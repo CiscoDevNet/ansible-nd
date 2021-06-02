@@ -7,25 +7,16 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 from copy import deepcopy
-import re
 import os
-import datetime
 import shutil
 import tempfile
-import traceback
 from ansible.module_utils.basic import json
 from ansible.module_utils.basic import env_fallback
 from ansible.module_utils.six import PY3
 from ansible.module_utils.six.moves import filterfalse
-from ansible.module_utils.six.moves.urllib.parse import urlencode, urljoin
-from ansible.module_utils.urls import fetch_url
+from ansible.module_utils.six.moves.urllib.parse import urlencode
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import Connection
-try:
-    from requests_toolbelt.multipart.encoder import MultipartEncoder
-    HAS_MULTIPART_ENCODER = True
-except ImportError:
-    HAS_MULTIPART_ENCODER = False
 
 
 if PY3:

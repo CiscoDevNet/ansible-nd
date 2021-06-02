@@ -18,7 +18,7 @@ __metaclass__ = type
 
 DOCUMENTATION = """
 ---
-author: 
+author:
 - Lionel Hercot (lhercot)
 httpapi: aci
 short_description: Nexus Dashboard Ansible HTTPAPI Plugin.
@@ -32,7 +32,6 @@ version_added: "0.0.1"
 import json
 import re
 import pickle
-import ipaddress
 import traceback
 
 from ansible.module_utils.six import PY3
@@ -119,7 +118,7 @@ class HttpApi(HttpApiBase):
             raise ConnectionError(json.dumps(self._verify_response(None, method, self.connection.get_option('host') + path, None)))
         self.connection._auth = None
 
-    def send_request(self, method, path, data={}):
+    def send_request(self, method, path, data=None):
         ''' This method handles all ND REST API requests other than login '''
 
         self.error = None
@@ -128,13 +127,21 @@ class HttpApi(HttpApiBase):
         self.info = {}
         self.method = 'GET'
 
+        if data is None:
+            data = {}
+
         self.connection.queue_message('vvvv', 'send_request method called')
         # # Case1: List of hosts is provided
         # self.backup_hosts = self.set_backup_hosts()
         # if not self.backup_hosts:
         if self.connection._connected is True and self.params.get('host') != self.connection.get_option('host'):
             self.connection._connected = False
-            self.connection.queue_message('vvvv', 'send_request reseting connection as host has changed from {0} to {1}'.format(self.connection.get_option('host'), self.params.get('host')))
+            self.connection.queue_message(
+                'vvvv',
+                'send_request reseting connection as host has changed from {0} to {1}'.format(
+                    self.connection.get_option('host'), self.params.get('host')
+                )
+            )
 
         if self.params.get('host') is not None:
             self.connection.set_option('host', self.params.get('host'))
@@ -177,7 +184,7 @@ class HttpApi(HttpApiBase):
         try:
             self.connection.queue_message('vvvv', 'send_request() - connection.send({0}, {1}, {2}, {3})'.format(path, data, method, self.headers))
             response, rdata = self.connection.send(path, data, method=method, headers=self.headers)
-        except ConnectionError as conn_e:
+        except ConnectionError:
             self.connection.queue_message('vvvv', 'login() - ConnectionError Exception')
             raise
         except Exception as e:
@@ -244,7 +251,7 @@ class HttpApi(HttpApiBase):
             return
 
     def _get_formated_info(self, response):
-        ''' The code in this function is based out of Ansible fetch_url code at https://github.com/ansible/ansible/blob/devel/lib/ansible/module_utils/urls.py '''
+        ''' The code in this function is based on Ansible fetch_url code at https://github.com/ansible/ansible/blob/devel/lib/ansible/module_utils/urls.py '''
         info = dict(msg="OK (%s bytes)" % response.headers.get('Content-Length', 'unknown'), url=response.geturl(), status=response.getcode())
         # Lowercase keys, to conform to py2 behavior, so that py3 and py2 are predictable
         info.update(dict((k.lower(), v) for k, v in response.info().items()))

@@ -16,7 +16,6 @@ options:
     - IP Address or hostname of the Nexus Dashboard (ND) host.
     - If the value is not specified in the task, the value of environment variable C(ND_HOST) will be used instead.
     type: str
-    required: yes
     aliases: [ hostname ]
   port:
     description:
@@ -35,7 +34,6 @@ options:
     - The password to use for authentication.
     - If the value is not specified in the task, the value of environment variables C(ND_PASSWORD) or C(ANSIBLE_NET_PASSWORD) will be used instead.
     type: str
-    required: yes
   output_level:
     description:
     - Influence the output of this ND module.
@@ -77,6 +75,7 @@ options:
     - The default value is Local.
     - If the value is not specified in the task, the value of environment variable C(ND_LOGIN_DOMAIN) will be used instead.
     type: str
+    default: local
 requirements:
 - Nexus Dashboard v2.0 or newer
 notes:
