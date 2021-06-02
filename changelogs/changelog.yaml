@@ -1,0 +1,6 @@
+ancestor: null
+releases:
+  0.1.0:
+    changes:
+      release_summary: Initial release of Nexus Dashboard collection
+    release_date: '2021-06-02'
