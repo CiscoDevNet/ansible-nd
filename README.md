@@ -33,8 +33,19 @@ Once the collection is installed, you can use it in a playbook by specifying the
     cisco.nd.nd_version:
       state: query
 ```
+With the following inventory file:
+```yaml
+nd ansible_host=10.0.0.1  ansible_user=admin ansible_ssh_pass="MySuperPassword"
 
-You can also use the ND HTTPAPI connection plugin with your cisco.mso Ansible collection for MSO running on ND (MSO version >= 3.2)
+[nd:vars]
+ansible_connection=ansible.netcommon.httpapi
+ansible_network_os=cisco.nd.nd
+ansible_httpapi_validate_certs=False
+ansible_httpapi_use_ssl=True
+ansible_httpapi_use_proxy=True
+```
+
+You can also use the ND HTTPAPI connection plugin with your cisco.mso Ansible collection for MSO running on ND (MSO version >= 3.2) using the inventory file above.
 ```yaml
 - hosts: nd
   gather_facts: no
