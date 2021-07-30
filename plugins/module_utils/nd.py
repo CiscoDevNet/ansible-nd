@@ -92,7 +92,7 @@ def nd_argument_spec():
         timeout=dict(type='int', default=30, fallback=(env_fallback, ['ND_TIMEOUT'])),
         use_proxy=dict(type='bool', default=True, fallback=(env_fallback, ['ND_USE_PROXY'])),
         use_ssl=dict(type='bool', default=True, fallback=(env_fallback, ['ND_USE_SSL'])),
-        validate_certs=dict(type='bool', default=True, fallback=(env_fallback, ['ND_VALIDATE_CERTS'])),
+        validate_certs=dict(type='bool', fallback=(env_fallback, ['ND_VALIDATE_CERTS'])),
         login_domain=dict(type='str', default='local', fallback=(env_fallback, ['ND_LOGIN_DOMAIN'])),
     )
 

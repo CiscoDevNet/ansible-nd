@@ -84,7 +84,14 @@ class HttpApi(HttpApiBase):
         if self.params.get('login_domain') != 'local':
             login_domain = self.params.get('login_domain')
 
-        payload = {'username': self.params.get('username'), 'password': self.params.get('password'), 'domain': login_domain}
+        payload = {'username': self.connection.get_option('remote_user'), 'password': self.connection.get_option('password'), 'domain': login_domain}
+
+        # Override the global username/password with the ones specified per task
+        if self.params.get('username') is not None:
+            payload['username'] = self.params.get('username')
+        if self.params.get('password') is not None:
+            payload['password'] = self.params.get('password')
+
         data = json.dumps(payload)
         try:
             self.connection.queue_message('vvvv', 'login() - connection.send({0}, {1}, {2}, {3})'.format(path, data, method, self.headers))
@@ -154,7 +161,7 @@ class HttpApi(HttpApiBase):
                 pass
             try:
                 self.connection.set_option("host", self.backup_hosts[self.host_counter])
-            except IndexError:
+            except (IndexError, TypeError):
                 pass
 
         if self.params.get('port') is not None:
