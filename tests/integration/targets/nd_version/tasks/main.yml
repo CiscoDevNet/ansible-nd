@@ -1,5 +1,6 @@
 # Test code for the ND modules
 # Copyright: (c) 2020, Lionel Hercot (@lhercot) <lhercot@cisco.com>
+# Copyright: (c) 2021, Cindy Zhao (@cizhao) <cizhao@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -87,3 +88,31 @@
     - nm_non_existing_state is not changed
     - cm_non_existing_state == nm_non_existing_state
     - cm_non_existing_state.msg == nm_non_existing_state.msg == "value of state must be one of{{':'}} query, got{{':'}} non-existing-state"
+
+- name: Query ND version by global parameters (check_mode)
+  cisco.nd.nd_version:
+    state: query
+  check_mode: yes
+  register: cm_query_global_params
+
+- name: Query ND version (normal mode)
+  cisco.nd.nd_version:
+    state: query
+  register: nm_query_global_params
+
+- name: Verify query
+  assert:
+    that:
+      - nm_query_global_params is not changed
+      - nm_query_global_params.current.major is defined
+      - nm_query_global_params.current.minor is defined
+      - nm_query_global_params.current.maintenance is defined
+      - nm_query_global_params.current.patch is defined
+      - nm_query_global_params.current.commit_id is defined
+      - nm_query_global_params.current.product_name == "Nexus Dashboard"
+      - nm_query_global_params.current.major == cm_query_global_params.current.major
+      - nm_query_global_params.current.minor == cm_query_global_params.current.minor
+      - nm_query_global_params.current.maintenance == cm_query_global_params.current.maintenance
+      - nm_query_global_params.current.patch == cm_query_global_params.current.patch
+      - nm_query_global_params.current.commit_id == cm_query_global_params.current.commit_id
+      - nm_query_global_params.current.product_name == cm_query_global_params.current.product_name
