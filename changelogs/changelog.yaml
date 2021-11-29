@@ -4,3 +4,10 @@ releases:
     changes:
       release_summary: Initial release of Nexus Dashboard collection
     release_date: '2021-06-02'
+  0.1.1:
+    changes:
+      bugfixes:
+      - Fix ND HTTAPI plugin to support remote users
+      - Remove required params for attributes that are handled by the HTTPAPI plugin
+      release_summary: New release v0.1.1
+    release_date: '2021-11-29'
