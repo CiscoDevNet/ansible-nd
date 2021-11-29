@@ -84,13 +84,13 @@ class HttpApi(HttpApiBase):
         if self.params.get('login_domain') != 'local':
             login_domain = self.params.get('login_domain')
 
-        payload = {'username': self.connection.get_option('remote_user'), 'password': self.connection.get_option('password'), 'domain': login_domain}
+        payload = {'userName': self.connection.get_option('remote_user'), 'userPasswd': self.connection.get_option('password'), 'domain': login_domain}
 
         # Override the global username/password with the ones specified per task
         if self.params.get('username') is not None:
-            payload['username'] = self.params.get('username')
+            payload['userName'] = self.params.get('username')
         if self.params.get('password') is not None:
-            payload['password'] = self.params.get('password')
+            payload['userPasswd'] = self.params.get('password')
 
         data = json.dumps(payload)
         try:
