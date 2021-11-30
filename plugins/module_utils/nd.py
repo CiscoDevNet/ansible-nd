@@ -86,7 +86,7 @@ def nd_argument_spec():
     return dict(
         host=dict(type='str', required=False, aliases=['hostname'], fallback=(env_fallback, ['ND_HOST'])),
         port=dict(type='int', required=False, fallback=(env_fallback, ['ND_PORT'])),
-        username=dict(type='str', default='admin', fallback=(env_fallback, ['ND_USERNAME', 'ANSIBLE_NET_USERNAME'])),
+        username=dict(type='str', fallback=(env_fallback, ['ND_USERNAME', 'ANSIBLE_NET_USERNAME'])),
         password=dict(type='str', required=False, no_log=True, fallback=(env_fallback, ['ND_PASSWORD', 'ANSIBLE_NET_PASSWORD'])),
         output_level=dict(type='str', default='normal', choices=['debug', 'info', 'normal'], fallback=(env_fallback, ['ND_OUTPUT_LEVEL'])),
         timeout=dict(type='int', default=30, fallback=(env_fallback, ['ND_TIMEOUT'])),
