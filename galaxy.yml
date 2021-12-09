@@ -2,7 +2,7 @@
 namespace: cisco
 name: nd
 # The version of the collection. Must be compatible with semantic versioning
-version: 0.1.1
+version: 0.1.2
 readme: README.md
 authors:
 - Lionel Hercot (@lhercot)
