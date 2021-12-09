@@ -11,3 +11,13 @@ releases:
       - Remove required params for attributes that are handled by the HTTPAPI plugin
       release_summary: New release v0.1.1
     release_date: '2021-11-29'
+  0.1.2:
+    changes:
+      bugfixes:
+      - Fix ND HTTAPI plugin login_domain issue when used with cisco.mso collection
+      - Fix default user when not defining the user. Default username "admin" has
+        been removed. Always specify username via module attribute or define the ansible_user
+        variable in inventory.
+      - Remove empty sanity ignore files
+      release_summary: New release v0.1.2
+    release_date: '2021-12-09'
