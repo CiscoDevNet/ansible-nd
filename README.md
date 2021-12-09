@@ -35,7 +35,8 @@ Once the collection is installed, you can use it in a playbook by specifying the
 ```
 With the following inventory file:
 ```yaml
-nd ansible_host=10.0.0.1  ansible_user=admin ansible_ssh_pass="MySuperPassword"
+[nd]
+nd1 ansible_host=10.0.0.1 ansible_user=admin ansible_ssh_pass="MySuperPassword"
 
 [nd:vars]
 ansible_connection=ansible.netcommon.httpapi
