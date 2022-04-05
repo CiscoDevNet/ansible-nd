@@ -93,7 +93,7 @@ def nd_argument_spec():
         use_proxy=dict(type='bool', fallback=(env_fallback, ['ND_USE_PROXY'])),
         use_ssl=dict(type='bool', fallback=(env_fallback, ['ND_USE_SSL'])),
         validate_certs=dict(type='bool', fallback=(env_fallback, ['ND_VALIDATE_CERTS'])),
-        login_domain=dict(type='str', default='local', fallback=(env_fallback, ['ND_LOGIN_DOMAIN'])),
+        login_domain=dict(type='str', default='DefaultAuth', fallback=(env_fallback, ['ND_LOGIN_DOMAIN'])),
     )
 
 
