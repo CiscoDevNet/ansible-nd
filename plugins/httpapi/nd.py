@@ -14,6 +14,9 @@
 
 
 from __future__ import (absolute_import, division, print_function)
+from email import message
+import mimetypes
+import os
 __metaclass__ = type
 
 DOCUMENTATION = """
@@ -46,6 +49,7 @@ class HttpApi(HttpApiBase):
         super(HttpApi, self).__init__(*args, **kwargs)
         self.platform = "cisco.nd"
         self.headers = {'Content-Type': 'application/json'}
+        self.file_headers = {'Content-Type': 'multipart/form-data'}
         self.params = {}
         self.auth = None
         self.backup_hosts = None
@@ -56,6 +60,7 @@ class HttpApi(HttpApiBase):
         self.path = ''
         self.status = -1
         self.info = {}
+        self.stdout = 'start nd httpapi \n'
 
     def get_platform(self):
         return self.platform
@@ -202,6 +207,146 @@ class HttpApi(HttpApiBase):
                 self.error = dict(code=self.status, message='ND HTTPAPI send_request() Exception: {0} - {1}'.format(e, traceback.format_exc()))
             raise ConnectionError(json.dumps(self._verify_response(None, method, full_path, None)))
         return self._verify_response(response, method, full_path, rdata)
+
+    def send_file_request(self, method, path, data=None):
+        ''' This method handles all ND REST API requests other than login '''
+
+        self.error = None
+        self.path = ''
+        self.status = -1
+        self.info = {}
+        self.method = 'GET'
+        if method is not None:
+            self.method = method
+
+        # if data is None:
+        #     data = {}
+
+        # self.connection.queue_message('vvvv', 'send_file_request method called')
+        # # # Case1: List of hosts is provided
+        # # self.backup_hosts = self.set_backup_hosts()
+        # # if not self.backup_hosts:
+        # if self.connection._connected is True and self.params.get('host') != self.connection.get_option('host'):
+        #     self.connection._connected = False
+        #     self.connection.queue_message(
+        #         'vvvv',
+        #         'send_request reseting connection as host has changed from {0} to {1}'.format(
+        #             self.connection.get_option('host'), self.params.get('host')
+        #         )
+        #     )
+
+        # if self.params.get('host') is not None:
+        #     self.connection.set_option('host', self.params.get('host'))
+
+        # else:
+        #     try:
+        #         with open('my_hosts.pk', 'rb') as fi:
+        #             self.host_counter = pickle.load(fi)
+        #     except FileNotFoundError:
+        #         pass
+        #     try:
+        #         self.connection.set_option('host', self.backup_hosts[self.host_counter])
+        #     except (IndexError, TypeError):
+        #         pass
+
+        # if self.params.get('port') is not None:
+        #     self.connection.set_option('port', self.params.get('port'))
+
+        # if self.params.get('username') is not None:
+        #     self.connection.set_option('remote_user', self.params.get('username'))
+
+        # if self.params.get('password') is not None:
+        #     self.connection.set_option('password', self.params.get('password'))
+
+        # if self.params.get('use_proxy') is not None:
+        #     self.connection.set_option('use_proxy', self.params.get('use_proxy'))
+
+        # if self.params.get('use_ssl') is not None:
+        #     self.connection.set_option('use_ssl', self.params.get('use_ssl'))
+
+        # if self.params.get('validate_certs') is not None:
+        #     self.connection.set_option('validate_certs', self.params.get('validate_certs'))
+
+        # # Perform some very basic path input validation.
+        # path = str(path)
+        # if path[0] != '/':
+        #     self.error = dict(code=self.status, message='Value of <path> does not appear to be formated properly')
+        #     raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
+        # full_path = self.connection.get_option('host') + path
+        # try:
+        #     self.connection.queue_message('vvvv', 'send_file_request() - connection.send({0}, {1}, {2}, {3})'.format(path, data, method, self.headers))
+        #     response, rdata = self.connection.send(path, data, method=method, headers=self.file_headers)
+        # except ConnectionError:
+        #     self.connection.queue_message('vvvv', 'login() - ConnectionError Exception')
+        #     raise
+        # except Exception as e:
+        #     self.connection.queue_message('vvvv', 'send_file_request() - Generic Exception')
+        #     if self.error is None:
+        #         self.error = dict(code=self.status, message='ND HTTPAPI send_request() Exception: {0} - {1}'.format(e, traceback.format_exc()))
+        #     raise ConnectionError(json.dumps(self._verify_response(None, method, full_path, None)))
+        # return self._verify_response(response, method, full_path, rdata)
+        try:
+            self.connection.queue_message('vvvv', 'send_file_request() - connection.send({0}, {1}, {2}, {3})'.format(path, data, method, self.file_headers))
+            # open and send file
+            try:
+                cwd = os.getcwd()
+                file_path = cwd + 'root/ansible/ansible_collections/cisco/ndi/tests/integration/' + data
+
+                # with open(file_path, 'r') as file_payload:
+                #     files = [
+                #         # ('data', ('data.json', open('data.json', 'r'), 'application/json')),
+                #         ('file', (os.path.basename(data), file_payload, mimetypes.guess_type(data)))
+                #     ]
+            except Exception as e:
+                # exist = os.path.exists(data)
+                # cwd = os.getcwd()
+                # dir = os.listdir(cwd)
+                # 'sbin', 'bin', 'mnt', 'var', 'lib64', 'usr', 'dev', 'tmp', 'etc', 'srv', 'root', 'media', 'boot', 'opt', 'proc', 'home', 'run', 'lib', 'sys', '.dockerenv'
+                # sbin = os.listdir(cwd + 'sbin/')
+                # bin = os.listdir(cwd + 'bin/')
+                # mnt = os.listdir(cwd + 'mnt/')
+                # var = os.listdir(cwd + 'var/')
+                # lib64 = os.listdir(cwd + 'lib64/')
+                # usr = os.listdir(cwd + 'usr/')
+                # dev = os.listdir(cwd + 'dev/')
+                # tmp = os.listdir(cwd + 'tmp/')
+                # etc = os.listdir(cwd + 'etc/')
+                # srv = os.listdir(cwd + 'srv/')
+                # integration_task = os.listdir(cwd + 'root/ansible/ansible_collections/cisco/ndi/tests/integration/targets/ndi_pcv/tasks')
+                # output = os.listdir(cwd + 'root/ansible/ansible_collections/cisco/ndi/tests/output')
+                # media = os.listdir(cwd + 'media/')
+                # boot = os.listdir(cwd + 'boot/')
+                # opt = os.listdir(cwd + 'proc/')
+                # home = os.listdir(cwd + 'home/')
+                # run = os.listdir(cwd + 'run/')
+                # lib = os.listdir(cwd + 'lib/')
+                # sys = os.listdir(cwd + 'sys/')
+                # docker = os.listdir(cwd + './dockerenv')
+                # self.error = dict(code=self.status, message=
+                # 'ND HTTPAPI send_file_request() Exception: {0} sbin is {1} bin is {2} mnt is {3} var is {4} lib64 is {5} usr is {6} dev is {7} tmp is {8} etc is {9} srv is {10} root is {11} media is {12} boot is {13} opt is {14} home is {15} run is {16} lib is {17} sys is {18} \n'
+                # .format(e, sbin, bin, mnt, var, lib64, usr, dev, tmp, etc, srv, root, media, boot, opt, home, run, lib, sys))
+                self.error = dict(code=self.status, message='ND HTTPAPI send_file_request() Exception: {0} '.format(e, traceback.format_exc()))
+                # self.error = dict(code=self.status, message='ND HTTPAPI send_file_request() Exception: {0} - {1} - {2} - {3} - {4}'.format(e, traceback.format_exc(), exist, cwd, dir))
+                # self.error = dict(code=self.status, message='ND HTTPAPI send_file_request() Exception: {0} - {1} - {2} - {3}'.format(e, traceback.format_exc(), cwd, dir))
+                raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
+            try:
+                response, rdata = self.connection.send(path, open(file_path, 'r'), method=method, headers=self.file_headers)
+            except Exception as e:
+                self.error = dict(code=self.status, message='ND HTTPAPI self.connection.send Exception: {0} '.format(e, traceback.format_exc()))
+                raise ConnectionError("err is" + str(self.error))
+            try:
+                return self._verify_response(response, method, path, rdata)
+            except Exception as e:
+                self.error = dict(code=self.status, message='ND HTTPAPI send return _verify_response Exception: {0} '.format(e, traceback.format_exc()))
+                raise ConnectionError("err is" + str(self.error))
+        # except ConnectionError:
+        #     self.connection.queue_message('vvvv', 'login() - ConnectionError Exception')
+        #     raise
+        except Exception as e:
+            self.error = dict(code=self.status, message='ND HTTPAPI post self.connection.send Exception: {0} '.format(e, traceback.format_exc()))
+            self.connection.queue_message('vvvv', 'send_file_request() - Generic Exception')
+            # raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
+            raise ConnectionError("last err is " + str(self.error))
 
     def handle_error(self):
         self.host_counter += 1
