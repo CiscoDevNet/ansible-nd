@@ -41,6 +41,7 @@ from ansible.module_utils.six import PY3
 from ansible.module_utils._text import to_text
 from ansible.module_utils.connection import ConnectionError
 from ansible.plugins.httpapi import HttpApiBase
+from ansible.module_utils.urls import prepare_multipart
 
 
 class HttpApi(HttpApiBase):
@@ -208,7 +209,7 @@ class HttpApi(HttpApiBase):
             raise ConnectionError(json.dumps(self._verify_response(None, method, full_path, None)))
         return self._verify_response(response, method, full_path, rdata)
 
-    def send_file_request(self, method, path, data=None):
+    def send_file_request(self, method, path, file=None, data=None):
         ''' This method handles all ND REST API requests other than login '''
 
         self.error = None
@@ -290,47 +291,51 @@ class HttpApi(HttpApiBase):
             # open and send file
             try:
                 cwd = os.getcwd()
-                file_path = cwd + 'root/ansible/ansible_collections/cisco/ndi/tests/integration/' + data
+                file_path = cwd + 'root/ansible_collections/cisco/ndi/tests/integration/' + file
+                test_task = os.listdir(cwd + "root/ansible_collections/cisco/ndi/tests/")
 
+                # file_read = open(file_path, 'r')
                 # with open(file_path, 'r') as file_payload:
                 #     files = [
                 #         # ('data', ('data.json', open('data.json', 'r'), 'application/json')),
-                #         ('file', (os.path.basename(data), file_payload, mimetypes.guess_type(data)))
+                #         ('file', (os.path.basename(file), file_payload, mimetypes.guess_type(file)))
                 #     ]
             except Exception as e:
-                # exist = os.path.exists(data)
-                # cwd = os.getcwd()
-                # dir = os.listdir(cwd)
-                # 'sbin', 'bin', 'mnt', 'var', 'lib64', 'usr', 'dev', 'tmp', 'etc', 'srv', 'root', 'media', 'boot', 'opt', 'proc', 'home', 'run', 'lib', 'sys', '.dockerenv'
-                # sbin = os.listdir(cwd + 'sbin/')
-                # bin = os.listdir(cwd + 'bin/')
-                # mnt = os.listdir(cwd + 'mnt/')
-                # var = os.listdir(cwd + 'var/')
-                # lib64 = os.listdir(cwd + 'lib64/')
-                # usr = os.listdir(cwd + 'usr/')
-                # dev = os.listdir(cwd + 'dev/')
-                # tmp = os.listdir(cwd + 'tmp/')
-                # etc = os.listdir(cwd + 'etc/')
-                # srv = os.listdir(cwd + 'srv/')
-                # integration_task = os.listdir(cwd + 'root/ansible/ansible_collections/cisco/ndi/tests/integration/targets/ndi_pcv/tasks')
-                # output = os.listdir(cwd + 'root/ansible/ansible_collections/cisco/ndi/tests/output')
-                # media = os.listdir(cwd + 'media/')
-                # boot = os.listdir(cwd + 'boot/')
-                # opt = os.listdir(cwd + 'proc/')
-                # home = os.listdir(cwd + 'home/')
-                # run = os.listdir(cwd + 'run/')
-                # lib = os.listdir(cwd + 'lib/')
-                # sys = os.listdir(cwd + 'sys/')
-                # docker = os.listdir(cwd + './dockerenv')
-                # self.error = dict(code=self.status, message=
-                # 'ND HTTPAPI send_file_request() Exception: {0} sbin is {1} bin is {2} mnt is {3} var is {4} lib64 is {5} usr is {6} dev is {7} tmp is {8} etc is {9} srv is {10} root is {11} media is {12} boot is {13} opt is {14} home is {15} run is {16} lib is {17} sys is {18} \n'
-                # .format(e, sbin, bin, mnt, var, lib64, usr, dev, tmp, etc, srv, root, media, boot, opt, home, run, lib, sys))
-                self.error = dict(code=self.status, message='ND HTTPAPI send_file_request() Exception: {0} '.format(e, traceback.format_exc()))
-                # self.error = dict(code=self.status, message='ND HTTPAPI send_file_request() Exception: {0} - {1} - {2} - {3} - {4}'.format(e, traceback.format_exc(), exist, cwd, dir))
-                # self.error = dict(code=self.status, message='ND HTTPAPI send_file_request() Exception: {0} - {1} - {2} - {3}'.format(e, traceback.format_exc(), cwd, dir))
-                raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
+                self.error = dict(code=self.status, message='ND HTTPAPI send_file_request() Exception: {0}  - file_path is {1} - cwd path is {2} - integration_taks is {3}'.format(e, file_path, cwd, test_task))
+                raise ConnectionError('open file err is ' + str(self.error))
+            # files = [
+            #     ('data', ('data.json', open('data.json', 'r'), 'application/json')),
+            #     ('file', (os.path.basename(args.file), open(
+            #         args.file, 'r'), mimetypes.guess_type(args.file)))
+            # ]
             try:
-                response, rdata = self.connection.send(path, open(file_path, 'r'), method=method, headers=self.file_headers)
+                # create data field
+                data["uploadedFileName"] = os.path.basename(file)
+                with open('data.json', 'w') as data_file:
+                    json.dump(data, data_file)
+            except Exception as e:
+                self.error = dict(code=self.status, message='ND HTTPAPI create data field Exception: {0} '.format(e, traceback.format_exc()))
+                raise ConnectionError("data field err is" + str(self.error))
+            # use prepare multipart
+            fields = {
+                'data': {
+                    'filename': 'data.json',
+                },
+                'file': {
+                    'filename': file_path
+                }
+            }
+            try:
+                content_type, form_body = prepare_multipart(fields)
+                data_content = json.load(open('data.json', 'r'))
+                file_content = json.load(open(file_path, 'r'))
+                # open('data-non-existing.json', 'r')
+            except Exception as e:
+                self.error = dict(code=self.status, message='ND HTTPAPI prepare multipart Exception: {0} - {1} - content_type is {2} - form_body is {3} - data_content is {4} - file_content is {5}'.format(e, traceback.format_exc(), content_type, form_body, data_content, file_content))
+                raise ConnectionError("err is" + str(self.error))
+            try:
+                # files = open(file_path, 'r')
+                response, rdata = self.connection.send(path, form_body, method=method, headers={'Content-Type': content_type})
             except Exception as e:
                 self.error = dict(code=self.status, message='ND HTTPAPI self.connection.send Exception: {0} '.format(e, traceback.format_exc()))
                 raise ConnectionError("err is" + str(self.error))
@@ -343,7 +348,7 @@ class HttpApi(HttpApiBase):
         #     self.connection.queue_message('vvvv', 'login() - ConnectionError Exception')
         #     raise
         except Exception as e:
-            self.error = dict(code=self.status, message='ND HTTPAPI post self.connection.send Exception: {0} '.format(e, traceback.format_exc()))
+            self.error = dict(code=self.status, message='ND HTTPAPI post self.connection.send Exception: {0} - {1} '.format(e, traceback.format_exc()))
             self.connection.queue_message('vvvv', 'send_file_request() - Generic Exception')
             # raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
             raise ConnectionError("last err is " + str(self.error))
