@@ -14,7 +14,6 @@
 
 
 from __future__ import (absolute_import, division, print_function)
-from email import message
 import mimetypes
 import os
 __metaclass__ = type
