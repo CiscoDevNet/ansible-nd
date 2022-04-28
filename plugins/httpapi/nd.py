@@ -41,13 +41,11 @@ from ansible.module_utils.six import PY3
 from ansible.module_utils._text import to_text
 from ansible.module_utils.connection import ConnectionError
 from ansible.plugins.httpapi import HttpApiBase
-from ansible.module_utils.urls import prepare_multipart
 try:
     from requests_toolbelt.multipart.encoder import MultipartEncoder
     HAS_MULTIPART_ENCODER = True
 except ImportError:
     HAS_MULTIPART_ENCODER = False
-
 
 
 class HttpApi(HttpApiBase):
@@ -56,7 +54,6 @@ class HttpApi(HttpApiBase):
         super(HttpApi, self).__init__(*args, **kwargs)
         self.platform = "cisco.nd"
         self.headers = {'Content-Type': 'application/json'}
-        self.file_headers = {'Content-Type': 'multipart/form-data'}
         self.params = {}
         self.auth = None
         self.backup_hosts = None
@@ -67,7 +64,7 @@ class HttpApi(HttpApiBase):
         self.path = ''
         self.status = -1
         self.info = {}
-        self.stdout = 'start nd httpapi \n'
+        self.stdout = ''
 
     def get_platform(self):
         return self.platform
@@ -227,85 +224,26 @@ class HttpApi(HttpApiBase):
             self.method = method
 
         try:
-            # open and send file
-            try:
-                cwd = os.getcwd()
-                file_path = cwd + 'root/ansible_collections/cisco/ndi/tests/integration/' + file
-                test_task = os.listdir(cwd + "root/ansible_collections/cisco/ndi/tests/")
-
-                # file_read = open(file_path, 'r')
-                # with open(file_path, 'r') as file_payload:
-                #     files = [
-                #         # ('data', ('data.json', open('data.json', 'r'), 'application/json')),
-                #         ('file', (os.path.basename(file), file_payload, mimetypes.guess_type(file)))
-                #     ]
-            except Exception as e:
-                self.error = dict(code=self.status, message='ND HTTPAPI send_file_request() Exception: {0}  - file_path is {1} - cwd path is {2} - integration_taks is {3}'.format(e, file_path, cwd, test_task))
-                raise ConnectionError('open file err is ' + str(self.error))
-            # files = [
-            #     ('data', ('data.json', open('data.json', 'r'), 'application/json')),
-            #     ('file', (os.path.basename(args.file), open(
-            #         args.file, 'r'), mimetypes.guess_type(args.file)))
-            # ]
-            try:
-                # create data field
-                data["uploadedFileName"] = os.path.basename(file)
-                with open('data.json', 'w') as data_file:
-                    json.dump(data, data_file)
-            except Exception as e:
-                self.error = dict(code=self.status, message='ND HTTPAPI create data field Exception: {0} '.format(e, traceback.format_exc()))
-                raise ConnectionError("data field err is" + str(self.error))
-            # use prepare multipart
-            # fields = {'data': {'filename': 'data.json'}, 'file': {'filename': file_path}}
-            try: 
-                fields = dict(data=('data.json', open('data.json', 'rb'), 'application/json'), file=(os.path.basename(file_path), open(file_path, 'rb'), mimetypes.guess_type(file_path)))
-                # fields = [('data', ('data.json', open('data.json', 'rb'), 'application/json')), ('file', (os.path.basename(file_path), open(file_path, 'rb'), mimetypes.guess_type(file_path)))] 
-                mp_encoder = MultipartEncoder(fields=fields)
-                # mp_encoder_str = mp_encoder.to_string()
-                self.headers['Content-Type'] = mp_encoder.content_type
-                self.headers['Accept'] = '*/*'
-                self.headers['Accept-Encoding'] = 'gzip, deflate, br'
-
-                response, rdata = self.connection.send(path, mp_encoder.to_string(), method=method, headers=self.headers)
-                # self.info['Content-Type'] = mp_encoder.content_type
-                # self.info['mp_encoder_str'] = mp_encoder_str
-                return self._verify_response(response, method, path, rdata)
-
-            # self.headers['Accept-Encoding'] = "gzip, deflate, br"
-                # self.error = dict(code=self.status, message='ND HTTPAPI MultipartEncoder Exception: mp_encoder_str is {0} - mp_encoder_content_type {1} '.format(mp_encoder_str, mp_encoder.content_type))
-                # raise ConnectionError("err is" + str(self.error))
-            except Exception as e:
-                self.error = dict(code=self.status, message='ND HTTPAPI MultipartEncoder Exception: {0} - {1} - mp_encoder_str {2} - content_type {3} '.format(e, traceback.format_exc(), mp_encoder_str, mp_encoder.content_type))
-                raise ConnectionError("err is" + str(self.error))
-
-
-            # try:
-            #     content_type, form_body = prepare_multipart(fields)
-            #     data_content = json.load(open('data.json', 'r'))
-            #     file_content = json.load(open(file_path, 'r'))
-            #     open('data-non-existing.json', 'r')
-            # except Exception as e:
-            #     self.error = dict(code=self.status, message='ND HTTPAPI prepare multipart Exception: {0} - {1} - content_type is {2} - form_body is {3} - data_content is {4} - file_content is {5}'.format(e, traceback.format_exc(), content_type, form_body, data_content, file_content))
-            #     raise ConnectionError("err is" + str(self.error))
-            # try:
-            #     # files = open(file_path, 'r')
-            #     response, rdata = self.connection.send(path, mp_encoder, method=method, headers={'Content-Type': mp_encoder.content_type}) 
-            # except Exception as e:
-            #     self.error = dict(code=self.status, message='ND HTTPAPI self.connection.send Exception: {0} - mp_encoder is {1} - traceback {2} '.format(e, mp_encoder_str , traceback.format_exc()))
-            #     raise ConnectionError("err is" + str(self.error))
-            # try:
-            #     return self._verify_response(response, method, path, rdata)
-            # except Exception as e:
-            #     self.error = dict(code=self.status, message='ND HTTPAPI send return _verify_response Exception: {0} '.format(e, traceback.format_exc()))
-            #     raise ConnectionError("err is" + str(self.error))
-        # except ConnectionError:
-        #     self.connection.queue_message('vvvv', 'login() - ConnectionError Exception')
-        #     raise
+            # create data field
+            data["uploadedFileName"] = os.path.basename(file)
+            with open('data.json', 'w') as data_file:
+                json.dump(data, data_file)
         except Exception as e:
-            self.error = dict(code=self.status, message='ND HTTPAPI post self.connection.send Exception: {0} - {1} - fields is {2} '.format(e, traceback.format_exc(), str(fields)))
-            self.connection.queue_message('vvvv', 'send_file_request() - Generic Exception')
-            # raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
-            raise ConnectionError("last err is " + str(self.error))
+            self.error = dict(code=self.status, message='ND HTTPAPI create data field Exception: {0} '.format(e, traceback.format_exc()))
+            raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
+
+        try: 
+            # create fields for MultipartEncoder
+            fields = dict(data=('data.json', open('data.json', 'rb'), 'application/json'), file=(os.path.basename(file), open(file, 'rb'), mimetypes.guess_type(file)))
+            mp_encoder = MultipartEncoder(fields=fields)
+            self.headers['Content-Type'] = mp_encoder.content_type
+            self.headers['Accept'] = '*/*'
+            self.headers['Accept-Encoding'] = 'gzip, deflate, br'
+            response, rdata = self.connection.send(path, mp_encoder.to_string(), method=method, headers=self.headers)
+        except Exception as e:
+            self.error = dict(code=self.status, message='ND HTTPAPI MultipartEncoder Exception: {0} - {1} '.format(e, traceback.format_exc()))
+            raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
+        return self._verify_response(response, method, path, rdata)
 
     def handle_error(self):
         self.host_counter += 1
