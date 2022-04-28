@@ -63,7 +63,6 @@ class HttpApi(HttpApiBase):
         self.path = ''
         self.status = -1
         self.info = {}
-        self.stdout = ''
 
     def get_platform(self):
         return self.platform
