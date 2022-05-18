@@ -420,3 +420,76 @@ class NDModule(object):
         if 'password' in existing:
             existing['password'] = self.sent.get('password')
         return not issubset(self.sent, existing)
+
+    def get_pcv_results(self, path, **kwargs):
+        obj = self.query_obj(path, **kwargs)
+        return obj['value']['data']
+
+    def get_site_id(self, path, site_name, **kwargs):
+        obj = self.query_obj(path, **kwargs)
+        for site in obj['value']['data'][0]['assuranceEntities']:
+            if site['name'] == site_name:
+                return site['uuid']
+
+    def get_pre_change_result(self, pcv_results, name, site_id, path,  **kwargs):
+        pcv_result = {}
+        for pcv in pcv_results:
+            if pcv.get("name") == name and pcv.get("fabricUuid") == site_id:
+                pcv_job_id = pcv.get("jobId")
+                pcv_path = '{0}/{1}'.format(path, pcv_job_id)
+                obj = self.query_obj(pcv_path,  **kwargs)
+                pcv_result = obj['value']['data']
+        return pcv_result
+
+    def get_epochs(self, path, **kwargs):
+        obj = self.query_obj(path, **kwargs)
+        return obj['value']['data'][0]
+
+    def query_data(self, path, **kwargs):
+        obj = self.query_obj(path, **kwargs)
+        return obj['value']['data']
+
+    def query_entry(self, path, **kwargs):
+        obj = self.query_obj(path, **kwargs)
+        return obj['entries']
+
+    def format_event_severity(self, events_severity):
+        result = {}
+        for each in events_severity:
+            event_severity_type = each.get("bucket")
+            event = {}
+            for output in each.get("output"):
+                epoch = output.get("bucket")
+                epoch_count = output.get("count")
+                event[epoch] = epoch_count
+            result[event_severity_type] = event
+        return result
+
+    def format_impacted_resource(self, impacted_resource):
+        result = {}
+        for each in impacted_resource:
+            resource = each.get("bucket")
+            with_issue_dict = {}
+            for output in each.get("output"):
+                epoch_count = {}
+                with_issues = output.get("bucket")
+                for epoch in output.get("output"):
+                    epoch_type = epoch.get("bucket")
+                    count = epoch.get("count")
+                    epoch_count[epoch_type] = count
+                with_issue_dict[with_issues] = epoch_count
+            result[resource] = with_issue_dict
+        return result
+
+
+    def query_event_severity(self, path, **kwargs):
+        event_severity = self.query_data(path, **kwargs)
+        formated_event_severity = self.format_event_severity(event_severity)
+        return formated_event_severity
+
+    def query_impacted_resource(self, path, **kwargs):
+        impacted_resource = self.query_data(path, **kwargs)
+        formated_impacted_resource = self.format_impacted_resource(impacted_resource)
+        return formated_impacted_resource
+
+
