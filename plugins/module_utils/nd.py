@@ -464,7 +464,7 @@ class NDModule(object):
     def format_event_severity(self, events_severity):
         result = {}
         for each in events_severity:
-            event_severity_type = each.get("bucket").lower()
+            event_severity_type = each.get("bucket").lower().split('_')[-1]
             result[event_severity_type] = {}
             for output in each.get("output"):
                 epoch = output.get("bucket").lower()
