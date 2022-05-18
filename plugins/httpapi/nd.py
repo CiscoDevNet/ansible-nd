@@ -227,7 +227,7 @@ class HttpApi(HttpApiBase):
             with open('data.json', 'w') as data_file:
                 json.dump(data, data_file)
         except Exception as e:
-            self.error = dict(code=self.status, message='ND HTTPAPI create data field Exception: {0} '.format(e, traceback.format_exc()))
+            self.error = dict(code=self.status, message='ND HTTPAPI create data field Exception: {0} - {1}'.format(e, traceback.format_exc()))
             raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
 
         try: 

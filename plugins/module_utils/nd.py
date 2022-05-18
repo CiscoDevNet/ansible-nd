@@ -468,17 +468,13 @@ class NDModule(object):
     def format_impacted_resource(self, impacted_resource):
         result = {}
         for each in impacted_resource:
-            resource = each.get("bucket")
-            with_issue_dict = {}
+            resource = each.get("bucket").lower()
+            result[resource] = {}
             for output in each.get("output"):
-                epoch_count = {}
-                with_issues = output.get("bucket")
                 for epoch in output.get("output"):
-                    epoch_type = epoch.get("bucket")
+                    epoch_type = epoch.get("bucket").lower()
                     count = epoch.get("count")
-                    epoch_count[epoch_type] = count
-                with_issue_dict[with_issues] = epoch_count
-            result[resource] = with_issue_dict
+                    result[resource][epoch_type] = count
         return result
 
 
@@ -491,5 +487,3 @@ class NDModule(object):
         impacted_resource = self.query_data(path, **kwargs)
         formated_impacted_resource = self.format_impacted_resource(impacted_resource)
         return formated_impacted_resource
-
-
