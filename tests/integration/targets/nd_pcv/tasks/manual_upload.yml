@@ -1,0 +1,64 @@
+# Test code for the NAE modules
+# Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("info") }}'
+
+- name: Present Pre-Change analysis from manual changes
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: manual
+    manual: |
+        [
+            {
+              "fvTenant": {
+                "attributes": {
+                  "name": "AnsibleTest",
+                  "dn": "uni/tn-AnsibleTest",
+                  "status": "deleted"
+                }
+              }
+            }
+        ]
+    state: present
+  register: present_pcv_manual
+
+- name: Checking pre-change analysis from manual changes ( Contract ) is added
+  assert:
+    that:
+    - present_pcv_manual is changed
+    - present_pcv_manual.previous == {}
+    # - present_pcv_manual.Result == "Pre-change analysis ansible_manual_upload successfully created."
+
+# QUERY specific pre-change analysis job result
+- name: Query specific Pre-Change analysis result
+  cisco.nd.nd_pcv: &nd_query
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: manual
+    state: query
+  register: nm_query_pcv
+
+- name: Query Pre-Change analysis results
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    state: query
+  register: nm_query_pcvs
+
+# # Delete specific pre-change analysis job
+# - name: Delete Pre-Change analysis
+#   cisco.nd.nd_pcv: &nd_rm
+#     <<: *nd_info
+#     ig_name: day2ops-tme
+#     site_name: prod-fabric
+#     name: manual
+#     state: absent
+#   register: rm_pcv

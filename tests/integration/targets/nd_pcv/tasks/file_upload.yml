@@ -1,0 +1,47 @@
+# Test code for the NAE modules
+# Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("info") }}'
+
+- name: Create a new Pre-Change analysis from file
+  cisco.nd.nd_pcv: &nd_present
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: pcv_by_file
+    file: /root/ansible/ansible_collections/cisco/nd/tests/integration/targets/nd_pcv/tasks/out-ospf-to-l2vrf.json
+    state: present
+  register: present_pcv
+
+- name: Create a new Pre-Change analysis from non-existing file
+  cisco.nd.nd_pcv:
+    <<: *nd_present
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: pcv_non_existing
+    file: /root/ansible/ansible_collections/cisco/nd/tests/integration/targets/nd_pcv/tasks/non-existing.json
+    state: present
+  register: present_pcv
+  ignore_errors: True
+
+- name: Query specific Pre-Change analysis job
+  cisco.nd.nd_pcv: &nd_query
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: pcv_by_file
+    state: query
+  register: nm_query_pcv_file
+
+- name: Query all Pre-Change analysis jobs
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    state: query
+  register: nm_query_pcvs_file
+
