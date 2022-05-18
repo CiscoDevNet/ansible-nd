@@ -456,13 +456,12 @@ class NDModule(object):
     def format_event_severity(self, events_severity):
         result = {}
         for each in events_severity:
-            event_severity_type = each.get("bucket")
-            event = {}
+            event_severity_type = each.get("bucket").lower()
+            result[event_severity_type] = {}
             for output in each.get("output"):
-                epoch = output.get("bucket")
+                epoch = output.get("bucket").lower()
                 epoch_count = output.get("count")
-                event[epoch] = epoch_count
-            result[event_severity_type] = event
+                result[event_severity_type][epoch] = epoch_count
         return result
 
     def format_impacted_resource(self, impacted_resource):
