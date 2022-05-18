@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2021, Lionel Hercot (@lhercot) <lhercot@cisco.com>
+# Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
 # Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)
 
 from __future__ import (absolute_import, division, print_function)
@@ -180,7 +181,7 @@ class NDModule(object):
             self.module.warn('Enable debug output because ANSIBLE_DEBUG was set.')
             self.params['output_level'] = 'debug'
 
-    def request(self, path, method=None, data=None, qs=None):
+    def request(self, path, method=None, data=None, file=None, qs=None, prefix=""):
         ''' Generic HTTP method for ND requests. '''
         self.path = path
 
@@ -194,11 +195,17 @@ class NDModule(object):
         conn = Connection(self.module._socket_path)
         conn.set_params(self.params)
         uri = self.path
+        if prefix != "":
+            uri = '{0}/{1}'.format(prefix, self.path)
         if qs is not None:
             uri = uri + update_qs(qs)
         try:
+            if file is not None:
+                info = conn.send_file_request(method, uri, file, data)
+            else:
+                info = conn.send_request(method, uri, json.dumps(data))
             self.result['data'] = data
-            info = conn.send_request(method, uri, json.dumps(data))
+
             self.url = info.get('url')
             info.pop('date')
         except Exception as e:
@@ -284,7 +291,8 @@ class NDModule(object):
 
     def query_obj(self, path, **kwargs):
         ''' Query the ND REST API for the whole object at a path '''
-        obj = self.request(path, method='GET')
+        prefix = kwargs.pop("prefix", "")
+        obj = self.request(path, method='GET', prefix=prefix)
         if obj == {}:
             return {}
         for kw_key, kw_value in kwargs.items():
