@@ -39,9 +39,11 @@ extends_documentation_fragment: cisco.nd.modules
 '''
 
 EXAMPLES = r'''
-- name: Get prechange validation result
-  cisco.nd.nd_pcv:
+- name: Get prechange validation delta analysis result
+  cisco.nd.nd_pcv_delta_analysis:
     ig_name: exampleIG
+    site_name: exampleSite
+    name: exampleName
   delegate_to: localhost
   register: query_results
 '''
