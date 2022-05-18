@@ -81,6 +81,7 @@ def main():
     pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis'.format(path, ig_name, site_name)
     pcv_result = nd.get_pre_change_result(pcv_results, name, site_id, pcv_path, prefix=ndi_prefix)
     pcv_status = pcv_result.get("analysisStatus")
+    pcv_snapshot_time = pcv_result.get("baseEpochCollectionTimeRfc3339")
     if pcv_status != "COMPLETED":
         nd.fail_json(msg="Pre-change validation {0} is not completed".format(name))
     epoch_delta_job_id = pcv_result.get("epochDeltaJobId")
@@ -94,6 +95,7 @@ def main():
     pcv_individual_anomalies_path = "{0}/individualTable?epochStatus=BOTH_EPOCHS".format(delta_analysis_path)
     pcv_individual_anomalies = nd.query_entry(pcv_individual_anomalies_path)
     nd.existing["anomalies"] = pcv_individual_anomalies
+    nd.existing["general"] = pcv_snapshot_time
     nd.exit_json()
 if __name__ == "__main__":
     main()
