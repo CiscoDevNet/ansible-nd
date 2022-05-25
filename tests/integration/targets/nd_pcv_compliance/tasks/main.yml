@@ -1,0 +1,23 @@
+# Test code for the nd modules
+# Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# CLEAN ENVIRONMENT
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("info") }}'
+
+# QUERY pre-change validation delta analysis results
+- name: query a pre_change validation compliance result
+  nd_pcv_compliance: &nd_query
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: '{{ item }}'
+  register: query_pcv_compliance
+  ignore_errors: True
+  loop:
+  - manual
+  - pcv_by_file

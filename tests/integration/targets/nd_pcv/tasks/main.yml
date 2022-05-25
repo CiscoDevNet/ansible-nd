@@ -19,7 +19,7 @@
     state: absent
   register: rm_existing_pcv
   loop:
-  # - manual
+  - manual
   - pcv_by_file
 
 - name: Run file upload tasks
