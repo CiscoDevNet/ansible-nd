@@ -53,6 +53,7 @@ RETURN = r'''
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 
 def main():
     argument_spec = nd_argument_spec()
@@ -68,32 +69,27 @@ def main():
     )
 
     nd = NDModule(module)
+    ndi = NDI(nd)
 
     name = nd.params.get("name")
     site_name = nd.params.get('site_name')
     ig_name = nd.params.get('ig_name')
 
-    ndi_prefix = '/sedgeapi/v1/cisco-nir/api/api/telemetry/v2'
-    path = 'config/insightsGroup'
-    pcvs_path = '{0}/{1}/prechangeAnalysis?$sort=-analysisSubmissionTime'.format(path, ig_name)
-    pcv_results = nd.get_pcv_results(pcvs_path, prefix=ndi_prefix)
-    site_id = nd.get_site_id(path, site_name, prefix=ndi_prefix)
-    pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis'.format(path, ig_name, site_name)
-    pcv_result = nd.get_pre_change_result(pcv_results, name, site_id, pcv_path, prefix=ndi_prefix)
+    pcv_result = ndi.query_pcv(ig_name, site_name, name)
     pcv_status = pcv_result.get("analysisStatus")
     pcv_snapshot_time = pcv_result.get("baseEpochCollectionTimeRfc3339")
     if pcv_status != "COMPLETED":
         nd.fail_json(msg="Pre-change validation {0} is not completed".format(name))
     epoch_delta_job_id = pcv_result.get("epochDeltaJobId")
-    delta_analysis_path = "{0}/epochDelta/insightsGroup/{1}/fabric/{2}/job/{3}/health/view".format(ndi_prefix, ig_name, site_name, epoch_delta_job_id)
+    delta_analysis_path = "{0}/epochDelta/insightsGroup/{1}/fabric/{2}/job/{3}/health/view".format(ndi.prefix, ig_name, site_name, epoch_delta_job_id)
     event_severity_path = "{0}/eventSeverity".format(delta_analysis_path)
-    pcv_event_severity = nd.query_event_severity(event_severity_path)
+    pcv_event_severity = ndi.query_event_severity(event_severity_path)
     nd.existing["event_severity"] = pcv_event_severity
     impacted_resource_path = "{0}/impactedResource".format(delta_analysis_path)
-    pcv_impacted_resource = nd.query_impacted_resource(impacted_resource_path)
+    pcv_impacted_resource = ndi.query_impacted_resource(impacted_resource_path)
     nd.existing["impacted_resources"] = pcv_impacted_resource
     pcv_individual_anomalies_path = "{0}/individualTable?epochStatus=BOTH_EPOCHS".format(delta_analysis_path)
-    pcv_individual_anomalies = nd.query_entry(pcv_individual_anomalies_path)
+    pcv_individual_anomalies = ndi.query_entry(pcv_individual_anomalies_path)
     nd.existing["anomalies"] = pcv_individual_anomalies
     nd.existing["general"] = pcv_snapshot_time
     nd.exit_json()
