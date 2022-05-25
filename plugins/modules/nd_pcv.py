@@ -7,6 +7,7 @@ from __future__ import absolute_import, division, print_function
 import json
 import os
 import time
+
 __metaclass__ = type
 
 ANSIBLE_METADATA = {'metadata_version': '1.1',
@@ -17,9 +18,9 @@ DOCUMENTATION = r'''
 ---
 module: nd_pcv
 version_added: "0.0.1"
-short_description: Manage pre-change validation
+short_description: Manage pre-change validation job
 description:
-- Manage pre-change validation on Cisco Nexus Dashboard Insights (NDI).
+- Manage pre-change validation job on Cisco Nexus Dashboard Insights (NDI).
 author:
 - Cindy Zhao (@cizhao)
 options:
@@ -31,11 +32,11 @@ options:
     aliases: [ fab_name ]
   name:
     description:
-    - The name of the pre-change validation.
+    - The name of the pre-change validation job.
     type: str
   description:
     description:
-    - Description for the pre-change validation.
+    - Description for the pre-change validation job.
     type: str
     aliases: [ descr ]
   site_name:
@@ -119,6 +120,7 @@ RETURN = r'''
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 
 def main():
     argument_spec = nd_argument_spec()
@@ -140,6 +142,7 @@ def main():
     )
 
     nd = NDModule(module)
+    ndi = NDI(nd)
 
     state = nd.params.get("state")
     name = nd.params.get("name")
@@ -149,15 +152,11 @@ def main():
     file = nd.params.get('file')
     manual = nd.params.get('manual')
 
-    ndi_prefix = '/sedgeapi/v1/cisco-nir/api/api/telemetry/v2'
     path = 'config/insightsGroup'
-    pcvs_path = '{0}/{1}/prechangeAnalysis?$sort=-analysisSubmissionTime'.format(path, ig_name)
-    pcv_results = nd.get_pcv_results(pcvs_path, prefix=ndi_prefix)
+    pcv_results = ndi.query_pcvs(ig_name)
     nd.existing = pcv_results
     if name is not None and site_name is not None:
-        site_id = nd.get_site_id(path, site_name, prefix=ndi_prefix)
-        pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis'.format(path, ig_name, site_name)
-        nd.existing = nd.get_pre_change_result(pcv_results, name, site_id, pcv_path, prefix=ndi_prefix)
+        nd.existing = ndi.query_pcv(ig_name, site_name, name)
 
     if state == 'query':
         pass
@@ -171,7 +170,7 @@ def main():
             else:
                 rm_path = '{0}/{1}/prechangeAnalysis/jobs'.format(path, ig_name)
                 rm_payload = [job_id]
-                rm_resp = nd.request(rm_path, method='POST', data=rm_payload, prefix=ndi_prefix)
+                rm_resp = nd.request(rm_path, method='POST', data=rm_payload, prefix=ndi.prefix)
                 if rm_resp["success"] == True:
                     nd.existing = {}
                 else:
@@ -182,7 +181,7 @@ def main():
         if nd.existing:
             nd.exit_json()
         epoch_path = 'events/insightsGroup/{0}/fabric/{1}/epochs?$size=1&$status=FINISHED'.format(ig_name, site_name)
-        base_epoch_data = nd.get_epochs(epoch_path, prefix=ndi_prefix)
+        base_epoch_data = ndi.get_epochs(epoch_path, prefix=ndi.prefix)
 
         data = {
             "allowUnsupportedObjectModification": "true",
@@ -199,13 +198,13 @@ def main():
                 nd.fail_json(msg="File not found : {0}".format(file))
 
             create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges'.format(path, ig_name, site_name)
-            file_resp = nd.request(create_pcv_path, method='POST', file=file, data=data, prefix=ndi_prefix)
+            file_resp = nd.request(create_pcv_path, method='POST', file=file, data=data, prefix=ndi.prefix)
             if file_resp.get("success") == True:
                 nd.existing = file_resp.get("value")["data"]
         if manual:
             data["imdata"] = json.loads(manual)
             create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/manualChanges?action=RUN'.format(path, ig_name, site_name)
-            manual_resp = nd.request(create_pcv_path, method='POST', data=data, prefix=ndi_prefix)
+            manual_resp = nd.request(create_pcv_path, method='POST', data=data, prefix=ndi.prefix)
             if manual_resp.get("success") == True:
                 nd.existing = manual_resp.get("value")["data"]
     nd.exit_json()
