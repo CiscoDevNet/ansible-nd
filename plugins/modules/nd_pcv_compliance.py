@@ -80,21 +80,13 @@ def main():
     if pcv_status != "COMPLETED":
         nd.fail_json(msg="Pre-change validation {0} is not completed".format(name))
     compliance_epoch_id = pcv_result.get("preChangeEpochUUID")
-    event_path = "{0}/events/insightsGroup/{1}/fabric/{2}".format(ndi.prefix, ig_name, site_name)
-    smart_events_path = "{0}/smartEvents?%24epochId={1}&%24page=0&%24size=10&%24sort=-severity&category=COMPLIANCE".format(event_path, compliance_epoch_id)
-    nd.stdout = nd.stdout + "query compliance smart event \n"
-    nd.existing["smart_events"] = ndi.query_compliance_smart_event(smart_events_path)
-    compliance_path = "{0}/model/aciPolicy/complianceAnalysis".format(event_path)
-    events_by_severity_path = "{0}/eventsBySeverity?%24epochId={1}".format(compliance_path, compliance_epoch_id)
-    nd.existing["events_by_severity"] = ndi.query_msg_with_data(events_by_severity_path)
-    unhealthy_resources_path = "{0}/eventUnhealthyResources?%24epochId={1}".format(compliance_path, compliance_epoch_id)
-    nd.existing["unhealthy_resources"] = ndi.query_unhealthy_resources(unhealthy_resources_path)
-    compliance_score_path = "{0}/complianceScore?%24epochId={1}".format(compliance_path, compliance_epoch_id)
-    nd.existing["compliance_score"] = ndi.query_data(compliance_score_path)
-    count_path = "{0}/count?%24epochId={1}".format(compliance_path, compliance_epoch_id)
-    nd.existing["count"] = ndi.query_data(count_path)
-    result_by_requirement_path = "{0}/complianceResultsByRequirement?%24epochId={1}&%24sort=-requirementName&%24page=0&%24size=10".format(compliance_path, compliance_epoch_id)
-    nd.existing["result_by_requirement"] = ndi.query_msg_with_data(result_by_requirement_path)
+    # nd.stdout = nd.stdout + "query compliance smart event \n"
+    # nd.existing["smart_events"] = ndi.query_compliance_smart_event(ig_name, site_name, compliance_epoch_id)
+    nd.existing["events_by_severity"] = ndi.query_msg_with_data(ig_name, site_name, compliance_epoch_id)
+    nd.existing["unhealthy_resources"] = ndi.query_unhealthy_resources(ig_name, site_name, compliance_epoch_id)
+    nd.existing["compliance_score"] = ndi.query_compliance_score(ig_name, site_name, compliance_epoch_id)
+    nd.existing["count"] = ndi.query_compliance_count(ig_name, site_name, compliance_epoch_id)
+    nd.existing["result_by_requirement"] = ndi.query_msg_with_data(ig_name, site_name, compliance_epoch_id)
 
     nd.exit_json()
 if __name__ == "__main__":

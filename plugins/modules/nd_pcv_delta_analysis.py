@@ -81,15 +81,11 @@ def main():
     if pcv_status != "COMPLETED":
         nd.fail_json(msg="Pre-change validation {0} is not completed".format(name))
     epoch_delta_job_id = pcv_result.get("epochDeltaJobId")
-    delta_analysis_path = "{0}/epochDelta/insightsGroup/{1}/fabric/{2}/job/{3}/health/view".format(ndi.prefix, ig_name, site_name, epoch_delta_job_id)
-    event_severity_path = "{0}/eventSeverity".format(delta_analysis_path)
-    pcv_event_severity = ndi.query_event_severity(event_severity_path)
+    pcv_event_severity = ndi.query_event_severity(ig_name, site_name, epoch_delta_job_id)
     nd.existing["event_severity"] = pcv_event_severity
-    impacted_resource_path = "{0}/impactedResource".format(delta_analysis_path)
-    pcv_impacted_resource = ndi.query_impacted_resource(impacted_resource_path)
+    pcv_impacted_resource = ndi.query_impacted_resource(ig_name, site_name, epoch_delta_job_id)
     nd.existing["impacted_resources"] = pcv_impacted_resource
-    pcv_individual_anomalies_path = "{0}/individualTable?epochStatus=BOTH_EPOCHS".format(delta_analysis_path)
-    pcv_individual_anomalies = ndi.query_entry(pcv_individual_anomalies_path)
+    pcv_individual_anomalies = ndi.query_entry(ig_name, site_name, epoch_delta_job_id)
     nd.existing["anomalies"] = pcv_individual_anomalies
     nd.existing["general"] = pcv_snapshot_time
     nd.exit_json()
