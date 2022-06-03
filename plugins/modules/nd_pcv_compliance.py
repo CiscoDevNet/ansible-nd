@@ -80,8 +80,8 @@ def main():
     if pcv_status != "COMPLETED":
         nd.fail_json(msg="Pre-change validation {0} is not completed".format(name))
     compliance_epoch_id = pcv_result.get("preChangeEpochUUID")
-    # nd.stdout = nd.stdout + "query compliance smart event \n"
-    # nd.existing["smart_events"] = ndi.query_compliance_smart_event(ig_name, site_name, compliance_epoch_id)
+    # nd.stdout = nd.stdout + "start querying compliance smart event \n"
+    nd.existing["smart_events"] = ndi.query_compliance_smart_event(ig_name, site_name, compliance_epoch_id)
     nd.existing["events_by_severity"] = ndi.query_msg_with_data(ig_name, site_name, compliance_epoch_id)
     nd.existing["unhealthy_resources"] = ndi.query_unhealthy_resources(ig_name, site_name, compliance_epoch_id)
     nd.existing["compliance_score"] = ndi.query_compliance_score(ig_name, site_name, compliance_epoch_id)

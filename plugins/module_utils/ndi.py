@@ -12,13 +12,16 @@ class NDI:
     def __init__(self, nd_module):
         self.nd = nd_module
         self.prefix = "/sedgeapi/v1/cisco-nir/api/api/telemetry/v2"
+        self.config_ig_path = "config/insightsGroup"
+        self.event_insight_group_path = "events/insightsGroup/{0}/fabric/{1}"
+        self.compliance_path = "model/aciPolicy/complianceAnalysis"
 
     def get_pcv_results(self, path, **kwargs):
         obj = self.nd.query_obj(path, **kwargs)
         return obj['value']['data']
 
-    def get_site_id(self, path, site_name, **kwargs):
-        obj = self.nd.query_obj(path, **kwargs)
+    def get_site_id(self, site_name, **kwargs):
+        obj = self.nd.query_obj(self.config_ig_path, **kwargs)
         for site in obj['value']['data'][0]['assuranceEntities']:
             if site['name'] == site_name:
                 return site['uuid']
@@ -34,7 +37,8 @@ class NDI:
         return pcv_result
 
     def get_epochs(self, ig_name, site_name):
-        path = 'events/insightsGroup/{0}/fabric/{1}/epochs?$size=1&$status=FINISHED'.format(ig_name, site_name)
+        ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
+        path = '{0}/epochs?$size=1&$status=FINISHED'.format(ig_base_path)
         obj = self.nd.query_obj(path, prefix=self.prefix)
         return obj['value']['data'][0]
 
@@ -43,7 +47,8 @@ class NDI:
         return obj['value']['data']
 
     def query_compliance_score(self, ig_name, site_name, compliance_epoch_id):
-        path = "events/insightsGroup/{0}/fabric/{1}/model/aciPolicy/complianceAnalysis/complianceScore?%24epochId={2}".format(ig_name, site_name, compliance_epoch_id)
+        ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
+        path = "{0}/{1}/complianceScore?%24epochId={2}".format(ig_base_path, self.compliance_path, compliance_epoch_id)
         compliance_score = self.query_data(path)
         return compliance_score
 
@@ -95,17 +100,15 @@ class NDI:
 
     def query_messages(self, path):
         result = {}
-        self.nd.stdout = self.nd.stdout + "query obj in query message \n"
-        self.nd.stdout = self.nd.stdout + "path is " + str(path) + "\n"
         obj = self.nd.query_obj(path, prefix = self.prefix)
-        for message in obj.get("messages"):
-            msg = message.get("message")
-            severity = message.get("severity").lower()
-            result[severity] = msg
+        if obj.get("messages") is not None:
+            for message in obj.get("messages"):
+                msg = message.get("message")
+                severity = message.get("severity").lower()
+                result[severity] = msg
         return result
 
     def query_compliance_smart_event(self, ig_name, site_name, compliance_epoch_id):
-        self.nd.stdout = self.nd.stdout + "inside query compliance smart event \n"
         path = "events/insightsGroup/{0}/fabric/{1}/smartEvents?%24epochId={2}&%24page=0&%24size=10&%24sort=-severity&category=COMPLIANCE".format(ig_name, site_name, compliance_epoch_id)
         smart_event = self.query_messages(path)
         return smart_event
@@ -135,11 +138,10 @@ class NDI:
         return pcv_results
 
     def query_pcv(self, ig_name, site_name, pcv_name):
-        path = 'config/insightsGroup'
         pcv_results = self.query_pcvs(ig_name)
         if pcv_name is not None and site_name is not None:
-            site_id = self.get_site_id(path, site_name, prefix=self.prefix)
-            pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis'.format(path, ig_name, site_name)
+            site_id = self.get_site_id(site_name, prefix=self.prefix)
+            pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis'.format(self.config_ig_path, ig_name, site_name)
             pcv_result = self.get_pre_change_result(pcv_results, pcv_name, site_id, pcv_path, prefix=self.prefix)
         else:
             self.nd.fail_json(msg="site name and prechange validation job name are required")

@@ -294,8 +294,6 @@ class NDModule(object):
     def query_obj(self, path, **kwargs):
         ''' Query the ND REST API for the whole object at a path '''
         prefix = kwargs.pop("prefix", "")
-        self.stdout = self.stdout + "request path " + str(path) + "\n"
-        self.stdout = self.stdout + "prefix is " + prefix + "\n"
         obj = self.request(path, method='GET', prefix=prefix)
         if obj == {}:
             return {}
