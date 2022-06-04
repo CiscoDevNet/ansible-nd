@@ -17,7 +17,6 @@
     site_name: prod-fabric
     name: '{{ item }}'
   register: query_pcv_compliance
-  ignore_errors: True
   loop:
   - manual
   - pcv_by_file

@@ -81,53 +81,59 @@ class HttpApi(HttpApiBase):
     def login(self, username, password):
         ''' Log in to ND '''
         # Perform login request
-        self.connection.queue_message('vvvv', 'Starting Login to {0}'.format(self.connection.get_option('host')))
+        self.connection.queue_message('info', 'login() - login method called for {0}'.format(self.connection.get_option('host')))
+        if self.connection._auth is None:
+            self.connection.queue_message('info', 'login() - previous auth not found sending login POST to {0}'.format(self.connection.get_option('host')))
+            method = 'POST'
+            path = '/login'
+            full_path = self.connection.get_option('host') + path
+            # TODO: Fix when username and password are not used in ND module
+            login_domain = 'DefaultAuth'
+            if self.params.get('login_domain'):
+                login_domain = self.params.get('login_domain')
 
-        method = 'POST'
-        path = '/login'
-        full_path = self.connection.get_option('host') + path
-        # TODO: Fix when username and password are not used in ND module
-        login_domain = 'DefaultAuth'
-        if self.params.get('login_domain'):
-            login_domain = self.params.get('login_domain')
+            payload = {'userName': self.connection.get_option('remote_user'), 'userPasswd': self.connection.get_option('password'), 'domain': login_domain}
 
-        payload = {'userName': self.connection.get_option('remote_user'), 'userPasswd': self.connection.get_option('password'), 'domain': login_domain}
+            # Override the global username/password with the ones specified per task
+            if self.params.get('username') is not None:
+                payload['userName'] = self.params.get('username')
+            if self.params.get('password') is not None:
+                payload['userPasswd'] = self.params.get('password')
 
-        # Override the global username/password with the ones specified per task
-        if self.params.get('username') is not None:
-            payload['userName'] = self.params.get('username')
-        if self.params.get('password') is not None:
-            payload['userPasswd'] = self.params.get('password')
+            data = json.dumps(payload)
+            try:
+                self.connection.queue_message('info', 'login() - connection.send({0}, LOGIN_PAYLOAD_NOT_SHOWN, {1}, {2})'.format(path, method, self.headers))
+                response, response_data = self.connection.send(path, data, method=method, headers=self.headers)
 
-        data = json.dumps(payload)
-        try:
-            self.connection.queue_message('vvvv', 'login() - connection.send({0}, {1}, {2}, {3})'.format(path, data, method, self.headers))
-            response, response_data = self.connection.send(path, data, method=method, headers=self.headers)
+                # Handle ND response
+                self.status = response.getcode()
+                if self.status not in [200, 201]:
+                    self.connection.queue_message('error', 'login() - login status incorrect. HTTP status={0}'.format(self.status))
+                    json_response = self._response_to_json(response_data)
+                    self.error = dict(code=self.status, message='Authentication failed: {0}'.format(json_response))
+                    raise ConnectionError(json.dumps(self._verify_response(response, method, full_path, response_data)))
+                self.connection._auth = {
+                    'Authorization': 'Bearer {0}'.format(self._response_to_json(response_data).get('token'))
+                }
 
-            # Handle ND response
-            self.status = response.getcode()
-            if self.status not in [200, 201]:
-                self.connection.queue_message('vvvv', 'login status incorrect status={0}'.format(self.status))
-                json_response = self._response_to_json(response_data)
-                self.error = dict(code=self.status, message='Authentication failed: {0}'.format(json_response))
-                raise ConnectionError(json.dumps(self._verify_response(response, method, full_path, response_data)))
-            self.connection._auth = {'Authorization': 'Bearer {0}'.format(self._response_to_json(response_data).get('token'))}
-
-        except ConnectionError:
-            self.connection.queue_message('vvvv', 'login() - ConnectionError Exception')
-            raise
-        except Exception as e:
-            self.connection.queue_message('vvvv', 'login() - Generic Exception')
-            self.error = dict(code=self.status, message='Authentication failed: Request failed: {0}'.format(e))
-            raise ConnectionError(json.dumps(self._verify_response(None, method, full_path, None)))
+            except ConnectionError as connection_err:
+                self.connection.queue_message('error', 'login() - ConnectionError Exception: {0}'.format(connection_err))
+                raise
+            except Exception as e:
+                self.connection.queue_message('error', 'login() - Generic Exception: {0}'.format(e))
+                self.error = dict(code=self.status, message='Authentication failed: Request failed: {0}'.format(e))
+                raise ConnectionError(json.dumps(self._verify_response(None, method, full_path, None)))
 
     def logout(self):
+        self.connection.queue_message('info', 'logout() - logout method called for {0}'.format(self.connection.get_option('host')))
         method = 'POST'
         path = '/logout'
 
         try:
+            self.connection.queue_message('info', 'logout() - connection.send({0}, \{\}, {1}, {2})'.format(path, method, self.headers))
             response, response_data = self.connection.send(path, {}, method=method, headers=self.headers)
         except Exception as e:
+            self.connection.queue_message('error', 'logout() - Generic Exception: {0}'.format(e))
             self.error = dict(code=self.status, message='Error on attempt to logout from ND. {0}'.format(e))
             raise ConnectionError(json.dumps(self._verify_response(None, method, self.connection.get_option('host') + path, None)))
         self.connection._auth = None
@@ -143,23 +149,20 @@ class HttpApi(HttpApiBase):
         if method is not None:
             self.method = method
 
-        if data is None:
-            data = {}
-
-        self.connection.queue_message('vvvv', 'send_request method called')
+        self.connection.queue_message('info', 'send_request() - send_request method called')
         # # Case1: List of hosts is provided
         # self.backup_hosts = self.set_backup_hosts()
         # if not self.backup_hosts:
-        if self.connection._connected is True and self.params.get('host') != self.connection.get_option('host'):
-            self.connection._connected = False
-            self.connection.queue_message(
-                'vvvv',
-                'send_request reseting connection as host has changed from {0} to {1}'.format(
-                    self.connection.get_option('host'), self.params.get('host')
-                )
-            )
 
         if self.params.get('host') is not None:
+            if self.connection._connected is True and self.params.get('host') != self.connection.get_option('host'):
+                self.connection._connected = False
+                self.connection.queue_message(
+                    'info',
+                    'send_request() - reseting connection as host has changed from {0} to {1}'.format(
+                        self.connection.get_option('host'), self.params.get('host')
+                    )
+                )
             self.connection.set_option('host', self.params.get('host'))
 
         else:
@@ -191,6 +194,9 @@ class HttpApi(HttpApiBase):
         if self.params.get('validate_certs') is not None:
             self.connection.set_option('validate_certs', self.params.get('validate_certs'))
 
+        if self.params.get('timeout') is not None:
+            self.connection.set_option('persistent_command_timeout', self.params.get('timeout'))
+
         # Perform some very basic path input validation.
         path = str(path)
         if path[0] != '/':
@@ -198,13 +204,13 @@ class HttpApi(HttpApiBase):
             raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
         full_path = self.connection.get_option('host') + path
         try:
-            self.connection.queue_message('vvvv', 'send_request() - connection.send({0}, {1}, {2}, {3})'.format(path, data, method, self.headers))
+            self.connection.queue_message('info', 'send_request() - connection.send({0}, {1}, {2}, {3})'.format(path, data, method, self.headers))
             response, rdata = self.connection.send(path, data, method=method, headers=self.headers)
-        except ConnectionError:
-            self.connection.queue_message('vvvv', 'login() - ConnectionError Exception')
+        except ConnectionError as connection_err:
+            self.connection.queue_message('info', 'send_request() - ConnectionError Exception: {0}'.format(connection_err))
             raise
         except Exception as e:
-            self.connection.queue_message('vvvv', 'send_request() - Generic Exception')
+            self.connection.queue_message('info', 'send_request() - Generic Exception: {0}'.format(e))
             if self.error is None:
                 self.error = dict(code=self.status, message='ND HTTPAPI send_request() Exception: {0} - {1}'.format(e, traceback.format_exc()))
             raise ConnectionError(json.dumps(self._verify_response(None, method, full_path, None)))
@@ -244,6 +250,7 @@ class HttpApi(HttpApiBase):
         return self._verify_response(response, method, path, rdata)
 
     def handle_error(self):
+        self.connection.queue_message('info', 'handle_error() - handle_error method called')
         self.host_counter += 1
         if self.host_counter == len(self.backup_hosts):
             raise ConnectionError("No hosts left in cluster to continue operation")
@@ -253,6 +260,8 @@ class HttpApi(HttpApiBase):
             self.connection.set_option('host', self.backup_hosts[self.host_counter])
         except IndexError:
             pass
+        self.connection.queue_message('info', 'handle_error() - clearing auth and calling login() again')
+        self.connection._auth = None
         self.login(self.connection.get_option('remote_user'), self.connection.get_option('password'))
         return True
 

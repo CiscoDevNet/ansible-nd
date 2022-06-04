@@ -176,6 +176,7 @@ class NDModule(object):
         self.response = None
         self.status = None
         self.url = None
+        self.httpapi_logs = list()
 
         if self.module._debug:
             self.module.warn('Enable debug output because ANSIBLE_DEBUG was set.')
@@ -204,11 +205,15 @@ class NDModule(object):
                 info = conn.send_file_request(method, uri, file, data)
             else:
                 self.stdout = self.stdout + "send_request uri " + uri + " data " + str(data) + "\n"
-                info = conn.send_request(method, uri, json.dumps(data))
+                if data:
+                    info = conn.send_request(method, uri, json.dumps(data))
+                else:
+                    info = conn.send_request(method, uri)
                 self.stdout = self.stdout + "after send_request"
             self.result['data'] = data
 
             self.url = info.get('url')
+            self.httpapi_logs.extend(conn.pop_messages())
             info.pop('date')
         except Exception as e:
             try:
@@ -379,6 +384,7 @@ class NDModule(object):
             self.result['response'] = self.response
             self.result['status'] = self.status
             self.result['url'] = self.url
+            self.result['httpapi_logs'] = self.httpapi_logs
 
             if self.params.get('state') in ('absent', 'present'):
                 self.result['sent'] = self.sent
@@ -414,6 +420,7 @@ class NDModule(object):
                 self.result['response'] = self.response
                 self.result['status'] = self.status
                 self.result['url'] = self.url
+                self.result['httpapi_logs'] = self.httpapi_logs
 
             if self.params.get('state') in ('absent', 'present'):
                 self.result['sent'] = self.sent

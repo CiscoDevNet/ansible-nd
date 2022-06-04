@@ -100,7 +100,7 @@ class NDI:
 
     def query_messages(self, path):
         result = {}
-        obj = self.nd.query_obj(path, prefix = self.prefix)
+        obj = self.nd.query_obj(path, prefix=self.prefix)
         if obj.get("messages") is not None:
             for message in obj.get("messages"):
                 msg = message.get("message")
