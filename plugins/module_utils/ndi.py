@@ -109,7 +109,7 @@ class NDI:
 
     def query_compliance_smart_event(self, ig_name, site_name, compliance_epoch_id):
         ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
-        path = "{0}/smartEvents?%24epochId={2}&%24page=0&%24size=10&%24sort=-severity&category=COMPLIANCE".format(ig_base_path, compliance_epoch_id)
+        path = "{0}/smartEvents?%24epochId={1}&%24page=0&%24size=10&%24sort=-severity&category=COMPLIANCE".format(ig_base_path, compliance_epoch_id)
         smart_event = self.query_messages(path)
         return smart_event
 
