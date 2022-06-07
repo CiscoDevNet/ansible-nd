@@ -97,14 +97,18 @@ class NDI:
         formated_impacted_resource = self.format_impacted_resource(impacted_resource)
         return formated_impacted_resource
 
+    def format_messages(self, messages, result):
+        for message in messages:
+            msg = message.get("message")
+            severity = message.get("severity").lower()
+            result[severity] = msg
+        return result
+
     def query_messages(self, path):
         result = {}
         obj = self.nd.query_obj(path, prefix=self.prefix)
         if obj.get("messages") is not None:
-            for message in obj.get("messages"):
-                msg = message.get("message")
-                severity = message.get("severity").lower()
-                result[severity] = msg
+            result = self.format_messages(obj.get("messages"), result)
         return result
 
     def query_compliance_smart_event(self, ig_name, site_name, compliance_epoch_id):
@@ -113,14 +117,17 @@ class NDI:
         smart_event = self.query_messages(path)
         return smart_event
 
-    def query_msg_with_data(self, ig_name, site_name, compliance_epoch_id):
+    def query_msg_with_data(self, ig_name, site_name, path):
         ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
-        path = "{0}/{1}/eventsBySeverity?%24epochId={2}".format(ig_base_path, self.compliance_path, compliance_epoch_id)
+        path = "{0}/{1}/{2}".format(ig_base_path, self.compliance_path, path)
         result = {}
-        msg = self.query_messages(path)
-        if len(msg) > 0:
-            result["messages"] = msg
-        data = self.query_data(path)
+        obj = self.nd.query_obj(path, prefix=self.prefix)
+        if obj.get("messages") is not None:
+            message = {}
+            message = self.format_messages(obj.get("messages"), message)
+            if len(message) > 0:
+                result["messages"] = message
+        data = obj.get("value")["data"]
         if len(data) > 0:
             result["data"] = data
         return result

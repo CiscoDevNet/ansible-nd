@@ -125,10 +125,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type='str', required=True),
+        insights_group=dict(type='str', required=True, aliases=[ "fab_name", "ig_name" ]),
         name=dict(type='str'),
-        description=dict(type='str'),
-        site_name=dict(type='str'),
+        description=dict(type='str', aliases=[ "descr" ]),
+        site_name=dict(type='str', aliases=[ "site" ]),
         file=dict(type='str'),
         manual=dict(type='str'),
         state=dict(type='str', default='query', choices=['query', 'absent', 'present']),

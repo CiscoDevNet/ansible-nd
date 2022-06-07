@@ -166,7 +166,7 @@ class NDModule(object):
         self.previous = dict()
         self.proposed = dict()
         self.sent = dict()
-        self.stdout = "start \n"
+        self.stdout = None
 
         # debug output
         self.has_modified = False
@@ -204,12 +204,10 @@ class NDModule(object):
             if file is not None:
                 info = conn.send_file_request(method, uri, file, data)
             else:
-                self.stdout = self.stdout + "send_request uri " + uri + " data " + str(data) + "\n"
                 if data:
                     info = conn.send_request(method, uri, json.dumps(data))
                 else:
                     info = conn.send_request(method, uri)
-                self.stdout = self.stdout + "after send_request"
             self.result['data'] = data
 
             self.url = info.get('url')
