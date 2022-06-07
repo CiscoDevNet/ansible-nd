@@ -13,7 +13,7 @@ ANSIBLE_METADATA = {'metadata_version': '1.1',
 DOCUMENTATION = r'''
 ---
 module: nd_pcv_delta_analysis
-version_added: "0.0.1"
+version_added: "0.2.0"
 short_description: Manage delta analysis of pre-change validation
 description:
 - Manage delta analysis of pre-change validation on Cisco Nexus Dashboard Insights (NDI).
@@ -76,18 +76,13 @@ def main():
     ig_name = nd.params.get('ig_name')
 
     pcv_result = ndi.query_pcv(ig_name, site_name, name)
-    pcv_status = pcv_result.get("analysisStatus")
-    pcv_snapshot_time = pcv_result.get("baseEpochCollectionTimeRfc3339")
-    if pcv_status != "COMPLETED":
+    if pcv_result.get("analysisStatus") != "COMPLETED":
         nd.fail_json(msg="Pre-change validation {0} is not completed".format(name))
     epoch_delta_job_id = pcv_result.get("epochDeltaJobId")
-    pcv_event_severity = ndi.query_event_severity(ig_name, site_name, epoch_delta_job_id)
-    nd.existing["event_severity"] = pcv_event_severity
-    pcv_impacted_resource = ndi.query_impacted_resource(ig_name, site_name, epoch_delta_job_id)
-    nd.existing["impacted_resources"] = pcv_impacted_resource
-    pcv_individual_anomalies = ndi.query_entry(ig_name, site_name, epoch_delta_job_id)
-    nd.existing["anomalies"] = pcv_individual_anomalies
-    nd.existing["general"] = pcv_snapshot_time
+    nd.existing["event_severity"] = ndi.query_event_severity(ig_name, site_name, epoch_delta_job_id)
+    nd.existing["impacted_resources"] = ndi.query_impacted_resource(ig_name, site_name, epoch_delta_job_id)
+    nd.existing["anomalies"] = ndi.query_entry(ig_name, site_name, epoch_delta_job_id)
+    nd.existing["general"] = pcv_result.get("baseEpochCollectionTimeRfc3339")
     nd.exit_json()
 if __name__ == "__main__":
     main()

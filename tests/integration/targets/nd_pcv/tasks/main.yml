@@ -9,7 +9,7 @@
     nd_info: &nd_info
       output_level: '{{ nd_output_level | default("info") }}'
 
-# QUERY pre-change job results
+# Delete pre-change job
 - name: Delete a pre_change analysis
   cisco.nd.nd_pcv: &nd_rm
     <<: *nd_info

@@ -17,19 +17,19 @@ ANSIBLE_METADATA = {'metadata_version': '1.1',
 DOCUMENTATION = r'''
 ---
 module: nd_pcv
-version_added: "0.0.1"
+version_added: "0.2.0"
 short_description: Manage pre-change validation job
 description:
 - Manage pre-change validation job on Cisco Nexus Dashboard Insights (NDI).
 author:
 - Cindy Zhao (@cizhao)
 options:
-  ig_name:
+  insights_group:
     description:
     - The name of the insights group.
     type: str
     required: yes
-    aliases: [ fab_name ]
+    aliases: [ fab_name, ig_name ]
   name:
     description:
     - The name of the pre-change validation job.
@@ -64,13 +64,13 @@ extends_documentation_fragment: cisco.nd.modules
 EXAMPLES = r'''
 - name: Get prechange validation result
   cisco.nd.nd_pcv:
-    ig_name: exampleIG
+    insights_group: exampleIG
     state: query
   delegate_to: localhost
   register: query_results
 - name: Get a specific prechange validation result
   cisco.nd.nd_pcv:
-    ig_name: exampleIG
+    insights_group: exampleIG
     site_name: siteName
     name: demoName
     state: query
@@ -78,7 +78,7 @@ EXAMPLES = r'''
   register: query_result
 - name: Create a new Pre-Change analysis from file
   cisco.nd.nd_pcv:
-    ig_name: igName
+    insights_group: igName
     site_name: siteName
     name: demoName
     file: configFilePath
@@ -87,7 +87,7 @@ EXAMPLES = r'''
   register: present_pcv
 - name: Present Pre-Change analysis from manual changes
   cisco.nd.nd_pcv:
-    ig_name: idName
+    insights_group: idName
     site_name: SiteName
     name: demoName
     manual: |
@@ -107,7 +107,7 @@ EXAMPLES = r'''
   register: present_pcv_manual
 - name: Delete Pre-Change analysis
   cisco.nd.nd_pcv:
-    ig_name: igName
+    insights_group: igName
     site_name: siteName
     name: demoName
     state: absent
@@ -125,7 +125,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        ig_name=dict(type='str', required=True),
+        insights_group=dict(type='str', required=True),
         name=dict(type='str'),
         description=dict(type='str'),
         site_name=dict(type='str'),
@@ -147,28 +147,25 @@ def main():
     state = nd.params.get("state")
     name = nd.params.get("name")
     site_name = nd.params.get('site_name')
-    ig_name = nd.params.get('ig_name')
+    insights_group = nd.params.get('insights_group')
     description = nd.params.get('description')
     file = nd.params.get('file')
     manual = nd.params.get('manual')
 
     path = 'config/insightsGroup'
-    pcv_results = ndi.query_pcvs(ig_name)
-    nd.existing = pcv_results
-    if name is not None and site_name is not None:
-        nd.existing = ndi.query_pcv(ig_name, site_name, name)
+    if name is None:
+        nd.existing = ndi.query_pcvs(insights_group)
+    elif site_name is not None:
+        nd.existing = ndi.query_pcv(insights_group, site_name, name)
 
-    if state == 'query':
-        pass
-
-    elif state == 'absent':
+    if state == 'absent':
         nd.previous = nd.existing
         job_id = nd.existing.get('jobId')
         if nd.existing and job_id:
             if module.check_mode:
                 nd.existing = {}
             else:
-                rm_path = '{0}/{1}/prechangeAnalysis/jobs'.format(path, ig_name)
+                rm_path = '{0}/{1}/prechangeAnalysis/jobs'.format(path, insights_group)
                 rm_payload = [job_id]
                 rm_resp = nd.request(rm_path, method='POST', data=rm_payload, prefix=ndi.prefix)
                 if rm_resp["success"] == True:
@@ -180,7 +177,7 @@ def main():
         nd.previous = nd.existing
         if nd.existing:
             nd.exit_json()
-        base_epoch_data = ndi.get_epochs(ig_name, site_name)
+        base_epoch_data = ndi.get_epochs(insights_group, site_name)
 
         data = {
             "allowUnsupportedObjectModification": "true",
@@ -195,13 +192,13 @@ def main():
         if file:
             if not os.path.exists(file):
                 nd.fail_json(msg="File not found : {0}".format(file))
-            create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges'.format(path, ig_name, site_name)
+            create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges'.format(path, insights_group, site_name)
             file_resp = nd.request(create_pcv_path, method='POST', file=file, data=data, prefix=ndi.prefix)
             if file_resp.get("success") == True:
                 nd.existing = file_resp.get("value")["data"]
         if manual:
             data["imdata"] = json.loads(manual)
-            create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/manualChanges?action=RUN'.format(path, ig_name, site_name)
+            create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/manualChanges?action=RUN'.format(path, insights_group, site_name)
             manual_resp = nd.request(create_pcv_path, method='POST', data=data, prefix=ndi.prefix)
             if manual_resp.get("success") == True:
                 nd.existing = manual_resp.get("value")["data"]

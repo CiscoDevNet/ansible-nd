@@ -15,10 +15,7 @@ class NDI:
         self.config_ig_path = "config/insightsGroup"
         self.event_insight_group_path = "events/insightsGroup/{0}/fabric/{1}"
         self.compliance_path = "model/aciPolicy/complianceAnalysis"
-
-    def get_pcv_results(self, path, **kwargs):
-        obj = self.nd.query_obj(path, **kwargs)
-        return obj['value']['data']
+        self.epoch_delta_ig_path = "epochDelta/insightsGroup/{0}/fabric/{1}/job/{2}/health/view"
 
     def get_site_id(self, site_name, **kwargs):
         obj = self.nd.query_obj(self.config_ig_path, **kwargs)
@@ -49,17 +46,17 @@ class NDI:
     def query_compliance_score(self, ig_name, site_name, compliance_epoch_id):
         ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
         path = "{0}/{1}/complianceScore?%24epochId={2}".format(ig_base_path, self.compliance_path, compliance_epoch_id)
-        compliance_score = self.query_data(path)
-        return compliance_score
+        return self.query_data(path)
 
     def query_compliance_count(self, ig_name, site_name, compliance_epoch_id):
-        path = "events/insightsGroup/{0}/fabric/{1}/model/aciPolicy/complianceAnalysis/count?%24epochId={2}".format(ig_name, site_name, compliance_epoch_id)
-        compliance_count = self.query_data(path)
-        return compliance_count
+        ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
+        path = "{0}/{1}/count?%24epochId={2}".format(ig_base_path, self.compliance_path, compliance_epoch_id)
+        return self.query_data(path)
 
 
     def query_entry(self, ig_name, site_name, epoch_delta_job_id):
-        path = "epochDelta/insightsGroup/{0}/fabric/{1}/job/{2}/health/view/individualTable?epochStatus=BOTH_EPOCHS".format(ig_name, site_name, epoch_delta_job_id)
+        epoch_delta_ig_path = self.epoch_delta_ig_path.format(ig_name, site_name, epoch_delta_job_id)
+        path = "{0}/individualTable?epochStatus=BOTH_EPOCHS".format(epoch_delta_ig_path)
         obj = self.nd.query_obj(path, prefix = self.prefix)
         return obj['entries']
 
@@ -87,13 +84,15 @@ class NDI:
         return result
 
     def query_event_severity(self, ig_name, site_name, epoch_delta_job_id):
-        path = "epochDelta/insightsGroup/{0}/fabric/{1}/job/{2}/health/view/eventSeverity".format(ig_name, site_name, epoch_delta_job_id)
+        epoch_delta_ig_path = self.epoch_delta_ig_path.format(ig_name, site_name, epoch_delta_job_id)
+        path = "{0}/eventSeverity".format(epoch_delta_ig_path)
         event_severity = self.query_data(path)
         formated_event_severity = self.format_event_severity(event_severity)
         return formated_event_severity
 
     def query_impacted_resource(self, ig_name, site_name, epoch_delta_job_id):
-        path = "epochDelta/insightsGroup/{0}/fabric/{1}/job/{2}/health/view/impactedResource".format(ig_name, site_name, epoch_delta_job_id)
+        epoch_delta_ig_path = self.epoch_delta_ig_path.format(ig_name, site_name, epoch_delta_job_id)
+        path = "{0}/impactedResource".format(epoch_delta_ig_path)
         impacted_resource = self.query_data(path)
         formated_impacted_resource = self.format_impacted_resource(impacted_resource)
         return formated_impacted_resource
@@ -109,12 +108,14 @@ class NDI:
         return result
 
     def query_compliance_smart_event(self, ig_name, site_name, compliance_epoch_id):
-        path = "events/insightsGroup/{0}/fabric/{1}/smartEvents?%24epochId={2}&%24page=0&%24size=10&%24sort=-severity&category=COMPLIANCE".format(ig_name, site_name, compliance_epoch_id)
+        ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
+        path = "{0}/smartEvents?%24epochId={2}&%24page=0&%24size=10&%24sort=-severity&category=COMPLIANCE".format(ig_base_path, compliance_epoch_id)
         smart_event = self.query_messages(path)
         return smart_event
 
     def query_msg_with_data(self, ig_name, site_name, compliance_epoch_id):
-        path = "events/insightsGroup/{0}/fabric/{1}/model/aciPolicy/complianceAnalysis/eventsBySeverity?%24epochId={2}".format(ig_name, site_name, compliance_epoch_id)
+        ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
+        path = "{0}/{1}/eventsBySeverity?%24epochId={2}".format(ig_base_path, self.compliance_path, compliance_epoch_id)
         result = {}
         msg = self.query_messages(path)
         if len(msg) > 0:
@@ -126,16 +127,17 @@ class NDI:
 
     def query_unhealthy_resources(self, ig_name, site_name, compliance_epoch_id):
         result = {}
-        path = "events/insightsGroup/{0}/fabric/{1}/model/aciPolicy/complianceAnalysis/eventUnhealthyResources?%24epochId={2}".format(ig_name, site_name, compliance_epoch_id)
+        ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
+        path = "{0}/{1}/eventUnhealthyResources?%24epochId={2}".format(ig_base_path, self.compliance_path, compliance_epoch_id)
         objs = self.query_data(path)
         for obj in objs:
             result[obj.get("bucket")] = {"count": obj.get("count"), "total": obj.get("total")}
         return result
 
     def query_pcvs(self, ig_name):
-        pcvs_path = 'config/insightsGroup/{0}/prechangeAnalysis?$sort=-analysisSubmissionTime'.format(ig_name)
-        pcv_results = self.get_pcv_results(pcvs_path, prefix=self.prefix)
-        return pcv_results
+        pcvs_path = '{0}/{1}/prechangeAnalysis?$sort=-analysisSubmissionTime'.format(self.config_ig_path, ig_name)
+        obj = self.nd.query_obj(pcvs_path, prefix=self.prefix)
+        return obj['value']['data']
 
     def query_pcv(self, ig_name, site_name, pcv_name):
         pcv_results = self.query_pcvs(ig_name)

@@ -13,19 +13,19 @@ ANSIBLE_METADATA = {'metadata_version': '1.1',
 DOCUMENTATION = r'''
 ---
 module: nd_pcv_compliance
-version_added: "0.0.1"
+version_added: "0.2.0"
 short_description: Manage pre-change validation compliance
 description:
-- Manage pre-change validation compliance on Cisco Nexus Dashboard Insights (NDI).
+- Query pre-change validation compliance on Cisco Nexus Dashboard Insights (NDI).
 author:
 - Cindy Zhao (@cizhao)
 options:
-  ig_name:
+  insights_group:
     description:
     - The name of the insights group.
     type: str
     required: yes
-    aliases: [ fab_name ]
+    aliases: [ fab_name, ig_name ]
   name:
     description:
     - The name of the pre-change validation.
@@ -41,7 +41,7 @@ extends_documentation_fragment: cisco.nd.modules
 EXAMPLES = r'''
 - name: Get prechange validation compliance result
   cisco.nd.nd_pcv_compliance:
-    ig_name: exampleIG
+    insights_group: exampleIG
     site_name: exampleSite
     name: exampleName
   delegate_to: localhost
@@ -58,9 +58,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        ig_name=dict(type='str', required=True),
+        insights_group=dict(type='str', required=True, aliases=[ "fab_name", "ig_name" ]),
         name=dict(type='str', required=True),
-        site_name=dict(type='str', required=True),
+        site_name=dict(type='str', required=True, aliases=[ "site" ]),
     )
 
     module = AnsibleModule(
@@ -73,20 +73,20 @@ def main():
 
     name = nd.params.get("name")
     site_name = nd.params.get('site_name')
-    ig_name = nd.params.get('ig_name')
+    insights_group = nd.params.get('insights_group')
 
-    pcv_result = ndi.query_pcv(ig_name, site_name, name)
+    pcv_result = ndi.query_pcv(insights_group, site_name, name)
     pcv_status = pcv_result.get("analysisStatus")
     if pcv_status != "COMPLETED":
         nd.fail_json(msg="Pre-change validation {0} is not completed".format(name))
     compliance_epoch_id = pcv_result.get("preChangeEpochUUID")
     # nd.stdout = nd.stdout + "start querying compliance smart event \n"
-    nd.existing["smart_events"] = ndi.query_compliance_smart_event(ig_name, site_name, compliance_epoch_id)
-    nd.existing["events_by_severity"] = ndi.query_msg_with_data(ig_name, site_name, compliance_epoch_id)
-    nd.existing["unhealthy_resources"] = ndi.query_unhealthy_resources(ig_name, site_name, compliance_epoch_id)
-    nd.existing["compliance_score"] = ndi.query_compliance_score(ig_name, site_name, compliance_epoch_id)
-    nd.existing["count"] = ndi.query_compliance_count(ig_name, site_name, compliance_epoch_id)
-    nd.existing["result_by_requirement"] = ndi.query_msg_with_data(ig_name, site_name, compliance_epoch_id)
+    # nd.existing["smart_events"] = ndi.query_compliance_smart_event(insights_group, site_name, compliance_epoch_id)
+    nd.existing["events_by_severity"] = ndi.query_msg_with_data(insights_group, site_name, compliance_epoch_id)
+    nd.existing["unhealthy_resources"] = ndi.query_unhealthy_resources(insights_group, site_name, compliance_epoch_id)
+    nd.existing["compliance_score"] = ndi.query_compliance_score(insights_group, site_name, compliance_epoch_id)
+    nd.existing["count"] = ndi.query_compliance_count(insights_group, site_name, compliance_epoch_id)
+    nd.existing["result_by_requirement"] = ndi.query_msg_with_data(insights_group, site_name, compliance_epoch_id)
 
     nd.exit_json()
 if __name__ == "__main__":
