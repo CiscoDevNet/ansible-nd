@@ -15,9 +15,31 @@
     <<: *nd_info
     ig_name: day2ops-tme
     site_name: prod-fabric
-    name: '{{ item }}'
-  register: query_pcv_delta_analysis
-  ignore_errors: True
-  loop:
-  - manual
-  - pcv_by_file
+    name: manual
+  register: query_pcv_delta_analysis_manual
+
+- name: Verify query_pcv_delta_analysis_manual
+  assert:
+    that:
+    - query_pcv_delta_analysis_manual.current is not changed
+    - query_pcv_delta_analysis_manual.current.anomalies is defined
+    - query_pcv_delta_analysis_manual.current.event_severity is defined
+    - query_pcv_delta_analysis_manual.current.general is defined
+    - query_pcv_delta_analysis_manual.current.impacted_resources is defined
+
+- name: query another pre_change analysis
+  nd_pcv_delta_analysis:
+    <<: *nd_query
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: pcv_by_file
+  register: query_pcv_by_file_delta_analysis
+
+- name: Verify query_pcv_by_file_delta_analysis
+  assert:
+    that:
+    - query_pcv_by_file_delta_analysis.current is not changed
+    - query_pcv_by_file_delta_analysis.current.anomalies is defined
+    - query_pcv_by_file_delta_analysis.current.event_severity is defined
+    - query_pcv_by_file_delta_analysis.current.general is defined
+    - query_pcv_by_file_delta_analysis.current.impacted_resources is defined

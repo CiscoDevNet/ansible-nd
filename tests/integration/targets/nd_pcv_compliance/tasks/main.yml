@@ -15,8 +15,35 @@
     <<: *nd_info
     ig_name: day2ops-tme
     site_name: prod-fabric
-    name: '{{ item }}'
-  register: query_pcv_compliance
-  loop:
-  - manual
-  - pcv_by_file
+    name: manual
+  register: query_manual_pcv
+
+- name: Verify query_manual_pcv
+  assert:
+    that:
+    - query_manual_pcv.current is not changed
+    - query_manual_pcv.current.compliance_score is defined
+    - query_manual_pcv.current.count is defined
+    - query_manual_pcv.current.events_by_severity is defined
+    - query_manual_pcv.current.result_by_requirement is defined
+    - query_manual_pcv.current.smart_events is defined
+    - query_manual_pcv.current.unhealthy_resources is defined
+
+- name: query another pre_change validation compliance result
+  nd_pcv_compliance:
+    <<: *nd_query
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: pcv_by_file
+  register: query_pcv_by_file
+
+- name: Verify query_pcv_by_file
+  assert:
+    that:
+    - query_pcv_by_file.current is not changed
+    - query_pcv_by_file.current.compliance_score is defined
+    - query_pcv_by_file.current.count is defined
+    - query_pcv_by_file.current.events_by_severity is defined
+    - query_pcv_by_file.current.result_by_requirement is defined
+    - query_pcv_by_file.current.smart_events is defined
+    - query_pcv_by_file.current.unhealthy_resources is defined
