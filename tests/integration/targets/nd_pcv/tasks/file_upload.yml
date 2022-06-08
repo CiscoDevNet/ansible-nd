@@ -26,8 +26,22 @@
     name: pcv_non_existing
     file: /root/ansible/ansible_collections/cisco/nd/tests/integration/targets/nd_pcv/tasks/non-existing.json
     state: present
-  register: present_pcv
+  register: present_pcv_non_existing
   ignore_errors: True
+
+- name: Verify present_pcv and present_pcv_non_existing
+  assert:
+    that:
+    - present_pcv is changed
+    - present_pcv.previous == {}
+    - present_pcv.current.name == "pcv_by_file"
+    - present_pcv.current.assuranceEntityName == "prod-fabric"
+    - present_pcv.current.analysisStatus is defined
+    - present_pcv.current.analysisScheduleId is defined
+    - present_pcv.current.baseEpochId is defined
+    - present_pcv.current.fabricUuid is defined
+    - present_pcv.current.jobId is defined
+    - present_pcv.current.submitterName is defined
 
 - name: Query specific Pre-Change analysis job
   cisco.nd.nd_pcv: &nd_query
@@ -38,6 +52,18 @@
     state: query
   register: nm_query_pcv_file
 
+- name: Verify nm_query_pcv_file
+  assert:
+    that:
+    - nm_query_pcv_file.current.name == "pcv_by_file"
+    - nm_query_pcv_file.current.assuranceEntityName == "prod-fabric"
+    - nm_query_pcv_file.current.uploadedFileName is defined
+    - nm_query_pcv_file.current.analysisStatus is defined
+    - nm_query_pcv_file.current.jobId is defined
+    - nm_query_pcv_file.current.analysisScheduleId is defined
+    - nm_query_pcv_file.current.baseEpochId is defined
+    - nm_query_pcv_file.current.fabricUuid is defined
+
 - name: Query all Pre-Change analysis jobs
   cisco.nd.nd_pcv:
     <<: *nd_info
@@ -45,3 +71,7 @@
     state: query
   register: nm_query_pcvs_file
 
+- name: Verify nm_query_pcvs_file
+  assert:
+    that:
+    - nm_query_pcvs_file.current | length >= 1

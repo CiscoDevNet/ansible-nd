@@ -34,6 +34,14 @@
     that:
     - present_pcv_manual is changed
     - present_pcv_manual.previous == {}
+    - present_pcv_manual.current.name == "manual"
+    - present_pcv_manual.current.assuranceEntityName == "prod-fabric"
+    - present_pcv_manual.current.analysisScheduleId is defined
+    - present_pcv_manual.current.analysisStatus is defined
+    - present_pcv_manual.current.baseEpochId is defined
+    - present_pcv_manual.current.fabricUuid is defined
+    - present_pcv_manual.current.jobId is defined
+    - present_pcv_manual.current.submitterName is defined
 
 # QUERY specific pre-change analysis job result
 - name: Query specific Pre-Change analysis result
@@ -52,12 +60,16 @@
     state: query
   register: nm_query_pcvs
 
-# Delete specific pre-change analysis job
-- name: Delete Pre-Change analysis
-  cisco.nd.nd_pcv: &nd_rm
-    <<: *nd_info
-    ig_name: day2ops-tme
-    site_name: prod-fabric
-    name: manual
-    state: absent
-  register: rm_pcv
+- name: Checking nm_query_pcv and nm_query_pcvs
+  assert:
+    that:
+    - nm_query_pcv is not changed
+    - nm_query_pcv.current.name == "manual"
+    - nm_query_pcv.current.assuranceEntityName == "prod-fabric"
+    - nm_query_pcv.current.analysisStatus is defined
+    - nm_query_pcv.current.baseEpochId is defined
+    - nm_query_pcv.current.imdata is defined
+    - nm_query_pcv.current.jobId is defined
+    - nm_query_pcv.current.analysisScheduleId is defined
+    - nm_query_pcvs is not changed
+    - nm_query_pcvs.current | length >= 1

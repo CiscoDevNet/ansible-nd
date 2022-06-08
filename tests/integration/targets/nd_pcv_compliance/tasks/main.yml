@@ -21,7 +21,7 @@
 - name: Verify query_manual_pcv
   assert:
     that:
-    - query_manual_pcv.current is not changed
+    - query_manual_pcv is not changed
     - query_manual_pcv.current.compliance_score is defined
     - query_manual_pcv.current.count is defined
     - query_manual_pcv.current.events_by_severity is defined
@@ -40,7 +40,7 @@
 - name: Verify query_pcv_by_file
   assert:
     that:
-    - query_pcv_by_file.current is not changed
+    - query_pcv_by_file is not changed
     - query_pcv_by_file.current.compliance_score is defined
     - query_pcv_by_file.current.count is defined
     - query_pcv_by_file.current.events_by_severity is defined

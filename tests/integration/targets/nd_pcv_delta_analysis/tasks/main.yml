@@ -21,7 +21,7 @@
 - name: Verify query_pcv_delta_analysis_manual
   assert:
     that:
-    - query_pcv_delta_analysis_manual.current is not changed
+    - query_pcv_delta_analysis_manual is not changed
     - query_pcv_delta_analysis_manual.current.anomalies is defined
     - query_pcv_delta_analysis_manual.current.event_severity is defined
     - query_pcv_delta_analysis_manual.current.general is defined
@@ -38,7 +38,7 @@
 - name: Verify query_pcv_by_file_delta_analysis
   assert:
     that:
-    - query_pcv_by_file_delta_analysis.current is not changed
+    - query_pcv_by_file_delta_analysis is not changed
     - query_pcv_by_file_delta_analysis.current.anomalies is defined
     - query_pcv_by_file_delta_analysis.current.event_severity is defined
     - query_pcv_by_file_delta_analysis.current.general is defined
