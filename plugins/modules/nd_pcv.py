@@ -66,7 +66,6 @@ EXAMPLES = r'''
   cisco.nd.nd_pcv:
     insights_group: exampleIG
     state: query
-  delegate_to: localhost
   register: query_results
 - name: Get a specific prechange validation result
   cisco.nd.nd_pcv:
@@ -74,7 +73,6 @@ EXAMPLES = r'''
     site_name: siteName
     name: demoName
     state: query
-  delegate_to: localhost
   register: query_result
 - name: Create a new Pre-Change analysis from file
   cisco.nd.nd_pcv:
@@ -83,8 +81,6 @@ EXAMPLES = r'''
     name: demoName
     file: configFilePath
     state: present
-  delegate_to: localhost
-  register: present_pcv
 - name: Present Pre-Change analysis from manual changes
   cisco.nd.nd_pcv:
     insights_group: idName
@@ -103,7 +99,6 @@ EXAMPLES = r'''
             }
         ]
     state: present
-  delegate_to: localhost
   register: present_pcv_manual
 - name: Delete Pre-Change analysis
   cisco.nd.nd_pcv:
@@ -111,8 +106,6 @@ EXAMPLES = r'''
     site_name: siteName
     name: demoName
     state: absent
-  delegate_to: localhost
-  register: rm_pcv
 '''
 
 RETURN = r'''
@@ -196,12 +189,14 @@ def main():
             file_resp = nd.request(create_pcv_path, method='POST', file=file, data=data, prefix=ndi.prefix)
             if file_resp.get("success") == True:
                 nd.existing = file_resp.get("value")["data"]
-        if manual:
+        elif manual:
             data["imdata"] = json.loads(manual)
             create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/manualChanges?action=RUN'.format(path, insights_group, site_name)
             manual_resp = nd.request(create_pcv_path, method='POST', data=data, prefix=ndi.prefix)
             if manual_resp.get("success") == True:
                 nd.existing = manual_resp.get("value")["data"]
+        else:
+            nd.fail_json(msg="either file or manual is required to create pcv job")
     nd.exit_json()
 if __name__ == "__main__":
     main()

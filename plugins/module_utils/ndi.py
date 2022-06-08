@@ -53,7 +53,6 @@ class NDI:
         path = "{0}/{1}/count?%24epochId={2}".format(ig_base_path, self.compliance_path, compliance_epoch_id)
         return self.query_data(path)
 
-
     def query_entry(self, ig_name, site_name, epoch_delta_job_id):
         epoch_delta_ig_path = self.epoch_delta_ig_path.format(ig_name, site_name, epoch_delta_job_id)
         path = "{0}/individualTable?epochStatus=BOTH_EPOCHS".format(epoch_delta_ig_path)
@@ -97,7 +96,8 @@ class NDI:
         formated_impacted_resource = self.format_impacted_resource(impacted_resource)
         return formated_impacted_resource
 
-    def format_messages(self, messages, result):
+    def format_messages(self, messages):
+        result = {}
         for message in messages:
             msg = message.get("message")
             severity = message.get("severity").lower()
@@ -105,11 +105,10 @@ class NDI:
         return result
 
     def query_messages(self, path):
-        result = {}
         obj = self.nd.query_obj(path, prefix=self.prefix)
         if obj.get("messages") is not None:
-            result = self.format_messages(obj.get("messages"), result)
-        return result
+            result = self.format_messages(obj.get("messages"))
+            return result
 
     def query_compliance_smart_event(self, ig_name, site_name, compliance_epoch_id):
         ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
@@ -123,8 +122,7 @@ class NDI:
         result = {}
         obj = self.nd.query_obj(path, prefix=self.prefix)
         if obj.get("messages") is not None:
-            message = {}
-            message = self.format_messages(obj.get("messages"), message)
+            message = self.format_messages(obj.get("messages"))
             if len(message) > 0:
                 result["messages"] = message
         data = obj.get("value")["data"]

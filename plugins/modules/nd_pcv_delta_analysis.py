@@ -14,9 +14,9 @@ DOCUMENTATION = r'''
 ---
 module: nd_pcv_delta_analysis
 version_added: "0.2.0"
-short_description: Manage delta analysis of pre-change validation
+short_description: Query delta analysis of pre-change validation
 description:
-- Manage delta analysis of pre-change validation on Cisco Nexus Dashboard Insights (NDI).
+- Query delta analysis of pre-change validation on Cisco Nexus Dashboard Insights (NDI).
 author:
 - Cindy Zhao (@cizhao)
 options:
@@ -44,7 +44,6 @@ EXAMPLES = r'''
     ig_name: exampleIG
     site_name: exampleSite
     name: exampleName
-  delegate_to: localhost
   register: query_results
 '''
 

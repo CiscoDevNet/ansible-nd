@@ -14,7 +14,7 @@ DOCUMENTATION = r'''
 ---
 module: nd_pcv_compliance
 version_added: "0.2.0"
-short_description: Manage pre-change validation compliance
+short_description: Query pre-change validation compliance
 description:
 - Query pre-change validation compliance on Cisco Nexus Dashboard Insights (NDI).
 author:
@@ -44,7 +44,6 @@ EXAMPLES = r'''
     insights_group: exampleIG
     site_name: exampleSite
     name: exampleName
-  delegate_to: localhost
   register: query_results
 '''
 

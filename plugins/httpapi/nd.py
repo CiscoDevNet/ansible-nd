@@ -87,7 +87,6 @@ class HttpApi(HttpApiBase):
             method = 'POST'
             path = '/login'
             full_path = self.connection.get_option('host') + path
-            # TODO: Fix when username and password are not used in ND module
             login_domain = 'DefaultAuth'
             if self.params.get('login_domain'):
                 login_domain = self.params.get('login_domain')
