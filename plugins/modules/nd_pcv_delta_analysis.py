@@ -20,20 +20,22 @@ description:
 author:
 - Cindy Zhao (@cizhao)
 options:
-  ig_name:
+  insights_group:
     description:
     - The name of the insights group.
     type: str
     required: yes
-    aliases: [ fab_name ]
+    aliases: [ fab_name, ig_name ]
   name:
     description:
     - The name of the pre-change validation.
     type: str
+    required: yes
   site_name:
     description:
     - Name of the Assurance Entity.
     type: str
+    required: yes
     aliases: [ site ]
 extends_documentation_fragment: cisco.nd.modules
 '''
@@ -41,7 +43,7 @@ extends_documentation_fragment: cisco.nd.modules
 EXAMPLES = r'''
 - name: Get prechange validation delta analysis result
   cisco.nd.nd_pcv_delta_analysis:
-    ig_name: exampleIG
+    insights_group: exampleIG
     site_name: exampleSite
     name: exampleName
   register: query_results
@@ -57,7 +59,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        ig_name=dict(type='str', required=True),
+        insights_group=dict(type='str', required=True),
         name=dict(type='str', required=True),
         site_name=dict(type='str', required=True),
     )
@@ -72,15 +74,15 @@ def main():
 
     name = nd.params.get("name")
     site_name = nd.params.get('site_name')
-    ig_name = nd.params.get('ig_name')
+    insights_group = nd.params.get('insights_group')
 
-    pcv_result = ndi.query_pcv(ig_name, site_name, name)
+    pcv_result = ndi.query_pcv(insights_group, site_name, name)
     if pcv_result.get("analysisStatus") != "COMPLETED":
         nd.fail_json(msg="Pre-change validation {0} is not completed".format(name))
     epoch_delta_job_id = pcv_result.get("epochDeltaJobId")
-    nd.existing["event_severity"] = ndi.query_event_severity(ig_name, site_name, epoch_delta_job_id)
-    nd.existing["impacted_resources"] = ndi.query_impacted_resource(ig_name, site_name, epoch_delta_job_id)
-    nd.existing["anomalies"] = ndi.query_entry(ig_name, site_name, epoch_delta_job_id)
+    nd.existing["event_severity"] = ndi.query_event_severity(insights_group, site_name, epoch_delta_job_id)
+    nd.existing["impacted_resources"] = ndi.query_impacted_resource(insights_group, site_name, epoch_delta_job_id)
+    nd.existing["anomalies"] = ndi.query_entry(insights_group, site_name, epoch_delta_job_id)
     nd.existing["general"] = pcv_result.get("baseEpochCollectionTimeRfc3339")
     nd.exit_json()
 if __name__ == "__main__":
