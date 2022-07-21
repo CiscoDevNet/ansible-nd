@@ -1,0 +1,16 @@
+{
+    "vzBrCP": {
+        "attributes": {
+            "descr": "",
+            "intent": "install",
+            "nameAlias": "",
+            "prio": "unspecified",
+            "scope": "context",
+            "targetDscp": "unspecified",
+            "dn": "uni/tn-AnsibleTest/brc-test_brc",
+            "name": "test_brc",
+            "pcv_status": "created"
+        },
+        "children": []
+    }
+}
