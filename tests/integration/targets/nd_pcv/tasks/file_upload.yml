@@ -53,9 +53,10 @@
     name: ansible_no_json
     state: query
   register: nm_query_ansible_no_json
-  retries: 60
-  delay: 60
   until: nm_query_ansible_no_json.current.analysisStatus == "COMPLETED"
+  retries: 60
+  delay: 10
+  
 
 - name: Add pre-change analysis from file upload (JSON format)
   cisco.nd.nd_pcv:
@@ -76,7 +77,7 @@
     state: query
   register: nm_query_ansible_json
   retries: 60
-  delay: 60
+  delay: 10
   until: nm_query_ansible_json.current.analysisStatus == "COMPLETED"
 
 - name: Add pre-change analysis from file upload with same file but different file name (JSON format)
@@ -116,7 +117,7 @@
     state: query
   register: nm_query_ansible_json_diff_name
   retries: 60
-  delay: 60
+  delay: 10
   until: nm_query_ansible_json_diff_name.current.analysisStatus == "COMPLETED"
 
 - name: Add another pre-change analysis from file upload (non JSON format)
@@ -152,7 +153,7 @@
     state: query
   register: nm_query_pcv_tenant_delete
   retries: 60
-  delay: 60
+  delay: 10
   until: nm_query_pcv_tenant_delete.current.analysisStatus == "COMPLETED"
 
 - name: Create a new Pre-Change analysis from file
