@@ -20,11 +20,13 @@ class NDI:
         self.compliance_path = "model/aciPolicy/complianceAnalysis"
         self.epoch_delta_ig_path = "epochDelta/insightsGroup/{0}/fabric/{1}/job/{2}/health/view"
 
-    def get_site_id(self, site_name, **kwargs):
+    def get_site_id(self, ig_name, site_name, **kwargs):
         obj = self.nd.query_obj(self.config_ig_path, **kwargs)
-        for site in obj['value']['data'][0]['assuranceEntities']:
-            if site['name'] == site_name:
-                return site['uuid']
+        for insights_group in obj['value']['data']:
+            if ig_name == insights_group['name']:
+                for site in insights_group['assuranceEntities']:
+                    if site['name'] == site_name:
+                        return site['uuid']
 
     def get_pre_change_result(self, pcv_results, name, site_id, path,  **kwargs):
         pcv_result = {}
@@ -150,7 +152,7 @@ class NDI:
     def query_pcv(self, ig_name, site_name, pcv_name):
         pcv_results = self.query_pcvs(ig_name)
         if pcv_name is not None and site_name is not None:
-            site_id = self.get_site_id(site_name, prefix=self.prefix)
+            site_id = self.get_site_id(ig_name, site_name, prefix=self.prefix)
             pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis'.format(self.config_ig_path, ig_name, site_name)
             pcv_result = self.get_pre_change_result(pcv_results, pcv_name, site_id, pcv_path, prefix=self.prefix)
         else:
