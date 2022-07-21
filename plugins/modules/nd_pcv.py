@@ -185,6 +185,9 @@ def main():
         if file:
             if not os.path.exists(file):
                 nd.fail_json(msg="File not found : {0}".format(file))
+            # check whether file content is a valid json
+            if ndi.is_json(open(file, "rb").read()) is False:
+                ndi.file_to_json(file)
             create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges'.format(path, insights_group, site_name)
             file_resp = nd.request(create_pcv_path, method='POST', file=os.path.abspath(file), data=data, prefix=ndi.prefix)
             if file_resp.get("success") == True:
