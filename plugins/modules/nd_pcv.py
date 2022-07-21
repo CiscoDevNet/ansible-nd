@@ -186,7 +186,7 @@ def main():
             if not os.path.exists(file):
                 nd.fail_json(msg="File not found : {0}".format(file))
             create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges'.format(path, insights_group, site_name)
-            file_resp = nd.request(create_pcv_path, method='POST', file=file, data=data, prefix=ndi.prefix)
+            file_resp = nd.request(create_pcv_path, method='POST', file=os.path.abspath(file), data=data, prefix=ndi.prefix)
             if file_resp.get("success") == True:
                 nd.existing = file_resp.get("value")["data"]
         elif manual:
