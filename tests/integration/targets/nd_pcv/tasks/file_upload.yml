@@ -19,6 +19,7 @@
   - ansible_json
   - ansible_json_diff_name
   - ansible_tenant_delete
+
 - name: Add pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
@@ -42,6 +43,20 @@
     - pcv_no_json.current.fabricUuid is defined
     - pcv_no_json.current.jobId is defined
     - pcv_no_json.current.submitterName is defined
+
+# check whether pre-change validation complete
+- name: Query Pre-Change analysis job pcv_no_json
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: ansible_no_json
+    state: query
+  register: nm_query_ansible_no_json
+  retries: 60
+  delay: 60
+  until: nm_query_ansible_no_json.current.analysisStatus == "COMPLETED"
+
 - name: Add pre-change analysis from file upload (JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
@@ -52,11 +67,18 @@
     state: present
   register: pcv_json
 
-- name: Create a new Pre-Change analysis from non-existing file
+- name: Query Pre-Change analysis job pcv_no_json
   cisco.nd.nd_pcv:
-    <<: *nd_present
+    <<: *nd_info
     ig_name: day2ops-tme
     site_name: prod-fabric
+    name: ansible_json
+    state: query
+  register: nm_query_ansible_json
+  retries: 60
+  delay: 60
+  until: nm_query_ansible_json.current.analysisStatus == "COMPLETED"
+
 - name: Add pre-change analysis from file upload with same file but different file name (JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
@@ -74,6 +96,7 @@
     - pcv_json is changed
     - pcv_json.previous == {}
     - pcv_json.current.name == "ansible_json"
+
 - name: Add pre-change analysis from file upload with same filename but different name (JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
@@ -83,6 +106,19 @@
     name: ansible_json_diff_name
     state: present
   register: pcv_json_diff_name
+
+- name: Query Pre-Change analysis job ansible_json_diff_name
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: ansible_json_diff_name
+    state: query
+  register: nm_query_ansible_json_diff_name
+  retries: 60
+  delay: 60
+  until: nm_query_ansible_json_diff_name.current.analysisStatus == "COMPLETED"
+
 - name: Add another pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
@@ -106,6 +142,18 @@
     - pcv_tenant_delete.current.fabricUuid is defined
     - pcv_tenant_delete.current.jobId is defined
     - pcv_tenant_delete.current.submitterName is defined
+
+- name: Query Pre-Change analysis job pcv_tenant_delete
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: pcv_tenant_delete
+    state: query
+  register: nm_query_pcv_tenant_delete
+  retries: 60
+  delay: 60
+  until: nm_query_pcv_tenant_delete.current.analysisStatus == "COMPLETED"
 
 - name: Create a new Pre-Change analysis from file
   cisco.nd.nd_pcv:
