@@ -441,8 +441,8 @@ class NDI:
         f.close()
 
     def file_to_json(self, file):
-        data = self.load(open(file))
-        tree = self.construct_tree(data)
-        self.create_structured_data(tree, file)
+        # self.cmap = {}
+        return self.load(open(file))
+
 
 
