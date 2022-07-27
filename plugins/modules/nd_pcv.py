@@ -191,8 +191,8 @@ def main():
             else:
                 extract_data = json.loads(open(file, "rb").read())
             if isinstance(extract_data, list):
+                ndi.cmap = {}
                 tree = ndi.construct_tree(extract_data)
-                # ndi.cmap = {}
                 ndi.create_structured_data(tree, file)
             with open(file, "rt") as old_fobj, open("output.json", "wt") as new_fobj:
                 new_fobj.write(old_fobj.read())
