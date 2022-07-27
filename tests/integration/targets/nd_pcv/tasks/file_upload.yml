@@ -8,19 +8,6 @@
     nd_info: &nd_info
       output_level: '{{ nd_output_level | default("info") }}'
 
-- name: Delete existing pre-change analysis
-  cisco.nd.nd_pcv:
-    ig_name: day2ops-tme
-    site_name: prod-fabric
-    name: '{{ item }}'
-    state: absent
-  loop:
-  - ansible_no_json
-  - ansible_json
-  - ansible_json_diff_name
-  - ansible_tenant_delete
-  - pcv_by_file
-
 - name: Add pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info

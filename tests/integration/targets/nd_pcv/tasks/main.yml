@@ -21,6 +21,10 @@
   loop:
   - manual
   - pcv_by_file
+  - ansible_no_json
+  - ansible_json
+  - ansible_json_diff_name
+  - ansible_tenant_delete
 
 - name: Run file upload tasks
   include_tasks: file_upload.yml
