@@ -19,6 +19,7 @@
   - ansible_json
   - ansible_json_diff_name
   - ansible_tenant_delete
+  - pcv_by_file
 
 - name: Add pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
@@ -56,7 +57,10 @@
   until: nm_query_ansible_no_json.current.analysisStatus == "COMPLETED"
   retries: 60
   delay: 10
-  
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
 
 - name: Add pre-change analysis from file upload (JSON format)
   cisco.nd.nd_pcv:
@@ -80,6 +84,10 @@
   delay: 10
   until: nm_query_ansible_json.current.analysisStatus == "COMPLETED"
 
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
+
 - name: Add pre-change analysis from file upload with same file but different file name (JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
@@ -97,6 +105,10 @@
     - pcv_json is changed
     - pcv_json.previous == {}
     - pcv_json.current.name == "ansible_json"
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
 
 - name: Add pre-change analysis from file upload with same filename but different name (JSON format)
   cisco.nd.nd_pcv:
@@ -119,6 +131,10 @@
   retries: 60
   delay: 10
   until: nm_query_ansible_json_diff_name.current.analysisStatus == "COMPLETED"
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
 
 - name: Add another pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
@@ -149,12 +165,16 @@
     <<: *nd_info
     ig_name: day2ops-tme
     site_name: prod-fabric
-    name: pcv_tenant_delete
+    name: ansible_tenant_delete
     state: query
   register: nm_query_pcv_tenant_delete
   retries: 60
   delay: 10
   until: nm_query_pcv_tenant_delete.current.analysisStatus == "COMPLETED"
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
 
 - name: Create a new Pre-Change analysis from file
   cisco.nd.nd_pcv:
@@ -165,6 +185,18 @@
     file: targets/nd_pcv/tasks/out-ospf-to-l2vrf.json
     state: present
   register: present_pcv
+
+- name: Query Pre-Change analysis job pcv_by_file
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: pcv_by_file
+    state: query
+  register: nm_query_present_pcv
+  retries: 60
+  delay: 10
+  until: nm_query_present_pcv.current.analysisStatus == "COMPLETED"
 
 - name: Verify present_pcv
   assert:
@@ -179,6 +211,10 @@
     - present_pcv.current.fabricUuid is defined
     - present_pcv.current.jobId is defined
     - present_pcv.current.submitterName is defined
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
 
 - name: Create a new Pre-Change analysis from non-existing file
   cisco.nd.nd_pcv:
