@@ -194,12 +194,6 @@ def main():
                 ndi.cmap = {}
                 tree = ndi.construct_tree(extract_data)
                 ndi.create_structured_data(tree, file)
-            with open(file, "rt") as old_fobj, open("output.json", "wt") as new_fobj:
-                new_fobj.write(old_fobj.read())
-            a_file = open("output.json", "r")
-            a_json = json.load(a_file)
-            pretty_json = json.dumps(a_json, indent=4)
-            a_file.close()
             create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges'.format(path, insights_group, site_name)
             file_resp = nd.request(create_pcv_path, method='POST', file=os.path.abspath(file), data=data, prefix=ndi.prefix)
             if file_resp.get("success") == True:
