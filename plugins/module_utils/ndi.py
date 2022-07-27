@@ -440,9 +440,5 @@ class NDI:
         self.cmap = {}
         f.close()
 
-    def file_to_json(self, file):
-        # self.cmap = {}
-        return self.load(open(file))
-
 
 
