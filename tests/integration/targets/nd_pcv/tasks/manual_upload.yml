@@ -45,13 +45,121 @@
 
 # QUERY specific pre-change analysis job result
 - name: Query specific Pre-Change analysis result
-  cisco.nd.nd_pcv: &nd_query
+  cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: day2ops-tme
     site_name: prod-fabric
     name: manual
     state: query
   register: nm_query_pcv
+  retries: 60
+  delay: 10
+  until: nm_query_pcv.current.analysisStatus == "COMPLETED"
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
+
+- name: Present Pre-Change analysis for adding contract
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: add_contract
+    manual: |
+        [
+            {
+                "vzBrCP": {
+                    "attributes": {
+                        "descr": "",
+                        "intent": "install",
+                        "nameAlias": "",
+                        "prio": "unspecified",
+                        "scope": "context",
+                        "targetDscp": "unspecified",
+                        "dn": "uni/tn-AnsibleTest/brc-test_brc",
+                        "name": "test_brc",
+                        "pcv_status": "created"
+                    },
+                    "children": []
+                }
+            }
+        ]
+    state: present
+  register: present_contract
+
+- name: Query present_contract until completed
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: add_contract
+    state: query
+  register: nm_query_add_contract
+  retries: 60
+  delay: 10
+  until: nm_query_add_contract.current.analysisStatus == "COMPLETED"
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
+
+- name: Present Pre-Change analysis for updating epg
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: update_epg
+    manual: |
+        [
+            {
+                "fvAEPg": {
+                    "attributes": {
+                        "descr": "",
+                        "exceptionTag": "",
+                        "floodOnEncap": "disabled",
+                        "fwdCtrl": "none",
+                        "hasMcastSource": "no",
+                        "isAttrBasedEPg": "no",
+                        "matchT": "AtleastOne",
+                        "nameAlias": "",
+                        "pcEnfPref": "unenforced",
+                        "prefGrMemb": "exclude",
+                        "prio": "unspecified",
+                        "shutdown": "no",
+                        "dn": "uni/tn-common/ap-default/epg-epg",
+                        "name": "epg",
+                        "pcv_status": "created"
+                    },
+                    "children": [{
+                        "fvRsBd": {
+                            "attributes": {
+                                "tnFvBDName": "",
+                                "pcv_status": ""
+                            }
+                        }
+                    }]
+                }
+            }
+        ]
+    state: present
+  register: present_epg
+
+- name: Query specific Pre-Change analysis result
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: update_epg
+    state: query
+  register: nm_present_epg
+  retries: 60
+  delay: 10
+  until: nm_present_epg.current.analysisStatus == "COMPLETED"
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
 
 - name: Query Pre-Change analysis results
   cisco.nd.nd_pcv:
@@ -72,4 +180,4 @@
     - nm_query_pcv.current.jobId is defined
     - nm_query_pcv.current.analysisScheduleId is defined
     - nm_query_pcvs is not changed
-    - nm_query_pcvs.current | length >= 1
+    - nm_query_pcvs.current | length >= 8
