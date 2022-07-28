@@ -16,6 +16,7 @@
 from __future__ import (absolute_import, division, print_function)
 import mimetypes
 import os
+import io
 __metaclass__ = type
 
 DOCUMENTATION = """
@@ -229,15 +230,15 @@ class HttpApi(HttpApiBase):
         try:
             # create data field
             data["uploadedFileName"] = os.path.basename(file)
-            with open('data.json', 'w') as data_file:
-                json.dump(data, data_file)
+            data_str = io.StringIO()
+            json.dump(data, data_str)
         except Exception as e:
             self.error = dict(code=self.status, message='ND HTTPAPI create data field Exception: {0} - {1}'.format(e, traceback.format_exc()))
             raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
 
         try: 
             # create fields for MultipartEncoder
-            fields = dict(data=('data.json', open('data.json', 'rb'), 'application/json'), file=(os.path.basename(file), open(file, 'rb'), mimetypes.guess_type(file)))
+            fields = dict(data=('data.json', data_str, 'application/json'), file=(os.path.basename(file), open(file, 'rb'), mimetypes.guess_type(file)))
             mp_encoder = MultipartEncoder(fields=fields)
             self.headers['Content-Type'] = mp_encoder.content_type
             self.headers['Accept'] = '*/*'
