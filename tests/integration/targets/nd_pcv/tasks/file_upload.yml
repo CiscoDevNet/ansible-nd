@@ -45,6 +45,18 @@
   retries: 60
   delay: 10
 
+- name: Verify nm_query_ansible_no_json
+  assert:
+    that:
+    - nm_query_ansible_no_json is not changed
+    - nm_query_ansible_no_json.current.name == "ansible_no_json"
+    - nm_query_ansible_no_json.current.assuranceEntityName == "prod-fabric"
+    - nm_query_ansible_no_json.current.analysisStatus == "COMPLETED"
+    - nm_query_ansible_no_json.current.analysisScheduleId is defined
+    - nm_query_ansible_no_json.current.baseEpochId is defined
+    - nm_query_ansible_no_json.current.fabricUuid is defined
+    - nm_query_ansible_no_json.current.jobId is defined
+
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
   pause:
       minutes: 1
@@ -59,6 +71,20 @@
     state: present
   register: pcv_json
 
+- name: Verify pcv_json
+  assert:
+    that:
+    - pcv_json is changed
+    - pcv_json.previous == {}
+    - pcv_json.current.name == "ansible_json"
+    - pcv_json.current.assuranceEntityName == "prod-fabric"
+    - pcv_json.current.analysisStatus is defined
+    - pcv_json.current.analysisScheduleId is defined
+    - pcv_json.current.baseEpochId is defined
+    - pcv_json.current.fabricUuid is defined
+    - pcv_json.current.jobId is defined
+    - pcv_json.current.submitterName is defined
+
 - name: Query Pre-Change analysis job pcv_no_json
   cisco.nd.nd_pcv:
     <<: *nd_info
@@ -70,6 +96,18 @@
   retries: 60
   delay: 10
   until: nm_query_ansible_json.current.analysisStatus == "COMPLETED"
+
+- name: Verify nm_query_ansible_json
+  assert:
+    that:
+    - nm_query_ansible_json is not changed
+    - nm_query_ansible_json.current.name == "ansible_json"
+    - nm_query_ansible_json.current.assuranceEntityName == "prod-fabric"
+    - nm_query_ansible_json.current.analysisStatus == "COMPLETED"
+    - nm_query_ansible_json.current.analysisScheduleId is defined
+    - nm_query_ansible_json.current.baseEpochId is defined
+    - nm_query_ansible_json.current.fabricUuid is defined
+    - nm_query_ansible_json.current.jobId is defined
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
   pause:
@@ -86,13 +124,6 @@
   register: pcv_json_diff_filename
   ignore_errors: True
 
-- name: Verify pcv_json pcv_json_diff_filename
-  assert:
-    that:
-    - pcv_json is changed
-    - pcv_json.previous == {}
-    - pcv_json.current.name == "ansible_json"
-
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
   pause:
       minutes: 1
@@ -107,6 +138,20 @@
     state: present
   register: pcv_json_diff_name
 
+- name: Verify pcv_json_diff_name
+  assert:
+    that:
+    - pcv_json_diff_name is changed
+    - pcv_json_diff_name.previous == {}
+    - pcv_json_diff_name.current.name == "ansible_json_diff_name"
+    - pcv_json_diff_name.current.assuranceEntityName == "prod-fabric"
+    - pcv_json_diff_name.current.analysisStatus is defined
+    - pcv_json_diff_name.current.analysisScheduleId is defined
+    - pcv_json_diff_name.current.baseEpochId is defined
+    - pcv_json_diff_name.current.fabricUuid is defined
+    - pcv_json_diff_name.current.jobId is defined
+    - pcv_json_diff_name.current.submitterName is defined
+
 - name: Query Pre-Change analysis job ansible_json_diff_name
   cisco.nd.nd_pcv:
     <<: *nd_info
@@ -118,6 +163,18 @@
   retries: 60
   delay: 10
   until: nm_query_ansible_json_diff_name.current.analysisStatus == "COMPLETED"
+
+- name: Verify nm_query_ansible_json_diff_name
+  assert:
+    that:
+    - nm_query_ansible_json_diff_name is not changed
+    - nm_query_ansible_json_diff_name.current.name == "ansible_json_diff_name"
+    - nm_query_ansible_json_diff_name.current.assuranceEntityName == "prod-fabric"
+    - nm_query_ansible_json_diff_name.current.analysisStatus == "COMPLETED"
+    - nm_query_ansible_json_diff_name.current.analysisScheduleId is defined
+    - nm_query_ansible_json_diff_name.current.baseEpochId is defined
+    - nm_query_ansible_json_diff_name.current.fabricUuid is defined
+    - nm_query_ansible_json_diff_name.current.jobId is defined
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
   pause:
@@ -159,6 +216,18 @@
   delay: 10
   until: nm_query_pcv_tenant_delete.current.analysisStatus == "COMPLETED"
 
+- name: Verify nm_query_pcv_tenant_delete
+  assert:
+    that:
+    - nm_query_pcv_tenant_delete is not changed
+    - nm_query_pcv_tenant_delete.current.name == "ansible_tenant_delete"
+    - nm_query_pcv_tenant_delete.current.assuranceEntityName == "prod-fabric"
+    - nm_query_pcv_tenant_delete.current.analysisStatus == "COMPLETED"
+    - nm_query_pcv_tenant_delete.current.analysisScheduleId is defined
+    - nm_query_pcv_tenant_delete.current.baseEpochId is defined
+    - nm_query_pcv_tenant_delete.current.fabricUuid is defined
+    - nm_query_pcv_tenant_delete.current.jobId is defined
+
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
   pause:
       minutes: 1
@@ -173,18 +242,6 @@
     state: present
   register: present_pcv
 
-- name: Query Pre-Change analysis job pcv_by_file
-  cisco.nd.nd_pcv:
-    <<: *nd_info
-    ig_name: day2ops-tme
-    site_name: prod-fabric
-    name: pcv_by_file
-    state: query
-  register: nm_query_present_pcv
-  retries: 60
-  delay: 10
-  until: nm_query_present_pcv.current.analysisStatus == "COMPLETED"
-
 - name: Verify present_pcv
   assert:
     that:
@@ -198,6 +255,30 @@
     - present_pcv.current.fabricUuid is defined
     - present_pcv.current.jobId is defined
     - present_pcv.current.submitterName is defined
+
+- name: Query Pre-Change analysis job pcv_by_file
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: day2ops-tme
+    site_name: prod-fabric
+    name: pcv_by_file
+    state: query
+  register: nm_query_present_pcv
+  retries: 60
+  delay: 10
+  until: nm_query_present_pcv.current.analysisStatus == "COMPLETED"
+
+- name: Verify nm_query_pcv_file
+  assert:
+    that:
+    - nm_query_present_pcv.current.name == "pcv_by_file"
+    - nm_query_present_pcv.current.assuranceEntityName == "prod-fabric"
+    - nm_query_present_pcv.current.uploadedFileName is defined
+    - nm_query_present_pcv.current.analysisStatus == "COMPLETED"
+    - nm_query_present_pcv.current.jobId is defined
+    - nm_query_present_pcv.current.analysisScheduleId is defined
+    - nm_query_present_pcv.current.baseEpochId is defined
+    - nm_query_present_pcv.current.fabricUuid is defined
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
   pause:
