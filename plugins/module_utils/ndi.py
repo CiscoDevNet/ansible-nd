@@ -179,8 +179,6 @@ class NDI:
             i = 0
             while i < len(chunk):
                 c = chunk[i]
-                # if i == 0 and c != '[':
-                # self.module.fail_json(msg="Input file invalid or already parsed.", **self.result)
                 buffer += c
 
                 if c == '"':
@@ -275,7 +273,7 @@ class NDI:
 
     def construct_tree(self, item_list):
         """
-        Given a flat list of items, each with a dn. Construct a tree represeting their relative relationships.
+        Given a flat list of items, each with a dn. Construct a tree representing their relative relationships.
         E.g. Given [/a/b/c/d, /a/b, /a/b/c/e, /a/f, /z], the function will construct
         __root__
           - a (no data)

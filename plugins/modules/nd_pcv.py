@@ -168,8 +168,6 @@ def main():
 
     elif state == 'present':
         nd.previous = nd.existing
-        # if nd.existing:
-        #     nd.exit_json()
         base_epoch_data = ndi.get_epochs(insights_group, site_name)
 
         data = {
