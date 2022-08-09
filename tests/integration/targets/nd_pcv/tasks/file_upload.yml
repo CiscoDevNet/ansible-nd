@@ -11,7 +11,7 @@
 - name: Add pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     file: targets/nd_pcv/tasks/ansible_dump.json
     name: ansible_no_json
@@ -36,7 +36,7 @@
 - name: Query Pre-Change analysis job pcv_no_json
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: ansible_no_json
     state: query
@@ -64,7 +64,7 @@
 - name: Add pre-change analysis from file upload (JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     file: targets/nd_pcv/tasks/contract.json
     name: ansible_json
@@ -88,7 +88,7 @@
 - name: Query Pre-Change analysis job pcv_no_json
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: ansible_json
     state: query
@@ -116,7 +116,7 @@
 - name: Add pre-change analysis from file upload with same file but different file name (JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     file: targets/nd_pcv/tasks/contract_identical.json
     name: ansible_json
@@ -131,7 +131,7 @@
 - name: Add pre-change analysis from file upload with same filename but different name (JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     file: targets/nd_pcv/tasks/contract.json
     name: ansible_json_diff_name
@@ -155,7 +155,7 @@
 - name: Query Pre-Change analysis job ansible_json_diff_name
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: ansible_json_diff_name
     state: query
@@ -183,7 +183,7 @@
 - name: Add another pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     file: targets/nd_pcv/tasks/tenant_delete_dump.json
     name: ansible_tenant_delete
@@ -207,7 +207,7 @@
 - name: Query Pre-Change analysis job pcv_tenant_delete
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: ansible_tenant_delete
     state: query
@@ -235,7 +235,7 @@
 - name: Create a new Pre-Change analysis from file
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: pcv_by_file
     file: targets/nd_pcv/tasks/out-ospf-to-l2vrf.json
@@ -259,7 +259,7 @@
 - name: Query Pre-Change analysis job pcv_by_file
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: pcv_by_file
     state: query
@@ -287,7 +287,7 @@
 - name: Create a new Pre-Change analysis from non-existing file
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: pcv_non_existing
     file: /root/ansible/ansible_collections/cisco/nd/tests/integration/targets/nd_pcv/tasks/non-existing.json
@@ -298,7 +298,7 @@
 - name: Query specific Pre-Change analysis job
   cisco.nd.nd_pcv: &nd_query
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: pcv_by_file
     state: query
@@ -319,7 +319,7 @@
 - name: Query all Pre-Change analysis jobs
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     state: query
   register: nm_query_pcvs_file
 

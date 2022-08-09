@@ -13,7 +13,7 @@
 - name: Delete a pre_change analysis
   cisco.nd.nd_pcv: &nd_rm
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: '{{ item }}'
     state: absent

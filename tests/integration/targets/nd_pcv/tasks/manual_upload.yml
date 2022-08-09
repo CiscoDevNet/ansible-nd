@@ -11,7 +11,7 @@
 - name: Present Pre-Change analysis from manual changes
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: manual
     manual: |
@@ -47,7 +47,7 @@
 - name: Query specific Pre-Change analysis result
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: manual
     state: query
@@ -75,7 +75,7 @@
 - name: Present Pre-Change analysis for adding contract
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: add_contract
     manual: |
@@ -117,7 +117,7 @@
 - name: Query present_contract until completed
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: add_contract
     state: query
@@ -145,7 +145,7 @@
 - name: Present Pre-Change analysis for updating epg
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: update_epg
     manual: |
@@ -200,7 +200,7 @@
 - name: Query specific Pre-Change analysis result
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: update_epg
     state: query
@@ -228,7 +228,7 @@
 - name: Query Pre-Change analysis results
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     state: query
   register: nm_query_pcvs
 

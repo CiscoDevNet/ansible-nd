@@ -13,7 +13,7 @@
 - name: query a pre_change analysis
   nd_pcv_delta_analysis: &nd_query
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: manual
   register: query_pcv_delta_analysis_manual
@@ -30,7 +30,7 @@
 - name: query another pre_change analysis
   nd_pcv_delta_analysis:
     <<: *nd_query
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: pcv_by_file
   register: query_pcv_by_file_delta_analysis

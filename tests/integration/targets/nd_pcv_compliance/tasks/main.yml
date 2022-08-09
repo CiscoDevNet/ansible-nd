@@ -13,7 +13,7 @@
 - name: query a pre_change validation compliance result
   nd_pcv_compliance: &nd_query
     <<: *nd_info
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: manual
   register: query_manual_pcv
@@ -32,7 +32,7 @@
 - name: query another pre_change validation compliance result
   nd_pcv_compliance:
     <<: *nd_query
-    ig_name: day2ops-tme
+    ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: pcv_by_file
   register: query_pcv_by_file
