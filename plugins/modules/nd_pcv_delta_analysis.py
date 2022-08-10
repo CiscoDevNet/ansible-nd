@@ -37,6 +37,12 @@ options:
     type: str
     required: yes
     aliases: [ site ]
+  epoch_choice:
+    description:
+    - Name of the Assurance Entity.
+    type: str
+    default: epoch2
+    choices: [ epoch2, epoch1, both_epoch, all ]
 extends_documentation_fragment: cisco.nd.modules
 '''
 
@@ -56,12 +62,20 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 
+epoch_map = {
+    'epoch2': 'EPOCH2_ONLY',
+    'epoch1': 'EPOCH1_ONLY',
+    'both_epoch': 'BOTH_EPOCHS',
+    'all': None,
+}
+
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type='str', required=True),
+        insights_group=dict(type='str', required=True, aliases=[ 'fab_name', 'ig_name' ]),
         name=dict(type='str', required=True),
-        site_name=dict(type='str', required=True),
+        site_name=dict(type='str', required=True, aliases=[ 'site' ]),
+        epoch_choice=dict(type='str', default='epoch2', choices=[ 'epoch2', 'epoch1', 'both_epoch', 'all' ])
     )
 
     module = AnsibleModule(
@@ -75,14 +89,15 @@ def main():
     name = nd.params.get("name")
     site_name = nd.params.get('site_name')
     insights_group = nd.params.get('insights_group')
+    epoch_choice = nd.params.get('epoch_choice')
 
     pcv_result = ndi.query_pcv(insights_group, site_name, name)
     if pcv_result.get("analysisStatus") != "COMPLETED":
         nd.fail_json(msg="Pre-change validation {0} is not completed".format(name))
     epoch_delta_job_id = pcv_result.get("epochDeltaJobId")
-    nd.existing["event_severity"] = ndi.query_event_severity(insights_group, site_name, epoch_delta_job_id)
-    nd.existing["impacted_resources"] = ndi.query_impacted_resource(insights_group, site_name, epoch_delta_job_id)
-    nd.existing["anomalies"] = ndi.query_entry(insights_group, site_name, epoch_delta_job_id)
+    nd.existing["anomaly_count"] = ndi.query_event_severity(insights_group, site_name, epoch_delta_job_id)
+    nd.existing["unhealthy_resources"] = ndi.query_impacted_resource(insights_group, site_name, epoch_delta_job_id)
+    nd.existing["anomalies"] = ndi.query_entry(insights_group, site_name, epoch_delta_job_id, epoch_map[epoch_choice])
     nd.existing["general"] = pcv_result.get("baseEpochCollectionTimeRfc3339")
     nd.exit_json()
 if __name__ == "__main__":
