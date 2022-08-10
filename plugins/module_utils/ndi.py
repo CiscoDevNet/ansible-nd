@@ -40,7 +40,7 @@ class NDI:
 
     def get_epochs(self, ig_name, site_name):
         ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
-        path = '{0}/epochs?$size=1&$status=FINISHED'.format(ig_base_path)
+        path = '{0}/epochs?$size=1&$status=FINISHED&%24epochType=ONLINE%2C+OFFLINE&%24sort=-collectionTime%2C-analysisStartTime'.format(ig_base_path)
         obj = self.nd.query_obj(path, prefix=self.prefix)
         return obj['value']['data'][0]
 
@@ -58,11 +58,21 @@ class NDI:
         path = "{0}/{1}/count?%24epochId={2}".format(ig_base_path, self.compliance_path, compliance_epoch_id)
         return self.query_data(path)
 
-    def query_entry(self, ig_name, site_name, epoch_delta_job_id):
+    def query_entry(self, ig_name, site_name, epoch_delta_job_id, epoch_choice):
         epoch_delta_ig_path = self.epoch_delta_ig_path.format(ig_name, site_name, epoch_delta_job_id)
-        path = "{0}/individualTable?epochStatus=BOTH_EPOCHS".format(epoch_delta_ig_path)
+        path = "{0}/individualTable?%24size=100".format(epoch_delta_ig_path)
+        if epoch_choice:
+            path = "{0}&epochStatus={1}".format(path, epoch_choice)
         obj = self.nd.query_obj(path, prefix = self.prefix)
-        return obj['entries']
+        pages, r = divmod(obj.get("totalItemsCount"), 100)
+        if r > 0 :
+            pages += 1
+        entries = []
+        for page in range(pages):
+            page_path = "{0}&%24page={1}".format(path, page)
+            obj = self.nd.query_obj(page_path, prefix = self.prefix)
+            entries += obj.get('entries')
+        return entries
 
     def format_event_severity(self, events_severity):
         result = {}
