@@ -52,7 +52,7 @@
     name: manual
     state: query
   register: nm_query_pcv
-  retries: 60
+  retries: 180
   delay: 10
   until: nm_query_pcv.current.analysisStatus == "COMPLETED"
 
@@ -122,7 +122,7 @@
     name: add_contract
     state: query
   register: nm_query_add_contract
-  retries: 60
+  retries: 180
   delay: 10
   until: nm_query_add_contract.current.analysisStatus == "COMPLETED"
 
@@ -205,7 +205,7 @@
     name: update_epg
     state: query
   register: nm_present_epg
-  retries: 60
+  retries: 180
   delay: 10
   until: nm_present_epg.current.analysisStatus == "COMPLETED"
 

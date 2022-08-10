@@ -42,7 +42,7 @@
     state: query
   register: nm_query_ansible_no_json
   until: nm_query_ansible_no_json.current.analysisStatus == "COMPLETED"
-  retries: 60
+  retries: 180
   delay: 10
 
 - name: Verify nm_query_ansible_no_json
@@ -93,7 +93,7 @@
     name: ansible_json
     state: query
   register: nm_query_ansible_json
-  retries: 60
+  retries: 180
   delay: 10
   until: nm_query_ansible_json.current.analysisStatus == "COMPLETED"
 
@@ -160,7 +160,7 @@
     name: ansible_json_diff_name
     state: query
   register: nm_query_ansible_json_diff_name
-  retries: 60
+  retries: 180
   delay: 10
   until: nm_query_ansible_json_diff_name.current.analysisStatus == "COMPLETED"
 
@@ -212,7 +212,7 @@
     name: ansible_tenant_delete
     state: query
   register: nm_query_pcv_tenant_delete
-  retries: 60
+  retries: 180
   delay: 10
   until: nm_query_pcv_tenant_delete.current.analysisStatus == "COMPLETED"
 
@@ -264,7 +264,7 @@
     name: pcv_by_file
     state: query
   register: nm_query_present_pcv
-  retries: 60
+  retries: 180
   delay: 10
   until: nm_query_present_pcv.current.analysisStatus == "COMPLETED"
 
