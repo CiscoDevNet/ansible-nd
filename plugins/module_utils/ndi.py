@@ -5,6 +5,7 @@
 # Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)
 
 from __future__ import (absolute_import, division, print_function)
+from html import entities
 import json
 from jsonpath_ng import parse
 __metaclass__ = type
@@ -58,20 +59,39 @@ class NDI:
         path = "{0}/{1}/count?%24epochId={2}".format(ig_base_path, self.compliance_path, compliance_epoch_id)
         return self.query_data(path)
 
-    def query_entry(self, ig_name, site_name, epoch_delta_job_id, epoch_choice):
+    def query_entry(self, path, size):
+        obj = self.nd.query_obj(path.format(size, 0), prefix=self.prefix)
+        entries = obj.get('entries')
+        if entries is None or len(entries) == 0:
+            return []
+        else:
+            pages, last_page = divmod(obj.get("totalItemsCount"), size)
+            if pages == 0 or (pages==1 and last_page==0) :
+                return entries
+            if last_page > 0 :
+                pages += 1
+            for page in range(1, pages):
+                obj = self.nd.query_obj(path.format(size, page), prefix = self.prefix)
+                entries += obj.get('entries')
+            return entries
+
+    def query_anomalies(self, ig_name, site_name, epoch_delta_job_id, epoch_choice):
         epoch_delta_ig_path = self.epoch_delta_ig_path.format(ig_name, site_name, epoch_delta_job_id)
-        path = "{0}/individualTable?%24size=100".format(epoch_delta_ig_path)
+        size = 100
+        path = epoch_delta_ig_path + "/individualTable?%24size={0}&%24page={1}"
         if epoch_choice:
             path = "{0}&epochStatus={1}".format(path, epoch_choice)
-        obj = self.nd.query_obj(path, prefix = self.prefix)
-        pages, r = divmod(obj.get("totalItemsCount"), 100)
-        if r > 0 :
-            pages += 1
-        entries = []
-        for page in range(pages):
-            page_path = "{0}&%24page={1}".format(path, page)
-            obj = self.nd.query_obj(page_path, prefix = self.prefix)
-            entries += obj.get('entries')
+        entries = self.query_entry(path, size)
+        # obj = self.nd.query_obj(path.format(epoch_delta_ig_path, size, 0), prefix = self.prefix)
+        # entries = obj.get('entries')
+        # pages, last_page = divmod(obj.get("totalItemsCount"), size)
+        # if pages == 0 or (pages==1 and last_page==0) :
+        #     return entries
+        # if last_page > 0 :
+        #     pages += 1
+        # for page in range(1, pages):
+        #     obj = self.nd.query_obj(path.format(epoch_delta_ig_path, size, page), prefix = self.prefix)
+        #     entries += obj.get('entries')
         return entries
 
     def format_event_severity(self, events_severity):
@@ -127,8 +147,9 @@ class NDI:
 
     def query_compliance_smart_event(self, ig_name, site_name, compliance_epoch_id):
         ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
-        path = "{0}/smartEvents?%24epochId={1}&%24page=0&%24size=10&%24sort=-severity&category=COMPLIANCE".format(ig_base_path, compliance_epoch_id)
-        smart_event = self.query_messages(path)
+        size = 100
+        path = "{0}/smartEvents?%24epochId={1}&%24size={2}&%24page={3}&%24sort=-severity&category=COMPLIANCE".format(ig_base_path, compliance_epoch_id)
+        smart_event = self.query_entry(path, size)
         return smart_event
 
     def query_msg_with_data(self, ig_name, site_name, path):
