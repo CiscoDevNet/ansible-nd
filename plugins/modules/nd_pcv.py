@@ -62,12 +62,12 @@ extends_documentation_fragment: cisco.nd.modules
 '''
 
 EXAMPLES = r'''
-- name: Get prechange validation result
+- name: Get prechange validation jobs' status
   cisco.nd.nd_pcv:
     insights_group: exampleIG
     state: query
   register: query_results
-- name: Get a specific prechange validation result
+- name: Get a specific prechange validation job status
   cisco.nd.nd_pcv:
     insights_group: exampleIG
     site_name: siteName

@@ -97,7 +97,7 @@ def main():
     epoch_delta_job_id = pcv_result.get("epochDeltaJobId")
     nd.existing["anomaly_count"] = ndi.query_event_severity(insights_group, site_name, epoch_delta_job_id)
     nd.existing["unhealthy_resources"] = ndi.query_impacted_resource(insights_group, site_name, epoch_delta_job_id)
-    nd.existing["anomalies"] = ndi.query_entry(insights_group, site_name, epoch_delta_job_id, epoch_map[epoch_choice])
+    nd.existing["anomalies"] = ndi.query_anomalies(insights_group, site_name, epoch_delta_job_id, epoch_map[epoch_choice])
     nd.existing["general"] = pcv_result.get("baseEpochCollectionTimeRfc3339")
     nd.exit_json()
 if __name__ == "__main__":

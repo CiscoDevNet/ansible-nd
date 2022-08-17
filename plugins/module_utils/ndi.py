@@ -82,16 +82,6 @@ class NDI:
         if epoch_choice:
             path = "{0}&epochStatus={1}".format(path, epoch_choice)
         entries = self.query_entry(path, size)
-        # obj = self.nd.query_obj(path.format(epoch_delta_ig_path, size, 0), prefix = self.prefix)
-        # entries = obj.get('entries')
-        # pages, last_page = divmod(obj.get("totalItemsCount"), size)
-        # if pages == 0 or (pages==1 and last_page==0) :
-        #     return entries
-        # if last_page > 0 :
-        #     pages += 1
-        # for page in range(1, pages):
-        #     obj = self.nd.query_obj(path.format(epoch_delta_ig_path, size, page), prefix = self.prefix)
-        #     entries += obj.get('entries')
         return entries
 
     def format_event_severity(self, events_severity):
@@ -148,8 +138,9 @@ class NDI:
     def query_compliance_smart_event(self, ig_name, site_name, compliance_epoch_id):
         ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
         size = 100
-        path = "{0}/smartEvents?%24epochId={1}&%24size={2}&%24page={3}&%24sort=-severity&category=COMPLIANCE".format(ig_base_path, compliance_epoch_id)
-        smart_event = self.query_entry(path, size)
+        path = "{0}/smartEvents?%24epochId={1}".format(ig_base_path, compliance_epoch_id)
+        event_path = path + "&%24size={0}&%24page={1}&%24sort=-severity&category=COMPLIANCE"
+        smart_event = self.query_entry(event_path, size)
         return smart_event
 
     def query_msg_with_data(self, ig_name, site_name, path):
