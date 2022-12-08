@@ -1,6 +1,8 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 # Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)
 
 from __future__ import absolute_import, division, print_function
@@ -69,13 +71,14 @@ epoch_map = {
     'all': None,
 }
 
+
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type='str', required=True, aliases=[ 'fab_name', 'ig_name' ]),
+        insights_group=dict(type='str', required=True, aliases=['fab_name', 'ig_name']),
         name=dict(type='str', required=True),
-        site_name=dict(type='str', required=True, aliases=[ 'site' ]),
-        epoch_choice=dict(type='str', default='epoch2', choices=[ 'epoch2', 'epoch1', 'both_epoch', 'all' ])
+        site_name=dict(type='str', required=True, aliases=['site']),
+        epoch_choice=dict(type='str', default='epoch2', choices=['epoch2', 'epoch1', 'both_epoch', 'all'])
     )
 
     module = AnsibleModule(
@@ -100,5 +103,7 @@ def main():
     nd.existing["anomalies"] = ndi.query_anomalies(insights_group, site_name, epoch_delta_job_id, epoch_map[epoch_choice])
     nd.existing["general"] = pcv_result.get("baseEpochCollectionTimeRfc3339")
     nd.exit_json()
+
+
 if __name__ == "__main__":
     main()

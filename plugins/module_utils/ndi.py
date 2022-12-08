@@ -5,12 +5,12 @@
 # Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)
 
 from __future__ import (absolute_import, division, print_function)
-from html import entities
 import json
 from jsonpath_ng import parse
 __metaclass__ = type
 
 class NDI:
+
 
     def __init__(self, nd_module):
         self.nd = nd_module
@@ -29,13 +29,13 @@ class NDI:
                     if site['name'] == site_name:
                         return site['uuid']
 
-    def get_pre_change_result(self, pcv_results, name, site_id, path,  **kwargs):
+    def get_pre_change_result(self, pcv_results, name, site_id, path, **kwargs):
         pcv_result = {}
         for pcv in pcv_results:
             if pcv.get("name") == name and pcv.get("fabricUuid") == site_id:
                 pcv_job_id = pcv.get("jobId")
                 pcv_path = '{0}/{1}'.format(path, pcv_job_id)
-                obj = self.nd.query_obj(pcv_path,  **kwargs)
+                obj = self.nd.query_obj(pcv_path, **kwargs)
                 pcv_result = obj['value']['data']
         return pcv_result
 
@@ -46,7 +46,7 @@ class NDI:
         return obj['value']['data'][0]
 
     def query_data(self, path):
-        obj = self.nd.query_obj(path, prefix = self.prefix)
+        obj = self.nd.query_obj(path, prefix=self.prefix)
         return obj['value']['data']
 
     def query_compliance_score(self, ig_name, site_name, compliance_epoch_id):
@@ -66,12 +66,12 @@ class NDI:
             return []
         else:
             pages, last_page = divmod(obj.get("totalItemsCount"), size)
-            if pages == 0 or (pages==1 and last_page==0) :
+            if pages == 0 or (pages == 1 and last_page == 0):
                 return entries
-            if last_page > 0 :
+            if last_page > 0:
                 pages += 1
             for page in range(1, pages):
-                obj = self.nd.query_obj(path.format(size, page), prefix = self.prefix)
+                obj = self.nd.query_obj(path.format(size, page), prefix=self.prefix)
                 entries += obj.get('entries')
             return entries
 
@@ -459,6 +459,3 @@ class NDI:
             json.dump(toplevel, f)
         self.cmap = {}
         f.close()
-
-
-

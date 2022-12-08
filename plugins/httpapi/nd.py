@@ -21,9 +21,9 @@ __metaclass__ = type
 
 DOCUMENTATION = """
 ---
+name: nd
 author:
-- Lionel Hercot (lhercot)
-httpapi: aci
+- Lionel Hercot (@lhercot)
 short_description: Nexus Dashboard Ansible HTTPAPI Plugin.
 description:
   - This ND plugin provides the HTTPAPI transport methods needed to initiate
@@ -130,7 +130,7 @@ class HttpApi(HttpApiBase):
         path = '/logout'
 
         try:
-            self.connection.queue_message('info', 'logout() - connection.send({0}, \{\}, {1}, {2})'.format(path, method, self.headers))
+            self.connection.queue_message('info', 'logout() - connection.send({0}, {1}, {2})'.format(path, method, self.headers))
             response, response_data = self.connection.send(path, {}, method=method, headers=self.headers)
         except Exception as e:
             self.connection.queue_message('error', 'logout() - Generic Exception: {0}'.format(e))
@@ -236,7 +236,7 @@ class HttpApi(HttpApiBase):
             self.error = dict(code=self.status, message='ND HTTPAPI create data field Exception: {0} - {1}'.format(e, traceback.format_exc()))
             raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
 
-        try: 
+        try:
             # create fields for MultipartEncoder
             fields = dict(data=('data.json', data_str, 'application/json'), file=(os.path.basename(file), open(file, 'rb'), mimetypes.guess_type(file)))
             mp_encoder = MultipartEncoder(fields=fields)

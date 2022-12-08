@@ -71,7 +71,7 @@ options:
     - The default value is Local.
     - If the value is not specified in the task, the value of environment variable C(ND_LOGIN_DOMAIN) will be used instead.
     type: str
-    default: local
+    default: DefaultAuth
 requirements:
 - Nexus Dashboard v2.0 or newer
 notes:

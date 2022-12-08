@@ -1,12 +1,11 @@
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 # Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)
 
 from __future__ import absolute_import, division, print_function
-import json
-import os
-import time
 
 __metaclass__ = type
 
@@ -111,17 +110,21 @@ EXAMPLES = r'''
 RETURN = r'''
 '''
 
+import json
+import os
+import time
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 
+
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type='str', required=True, aliases=[ "fab_name", "ig_name" ]),
+        insights_group=dict(type='str', required=True, aliases=["fab_name", "ig_name"]),
         name=dict(type='str'),
-        description=dict(type='str', aliases=[ "descr" ]),
-        site_name=dict(type='str', aliases=[ "site" ]),
+        description=dict(type='str', aliases=["descr"]),
+        site_name=dict(type='str', aliases=["site"]),
         file=dict(type='str'),
         manual=dict(type='str'),
         state=dict(type='str', default='query', choices=['query', 'absent', 'present']),
@@ -161,7 +164,7 @@ def main():
                 rm_path = '{0}/{1}/prechangeAnalysis/jobs'.format(path, insights_group)
                 rm_payload = [job_id]
                 rm_resp = nd.request(rm_path, method='POST', data=rm_payload, prefix=ndi.prefix)
-                if rm_resp["success"] == True:
+                if rm_resp["success"] is True:
                     nd.existing = {}
                 else:
                     nd.fail_json(msg="Pre-change validation {0} is not able to be deleted".format(name))
@@ -194,16 +197,18 @@ def main():
                 ndi.create_structured_data(tree, file)
             create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges'.format(path, insights_group, site_name)
             file_resp = nd.request(create_pcv_path, method='POST', file=os.path.abspath(file), data=data, prefix=ndi.prefix)
-            if file_resp.get("success") == True:
+            if file_resp.get("success") is True:
                 nd.existing = file_resp.get("value")["data"]
         elif manual:
             data["imdata"] = json.loads(manual)
             create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/manualChanges?action=RUN'.format(path, insights_group, site_name)
             manual_resp = nd.request(create_pcv_path, method='POST', data=data, prefix=ndi.prefix)
-            if manual_resp.get("success") == True:
+            if manual_resp.get("success") is True:
                 nd.existing = manual_resp.get("value")["data"]
         else:
             nd.fail_json(msg="either file or manual is required to create pcv job")
     nd.exit_json()
+
+
 if __name__ == "__main__":
     main()
