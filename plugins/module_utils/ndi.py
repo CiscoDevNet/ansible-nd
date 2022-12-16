@@ -340,10 +340,9 @@ class NDI:
                             if not aci_class:
                                 return False
                             data_dic = {}
-                            data_dic['attributes'] = dict(dn=curr_node_dn)
+                            data_dic['attributes'] = dict(dn=curr_node_dn, name= node.split("-", 1)[1])
                             cursor['children'][node] = {
                                 'data': (aci_class, data_dic),
-                                'name': node,
                                 'children': {}
                             }
                     cursor = cursor['children'][node]
