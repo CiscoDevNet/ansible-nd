@@ -32,10 +32,12 @@ options:
     description:
     - The name of the pre-change validation.
     type: str
+    required: yes
   site_name:
     description:
     - Name of the Assurance Entity.
     type: str
+    required: yes
     aliases: [ site ]
 extends_documentation_fragment: cisco.nd.modules
 '''

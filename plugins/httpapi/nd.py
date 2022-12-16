@@ -239,6 +239,9 @@ class HttpApi(HttpApiBase):
         try:
             # create fields for MultipartEncoder
             fields = dict(data=('data.json', data_str, 'application/json'), file=(os.path.basename(file), open(file, 'rb'), mimetypes.guess_type(file)))
+            if not HAS_MULTIPART_ENCODER:
+                self.nd.fail_json(
+                    msg='Cannot use requests_toolbelt MultipartEncoder() because requests_toolbelt module is not available')
             mp_encoder = MultipartEncoder(fields=fields)
             self.headers['Content-Type'] = mp_encoder.content_type
             self.headers['Accept'] = '*/*'

@@ -6,7 +6,12 @@
 
 from __future__ import (absolute_import, division, print_function)
 import json
-from jsonpath_ng import parse
+try:
+    from jsonpath_ng import parse
+    HAS_JSONPATH_NG = True
+except ImportError:
+    HAS_JSONPATH_NG = False
+
 __metaclass__ = type
 
 
@@ -340,7 +345,7 @@ class NDI:
                             if not aci_class:
                                 return False
                             data_dic = {}
-                            data_dic['attributes'] = dict(dn=curr_node_dn, name= node.split("-", 1)[1])
+                            data_dic['attributes'] = dict(dn=curr_node_dn, name=node.split("-", 1)[1])
                             cursor['children'][node] = {
                                 'data': (aci_class, data_dic),
                                 'children': {}
@@ -424,6 +429,9 @@ class NDI:
         for dn, children in cmap.items():
             aci_class = self.get_aci_class(
                 (self.parse_path(dn)[-1]).split("-")[0])
+            if not HAS_JSONPATH_NG:
+                self.nd.fail_json(
+                    msg='Cannot use jsonpath-ng parse() because jsonpath-ng module is not available')
             json_path_expr_search = parse('$..children.[*].{0}'.format(aci_class))
             json_path_expr_update = parse(str([str(match.full_path) for match in json_path_expr_search.find(
                 tree) if match.value['attributes']['dn'] == dn][0]))

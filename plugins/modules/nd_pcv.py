@@ -53,9 +53,10 @@ options:
     type: str
   state:
     description:
-    - Use C(query) for retrieving the version object.
+    - Use C(present) or C(absent) for creating or removing a PCV.
+    - Use C(query) for retrieving the PCV information.
     type: str
-    choices: [ query ]
+    choices: [ query, present, absent ]
     default: query
 extends_documentation_fragment: cisco.nd.modules
 '''
@@ -133,8 +134,10 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
-        required_if=[['state', 'absent', ['name'], ['site_name']],
-                     ['state', 'present', ['name'], ['site_name']]]
+        required_if=[
+            ['state', 'absent', ['name', 'site_name']],
+            ['state', 'present', ['name', 'site_name']]
+        ]
     )
 
     nd = NDModule(module)
