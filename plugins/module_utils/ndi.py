@@ -9,8 +9,8 @@ import json
 from jsonpath_ng import parse
 __metaclass__ = type
 
-class NDI:
 
+class NDI:
 
     def __init__(self, nd_module):
         self.nd = nd_module

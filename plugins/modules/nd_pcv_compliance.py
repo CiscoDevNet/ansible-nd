@@ -90,8 +90,8 @@ def main():
     nd.existing["result_by_requirement"] = ndi.query_msg_with_data(
         insights_group, site_name, "complianceResultsByRequirement?%24epochId={0}&%24sort=-requirementName&%24page=0&%24size=10".
         format(compliance_epoch_id))
-
-
     nd.exit_json()
+
+
 if __name__ == "__main__":
     main()
