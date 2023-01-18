@@ -12,7 +12,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: manual
     manual: |
         [
@@ -35,7 +35,7 @@
     - present_pcv_manual is changed
     - present_pcv_manual.previous == {}
     - present_pcv_manual.current.name == "manual"
-    - present_pcv_manual.current.assuranceEntityName == "prod-fabric"
+    - present_pcv_manual.current.assuranceEntityName == site_name
     - present_pcv_manual.current.analysisScheduleId is defined
     - present_pcv_manual.current.analysisStatus is defined
     - present_pcv_manual.current.baseEpochId is defined
@@ -48,7 +48,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: manual
     state: query
   register: nm_query_pcv
@@ -61,7 +61,7 @@
     that:
     - nm_query_pcv is not changed
     - nm_query_pcv.current.name == "manual"
-    - nm_query_pcv.current.assuranceEntityName == "prod-fabric"
+    - nm_query_pcv.current.assuranceEntityName == site_name
     - nm_query_pcv.current.analysisStatus is defined
     - nm_query_pcv.current.baseEpochId is defined
     - nm_query_pcv.current.imdata is defined
@@ -76,7 +76,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: add_contract
     manual: |
         [
@@ -106,7 +106,7 @@
     - present_contract is changed
     - present_contract.previous == {}
     - present_contract.current.name == "add_contract"
-    - present_contract.current.assuranceEntityName == "prod-fabric"
+    - present_contract.current.assuranceEntityName == site_name
     - present_contract.current.analysisScheduleId is defined
     - present_contract.current.analysisStatus is defined
     - present_contract.current.baseEpochId is defined
@@ -118,7 +118,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: add_contract
     state: wait_and_query
   register: nm_query_add_contract
@@ -128,7 +128,7 @@
     that:
     - nm_query_add_contract is not changed
     - nm_query_add_contract.current.name == "add_contract"
-    - nm_query_add_contract.current.assuranceEntityName == "prod-fabric"
+    - nm_query_add_contract.current.assuranceEntityName == site_name
     - nm_query_add_contract.current.analysisStatus == "COMPLETED"
     - nm_query_add_contract.current.analysisScheduleId is defined
     - nm_query_add_contract.current.baseEpochId is defined
@@ -143,7 +143,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: update_epg
     manual: |
         [
@@ -186,7 +186,7 @@
     - present_epg is changed
     - present_epg.previous == {}
     - present_epg.current.name == "update_epg"
-    - present_epg.current.assuranceEntityName == "prod-fabric"
+    - present_epg.current.assuranceEntityName == site_name
     - present_epg.current.analysisScheduleId is defined
     - present_epg.current.analysisStatus is defined
     - present_epg.current.baseEpochId is defined
@@ -198,7 +198,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: update_epg
     state: query
   register: nm_present_epg
@@ -211,7 +211,7 @@
     that:
     - nm_present_epg is not changed
     - nm_present_epg.current.name == "update_epg"
-    - nm_present_epg.current.assuranceEntityName == "prod-fabric"
+    - nm_present_epg.current.assuranceEntityName == site_name
     - nm_present_epg.current.analysisStatus == "COMPLETED"
     - nm_present_epg.current.baseEpochId is defined
     - nm_present_epg.current.imdata is defined

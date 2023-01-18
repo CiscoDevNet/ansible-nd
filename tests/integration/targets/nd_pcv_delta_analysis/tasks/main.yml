@@ -3,6 +3,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+- name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+  fail:
+    msg: "Please define the following variables: ig_name, site_name."
+  when: ig_name is not defined or site_name is not defined
+
 # CLEAN ENVIRONMENT
 - name: Set vars
   set_fact:
@@ -14,7 +19,7 @@
   nd_pcv_delta_analysis: &nd_query
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: manual
   register: query_pcv_delta_analysis_manual
 
@@ -31,7 +36,7 @@
   nd_pcv_delta_analysis:
     <<: *nd_query
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: pcv_by_file
   register: query_pcv_by_file_delta_analysis
 
@@ -48,7 +53,7 @@
   nd_pcv_delta_analysis:
     <<: *nd_query
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: pcv_by_file
     state: validate
   ignore_errors: yes
@@ -63,7 +68,7 @@
   nd_pcv_delta_analysis:
     <<: *nd_query
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: add_contract
     state: validate
   ignore_errors: yes
@@ -78,7 +83,7 @@
   nd_pcv_delta_analysis:
     <<: *nd_query
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: non_existing
   ignore_errors: yes
   register: query_non_existing
@@ -94,7 +99,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: vrf_with_overlapping_subnets
     state: absent
 
@@ -102,7 +107,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: vrf_with_overlapping_subnets
     file: targets/nd_pcv_delta_analysis/tasks/vrf_with_overlapping_subnets.json
     state: present
@@ -111,7 +116,7 @@
   nd_pcv_delta_analysis:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: vrf_with_overlapping_subnets
   ignore_errors: yes
   register: query_pcv_update_epg_while_running
@@ -120,7 +125,7 @@
   nd_pcv_delta_analysis:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: vrf_with_overlapping_subnets
     state: validate
   ignore_errors: yes

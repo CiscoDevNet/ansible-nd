@@ -12,7 +12,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     file: targets/nd_pcv/tasks/ansible_dump.json
     name: ansible_no_json
     state: present
@@ -24,7 +24,7 @@
     - pcv_no_json is changed
     - pcv_no_json.previous == {}
     - pcv_no_json.current.name == "ansible_no_json"
-    - pcv_no_json.current.assuranceEntityName == "prod-fabric"
+    - pcv_no_json.current.assuranceEntityName == site_name
     - pcv_no_json.current.analysisStatus is defined
     - pcv_no_json.current.analysisScheduleId is defined
     - pcv_no_json.current.baseEpochId is defined
@@ -37,7 +37,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: ansible_no_json
     state: query
   register: nm_query_ansible_no_json
@@ -53,7 +53,7 @@
     that:
     - nm_query_ansible_no_json is not changed
     - nm_query_ansible_no_json.current.name == "ansible_no_json"
-    - nm_query_ansible_no_json.current.assuranceEntityName == "prod-fabric"
+    - nm_query_ansible_no_json.current.assuranceEntityName == site_name
     - nm_query_ansible_no_json.current.analysisStatus == "COMPLETED"
     - nm_query_ansible_no_json.current.analysisScheduleId is defined
     - nm_query_ansible_no_json.current.baseEpochId is defined
@@ -68,7 +68,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     file: targets/nd_pcv/tasks/contract.json
     name: ansible_json
     state: present
@@ -80,7 +80,7 @@
     - pcv_json is changed
     - pcv_json.previous == {}
     - pcv_json.current.name == "ansible_json"
-    - pcv_json.current.assuranceEntityName == "prod-fabric"
+    - pcv_json.current.assuranceEntityName == site_name
     - pcv_json.current.analysisStatus is defined
     - pcv_json.current.analysisScheduleId is defined
     - pcv_json.current.baseEpochId is defined
@@ -92,7 +92,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: ansible_json
     state: query
   register: query_ansible_json_until_running
@@ -104,7 +104,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: ansible_json
     state: absent
   ignore_errors: yes
@@ -120,7 +120,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: ansible_json
     state: query
   register: nm_query_ansible_json
@@ -133,7 +133,7 @@
     that:
     - nm_query_ansible_json is not changed
     - nm_query_ansible_json.current.name == "ansible_json"
-    - nm_query_ansible_json.current.assuranceEntityName == "prod-fabric"
+    - nm_query_ansible_json.current.assuranceEntityName == site_name
     - nm_query_ansible_json.current.analysisStatus == "COMPLETED"
     - nm_query_ansible_json.current.analysisScheduleId is defined
     - nm_query_ansible_json.current.baseEpochId is defined
@@ -148,7 +148,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     file: targets/nd_pcv/tasks/contract_identical.json
     name: ansible_json
     state: present
@@ -163,7 +163,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     file: targets/nd_pcv/tasks/contract.json
     name: ansible_json_diff_name
     state: present
@@ -175,7 +175,7 @@
     - pcv_json_diff_name is changed
     - pcv_json_diff_name.previous == {}
     - pcv_json_diff_name.current.name == "ansible_json_diff_name"
-    - pcv_json_diff_name.current.assuranceEntityName == "prod-fabric"
+    - pcv_json_diff_name.current.assuranceEntityName == site_name
     - pcv_json_diff_name.current.analysisStatus is defined
     - pcv_json_diff_name.current.analysisScheduleId is defined
     - pcv_json_diff_name.current.baseEpochId is defined
@@ -187,7 +187,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     file: targets/nd_pcv/tasks/contract.json
     name: ansible_json
     state: present
@@ -199,7 +199,7 @@
     - pcv_json_again is not changed
     - pcv_json_again.previous is defined
     - pcv_json_again.current.name == "ansible_json"
-    - pcv_json_again.current.assuranceEntityName == "prod-fabric"
+    - pcv_json_again.current.assuranceEntityName == site_name
     - pcv_json_again.current.analysisStatus is defined
     - pcv_json_again.current.analysisScheduleId is defined
     - pcv_json_again.current.baseEpochId is defined
@@ -211,7 +211,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: ansible_json_diff_name
     state: query
   register: nm_query_ansible_json_diff_name
@@ -224,7 +224,7 @@
     that:
     - nm_query_ansible_json_diff_name is not changed
     - nm_query_ansible_json_diff_name.current.name == "ansible_json_diff_name"
-    - nm_query_ansible_json_diff_name.current.assuranceEntityName == "prod-fabric"
+    - nm_query_ansible_json_diff_name.current.assuranceEntityName == site_name
     - nm_query_ansible_json_diff_name.current.analysisStatus == "COMPLETED"
     - nm_query_ansible_json_diff_name.current.analysisScheduleId is defined
     - nm_query_ansible_json_diff_name.current.baseEpochId is defined
@@ -239,7 +239,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     file: targets/nd_pcv/tasks/tenant_delete_dump.json
     name: ansible_tenant_delete
     state: present
@@ -251,7 +251,7 @@
     - pcv_tenant_delete is changed
     - pcv_tenant_delete.previous == {}
     - pcv_tenant_delete.current.name == "ansible_tenant_delete"
-    - pcv_tenant_delete.current.assuranceEntityName == "prod-fabric"
+    - pcv_tenant_delete.current.assuranceEntityName == site_name
     - pcv_tenant_delete.current.analysisStatus is defined
     - pcv_tenant_delete.current.analysisScheduleId is defined
     - pcv_tenant_delete.current.baseEpochId is defined
@@ -263,7 +263,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: ansible_tenant_delete
     state: query
   register: nm_query_pcv_tenant_delete
@@ -276,7 +276,7 @@
     that:
     - nm_query_pcv_tenant_delete is not changed
     - nm_query_pcv_tenant_delete.current.name == "ansible_tenant_delete"
-    - nm_query_pcv_tenant_delete.current.assuranceEntityName == "prod-fabric"
+    - nm_query_pcv_tenant_delete.current.assuranceEntityName == site_name
     - nm_query_pcv_tenant_delete.current.analysisStatus == "COMPLETED"
     - nm_query_pcv_tenant_delete.current.analysisScheduleId is defined
     - nm_query_pcv_tenant_delete.current.baseEpochId is defined
@@ -291,7 +291,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: pcv_by_file
     file: targets/nd_pcv/tasks/out-ospf-to-l2vrf.json
     state: present
@@ -303,7 +303,7 @@
     - present_pcv is changed
     - present_pcv.previous == {}
     - present_pcv.current.name == "pcv_by_file"
-    - present_pcv.current.assuranceEntityName == "prod-fabric"
+    - present_pcv.current.assuranceEntityName == site_name
     - present_pcv.current.analysisStatus is defined
     - present_pcv.current.analysisScheduleId is defined
     - present_pcv.current.baseEpochId is defined
@@ -315,7 +315,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: pcv_by_file
     state: query
   register: nm_query_present_pcv
@@ -327,7 +327,7 @@
   assert:
     that:
     - nm_query_present_pcv.current.name == "pcv_by_file"
-    - nm_query_present_pcv.current.assuranceEntityName == "prod-fabric"
+    - nm_query_present_pcv.current.assuranceEntityName == site_name
     - nm_query_present_pcv.current.uploadedFileName is defined
     - nm_query_present_pcv.current.analysisStatus == "COMPLETED"
     - nm_query_present_pcv.current.jobId is defined
@@ -343,7 +343,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: pcv_non_existing
     file: /root/ansible/ansible_collections/cisco/nd/tests/integration/targets/nd_pcv/tasks/non-existing.json
     state: present
@@ -354,7 +354,7 @@
   cisco.nd.nd_pcv: &nd_query
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: pcv_by_file
     state: query
   register: nm_query_pcv_file
@@ -363,7 +363,7 @@
   assert:
     that:
     - nm_query_pcv_file.current.name == "pcv_by_file"
-    - nm_query_pcv_file.current.assuranceEntityName == "prod-fabric"
+    - nm_query_pcv_file.current.assuranceEntityName == site_name
     - nm_query_pcv_file.current.uploadedFileName is defined
     - nm_query_pcv_file.current.analysisStatus is defined
     - nm_query_pcv_file.current.jobId is defined
@@ -387,7 +387,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: ansible_json
     state: absent
   check_mode: yes
@@ -397,7 +397,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: ansible_json
     state: absent
   register: nm_pcv_absent
@@ -406,7 +406,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: ansible_json
     state: absent
   register: pcv_absent_again
@@ -428,7 +428,7 @@
   cisco.nd.nd_pcv:
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: pcv_without_file_or_manual
     state: present
   ignore_errors: yes
