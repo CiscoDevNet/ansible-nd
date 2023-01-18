@@ -25,6 +25,9 @@ class NDI:
         self.event_insight_group_path = "events/insightsGroup/{0}/fabric/{1}"
         self.compliance_path = "model/aciPolicy/complianceAnalysis"
         self.epoch_delta_ig_path = "epochDelta/insightsGroup/{0}/fabric/{1}/job/{2}/health/view"
+        self.run_analysis_ig_path = "{0}/fabric/{1}/runOnlineAnalysis"
+        self.run_epoch_delta_ig_path = "{0}/fabric/{1}/runEpochDelta"
+        self.jobs_ig_path = "jobs/summary.json"
 
     def get_site_id(self, ig_name, site_name, **kwargs):
         obj = self.nd.query_obj(self.config_ig_path, **kwargs)
@@ -47,6 +50,12 @@ class NDI:
     def get_last_epoch(self, ig_name, site_name):
         ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
         path = "{0}/epochs?$size=1&$status=FINISHED&%24epochType=ONLINE%2C+OFFLINE&%24sort=-collectionTime%2C-analysisStartTime".format(ig_base_path)
+        obj = self.nd.query_obj(path, prefix=self.prefix)
+        return obj["value"]["data"][0]
+
+    def get_epoch_by_jobid(self, ig_name, site_name, job_id):
+        ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
+        path = "{0}/epochs?analysisId={1}".format(ig_base_path, job_id)
         obj = self.nd.query_obj(path, prefix=self.prefix)
         return obj["value"]["data"][0]
 
@@ -96,6 +105,62 @@ class NDI:
                 else:
                     result.append(entry)
         return result
+
+    def query_instant_assurance_analysis(self, ig_name, site_name, jobId=None):
+        instant_assurance_jobs_path = (
+            self.jobs_ig_path
+            + "?insightsGroupName={0}&fabricName={1}&orderBy=startTs,desc&filter=(jobType:ONLINE\\-ANALYSIS*%20AND%20triggeredBy:INSTANT)&startTs={2}".format(
+                ig_name, site_name, 0
+            )
+        )
+        if jobId:
+            instant_assurance_jobs_path = instant_assurance_jobs_path + "&jobId={0}".format(jobId)
+
+        size = 1000
+        path = instant_assurance_jobs_path
+        # + "&count={0}&offset={1}" does not work with current implementation of query_entry
+
+        entries = self.query_entry(path, size)
+        return entries
+
+    def query_delta_analysis(self, ig_name, site_name, jobId=None, jobName=None):
+        if jobId:
+            delta_job_path = (
+                self.jobs_ig_path
+                + "?jobType=EPOCH-DELTA-ANALYSIS&insightsGroupName={0}&fabricName={1}&filter=(!configData:pcvJobId%20AND%20jobId:{2})".format(
+                    ig_name, site_name, jobId
+                )
+            )
+            entries = self.query_entry(delta_job_path, 1)
+            if len(entries) == 1:
+                return entries[0]
+            else:
+                return {}
+        elif jobName:
+            delta_job_path = (
+                self.jobs_ig_path
+                + "?jobType=EPOCH-DELTA-ANALYSIS&insightsGroupName={0}&fabricName={1}&filter=(!configData:pcvJobId%20AND%20jobName:{2})".format(
+                    ig_name, site_name, jobName
+                )
+            )
+            entries = self.query_entry(delta_job_path, 1)
+            if len(entries) == 1:
+                return entries[0]
+            else:
+                return {}
+        else:
+            delta_jobs_path = (
+                self.jobs_ig_path
+                + "?jobType=EPOCH-DELTA-ANALYSIS&insightsGroupName={0}&fabricName={1}&filter=(!configData:pcvJobId)&orderBy=startTs,desc&startTs={2}".format(
+                    ig_name, site_name, 0
+                )
+            )
+            size = 1000
+            path = delta_jobs_path
+            # + "&count={0}&offset={1}" does not work with current implementation of query_entry
+
+            entries = self.query_entry(path, size)
+            return entries
 
     def format_event_severity(self, events_severity):
         result = {}

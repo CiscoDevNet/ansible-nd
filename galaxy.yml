@@ -5,22 +5,24 @@ name: nd
 version: 0.1.2
 readme: README.md
 authors:
-- Lionel Hercot (@lhercot)
+  - "Lionel Hercot (@lhercot)"
+  - "Cindy Zhao (@cizhao)"
+  - "Alejandro de Alda (@adealdag)"
 description: An Ansible collection for managing Cisco Nexus Dashboard
-license_file: 'LICENSE'
-tags: 
-- cisco
-- nd
-- aci
-- dcnm
-- orchestrator
-- multisite
-- insights
-- nexus
-- cloud
-- collection
-- networking
-- sdn
+license_file: "LICENSE"
+tags:
+  - cisco
+  - nd
+  - aci
+  - dcnm
+  - orchestrator
+  - multisite
+  - insights
+  - nexus
+  - cloud
+  - collection
+  - networking
+  - sdn
 dependencies:
   "ansible.netcommon": "*"
 repository: https://github.com/CiscoDevNet/ansible-nd

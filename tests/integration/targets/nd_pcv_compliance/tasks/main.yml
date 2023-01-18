@@ -3,6 +3,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+- name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+  fail:
+    msg: "Please define the following variables: ig_name, site_name."
+  when: ig_name is not defined or site_name is not defined
+
 # CLEAN ENVIRONMENT
 - name: Set vars
   set_fact:
@@ -14,7 +19,7 @@
   nd_pcv_compliance: &nd_query
     <<: *nd_info
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: manual
   register: query_manual_pcv
 
@@ -33,7 +38,7 @@
   nd_pcv_compliance:
     <<: *nd_query
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: pcv_by_file
   register: query_pcv_by_file
 
@@ -52,7 +57,7 @@
   nd_pcv_compliance:
     <<: *nd_query
     ig_name: '{{ ig_name }}'
-    site_name: prod-fabric
+    site_name: "{{ site_name }}"
     name: non_existing
   ignore_errors: yes
   register: query_non_existing

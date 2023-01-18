@@ -1,0 +1,118 @@
+# Test code for the ND modules
+# Copyright: (c) 2023, Alejandro de Alda (@adealdag) <adealdag@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+  fail:
+    msg: "Please define the following variables: ig_name, site_name."
+  when: ig_name is not defined or site_name is not defined
+
+# CLEAN ENVIRONMENT
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("info") }}'
+
+# TRIGGER INSTANT ASSURANCE ANALYSIS
+- name: Trigger instant assurance analysis job
+  cisco.nd.nd_instant_assurance_analysis:
+    <<: *nd_info
+    insights_group: "{{ ig_name }}"
+    site_name: "{{ site_name }}"
+    state: present
+  register: instant_analysis_triggered
+
+# WAIT AND LOOP UNTIL INSTANT ANALYSIS IS COMPLETED
+- name: Wait until instant assurance analysis is completed
+  cisco.nd.nd_instant_assurance_analysis:
+    <<: *nd_info
+    insights_group: "{{ ig_name }}"
+    site_name: "{{ site_name }}"
+    job_id: "{{ instant_analysis_triggered.current.jobId }}"
+    state: query
+  register: instant_analysis_info
+  until: instant_analysis_info.current.operSt == "COMPLETE"
+  retries: 200
+  delay: 6
+
+- name: Verify instant_analysis_info
+  assert:
+    that:
+      - instant_analysis_info.current.operSt == "COMPLETE"
+      - instant_analysis_info.current.epochInfo is defined
+      - instant_analysis_info.current.epochInfo.epochId is defined
+
+# QUERY LIST OF INSTANT ANALYSIS
+- name: Get history of instant assurance analysis
+  cisco.nd.nd_instant_assurance_analysis:
+    <<: *nd_info
+    insights_group: "{{ ig_name }}"
+    site_name: "{{ site_name }}"
+    state: query
+  register: instant_analysis_history
+
+# QUERY USING ALIASES
+- name: Get history of instant assurance analysis using aliases
+  cisco.nd.nd_instant_assurance_analysis:
+    <<: *nd_info
+    ig_name: "{{ ig_name }}"
+    site: "{{ site_name }}"
+    state: query
+  register: instant_analysis_history_aliases
+
+- name: Verify instant_analysis_info
+  assert:
+    that:
+      - instant_analysis_history.current[0].operSt == "COMPLETE"
+      - instant_analysis_history_aliases.current[0].operSt == "COMPLETE"
+      - instant_analysis_history.current == instant_analysis_history_aliases.current
+
+# USE INVALID STATE OPTION
+- name: Test invalid state option
+  cisco.nd.nd_instant_assurance_analysis:
+    <<: *nd_info
+    insights_group: "{{ ig_name }}"
+    site_name: "{{ site_name }}"
+    state: absent
+  ignore_errors: true
+  register: invalid_state
+
+# MISSING REQUIRED PARAMETERS
+- name: Test failure when missing insights_group
+  cisco.nd.nd_instant_assurance_analysis:
+    <<: *nd_info
+    site_name: "{{ site_name }}"
+    state: present
+  ignore_errors: true
+  register: missing_insights_group
+
+- name: Test failure when missing site_name
+  cisco.nd.nd_instant_assurance_analysis:
+    <<: *nd_info
+    insights_group: "{{ ig_name }}"
+    state: present
+  ignore_errors: true
+  register: missing_site_name
+
+- name: Verify instant_analysis_info
+  assert:
+    that:
+      - invalid_state.msg == "value of state must be one of{{':'}} query, present, got{{':'}} absent"
+      - missing_insights_group.msg == "missing required arguments{{':'}} insights_group"
+      - missing_site_name.msg == "missing required arguments{{':'}} site_name"
+
+# CHECK MODE
+- name: Test Check Mode
+  cisco.nd.nd_instant_assurance_analysis:
+    <<: *nd_info
+    insights_group: "{{ ig_name }}"
+    site_name: "{{ site_name }}"
+    state: present
+  check_mode: true
+  register: instant_analysis_info
+
+- name: Verify instant_analysis_info
+  assert:
+    that:
+      - instant_analysis_info.msg == "remote module (cisco.nd.nd_instant_assurance_analysis) does not support check mode"
