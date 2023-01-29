@@ -3,13 +3,14 @@
 # Copyright: (c) 2018, Dag Wieers (@dagwieers) <dag@wieers.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import (absolute_import, division, print_function)
+from __future__ import absolute_import, division, print_function
+
 __metaclass__ = type
 
 
 class ModuleDocFragment(object):
     # Standard files documentation fragment
-    DOCUMENTATION = r'''
+    DOCUMENTATION = r"""
 options:
   host:
     description:
@@ -77,4 +78,4 @@ requirements:
 notes:
 - Please read the :ref:`nd_guide` for more detailed information on how to manage your ND infrastructure using Ansible.
 - This module was written to support Nexus Dashboard v2.0 or newer. Some or all functionality may not work on earlier versions.
-'''
+"""

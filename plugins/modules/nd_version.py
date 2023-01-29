@@ -5,13 +5,12 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
+
 __metaclass__ = type
 
-ANSIBLE_METADATA = {'metadata_version': '1.1',
-                    'status': ['preview'],
-                    'supported_by': 'community'}
+ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
-DOCUMENTATION = r'''
+DOCUMENTATION = r"""
 ---
 module: nd_version
 version_added: "0.0.1"
@@ -28,9 +27,9 @@ options:
     choices: [ query ]
     default: query
 extends_documentation_fragment: cisco.nd.modules
-'''
+"""
 
-EXAMPLES = r'''
+EXAMPLES = r"""
 - name: Get Nexus Dahsboard version
   cisco.nd.nd_version:
     host: nd_host
@@ -39,10 +38,10 @@ EXAMPLES = r'''
     state: query
   delegate_to: localhost
   register: query_result
-'''
+"""
 
-RETURN = r'''
-'''
+RETURN = r"""
+"""
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
@@ -50,18 +49,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_ar
 
 def main():
     argument_spec = nd_argument_spec()
-    argument_spec.update(
-        state=dict(type='str', default='query', choices=['query'])
-    )
+    argument_spec.update(state=dict(type="str", default="query", choices=["query"]))
 
-    module = AnsibleModule(
-        argument_spec=argument_spec,
-        supports_check_mode=True
-    )
+    module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
 
     nd = NDModule(module)
 
-    path = '/version.json'
+    path = "/version.json"
 
     # Query for nd.existing object
     nd.existing = nd.query_obj(path)

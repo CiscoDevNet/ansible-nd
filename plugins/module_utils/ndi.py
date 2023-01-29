@@ -4,10 +4,12 @@
 # Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
 # Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)
 
-from __future__ import (absolute_import, division, print_function)
+from __future__ import absolute_import, division, print_function
 import json
+
 try:
     from jsonpath_ng import parse
+
     HAS_JSONPATH_NG = True
 except ImportError:
     HAS_JSONPATH_NG = False
@@ -16,7 +18,6 @@ __metaclass__ = type
 
 
 class NDI:
-
     def __init__(self, nd_module):
         self.nd = nd_module
         self.cmap = {}
@@ -28,31 +29,31 @@ class NDI:
 
     def get_site_id(self, ig_name, site_name, **kwargs):
         obj = self.nd.query_obj(self.config_ig_path, **kwargs)
-        for insights_group in obj['value']['data']:
-            if ig_name == insights_group['name']:
-                for site in insights_group['assuranceEntities']:
-                    if site['name'] == site_name:
-                        return site['uuid']
+        for insights_group in obj["value"]["data"]:
+            if ig_name == insights_group["name"]:
+                for site in insights_group["assuranceEntities"]:
+                    if site["name"] == site_name:
+                        return site["uuid"]
 
     def get_pre_change_result(self, pcv_results, name, site_id, path, **kwargs):
         pcv_result = {}
         for pcv in pcv_results:
             if pcv.get("name") == name and pcv.get("fabricUuid") == site_id:
                 pcv_job_id = pcv.get("jobId")
-                pcv_path = '{0}/{1}'.format(path, pcv_job_id)
+                pcv_path = "{0}/{1}".format(path, pcv_job_id)
                 obj = self.nd.query_obj(pcv_path, **kwargs)
-                pcv_result = obj['value']['data']
+                pcv_result = obj["value"]["data"]
         return pcv_result
 
     def get_epochs(self, ig_name, site_name):
         ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
-        path = '{0}/epochs?$size=1&$status=FINISHED&%24epochType=ONLINE%2C+OFFLINE&%24sort=-collectionTime%2C-analysisStartTime'.format(ig_base_path)
+        path = "{0}/epochs?$size=1&$status=FINISHED&%24epochType=ONLINE%2C+OFFLINE&%24sort=-collectionTime%2C-analysisStartTime".format(ig_base_path)
         obj = self.nd.query_obj(path, prefix=self.prefix)
-        return obj['value']['data'][0]
+        return obj["value"]["data"][0]
 
     def query_data(self, path):
         obj = self.nd.query_obj(path, prefix=self.prefix)
-        return obj['value']['data']
+        return obj["value"]["data"]
 
     def query_compliance_score(self, ig_name, site_name, compliance_epoch_id):
         ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
@@ -66,7 +67,7 @@ class NDI:
 
     def query_entry(self, path, size):
         obj = self.nd.query_obj(path.format(size, 0), prefix=self.prefix)
-        entries = obj.get('entries')
+        entries = obj.get("entries")
         if entries is None or len(entries) == 0:
             return []
         else:
@@ -77,7 +78,7 @@ class NDI:
                 pages += 1
             for page in range(1, pages):
                 obj = self.nd.query_obj(path.format(size, page), prefix=self.prefix)
-                entries += obj.get('entries')
+                entries += obj.get("entries")
             return entries
 
     def query_anomalies(self, ig_name, site_name, epoch_delta_job_id, epoch_choice):
@@ -92,7 +93,7 @@ class NDI:
     def format_event_severity(self, events_severity):
         result = {}
         for each in events_severity:
-            event_severity_type = each.get("bucket").lower().split('_')[-1]
+            event_severity_type = each.get("bucket").lower().split("_")[-1]
             result[event_severity_type] = {}
             for output in each.get("output"):
                 epoch = output.get("bucket").lower()
@@ -172,15 +173,15 @@ class NDI:
         return result
 
     def query_pcvs(self, ig_name):
-        pcvs_path = '{0}/{1}/prechangeAnalysis?$sort=-analysisSubmissionTime'.format(self.config_ig_path, ig_name)
+        pcvs_path = "{0}/{1}/prechangeAnalysis?$sort=-analysisSubmissionTime".format(self.config_ig_path, ig_name)
         obj = self.nd.query_obj(pcvs_path, prefix=self.prefix)
-        return obj['value']['data']
+        return obj["value"]["data"]
 
     def query_pcv(self, ig_name, site_name, pcv_name):
         pcv_results = self.query_pcvs(ig_name)
         if pcv_name is not None and site_name is not None:
             site_id = self.get_site_id(ig_name, site_name, prefix=self.prefix)
-            pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis'.format(self.config_ig_path, ig_name, site_name)
+            pcv_path = "{0}/{1}/fabric/{2}/prechangeAnalysis".format(self.config_ig_path, ig_name, site_name)
             pcv_result = self.get_pre_change_result(pcv_results, pcv_name, site_id, pcv_path, prefix=self.prefix)
         else:
             self.nd.fail_json(msg="site name and prechange validation job name are required")
@@ -210,13 +211,13 @@ class NDI:
 
                 if c == '"':
                     in_str = not in_str
-                elif c == '[':
+                elif c == "[":
                     if not in_str:
                         depth += 1
-                elif c == ']':
+                elif c == "]":
                     if not in_str:
                         depth -= 1
-                elif c == '\\':
+                elif c == "\\":
                     buffer += c[i + 1]
                     i += 1
 
@@ -312,47 +313,39 @@ class NDI:
           - z (data of /z)
         __root__ is a predefined name, you could replace this with a flag root:True/False
         """
-        tree = {'data': None, 'name': '__root__', 'children': {}}
+        tree = {"data": None, "name": "__root__", "children": {}}
 
         for item in item_list:
             for nm, desc in item.items():
-                if 'attributes' not in desc:
+                if "attributes" not in desc:
                     raise AssertionError("attributes not in desc")
-                attr = desc.get('attributes')
-                if 'dn' not in attr:
+                attr = desc.get("attributes")
+                if "dn" not in attr:
                     raise AssertionError("dn not in desc")
-                if 'children' in desc:
-                    existing_children = desc.get('children')
-                    self.cmap[attr['dn']] = existing_children
-                path = self.parse_path(attr['dn'])
+                if "children" in desc:
+                    existing_children = desc.get("children")
+                    self.cmap[attr["dn"]] = existing_children
+                path = self.parse_path(attr["dn"])
                 cursor = tree
                 curr_node_dn = ""
                 for node in path:
                     curr_node_dn += "/" + str(node)
                     if curr_node_dn[0] == "/":
                         curr_node_dn = curr_node_dn[1:]
-                    if node not in cursor['children']:
-                        if node == 'uni':
-                            cursor['children'][node] = {
-                                'data': None,
-                                'name': node,
-                                'children': {}
-                            }
+                    if node not in cursor["children"]:
+                        if node == "uni":
+                            cursor["children"][node] = {"data": None, "name": node, "children": {}}
                         else:
                             aci_class_identifier = node.split("-")[0]
-                            aci_class = self.get_aci_class(
-                                aci_class_identifier)
+                            aci_class = self.get_aci_class(aci_class_identifier)
                             if not aci_class:
                                 return False
                             data_dic = {}
-                            data_dic['attributes'] = dict(dn=curr_node_dn, name=node.split("-", 1)[1])
-                            cursor['children'][node] = {
-                                'data': (aci_class, data_dic),
-                                'children': {}
-                            }
-                    cursor = cursor['children'][node]
-                cursor['data'] = (nm, desc)
-                cursor['name'] = path[-1]
+                            data_dic["attributes"] = dict(dn=curr_node_dn, name=node.split("-", 1)[1])
+                            cursor["children"][node] = {"data": (aci_class, data_dic), "children": {}}
+                    cursor = cursor["children"][node]
+                cursor["data"] = (nm, desc)
+                cursor["name"] = path[-1]
 
         return tree
 
@@ -366,12 +359,12 @@ class NDI:
         buffer = ""
         i = 0
         while i < len(dn):
-            if dn[i] == '[':
-                while i < len(dn) and dn[i] != ']':
+            if dn[i] == "[":
+                while i < len(dn) and dn[i] != "]":
                     buffer += dn[i]
                     i += 1
 
-            if dn[i] == '/':
+            if dn[i] == "/":
                 path.append(buffer)
                 buffer = ""
             else:
@@ -396,11 +389,11 @@ class NDI:
           - z (data of /z)s
         This function will return [__root__, a, c]
         """
-        if tree['data'] is not None:
+        if tree["data"] is not None:
             return [tree]
 
         roots = []
-        for child in tree['children'].values():
+        for child in tree["children"].values():
             roots += self.find_tree_roots(child)
 
         return roots
@@ -409,50 +402,44 @@ class NDI:
         """
         Exports the constructed tree to a hierarchial json representation. (equal to tn-ansible, except for ordering)
         """
-        tree_data = {
-            'attributes': tree['data'][1]['attributes']
-        }
+        tree_data = {"attributes": tree["data"][1]["attributes"]}
         children = []
-        for child in tree['children'].values():
+        for child in tree["children"].values():
             children.append(self.export_tree(child))
 
         if len(children) > 0:
-            tree_data['children'] = children
+            tree_data["children"] = children
 
-        return {tree['data'][0]: tree_data}
+        return {tree["data"][0]: tree_data}
 
     def copy_children(self, tree):
-        '''
+        """
         Copies existing children objects to the built tree
-        '''
+        """
         cmap = self.cmap
         for dn, children in cmap.items():
-            aci_class = self.get_aci_class(
-                (self.parse_path(dn)[-1]).split("-")[0])
+            aci_class = self.get_aci_class((self.parse_path(dn)[-1]).split("-")[0])
             if not HAS_JSONPATH_NG:
-                self.nd.fail_json(
-                    msg='Cannot use jsonpath-ng parse() because jsonpath-ng module is not available')
-            json_path_expr_search = parse('$..children.[*].{0}'.format(aci_class))
-            json_path_expr_update = parse(str([str(match.full_path) for match in json_path_expr_search.find(
-                tree) if match.value['attributes']['dn'] == dn][0]))
-            curr_obj = [
-                match.value for match in json_path_expr_update.find(tree)][0]
-            if 'children' in curr_obj:
+                self.nd.fail_json(msg="Cannot use jsonpath-ng parse() because jsonpath-ng module is not available")
+            json_path_expr_search = parse("$..children.[*].{0}".format(aci_class))
+            json_path_expr_update = parse(
+                str([str(match.full_path) for match in json_path_expr_search.find(tree) if match.value["attributes"]["dn"] == dn][0])
+            )
+            curr_obj = [match.value for match in json_path_expr_update.find(tree)][0]
+            if "children" in curr_obj:
                 for child in children:
-                    curr_obj['children'].append(child)
-            elif 'children' not in curr_obj:
-                curr_obj['children'] = []
+                    curr_obj["children"].append(child)
+            elif "children" not in curr_obj:
+                curr_obj["children"] = []
                 for child in children:
-                    curr_obj['children'].append(child)
+                    curr_obj["children"].append(child)
             json_path_expr_update.update(curr_obj, tree)
 
         return
 
     def create_structured_data(self, tree, file):
         if tree is False:
-            self.module.fail_json(
-                msg="Error parsing input file, unsupported object found in hierarchy.",
-                **self.result)
+            self.module.fail_json(msg="Error parsing input file, unsupported object found in hierarchy.", **self.result)
         tree_roots = self.find_tree_roots(tree)
         ansible_ds = {}
         for root in tree_roots:
@@ -461,8 +448,8 @@ class NDI:
                 ansible_ds[key] = val
         self.copy_children(ansible_ds)
         toplevel = {"totalCount": "1", "imdata": []}
-        toplevel['imdata'].append(ansible_ds)
-        with open(file, 'w') as f:
+        toplevel["imdata"].append(ansible_ds)
+        with open(file, "w") as f:
             json.dump(toplevel, f)
         self.cmap = {}
         f.close()

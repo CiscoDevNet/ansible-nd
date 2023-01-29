@@ -9,11 +9,9 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-ANSIBLE_METADATA = {'metadata_version': '1.1',
-                    'status': ['preview'],
-                    'supported_by': 'community'}
+ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
-DOCUMENTATION = r'''
+DOCUMENTATION = r"""
 ---
 module: nd_pcv
 version_added: "0.2.0"
@@ -59,9 +57,9 @@ options:
     choices: [ query, present, absent ]
     default: query
 extends_documentation_fragment: cisco.nd.modules
-'''
+"""
 
-EXAMPLES = r'''
+EXAMPLES = r"""
 - name: Get prechange validation jobs' status
   cisco.nd.nd_pcv:
     insights_group: exampleIG
@@ -106,10 +104,10 @@ EXAMPLES = r'''
     site_name: siteName
     name: demoName
     state: absent
-'''
+"""
 
-RETURN = r'''
-'''
+RETURN = r"""
+"""
 
 import json
 import os
@@ -122,22 +120,19 @@ from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type='str', required=True, aliases=["fab_name", "ig_name"]),
-        name=dict(type='str'),
-        description=dict(type='str', aliases=["descr"]),
-        site_name=dict(type='str', aliases=["site"]),
-        file=dict(type='str'),
-        manual=dict(type='str'),
-        state=dict(type='str', default='query', choices=['query', 'absent', 'present']),
+        insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
+        name=dict(type="str"),
+        description=dict(type="str", aliases=["descr"]),
+        site_name=dict(type="str", aliases=["site"]),
+        file=dict(type="str"),
+        manual=dict(type="str"),
+        state=dict(type="str", default="query", choices=["query", "absent", "present"]),
     )
 
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
-        required_if=[
-            ['state', 'absent', ['name', 'site_name']],
-            ['state', 'present', ['name', 'site_name']]
-        ]
+        required_if=[["state", "absent", ["name", "site_name"]], ["state", "present", ["name", "site_name"]]],
     )
 
     nd = NDModule(module)
@@ -145,34 +140,34 @@ def main():
 
     state = nd.params.get("state")
     name = nd.params.get("name")
-    site_name = nd.params.get('site_name')
-    insights_group = nd.params.get('insights_group')
-    description = nd.params.get('description')
-    file = nd.params.get('file')
-    manual = nd.params.get('manual')
+    site_name = nd.params.get("site_name")
+    insights_group = nd.params.get("insights_group")
+    description = nd.params.get("description")
+    file = nd.params.get("file")
+    manual = nd.params.get("manual")
 
-    path = 'config/insightsGroup'
+    path = "config/insightsGroup"
     if name is None:
         nd.existing = ndi.query_pcvs(insights_group)
     elif site_name is not None:
         nd.existing = ndi.query_pcv(insights_group, site_name, name)
 
-    if state == 'absent':
+    if state == "absent":
         nd.previous = nd.existing
-        job_id = nd.existing.get('jobId')
+        job_id = nd.existing.get("jobId")
         if nd.existing and job_id:
             if module.check_mode:
                 nd.existing = {}
             else:
-                rm_path = '{0}/{1}/prechangeAnalysis/jobs'.format(path, insights_group)
+                rm_path = "{0}/{1}/prechangeAnalysis/jobs".format(path, insights_group)
                 rm_payload = [job_id]
-                rm_resp = nd.request(rm_path, method='POST', data=rm_payload, prefix=ndi.prefix)
+                rm_resp = nd.request(rm_path, method="POST", data=rm_payload, prefix=ndi.prefix)
                 if rm_resp["success"] is True:
                     nd.existing = {}
                 else:
                     nd.fail_json(msg="Pre-change validation {0} is not able to be deleted".format(name))
 
-    elif state == 'present':
+    elif state == "present":
         nd.previous = nd.existing
         base_epoch_data = ndi.get_epochs(insights_group, site_name)
 
@@ -198,14 +193,14 @@ def main():
                 ndi.cmap = {}
                 tree = ndi.construct_tree(extract_data)
                 ndi.create_structured_data(tree, file)
-            create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges'.format(path, insights_group, site_name)
-            file_resp = nd.request(create_pcv_path, method='POST', file=os.path.abspath(file), data=data, prefix=ndi.prefix)
+            create_pcv_path = "{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges".format(path, insights_group, site_name)
+            file_resp = nd.request(create_pcv_path, method="POST", file=os.path.abspath(file), data=data, prefix=ndi.prefix)
             if file_resp.get("success") is True:
                 nd.existing = file_resp.get("value")["data"]
         elif manual:
             data["imdata"] = json.loads(manual)
-            create_pcv_path = '{0}/{1}/fabric/{2}/prechangeAnalysis/manualChanges?action=RUN'.format(path, insights_group, site_name)
-            manual_resp = nd.request(create_pcv_path, method='POST', data=data, prefix=ndi.prefix)
+            create_pcv_path = "{0}/{1}/fabric/{2}/prechangeAnalysis/manualChanges?action=RUN".format(path, insights_group, site_name)
+            manual_resp = nd.request(create_pcv_path, method="POST", data=data, prefix=ndi.prefix)
             if manual_resp.get("success") is True:
                 nd.existing = manual_resp.get("value")["data"]
         else:

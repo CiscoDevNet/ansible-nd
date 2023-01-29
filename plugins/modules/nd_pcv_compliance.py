@@ -6,13 +6,12 @@
 # Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)
 
 from __future__ import absolute_import, division, print_function
+
 __metaclass__ = type
 
-ANSIBLE_METADATA = {'metadata_version': '1.1',
-                    'status': ['preview'],
-                    'supported_by': 'community'}
+ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
-DOCUMENTATION = r'''
+DOCUMENTATION = r"""
 ---
 module: nd_pcv_compliance
 version_added: "0.2.0"
@@ -40,19 +39,19 @@ options:
     required: yes
     aliases: [ site ]
 extends_documentation_fragment: cisco.nd.modules
-'''
+"""
 
-EXAMPLES = r'''
+EXAMPLES = r"""
 - name: Get prechange validation compliance result
   cisco.nd.nd_pcv_compliance:
     insights_group: exampleIG
     site_name: exampleSite
     name: exampleName
   register: query_results
-'''
+"""
 
-RETURN = r'''
-'''
+RETURN = r"""
+"""
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
@@ -62,9 +61,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type='str', required=True, aliases=["fab_name", "ig_name"]),
-        name=dict(type='str', required=True),
-        site_name=dict(type='str', required=True, aliases=["site"]),
+        insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
+        name=dict(type="str", required=True),
+        site_name=dict(type="str", required=True, aliases=["site"]),
     )
 
     module = AnsibleModule(
@@ -76,8 +75,8 @@ def main():
     ndi = NDI(nd)
 
     name = nd.params.get("name")
-    site_name = nd.params.get('site_name')
-    insights_group = nd.params.get('insights_group')
+    site_name = nd.params.get("site_name")
+    insights_group = nd.params.get("insights_group")
 
     pcv_result = ndi.query_pcv(insights_group, site_name, name)
     pcv_status = pcv_result.get("analysisStatus")
@@ -90,8 +89,8 @@ def main():
     nd.existing["compliance_score"] = ndi.query_compliance_score(insights_group, site_name, compliance_epoch_id)
     nd.existing["count"] = ndi.query_compliance_count(insights_group, site_name, compliance_epoch_id)
     nd.existing["result_by_requirement"] = ndi.query_msg_with_data(
-        insights_group, site_name, "complianceResultsByRequirement?%24epochId={0}&%24sort=-requirementName&%24page=0&%24size=10".
-        format(compliance_epoch_id))
+        insights_group, site_name, "complianceResultsByRequirement?%24epochId={0}&%24sort=-requirementName&%24page=0&%24size=10".format(compliance_epoch_id)
+    )
     nd.exit_json()
 
 
