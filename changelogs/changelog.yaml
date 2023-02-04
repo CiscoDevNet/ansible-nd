@@ -21,3 +21,34 @@ releases:
       - Remove empty sanity ignore files
       release_summary: New release v0.1.2
     release_date: '2021-12-09'
+  0.2.0:
+    changes:
+      bugfixes:
+      - Allow local to be set as login_domain && set DefaultAuth as default for login_domain
+      - Fix HTTPAPI Connection plugin when wrong login_domain is provided
+      - Fix HTTPAPI ND connection plugin missing login_domain definition
+      minor_changes:
+      - Add ansible_httpapi_login_domain global inventory variable
+      release_summary: 'Release v0.2.0 of the ``ansible-nd`` collection on 2023-02-04.
+
+        This changelog describes all changes made to the modules and plugins included
+        in this collection since v0.1.2.
+
+        '
+    modules:
+    - description: Manage delta analysis jobs
+      name: nd_delta_analysis
+      namespace: ''
+    - description: Manage instant online assurance analysis jobs
+      name: nd_instant_assurance_analysis
+      namespace: ''
+    - description: Manage pre-change validation job
+      name: nd_pcv
+      namespace: ''
+    - description: Query pre-change validation compliance
+      name: nd_pcv_compliance
+      namespace: ''
+    - description: Query delta analysis of pre-change validation
+      name: nd_pcv_delta_analysis
+      namespace: ''
+    release_date: '2023-02-04'
