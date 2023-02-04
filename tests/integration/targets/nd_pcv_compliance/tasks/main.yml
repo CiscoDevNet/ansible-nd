@@ -1,0 +1,64 @@
+# Test code for the nd modules
+# Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# CLEAN ENVIRONMENT
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("info") }}'
+
+# QUERY pre-change validation delta analysis results
+- name: Query a pre_change validation compliance result
+  nd_pcv_compliance: &nd_query
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: manual
+  register: query_manual_pcv
+
+- name: Verify query_manual_pcv
+  assert:
+    that:
+    - query_manual_pcv is not changed
+    - query_manual_pcv.current.compliance_score is defined
+    - query_manual_pcv.current.count is defined
+    - query_manual_pcv.current.events_by_severity is defined
+    - query_manual_pcv.current.result_by_requirement is defined
+    - query_manual_pcv.current.smart_events is defined
+    - query_manual_pcv.current.unhealthy_resources is defined
+
+- name: Query another pre_change validation compliance result
+  nd_pcv_compliance:
+    <<: *nd_query
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: pcv_by_file
+  register: query_pcv_by_file
+
+- name: Verify query_pcv_by_file
+  assert:
+    that:
+    - query_pcv_by_file is not changed
+    - query_pcv_by_file.current.compliance_score is defined
+    - query_pcv_by_file.current.count is defined
+    - query_pcv_by_file.current.events_by_severity is defined
+    - query_pcv_by_file.current.result_by_requirement is defined
+    - query_pcv_by_file.current.smart_events is defined
+    - query_pcv_by_file.current.unhealthy_resources is defined
+
+- name: Query non_existing pre_change validation compliance result
+  nd_pcv_compliance:
+    <<: *nd_query
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: non_existing
+  ignore_errors: yes
+  register: query_non_existing
+
+- name: Verify query_non_existing
+  assert:
+    that:
+    - query_non_existing is not changed
+    - query_non_existing.msg == "Pre-change validation non_existing is not completed"

@@ -1,0 +1,133 @@
+# Test code for the nd modules
+# Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# CLEAN ENVIRONMENT
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("info") }}'
+
+# QUERY pre-change validation delta analysis results
+- name: Query a pre_change analysis
+  nd_pcv_delta_analysis: &nd_query
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: manual
+  register: query_pcv_delta_analysis_manual
+
+- name: Verify query_pcv_delta_analysis_manual
+  assert:
+    that:
+    - query_pcv_delta_analysis_manual is not changed
+    - query_pcv_delta_analysis_manual.current.anomalies is defined
+    - query_pcv_delta_analysis_manual.current.anomaly_count is defined
+    - query_pcv_delta_analysis_manual.current.general is defined
+    - query_pcv_delta_analysis_manual.current.unhealthy_resources is defined
+
+- name: Query another pre_change analysis
+  nd_pcv_delta_analysis:
+    <<: *nd_query
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: pcv_by_file
+  register: query_pcv_by_file_delta_analysis
+
+- name: Verify query_pcv_by_file_delta_analysis
+  assert:
+    that:
+    - query_pcv_by_file_delta_analysis is not changed
+    - query_pcv_by_file_delta_analysis.current.anomalies is defined
+    - query_pcv_by_file_delta_analysis.current.anomaly_count is defined
+    - query_pcv_by_file_delta_analysis.current.general is defined
+    - query_pcv_by_file_delta_analysis.current.unhealthy_resources is defined
+
+- name: Validate a pre_change analysis
+  nd_pcv_delta_analysis:
+    <<: *nd_query
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: pcv_by_file
+    state: validate
+  ignore_errors: yes
+  register: validate_pcv_by_file_delta_analysis
+
+- name: Verify validate_pcv_by_file_delta_analysis
+  assert:
+    that:
+    - validate_pcv_by_file_delta_analysis.msg == "Pre-change analysis failed. The above 2 (critical(0)|major(1)|minor(0)|warning(1)) anomalies have been detected."
+
+- name: Validate another pre_change analysis
+  nd_pcv_delta_analysis:
+    <<: *nd_query
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: add_contract
+    state: validate
+  ignore_errors: yes
+  register: validate_pcv_add_contract_delta_analysis
+
+- name: Verify validate_pcv_add_contract_delta_analysis
+  assert:
+    that:
+    - validate_pcv_add_contract_delta_analysis.msg == "Pre-change analysis failed. The above 1 (critical(0)|major(0)|minor(1)|warning(0)) anomalies have been detected."
+
+- name: Query non_existing pre_change validation delta analysis result
+  nd_pcv_delta_analysis:
+    <<: *nd_query
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: non_existing
+  ignore_errors: yes
+  register: query_non_existing
+
+- name: Verify query_non_existing
+  assert:
+    that:
+    - query_non_existing is not changed
+    - query_non_existing.msg == "Pre-change validation non_existing not found"
+
+# Delete pre-change job
+- name: Delete a pre_change analysis to recreate
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: vrf_with_overlapping_subnets
+    state: absent
+
+- name: Create a pre-change analysis to validate
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: vrf_with_overlapping_subnets
+    file: targets/nd_pcv_delta_analysis/tasks/vrf_with_overlapping_subnets.json
+    state: present
+
+- name: Query a pre_change analysis
+  nd_pcv_delta_analysis:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: vrf_with_overlapping_subnets
+  ignore_errors: yes
+  register: query_pcv_update_epg_while_running
+
+- name: Validate a pre_change analysis while running
+  nd_pcv_delta_analysis:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: vrf_with_overlapping_subnets
+    state: validate
+  ignore_errors: yes
+  register: validate_pcv_update_epg_while_running
+
+- name: Verify query_pcv_update_epg_while_running and validate_pcv_update_epg_while_running
+  assert:
+    that:
+    - query_pcv_update_epg_while_running.msg == "Pre-change validation vrf_with_overlapping_subnets is not completed"
+    - validate_pcv_update_epg_while_running.msg == "Pre-change analysis failed. The above 2 (critical(0)|major(2)|minor(0)|warning(0)) anomalies have been detected."

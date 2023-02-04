@@ -1,0 +1,441 @@
+# Test code for the NAE modules
+# Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("info") }}'
+
+- name: Add pre-change analysis from file upload (non JSON format)
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    file: targets/nd_pcv/tasks/ansible_dump.json
+    name: ansible_no_json
+    state: present
+  register: pcv_no_json
+
+- name: Verify pcv ansible_no_json
+  assert:
+    that:
+    - pcv_no_json is changed
+    - pcv_no_json.previous == {}
+    - pcv_no_json.current.name == "ansible_no_json"
+    - pcv_no_json.current.assuranceEntityName == "prod-fabric"
+    - pcv_no_json.current.analysisStatus is defined
+    - pcv_no_json.current.analysisScheduleId is defined
+    - pcv_no_json.current.baseEpochId is defined
+    - pcv_no_json.current.fabricUuid is defined
+    - pcv_no_json.current.jobId is defined
+    - pcv_no_json.current.submitterName is defined
+
+# check whether pre-change validation complete
+- name: Query Pre-Change analysis job pcv ansible_no_json
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: ansible_no_json
+    state: query
+  register: nm_query_ansible_no_json
+  until:
+  - nm_query_ansible_no_json.current is defined
+  - nm_query_ansible_no_json.current.analysisStatus is defined
+  - nm_query_ansible_no_json.current.analysisStatus == "COMPLETED"
+  retries: 180
+  delay: 10
+
+- name: Verify nm_query_ansible_no_json
+  assert:
+    that:
+    - nm_query_ansible_no_json is not changed
+    - nm_query_ansible_no_json.current.name == "ansible_no_json"
+    - nm_query_ansible_no_json.current.assuranceEntityName == "prod-fabric"
+    - nm_query_ansible_no_json.current.analysisStatus == "COMPLETED"
+    - nm_query_ansible_no_json.current.analysisScheduleId is defined
+    - nm_query_ansible_no_json.current.baseEpochId is defined
+    - nm_query_ansible_no_json.current.fabricUuid is defined
+    - nm_query_ansible_no_json.current.jobId is defined
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
+
+- name: Add pre-change analysis from file upload (JSON format)
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    file: targets/nd_pcv/tasks/contract.json
+    name: ansible_json
+    state: present
+  register: pcv_json
+
+- name: Verify pcv_json
+  assert:
+    that:
+    - pcv_json is changed
+    - pcv_json.previous == {}
+    - pcv_json.current.name == "ansible_json"
+    - pcv_json.current.assuranceEntityName == "prod-fabric"
+    - pcv_json.current.analysisStatus is defined
+    - pcv_json.current.analysisScheduleId is defined
+    - pcv_json.current.baseEpochId is defined
+    - pcv_json.current.fabricUuid is defined
+    - pcv_json.current.jobId is defined
+    - pcv_json.current.submitterName is defined
+
+- name: Query Pre-Change analysis job pcv ansible_json (until RUNNING)
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: ansible_json
+    state: query
+  register: query_ansible_json_until_running
+  retries: 180
+  delay: 10
+  until: query_ansible_json_until_running.current.analysisStatus == "RUNNING"
+
+- name: Delete ansible_json pre-change analysis while RUNNING
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: ansible_json
+    state: absent
+  ignore_errors: yes
+  register: pcv_absent_while_running
+
+- name: Verify pcv_absent_while_running
+  assert:
+    that:
+    - pcv_absent_while_running is not changed
+    - pcv_absent_while_running.msg == "ND Error 4015 (ERROR){{':'}} The analysis is in progress. The Pre-Change Job cannot be deleted."
+
+- name: Query Pre-Change analysis job pcv ansible_json
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: ansible_json
+    state: query
+  register: nm_query_ansible_json
+  retries: 180
+  delay: 10
+  until: nm_query_ansible_json.current.analysisStatus == "COMPLETED"
+
+- name: Verify nm_query_ansible_json
+  assert:
+    that:
+    - nm_query_ansible_json is not changed
+    - nm_query_ansible_json.current.name == "ansible_json"
+    - nm_query_ansible_json.current.assuranceEntityName == "prod-fabric"
+    - nm_query_ansible_json.current.analysisStatus == "COMPLETED"
+    - nm_query_ansible_json.current.analysisScheduleId is defined
+    - nm_query_ansible_json.current.baseEpochId is defined
+    - nm_query_ansible_json.current.fabricUuid is defined
+    - nm_query_ansible_json.current.jobId is defined
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
+
+- name: Add pre-change analysis from file upload with same file but different file name (JSON format)
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    file: targets/nd_pcv/tasks/contract_identical.json
+    name: ansible_json
+    state: present
+  register: pcv_json_diff_filename
+  ignore_errors: yes
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
+
+- name: Add pre-change analysis from file upload with same filename but different name (JSON format)
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    file: targets/nd_pcv/tasks/contract.json
+    name: ansible_json_diff_name
+    state: present
+  register: pcv_json_diff_name
+
+- name: Verify pcv_json_diff_name
+  assert:
+    that:
+    - pcv_json_diff_name is changed
+    - pcv_json_diff_name.previous == {}
+    - pcv_json_diff_name.current.name == "ansible_json_diff_name"
+    - pcv_json_diff_name.current.assuranceEntityName == "prod-fabric"
+    - pcv_json_diff_name.current.analysisStatus is defined
+    - pcv_json_diff_name.current.analysisScheduleId is defined
+    - pcv_json_diff_name.current.baseEpochId is defined
+    - pcv_json_diff_name.current.fabricUuid is defined
+    - pcv_json_diff_name.current.jobId is defined
+    - pcv_json_diff_name.current.submitterName is defined
+
+- name: Add pre-change analysis from file upload again (JSON format)
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    file: targets/nd_pcv/tasks/contract.json
+    name: ansible_json
+    state: present
+  register: pcv_json_again
+
+- name: Verify pcv_json_again
+  assert:
+    that:
+    - pcv_json_again is not changed
+    - pcv_json_again.previous is defined
+    - pcv_json_again.current.name == "ansible_json"
+    - pcv_json_again.current.assuranceEntityName == "prod-fabric"
+    - pcv_json_again.current.analysisStatus is defined
+    - pcv_json_again.current.analysisScheduleId is defined
+    - pcv_json_again.current.baseEpochId is defined
+    - pcv_json_again.current.fabricUuid is defined
+    - pcv_json_again.current.jobId is defined
+    - pcv_json_again.current.submitterName is defined
+
+- name: Query Pre-Change analysis job ansible_json_diff_name
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: ansible_json_diff_name
+    state: query
+  register: nm_query_ansible_json_diff_name
+  retries: 180
+  delay: 10
+  until: nm_query_ansible_json_diff_name.current.analysisStatus == "COMPLETED"
+
+- name: Verify nm_query_ansible_json_diff_name
+  assert:
+    that:
+    - nm_query_ansible_json_diff_name is not changed
+    - nm_query_ansible_json_diff_name.current.name == "ansible_json_diff_name"
+    - nm_query_ansible_json_diff_name.current.assuranceEntityName == "prod-fabric"
+    - nm_query_ansible_json_diff_name.current.analysisStatus == "COMPLETED"
+    - nm_query_ansible_json_diff_name.current.analysisScheduleId is defined
+    - nm_query_ansible_json_diff_name.current.baseEpochId is defined
+    - nm_query_ansible_json_diff_name.current.fabricUuid is defined
+    - nm_query_ansible_json_diff_name.current.jobId is defined
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
+
+- name: Add another pre-change analysis from file upload (non JSON format)
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    file: targets/nd_pcv/tasks/tenant_delete_dump.json
+    name: ansible_tenant_delete
+    state: present
+  register: pcv_tenant_delete
+
+- name: Verify pcv_tenant_delete
+  assert:
+    that:
+    - pcv_tenant_delete is changed
+    - pcv_tenant_delete.previous == {}
+    - pcv_tenant_delete.current.name == "ansible_tenant_delete"
+    - pcv_tenant_delete.current.assuranceEntityName == "prod-fabric"
+    - pcv_tenant_delete.current.analysisStatus is defined
+    - pcv_tenant_delete.current.analysisScheduleId is defined
+    - pcv_tenant_delete.current.baseEpochId is defined
+    - pcv_tenant_delete.current.fabricUuid is defined
+    - pcv_tenant_delete.current.jobId is defined
+    - pcv_tenant_delete.current.submitterName is defined
+
+- name: Query Pre-Change analysis job pcv_tenant_delete
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: ansible_tenant_delete
+    state: query
+  register: nm_query_pcv_tenant_delete
+  retries: 180
+  delay: 10
+  until: nm_query_pcv_tenant_delete.current.analysisStatus == "COMPLETED"
+
+- name: Verify nm_query_pcv_tenant_delete
+  assert:
+    that:
+    - nm_query_pcv_tenant_delete is not changed
+    - nm_query_pcv_tenant_delete.current.name == "ansible_tenant_delete"
+    - nm_query_pcv_tenant_delete.current.assuranceEntityName == "prod-fabric"
+    - nm_query_pcv_tenant_delete.current.analysisStatus == "COMPLETED"
+    - nm_query_pcv_tenant_delete.current.analysisScheduleId is defined
+    - nm_query_pcv_tenant_delete.current.baseEpochId is defined
+    - nm_query_pcv_tenant_delete.current.fabricUuid is defined
+    - nm_query_pcv_tenant_delete.current.jobId is defined
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
+
+- name: Create a new Pre-Change analysis from file
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: pcv_by_file
+    file: targets/nd_pcv/tasks/out-ospf-to-l2vrf.json
+    state: present
+  register: present_pcv
+
+- name: Verify present_pcv
+  assert:
+    that:
+    - present_pcv is changed
+    - present_pcv.previous == {}
+    - present_pcv.current.name == "pcv_by_file"
+    - present_pcv.current.assuranceEntityName == "prod-fabric"
+    - present_pcv.current.analysisStatus is defined
+    - present_pcv.current.analysisScheduleId is defined
+    - present_pcv.current.baseEpochId is defined
+    - present_pcv.current.fabricUuid is defined
+    - present_pcv.current.jobId is defined
+    - present_pcv.current.submitterName is defined
+
+- name: Query Pre-Change analysis job pcv_by_file
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: pcv_by_file
+    state: query
+  register: nm_query_present_pcv
+  retries: 180
+  delay: 10
+  until: nm_query_present_pcv.current.analysisStatus == "COMPLETED"
+
+- name: Verify nm_query_pcv_file
+  assert:
+    that:
+    - nm_query_present_pcv.current.name == "pcv_by_file"
+    - nm_query_present_pcv.current.assuranceEntityName == "prod-fabric"
+    - nm_query_present_pcv.current.uploadedFileName is defined
+    - nm_query_present_pcv.current.analysisStatus == "COMPLETED"
+    - nm_query_present_pcv.current.jobId is defined
+    - nm_query_present_pcv.current.analysisScheduleId is defined
+    - nm_query_present_pcv.current.baseEpochId is defined
+    - nm_query_present_pcv.current.fabricUuid is defined
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  pause:
+      minutes: 1
+
+- name: Create a new Pre-Change analysis from non-existing file
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: pcv_non_existing
+    file: /root/ansible/ansible_collections/cisco/nd/tests/integration/targets/nd_pcv/tasks/non-existing.json
+    state: present
+  register: present_pcv_non_existing
+  ignore_errors: yes
+
+- name: Query specific Pre-Change analysis job
+  cisco.nd.nd_pcv: &nd_query
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: pcv_by_file
+    state: query
+  register: nm_query_pcv_file
+
+- name: Verify nm_query_pcv_file
+  assert:
+    that:
+    - nm_query_pcv_file.current.name == "pcv_by_file"
+    - nm_query_pcv_file.current.assuranceEntityName == "prod-fabric"
+    - nm_query_pcv_file.current.uploadedFileName is defined
+    - nm_query_pcv_file.current.analysisStatus is defined
+    - nm_query_pcv_file.current.jobId is defined
+    - nm_query_pcv_file.current.analysisScheduleId is defined
+    - nm_query_pcv_file.current.baseEpochId is defined
+    - nm_query_pcv_file.current.fabricUuid is defined
+
+- name: Query all Pre-Change analysis jobs
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    state: query
+  register: nm_query_pcvs_file
+
+- name: Verify nm_query_pcvs_file
+  assert:
+    that:
+    - nm_query_pcvs_file.current | length >= 5
+
+- name: Delete ansible_json pre-change analysis (check_mode)
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: ansible_json
+    state: absent
+  check_mode: yes
+  register: cm_pcv_absent
+
+- name: Delete ansible_json pre-change analysis (normal_mode)
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: ansible_json
+    state: absent
+  register: nm_pcv_absent
+
+- name: Delete ansible_json pre-change analysis again
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: ansible_json
+    state: absent
+  register: pcv_absent_again
+
+- name: Verify nm_query_pcv_file
+  assert:
+    that:
+    - cm_pcv_absent is changed
+    - nm_pcv_absent is changed
+    - pcv_absent_again is not changed
+    - cm_pcv_absent.previous is defined
+    - cm_pcv_absent.current == {}
+    - nm_pcv_absent.previous is defined
+    - nm_pcv_absent.current == {}
+    - pcv_absent_again.previous == {}
+    - pcv_absent_again.current == {}
+
+- name: Try to create pcv_without_file_or_manual pre-change analysis
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: pcv_without_file_or_manual
+    state: present
+  ignore_errors: yes
+  register: pcv_without_file_or_manual
+
+- name: Verify pcv_without_file_or_manual
+  assert:
+    that:
+    - pcv_without_file_or_manual is not changed
+    - pcv_without_file_or_manual.msg == "Either file or manual is required to create a PCV job"

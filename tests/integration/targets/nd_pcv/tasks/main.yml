@@ -1,0 +1,59 @@
+# Test code for the nd modules
+# Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# CLEAN ENVIRONMENT
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      output_level: '{{ nd_output_level | default("debug") }}'
+
+# Delete pre-change job
+- name: Check if the pre_change analysises to be deleted are not RUNNING
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: '{{ item }}'
+    state: query
+  register: query_existing_pcv
+  until: query_existing_pcv.current == {} or query_existing_pcv.current.analysisStatus != "RUNNING"
+  retries: 180
+  delay: 10
+  loop:
+  - manual
+  - pcv_by_file
+  - ansible_no_json
+  - ansible_json
+  - ansible_json_diff_name
+  - ansible_tenant_delete
+  - update_epg
+  - add_contract
+
+# Delete pre-change job
+- name: Delete a pre_change analysis
+  cisco.nd.nd_pcv: &nd_rm
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: '{{ item }}'
+    state: absent
+  register: rm_existing_pcv
+  loop:
+  - manual
+  - pcv_by_file
+  - ansible_no_json
+  - ansible_json
+  - ansible_json_diff_name
+  - ansible_tenant_delete
+  - update_epg
+  - add_contract
+
+- name: Run file upload tasks
+  include_tasks: file_upload.yml
+  tags: file_upload
+
+- name: Run manual upload tasks
+  include_tasks: manual_upload.yml
+  tags: manual_upload

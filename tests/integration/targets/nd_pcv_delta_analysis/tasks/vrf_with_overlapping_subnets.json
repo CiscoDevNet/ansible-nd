@@ -1,0 +1,61 @@
+{
+    "fvTenant": {
+        "attributes": {
+            "descr": "tenant by Ansible",
+            "dn": "uni/tn-AnsibleTest",
+            "name": "AnsibleTest"
+        },
+        "children": [{
+            "fvCtx": {
+                "attributes": {
+                    "dn": "uni/tn-AnsibleTest/ctx-AnsibleTest_VRF",
+                    "name": "AnsibleTest_VRF"
+                }
+            }
+        }, {
+            "fvBD": {
+                "attributes": {
+                    "dn": "uni/tn-AnsibleTest/BD-AnsibleTest_BD1",
+                    "name": "AnsibleTest_BD1"
+                },
+                "children": [{
+                    "fvSubnet": {
+                        "attributes": {
+                            "dn": "uni/tn-AnsibleTest/BD-AnsibleTest_BD1/subnet-[10.10.10.1/24]",
+                            "ip": "10.10.10.1/24",
+                            "name": "BD1"
+                        }
+                    }
+                }, {
+                    "fvRsCtx": {
+                        "attributes": {
+                            "tnFvCtxName": "AnsibleTest_VRF"
+                        }
+                    }
+                }]
+            }
+        }, {
+            "fvBD": {
+                "attributes": {
+                    "dn": "uni/tn-AnsibleTest/BD-AnsibleTest_BD2",
+                    "name": "AnsibleTest_BD2"
+                },
+                "children": [{
+                    "fvSubnet": {
+                        "attributes": {
+                            "dn": "uni/tn-AnsibleTest/BD-AnsibleTest_BD2/subnet-[10.10.10.2/24]",
+                            "ip": "10.10.10.2/24",
+                            "name": "BD2"
+                        }
+                    }
+                }, {
+                    "fvRsCtx": {
+                        "attributes": {
+                            "tnFvCtxName": "AnsibleTest_VRF"
+                        }
+                    }
+                }]
+            }
+        }]
+    }
+}
