@@ -1,2 +1,10 @@
 ---
 requires_ansible: '>=2.9.10'
+action_groups:
+  all:
+    - nd_delta_analysis
+    - nd_instant_assurance_analysis
+    - nd_pcv
+    - nd_pcv_compliance
+    - nd_pcv_delta_analysis
+    - nd_version
