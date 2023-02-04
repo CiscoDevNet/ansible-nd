@@ -5,6 +5,37 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 .. contents:: Topics
 
 
+v0.2.0
+======
+
+Release Summary
+---------------
+
+Release v0.2.0 of the ``ansible-nd`` collection on 2023-02-04.
+This changelog describes all changes made to the modules and plugins included in this collection since v0.1.2.
+
+
+Minor Changes
+-------------
+
+- Add ansible_httpapi_login_domain global inventory variable
+
+Bugfixes
+--------
+
+- Allow local to be set as login_domain && set DefaultAuth as default for login_domain
+- Fix HTTPAPI Connection plugin when wrong login_domain is provided
+- Fix HTTPAPI ND connection plugin missing login_domain definition
+
+New Modules
+-----------
+
+- cisco.nd.nd_delta_analysis - Manage delta analysis jobs
+- cisco.nd.nd_instant_assurance_analysis - Manage instant online assurance analysis jobs
+- cisco.nd.nd_pcv - Manage pre-change validation job
+- cisco.nd.nd_pcv_compliance - Query pre-change validation compliance
+- cisco.nd.nd_pcv_delta_analysis - Query delta analysis of pre-change validation
+
 v0.1.2
 ======
 
