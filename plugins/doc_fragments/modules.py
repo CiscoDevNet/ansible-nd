@@ -69,10 +69,9 @@ options:
   login_domain:
     description:
     - The login domain name to use for authentication.
-    - The default value is Local.
+    - The default value is DefaultAuth.
     - If the value is not specified in the task, the value of environment variable C(ND_LOGIN_DOMAIN) will be used instead.
     type: str
-    default: DefaultAuth
 requirements:
 - Nexus Dashboard v2.0 or newer
 notes:

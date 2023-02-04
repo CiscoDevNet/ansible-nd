@@ -96,7 +96,7 @@ def nd_argument_spec():
         use_proxy=dict(type="bool", fallback=(env_fallback, ["ND_USE_PROXY"])),
         use_ssl=dict(type="bool", fallback=(env_fallback, ["ND_USE_SSL"])),
         validate_certs=dict(type="bool", fallback=(env_fallback, ["ND_VALIDATE_CERTS"])),
-        login_domain=dict(type="str", default="DefaultAuth", fallback=(env_fallback, ["ND_LOGIN_DOMAIN"])),
+        login_domain=dict(type="str", fallback=(env_fallback, ["ND_LOGIN_DOMAIN"])),
     )
 
 
@@ -258,12 +258,14 @@ class NDModule(object):
                 except Exception as e:
                     self.error = dict(code=-1, message="Unable to parse output as JSON, see 'raw' output. {0}".format(e))
                     self.result["raw"] = body
-                    self.fail_json(msg="ND Error:", data=data, info=info)
+                    self.fail_json(msg="ND Error: {0}".format(self.error.get("message")), data=data, info=info)
                 self.error = payload
                 if "code" in payload:
                     self.fail_json(msg="ND Error {code}: {message}".format(**payload), data=data, info=info, payload=payload)
+                elif "messages" in payload and len(payload.get("messages")) > 0:
+                    self.fail_json(msg="ND Error {code} ({severity}): {message}".format(**payload["messages"][0]), data=data, info=info, payload=payload)
                 else:
-                    self.fail_json(msg="ND Error:".format(**payload), data=data, info=info, payload=payload)
+                    self.fail_json(msg="ND Error: Unknown error no error code in decoded payload".format(**payload), data=data, info=info, payload=payload)
             else:
                 # Connection error
                 msg = "Connection failed for {0}. {1}".format(info.get("url"), info.get("msg"))

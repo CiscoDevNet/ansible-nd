@@ -7,7 +7,29 @@
 - name: Set vars
   set_fact:
     nd_info: &nd_info
-      output_level: '{{ nd_output_level | default("info") }}'
+      output_level: '{{ nd_output_level | default("debug") }}'
+
+# Delete pre-change job
+- name: Check if the pre_change analysises to be deleted are not RUNNING
+  cisco.nd.nd_pcv:
+    <<: *nd_info
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: '{{ item }}'
+    state: query
+  register: query_existing_pcv
+  until: query_existing_pcv.current == {} or query_existing_pcv.current.analysisStatus != "RUNNING"
+  retries: 180
+  delay: 10
+  loop:
+  - manual
+  - pcv_by_file
+  - ansible_no_json
+  - ansible_json
+  - ansible_json_diff_name
+  - ansible_tenant_delete
+  - update_epg
+  - add_contract
 
 # Delete pre-change job
 - name: Delete a pre_change analysis

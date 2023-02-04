@@ -1,42 +1,41 @@
 # Copyright (c) 2020 Cisco and/or its affiliates.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 
 from __future__ import absolute_import, division, print_function
-import mimetypes
-import os
-import io
 
 __metaclass__ = type
 
 DOCUMENTATION = """
 ---
-name: nd
 author:
 - Lionel Hercot (@lhercot)
+name: nd
 short_description: Nexus Dashboard Ansible HTTPAPI Plugin.
 description:
-  - This ND plugin provides the HTTPAPI transport methods needed to initiate
-    a connection to ND, send API requests and process the
-    response.
+- This ND plugin provides the HTTPAPI transport methods needed to initiate
+  a connection to ND, send API requests and process the response.
 version_added: "0.0.1"
+options:
+  login_domain:
+    description:
+    - The login domain name to use for authentication.
+    - The default value is DefaultAuth.
+    type: string
+    env:
+    - name: ANSIBLE_HTTPAPI_LOGIN_DOMAIN
+    vars:
+    - name: ansible_httpapi_login_domain
 """
 
-import json
+import os
+import io
 import re
+import json
 import pickle
 import traceback
+import mimetypes
 
 from ansible.module_utils.six import PY3
 from ansible.module_utils._text import to_text
@@ -57,7 +56,6 @@ class HttpApi(HttpApiBase):
         self.platform = "cisco.nd"
         self.headers = {"Content-Type": "application/json"}
         self.params = {}
-        self.auth = None
         self.backup_hosts = None
         self.host_counter = 0
 
@@ -90,11 +88,12 @@ class HttpApi(HttpApiBase):
             method = "POST"
             path = "/login"
             full_path = self.connection.get_option("host") + path
-            login_domain = "DefaultAuth"
-            if self.params.get("login_domain"):
-                login_domain = self.params.get("login_domain")
 
-            payload = {"userName": self.connection.get_option("remote_user"), "userPasswd": self.connection.get_option("password"), "domain": login_domain}
+            payload = {
+                "userName": self.connection.get_option("remote_user"),
+                "userPasswd": self.connection.get_option("password"),
+                "domain": self.get_option("login_domain"),
+            }
 
             # Override the global username/password with the ones specified per task
             if self.params.get("username") is not None:
@@ -109,9 +108,11 @@ class HttpApi(HttpApiBase):
 
                 # Handle ND response
                 self.status = response.getcode()
-                if self.status not in [200, 201]:
-                    self.connection.queue_message("error", "login() - login status incorrect. HTTP status={0}".format(self.status))
-                    json_response = self._response_to_json(response_data)
+                if self.status not in [200, 201] or (self.status == 200 and response_data.getbuffer().nbytes == 0):
+                    self.connection.queue_message("error", "login() - login status incorrect or response empty. HTTP status={0}".format(self.status))
+                    json_response = "Most likely a wrong login domain was provided, the provided login_domain was {0}".format(self.get_option("login_domain"))
+                    if self.status not in [200, 201]:
+                        json_response = self._response_to_json(response_data)
                     self.error = dict(code=self.status, message="Authentication failed: {0}".format(json_response))
                     raise ConnectionError(json.dumps(self._verify_response(response, method, full_path, response_data)))
                 self.connection._auth = {"Authorization": "Bearer {0}".format(self._response_to_json(response_data).get("token"))}
@@ -165,16 +166,10 @@ class HttpApi(HttpApiBase):
                 )
             self.connection.set_option("host", self.params.get("host"))
 
-        else:
-            try:
-                with open("my_hosts.pk", "rb") as fi:
-                    self.host_counter = pickle.load(fi)
-            except FileNotFoundError:
-                pass
-            try:
-                self.connection.set_option("host", self.backup_hosts[self.host_counter])
-            except (IndexError, TypeError):
-                pass
+        if self.params.get("login_domain") is not None:
+            self.set_option("login_domain", self.params.get("login_domain"))
+        elif self.get_option("login_domain") is None:
+            self.set_option("login_domain", "DefaultAuth")
 
         if self.params.get("port") is not None:
             self.connection.set_option("port", self.params.get("port"))
@@ -242,10 +237,8 @@ class HttpApi(HttpApiBase):
             if not HAS_MULTIPART_ENCODER:
                 self.nd.fail_json(msg="Cannot use requests_toolbelt MultipartEncoder() because requests_toolbelt module is not available")
             mp_encoder = MultipartEncoder(fields=fields)
-            self.headers["Content-Type"] = mp_encoder.content_type
-            self.headers["Accept"] = "*/*"
-            self.headers["Accept-Encoding"] = "gzip, deflate, br"
-            response, rdata = self.connection.send(path, mp_encoder.to_string(), method=method, headers=self.headers)
+            multiheader = {"Content-Type": mp_encoder.content_type, "Accept": "*/*", "Accept-Encoding": "gzip, deflate, br"}
+            response, rdata = self.connection.send(path, mp_encoder.to_string(), method=method, headers=multiheader)
         except Exception as e:
             self.error = dict(code=self.status, message="ND HTTPAPI MultipartEncoder Exception: {0} - {1} ".format(e, traceback.format_exc()))
             raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))

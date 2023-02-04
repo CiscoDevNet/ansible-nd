@@ -3,7 +3,6 @@
 
 # Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-# Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)
 
 from __future__ import absolute_import, division, print_function
 
@@ -51,10 +50,11 @@ options:
     type: str
   state:
     description:
-    - Use C(present) or C(absent) for creating or removing a PCV.
+    - Use C(present) or C(absent) for creating or deleting a Pre-Change Validation (PCV).
     - Use C(query) for retrieving the PCV information.
+    - Use C(wait_and_query) to execute the query until the Pre-Change Validation (PCV) task status is COMPLETED or FAILED
     type: str
-    choices: [ query, present, absent ]
+    choices: [ absent, present, query, wait_and_query ]
     default: query
 extends_documentation_fragment: cisco.nd.modules
 """
@@ -98,6 +98,12 @@ EXAMPLES = r"""
         ]
     state: present
   register: present_pcv_manual
+- name: Wait until Pre-Change analysis is completed, and query status
+  cisco.nd.nd_pcv:
+    insights_group: igName
+    site_name: siteName
+    name: demoName
+    state: wait_and_query
 - name: Delete Pre-Change analysis
   cisco.nd.nd_pcv:
     insights_group: igName
@@ -109,12 +115,12 @@ EXAMPLES = r"""
 RETURN = r"""
 """
 
-import json
-import os
 import time
-from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
+import os
+import json
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
+from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
+from ansible.module_utils.basic import AnsibleModule
 
 
 def main():
@@ -126,13 +132,17 @@ def main():
         site_name=dict(type="str", aliases=["site"]),
         file=dict(type="str"),
         manual=dict(type="str"),
-        state=dict(type="str", default="query", choices=["query", "absent", "present"]),
+        state=dict(type="str", default="query", choices=["query", "absent", "present", "wait_and_query"]),
     )
 
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
-        required_if=[["state", "absent", ["name", "site_name"]], ["state", "present", ["name", "site_name"]]],
+        required_if=[
+            ["state", "absent", ["name", "site_name"]],
+            ["state", "present", ["name", "site_name"]],
+            ["state", "wait_and_query", ["name", "site_name"]],
+        ],
     )
 
     nd = NDModule(module)
@@ -152,7 +162,19 @@ def main():
     elif site_name is not None:
         nd.existing = ndi.query_pcv(insights_group, site_name, name)
 
-    if state == "absent":
+    if state == "wait_and_query" and nd.existing:
+        status = nd.existing.get("analysisStatus")
+        while status != "COMPLETED":
+            try:
+                verified_pcv = ndi.query_pcv(insights_group, site_name, name)
+                status = verified_pcv.get("analysisStatus")
+                if status == "COMPLETED" or status == "FAILED":
+                    nd.existing = verified_pcv
+                    break
+            except BaseException:
+                nd.existing = {}
+
+    elif state == "absent":
         nd.previous = nd.existing
         job_id = nd.existing.get("jobId")
         if nd.existing and job_id:
@@ -169,7 +191,14 @@ def main():
 
     elif state == "present":
         nd.previous = nd.existing
-        base_epoch_data = ndi.get_epochs(insights_group, site_name)
+        if nd.existing:
+            pcv_file_name = nd.existing.get("uploadedFileName")
+            if file and pcv_file_name:
+                if os.path.basename(file) == pcv_file_name:
+                    nd.exit_json()
+                else:
+                    nd.fail_json(msg="Pre-change validation {0} already exists with configuration file {1}".format(name, pcv_file_name))
+        base_epoch_data = ndi.get_last_epoch(insights_group, site_name)
 
         data = {
             "allowUnsupportedObjectModification": "true",
@@ -204,7 +233,7 @@ def main():
             if manual_resp.get("success") is True:
                 nd.existing = manual_resp.get("value")["data"]
         else:
-            nd.fail_json(msg="either file or manual is required to create pcv job")
+            nd.fail_json(msg="Either file or manual is required to create a PCV job")
     nd.exit_json()
 
 

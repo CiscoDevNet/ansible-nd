@@ -10,10 +10,9 @@ import json
 try:
     from jsonpath_ng import parse
 
-    HAS_JSONPATH_NG = True
+    HAS_JSONPATH_NG_PARSE = True
 except ImportError:
-    HAS_JSONPATH_NG = False
-
+    HAS_JSONPATH_NG_PARSE = False
 __metaclass__ = type
 
 
@@ -45,7 +44,7 @@ class NDI:
                 pcv_result = obj["value"]["data"]
         return pcv_result
 
-    def get_epochs(self, ig_name, site_name):
+    def get_last_epoch(self, ig_name, site_name):
         ig_base_path = self.event_insight_group_path.format(ig_name, site_name)
         path = "{0}/epochs?$size=1&$status=FINISHED&%24epochType=ONLINE%2C+OFFLINE&%24sort=-collectionTime%2C-analysisStartTime".format(ig_base_path)
         obj = self.nd.query_obj(path, prefix=self.prefix)
@@ -81,14 +80,22 @@ class NDI:
                 entries += obj.get("entries")
             return entries
 
-    def query_anomalies(self, ig_name, site_name, epoch_delta_job_id, epoch_choice):
+    def query_anomalies(self, ig_name, site_name, epoch_delta_job_id, epoch_choice, exclude_ack_anomalies):
         epoch_delta_ig_path = self.epoch_delta_ig_path.format(ig_name, site_name, epoch_delta_job_id)
         size = 100
         path = epoch_delta_ig_path + "/individualTable?%24size={0}&%24page={1}"
         if epoch_choice:
             path = "{0}&epochStatus={1}".format(path, epoch_choice)
         entries = self.query_entry(path, size)
-        return entries
+        result = []
+        for entry in entries:
+            if entry.get("severity") != "info":
+                if exclude_ack_anomalies:
+                    if not entry.get("acknowledged"):
+                        result.append(entry)
+                else:
+                    result.append(entry)
+        return result
 
     def format_event_severity(self, events_severity):
         result = {}
@@ -419,7 +426,7 @@ class NDI:
         cmap = self.cmap
         for dn, children in cmap.items():
             aci_class = self.get_aci_class((self.parse_path(dn)[-1]).split("-")[0])
-            if not HAS_JSONPATH_NG:
+            if not HAS_JSONPATH_NG_PARSE:
                 self.nd.fail_json(msg="Cannot use jsonpath-ng parse() because jsonpath-ng module is not available")
             json_path_expr_search = parse("$..children.[*].{0}".format(aci_class))
             json_path_expr_update = parse(

@@ -10,7 +10,7 @@
       output_level: '{{ nd_output_level | default("info") }}'
 
 # QUERY pre-change validation delta analysis results
-- name: query a pre_change validation compliance result
+- name: Query a pre_change validation compliance result
   nd_pcv_compliance: &nd_query
     <<: *nd_info
     ig_name: '{{ ig_name }}'
@@ -29,7 +29,7 @@
     - query_manual_pcv.current.smart_events is defined
     - query_manual_pcv.current.unhealthy_resources is defined
 
-- name: query another pre_change validation compliance result
+- name: Query another pre_change validation compliance result
   nd_pcv_compliance:
     <<: *nd_query
     ig_name: '{{ ig_name }}'
@@ -47,3 +47,18 @@
     - query_pcv_by_file.current.result_by_requirement is defined
     - query_pcv_by_file.current.smart_events is defined
     - query_pcv_by_file.current.unhealthy_resources is defined
+
+- name: Query non_existing pre_change validation compliance result
+  nd_pcv_compliance:
+    <<: *nd_query
+    ig_name: '{{ ig_name }}'
+    site_name: prod-fabric
+    name: non_existing
+  ignore_errors: yes
+  register: query_non_existing
+
+- name: Verify query_non_existing
+  assert:
+    that:
+    - query_non_existing is not changed
+    - query_non_existing.msg == "Pre-change validation non_existing is not completed"

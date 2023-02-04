@@ -120,11 +120,8 @@
     ig_name: '{{ ig_name }}'
     site_name: prod-fabric
     name: add_contract
-    state: query
+    state: wait_and_query
   register: nm_query_add_contract
-  retries: 180
-  delay: 10
-  until: nm_query_add_contract.current.analysisStatus == "COMPLETED"
 
 - name: Verify nm_query_add_contract
   assert:
