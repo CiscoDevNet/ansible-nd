@@ -1,0 +1,145 @@
+# Test code for the ND modules
+# Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have an Nexus Dashboard host, username and password
+  fail:
+    msg: 'Please define the following variables: nd_hostname, nd_username and nd_password.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined
+
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      host: '{{ nd_hostname }}'
+      username: '{{ nd_username }}'
+      password: '{{ nd_password }}'
+      validate_certs: '{{ nd_validate_certs | default(false) }}'
+      use_ssl: '{{ nd_use_ssl | default(true) }}'
+      use_proxy: '{{ nd_use_proxy | default(true) }}'
+      output_level: '{{ nd_output_level | default("info") }}'
+    ndi_info: &ndi_info
+      insights_group: d2o-tme
+      site: qa-fabric
+    date: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
+    datetime: "{{ lookup('pipe', 'date +%Y-%m-%dU%H:%M:%S') }}"
+
+# PASS TESTS CREATE
+
+- name: Get Epoch with period ( latest )
+  cisco.nd.nd_epoch:  
+    <<: *nd_info
+    <<: *ndi_info
+    period: latest
+  register: period_latest
+
+- name: Get Epoch with period ( last_week )
+  cisco.nd.nd_epoch:
+    <<: *nd_info
+    <<: *ndi_info
+    period: last_week
+  register: period_last_week
+
+- name: Get Epochs with period range ( last_week )
+  cisco.nd.nd_epoch:  
+    <<: *nd_info
+    <<: *ndi_info
+    period: last_week
+    range: true
+  register: period_range_last_week
+
+- name: Get Epochs with period range and max epochs( last_week )
+  cisco.nd.nd_epoch:  
+    <<: *nd_info
+    <<: *ndi_info
+    period: last_week
+    range: true
+    max_epochs: 2
+  register: period_range_last_week_max_epochs
+
+- name: Get Epochs with date ( from_date )
+  cisco.nd.nd_epoch:  
+    <<: *nd_info
+    <<: *ndi_info
+    from_date: "{{ date }}"
+  register: date_from_date
+
+- name: Get Epochs with date ( to_date )
+  cisco.nd.nd_epoch:  
+    <<: *nd_info
+    <<: *ndi_info
+    to_date: "{{ datetime }}"
+  register: date_to_date
+
+- name: Get Epochs with date ( from_date & to_date )
+  cisco.nd.nd_epoch:  
+    <<: *nd_info
+    <<: *ndi_info
+    from_date: "{{ date }}"
+    to_date: "{{ datetime }}"
+  register: date_from_date_to_date
+
+- name: Get Epochs with date range ( from_date & to_date )
+  cisco.nd.nd_epoch: 
+    <<: *nd_info
+    <<: *ndi_info
+    from_date: "{{ date }}"
+    to_date: "{{ datetime }}"
+    range: true
+  register: date_range_from_date_to_date
+
+- name: Get Epochs with date range ( from_date & to_date )
+  cisco.nd.nd_epoch:  
+    <<: *nd_info
+    <<: *ndi_info
+    from_date: "{{ date }}"
+    to_date: "{{ datetime }}"
+    range: true
+    max_epochs: 3
+  register: date_range_from_date_to_date_max_epochs
+
+- name: Verify Epochs
+  assert:
+    that:
+      - period_latest.current | type_debug == "dict"
+      - period_last_week.current | type_debug == "dict"
+      - period_range_last_week.current | type_debug == "list"
+      - period_range_last_week_max_epochs.current | type_debug == "list"
+      - date_from_date.current | type_debug == "dict"
+      - date_to_date.current | type_debug == "dict"
+      - date_from_date_to_date.current | type_debug == "dict"
+      - date_range_from_date_to_date.current | type_debug == "list"
+      - date_range_from_date_to_date_max_epochs.current | type_debug == "list"
+
+# FAIL TESTS
+
+- name: Get Epochs with date ( from_date invalid )
+  cisco.nd.nd_epoch:
+    <<: *nd_info
+    <<: *ndi_info
+    from_date: "invalid"
+  ignore_errors: yes
+  register: date_from_date_invalid
+
+- name: Get Epochs with date ( to_date invalid )
+  cisco.nd.nd_epoch:
+    <<: *nd_info
+    <<: *ndi_info
+    to_date: "invalid"
+  ignore_errors: yes
+  register: date_to_date_invalid
+
+- name: Get Epochs with period ( invalid )
+  cisco.nd.nd_epoch:  
+    <<: *nd_info
+    <<: *ndi_info
+    period: "invalid"
+  ignore_errors: yes
+  register: period_invalid
+
+- name: Verify errors
+  assert:
+    that:
+      - date_from_date_invalid.msg.startswith("Invalid isoformat string")
+      - date_to_date_invalid.msg.startswith("Invalid isoformat string")
+      - period_invalid.payload.msg.startswith("value of period must be one of: latest, last_15_min, last_hour, last_2_hours, last_6_hours, last_day, last_week")

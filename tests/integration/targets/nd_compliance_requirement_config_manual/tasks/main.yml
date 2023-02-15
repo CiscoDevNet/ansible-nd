@@ -1,0 +1,210 @@
+# Test code for the ND modules
+# Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have an Nexus Dashboard host, username and password
+  fail:
+    msg: 'Please define the following variables: nd_hostname, nd_username and nd_password.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined
+
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      host: '{{ nd_hostname }}'
+      username: '{{ nd_username }}'
+      password: '{{ nd_password }}'
+      validate_certs: '{{ nd_validate_certs | default(false) }}'
+      use_ssl: '{{ nd_use_ssl | default(true) }}'
+      use_proxy: '{{ nd_use_proxy | default(true) }}'
+      output_level: '{{ nd_output_level | default("info") }}'
+    ndi_info: &ndi_info
+      insights_group: d2o-tme
+    ndi_base: &ndi_base
+      name: ansible-test-1
+      sites:
+        - qa-fabric
+      enabled: false
+    ndi_base_object: &ndi_base_object
+      from_object_type: epg
+      from_match_criteria:
+        - match_criteria_type: include
+          matches:
+            - object_type: vrf
+              object_attribute: DN
+              matches_pattern:
+                - match_type: tenant
+                  pattern_type: begins_with
+                  pattern: foo
+                - match_type: vrf
+                  pattern_type: contains
+                  pattern: bar
+    ndi_base_config: &ndi_base_config
+      config_rules:
+        - attribute: name
+          operator: contains
+          value: foo
+
+# CLEAN ENVIRONMENT
+- name: Query compliance requirements
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *nd_info
+    <<: *ndi_info
+    state: query
+  register: clean_existing
+
+- name: Delete existing communication compliance requirements
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *nd_info
+    <<: *ndi_info
+    name: "{{ item.name }}"
+    state: absent
+  loop: "{{ clean_existing.current }}"
+
+- name: Query compliance requirements
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *nd_info
+    <<: *ndi_info
+    state: query
+  register: query_existing
+
+- name: Verify no compliance requirements are present
+  assert:
+    that:
+    - query_existing.current == []
+
+# PASS TESTS CREATE
+
+- name: Create a compliance requirement ( check mode )
+  cisco.nd.nd_compliance_requirement_config_manual: &requirement_create
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_config
+    state: present
+  check_mode: yes
+  register: cm_create_requirement
+
+- name: Create a compliance requirement
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_create
+    state: present
+  register: nm_create_requirement
+
+- name: Create a compliance requirement again
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_create
+    state: present
+  register: nm_create_requirement_again
+
+- name: Create a compliance requirement again with change
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_create
+    enabled: true
+    state: present
+  register: nm_create_requirement_again_with_change
+
+- name: Delete a compliance requirement ( check mode )
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_create
+    state: absent
+  check_mode: yes
+  register: cm_remove_requirement
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_create
+    state: absent
+  register: nm_remove_requirement
+
+- name: Verify create compliance requirement
+  assert:
+    that:
+      - cm_create_requirement.current.associatedSites | length == 1
+      - cm_create_requirement.current.configComplianceParameter.andParameters.0.operator == "CONTAINS"
+      - cm_create_requirement.current.configComplianceParameter.andParameters.0.parameter == "CCP_NAME"
+      - cm_create_requirement.current.configComplianceParameter.andParameters.0.value == "foo"
+      - cm_create_requirement.current.configurationType == "MANUAL_CONFIGURATION_COMPLIANCE"
+      - cm_create_requirement.current.enabled == false
+      - cm_create_requirement.current.name == "ansible-test-1"
+      - cm_create_requirement.current.requirementType == "CONFIGURATION_COMPLIANCE"
+      - cm_create_requirement.current.objectSelectorA.excludes | length == 0
+      - cm_create_requirement.current.objectSelectorA.includes.0.matches.0.vrfMatch.objectAttribute == "DN"
+      - cm_create_requirement.current.objectSelectorA.includes.0.matches.0.vrfMatch.tenant.pattern == "foo"
+      - cm_create_requirement.current.objectSelectorA.includes.0.matches.0.vrfMatch.tenant.type == "BEGINS_WITH"
+      - cm_create_requirement.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.pattern == "bar"
+      - cm_create_requirement.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.type == "CONTAINS"
+      - cm_create_requirement.current.objectSelectorA.selectorType == "OST_EPG"
+      - nm_create_requirement.current.associatedSites | length == 1
+      - nm_create_requirement.current.configComplianceParameter.andParameters.0.operator == "CONTAINS"
+      - nm_create_requirement.current.configComplianceParameter.andParameters.0.parameter == "CCP_NAME"
+      - nm_create_requirement.current.configComplianceParameter.andParameters.0.value == "foo"
+      - nm_create_requirement.current.configurationType == "MANUAL_CONFIGURATION_COMPLIANCE"
+      - nm_create_requirement.current.enabled == false
+      - nm_create_requirement.current.name == "ansible-test-1"
+      - nm_create_requirement.current.requirementType == "CONFIGURATION_COMPLIANCE"
+      - nm_create_requirement.current.objectSelectorA.excludes | length == 0
+      - nm_create_requirement.current.objectSelectorA.includes.0.matches.0.vrfMatch.objectAttribute == "DN"
+      - nm_create_requirement.current.objectSelectorA.includes.0.matches.0.vrfMatch.tenant.pattern == "foo"
+      - nm_create_requirement.current.objectSelectorA.includes.0.matches.0.vrfMatch.tenant.type == "BEGINS_WITH"
+      - nm_create_requirement.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.pattern == "bar"
+      - nm_create_requirement.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.type == "CONTAINS"
+      - nm_create_requirement.current.objectSelectorA.selectorType == "OST_EPG"
+      - nm_create_requirement_again is not changed
+      - nm_create_requirement_again_with_change.current.enabled == true
+      - cm_remove_requirement.current == {}
+      - nm_remove_requirement.current == {}
+
+
+- name: Create a compliance requirement ( without description )
+  cisco.nd.nd_compliance_requirement_config_manual: &requirement_description
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_config
+    state: present
+
+- name: Query compliance requirements ( without description )
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_description
+    state: query
+  register: create_requirement_description_none
+
+- name: Create a compliance requirement ( with description )
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_description
+    description: ansible-test-description
+    state: present
+
+- name: Query compliance requirements ( with description )
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_description
+    state: query
+  register: create_requirement_description
+
+- name: Create a compliance requirement ( without description )
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_description
+    state: present
+
+- name: Query compliance requirements ( without description )
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_description
+    state: query
+  register: create_requirement_description_none_again
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_description
+    state: absent
+  register: remove_requirement_description
+
+- name: Verify create compliance requirement ( with description )
+  assert:
+    that:
+      - create_requirement_description_none.current.description is not defined
+      - create_requirement_description.current.description == "ansible-test-description"
+      - create_requirement_description_none_again.current.description == " "
+      - remove_requirement_description.current == {}

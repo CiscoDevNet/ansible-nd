@@ -1,0 +1,248 @@
+{
+    "polUni": {
+        "attributes": {
+            "annotation": "",
+            "dn": "uni",
+            "nameAlias": ""
+        },
+        "children": [
+            {
+                "apPluginPolContainer": {
+                    "attributes": {
+                        "annotation": "",
+                        "descr": "",
+                        "dn": "uni/pluginPolContainer",
+                        "name": "",
+                        "nameAlias": "",
+                        "ownerKey": "",
+                        "ownerTag": ""
+                    },
+                    "children": [
+                        {
+                            "apPluginPolicy": {
+                                "attributes": {
+                                    "annotation": "",
+                                    "descr": "",
+                                    "dn": "",
+                                    "name": "",
+                                    "nameAlias": "",
+                                    "ownerKey": "",
+                                    "ownerTag": "",
+                                    "verifySignature": "disable"
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "fvTenant": {
+                    "attributes": {
+                        "annotation": "",
+                        "descr": "",
+                        "dn": "uni/tn-Tn_GGSDD",
+                        "name": "Tn_GGSDD",
+                        "nameAlias": "",
+                        "ownerKey": "",
+                        "ownerTag": ""
+                    },
+                    "children": [
+                        {
+                            "vnsSvcCont": {
+                                "attributes": {
+                                    "annotation": "",
+                                    "dn": ""
+                                }
+                            }
+                        },
+                        {
+                            "fvCtx": {
+                                "attributes": {
+                                    "annotation": "",
+                                    "bdEnforcedEnable": "no",
+                                    "descr": "",
+                                    "dn": "",
+                                    "ipDataPlaneLearning": "enabled",
+                                    "knwMcastAct": "permit",
+                                    "name": "VRF_GGSDD",
+                                    "nameAlias": "",
+                                    "ownerKey": "",
+                                    "ownerTag": "",
+                                    "pcEnfDir": "ingress",
+                                    "pcEnfPref": "enforced"
+                                },
+                                "children": [
+                                    {
+                                        "fvRsVrfValidationPol": {
+                                            "attributes": {
+                                                "annotation": "",
+                                                "dn": "",
+                                                "tnL3extVrfValidationPolName": ""
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "vzAny": {
+                                            "attributes": {
+                                                "annotation": "",
+                                                "descr": "",
+                                                "dn": "",
+                                                "matchT": "AtleastOne",
+                                                "name": "",
+                                                "nameAlias": "",
+                                                "prefGrMemb": "disabled"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "fvRsOspfCtxPol": {
+                                            "attributes": {
+                                                "annotation": "",
+                                                "dn": "",
+                                                "tnOspfCtxPolName": ""
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "fvRsCtxToEpRet": {
+                                            "attributes": {
+                                                "annotation": "",
+                                                "dn": "",
+                                                "tnFvEpRetPolName": ""
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "fvRsCtxToExtRouteTagPol": {
+                                            "attributes": {
+                                                "annotation": "",
+                                                "dn": "",
+                                                "tnL3extRouteTagPolName": ""
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "fvRsBgpCtxPol": {
+                                            "attributes": {
+                                                "annotation": "",
+                                                "dn": "",
+                                                "tnBgpCtxPolName": ""
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "fvRsTenantMonPol": {
+                                "attributes": {
+                                    "annotation": "",
+                                    "dn": "",
+                                    "tnMonEPGPolName": ""
+                                }
+                            }
+                        },
+                        {
+                            "fvAp": {
+                                "attributes": {
+                                    "annotation": "",
+                                    "descr": "",
+                                    "dn": "",
+                                    "name": "ANP_GGSDD",
+                                    "nameAlias": "",
+                                    "ownerKey": "",
+                                    "ownerTag": "",
+                                    "prio": "unspecified"
+                                },
+                                "children": [
+                                    {
+                                        "fvAEPg": {
+                                            "attributes": {
+                                                "annotation": "",
+                                                "descr": "EPG_GGSDD_Vlan385",
+                                                "dn": "",
+                                                "exceptionTag": "",
+                                                "floodOnEncap": "disabled",
+                                                "fwdCtrl": "",
+                                                "hasMcastSource": "no",
+                                                "isAttrBasedEPg": "no",
+                                                "matchT": "AtleastOne",
+                                                "name": "EPG_GGSDD",
+                                                "nameAlias": "",
+                                                "pcEnfPref": "unenforced",
+                                                "prefGrMemb": "include",
+                                                "prio": "unspecified",
+                                                "shutdown": "no"
+                                            },
+                                            "children": [
+                                                {
+                                                    "fvRsPathAtt": {
+                                                        "attributes": {
+                                                            "annotation": "",
+                                                            "descr": "",
+                                                            "dn": "",
+                                                            "encap": "vlan-385",
+                                                            "instrImedcy": "lazy",
+                                                            "mode": "regular",
+                                                            "primaryEncap": "unknown",
+                                                            "tDn": "topology/pod-1/protpaths-105-106/pathep-[DC1_DataLake_FIA]"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "fvRsDomAtt": {
+                                                        "attributes": {
+                                                            "annotation": "",
+                                                            "bindingType": "none",
+                                                            "classPref": "encap",
+                                                            "delimiter": "",
+                                                            "dn": "",
+                                                            "encap": "unknown",
+                                                            "encapMode": "auto",
+                                                            "epgCos": "Cos0",
+                                                            "epgCosPref": "disabled",
+                                                            "instrImedcy": "immediate",
+                                                            "lagPolicyName": "",
+                                                            "netflowDir": "both",
+                                                            "netflowPref": "disabled",
+                                                            "numPorts": "0",
+                                                            "portAllocation": "none",
+                                                            "primaryEncap": "unknown",
+                                                            "primaryEncapInner": "unknown",
+                                                            "resImedcy": "immediate",
+                                                            "secondaryEncapInner": "unknown",
+                                                            "switchingMode": "native",
+                                                            "tDn": "uni/vmmp-VMware/dom-ECAVS01"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "fvRsCustQosPol": {
+                                                        "attributes": {
+                                                            "annotation": "",
+                                                            "dn": "",
+                                                            "tnQosCustomPolName": ""
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "fvRsBd": {
+                                                        "attributes": {
+                                                            "annotation": "",
+                                                            "dn": "",
+                                                            "tnFvBDName": "BD_GGSDD"
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+}

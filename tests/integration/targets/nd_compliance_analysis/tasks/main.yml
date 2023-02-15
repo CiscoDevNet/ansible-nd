@@ -1,0 +1,172 @@
+# Test code for the ND modules
+# Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have an Nexus Dashboard host, username and password
+  fail:
+    msg: 'Please define the following variables: nd_hostname, nd_username and nd_password.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined
+
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      host: '{{ nd_hostname }}'
+      username: '{{ nd_username }}'
+      password: '{{ nd_password }}'
+      validate_certs: '{{ nd_validate_certs | default(false) }}'
+      use_ssl: '{{ nd_use_ssl | default(true) }}'
+      use_proxy: '{{ nd_use_proxy | default(true) }}'
+      output_level: '{{ nd_output_level | default("info") }}'
+    ndi_info: &ndi_info
+      insights_group: d2o-tme
+    ndi_dite: &ndi_site
+      site: qa-fabric
+    ndi_base: &ndi_base
+      sites:
+        - qa-fabric
+      enabled: true
+    
+
+# CLEAN ENVIRONMENT
+- name: Query compliance requirements
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *nd_info
+    <<: *ndi_info
+    state: query
+  register: clean_existing
+
+- name: Delete existing manual config compliance requirements
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *nd_info
+    <<: *ndi_info
+    name: "{{ item.name }}"
+    state: absent
+  loop: "{{ clean_existing.current }}"
+
+- name: Query compliance requirements
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    state: query
+  register: clean_existing
+
+- name: Delete existing communication compliance requirements
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    name: "{{ item.name }}"
+    state: absent
+  loop: "{{ clean_existing.current }}"
+
+- name: Query compliance requirements
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *nd_info
+    <<: *ndi_info
+    state: query
+  register: query_existing
+
+- name: Verify no compliance requirements are present
+  assert:
+    that:
+    - query_existing.current == []
+
+# PASS TESTS CREATE
+
+- name: Create a compliance requirement ( config manual )
+  cisco.nd.nd_compliance_requirement_config_manual: &requirement_config_manual
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    name: ansible-test-epg
+    from_object_type: epg
+    from_match_criteria:
+      - match_criteria_type: include
+        matches:
+          - object_type: tenant
+            object_attribute: DN
+            matches_pattern:
+              - match_type: tenant
+                pattern_type: contains
+    config_rules:
+      - attribute: name
+        operator: contains
+        value: foo
+    state: present
+
+- name: Create a compliance requirement bd ( config manual )
+  cisco.nd.nd_compliance_requirement_config_manual: &requirement_config_manual_bd
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    name: ansible-test-bd
+    from_object_type: bd
+    from_match_criteria:
+      - match_criteria_type: include
+        matches:
+          - object_type: tenant
+            object_attribute: DN
+            matches_pattern:
+              - match_type: tenant
+                pattern_type: contains
+    config_rules:
+      - attribute: unicast_routing
+        operator: equal_to
+        value: "Yes"
+    state: present
+
+# TRIGGER INSTANT ASSURANCE ANALYSIS
+- name: Trigger instant assurance analysis job
+  cisco.nd.nd_instant_assurance_analysis:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_site
+    state: present
+  register: instant_analysis_triggered
+
+# WAIT AND LOOP UNTIL INSTANT ANALYSIS IS COMPLETED
+- name: Wait until instant assurance analysis is completed
+  cisco.nd.nd_instant_assurance_analysis:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_site
+    job_id: "{{ instant_analysis_triggered.current.jobId }}"
+    state: query
+  register: instant_analysis_info
+  until: instant_analysis_info.current.operSt == "COMPLETE"
+  retries: 200
+  delay: 6
+
+- name: Run compliance analysis for latest epoch id
+  cisco.nd.nd_compliance_analysis:  
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_site
+  register: compliance_analysis_latest
+
+- name: Get Epoch with period ( latest )
+  cisco.nd.nd_epoch:  
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_site
+    period: latest
+    site: qa-fabric
+  register: period_latest
+
+- name: Run compliance analysis for latest epoch id
+  cisco.nd.nd_compliance_analysis:  
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_site
+    epoch_id: "{{ period_latest.current.epochId }}"
+  register: compliance_analysis_epoch
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_config_manual
+    state: absent
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_config_manual:
+    <<: *requirement_config_manual_bd
+    state: absent
