@@ -1,0 +1,211 @@
+# Test code for the ND modules
+# Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have an Nexus Dashboard host, username and password
+  fail:
+    msg: 'Please define the following variables: nd_hostname, nd_username and nd_password.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined
+
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      host: '{{ nd_hostname }}'
+      username: '{{ nd_username }}'
+      password: '{{ nd_password }}'
+      validate_certs: '{{ nd_validate_certs | default(false) }}'
+      use_ssl: '{{ nd_use_ssl | default(true) }}'
+      use_proxy: '{{ nd_use_proxy | default(true) }}'
+      output_level: '{{ nd_output_level | default("info") }}'
+    ndi_info: &ndi_info
+      insights_group: d2o-tme
+    ndi_base: &ndi_base
+      name: ansible-test-1
+      sites:
+        - qa-fabric
+      enabled: false
+      file: targets/nd_compliance_requirement_config_template/files/ansible-test.json
+
+# CLEAN ENVIRONMENT
+- name: Query compliance requirements
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *nd_info
+    <<: *ndi_info
+    state: query
+  register: clean_existing
+
+- name: Delete existing communication compliance requirements
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *nd_info
+    <<: *ndi_info
+    name: "{{ item.name }}"
+    state: absent
+  loop: "{{ clean_existing.current }}"
+
+- name: Query compliance requirements
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *nd_info
+    <<: *ndi_info
+    state: query
+  register: query_existing
+
+- name: Verify no compliance requirements are present
+  assert:
+    that:
+    - query_existing.current == []
+
+# PASS TESTS CREATE
+
+- name: Create a compliance requirement ( check mode )
+  cisco.nd.nd_compliance_requirement_config_template: &requirement_create
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    state: present
+  check_mode: yes
+  register: cm_create_requirement
+
+- name: Create a compliance requirement
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_create
+    state: present
+  register: nm_create_requirement
+
+- name: Create a compliance requirement again
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_create
+    state: present
+  register: nm_create_requirement_again
+
+- name: Create a compliance requirement again with change
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_create
+    enabled: true
+    state: present
+  register: nm_create_requirement_again_with_change
+
+- name: Delete a compliance requirement ( check mode )
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_create
+    state: absent
+  check_mode: yes
+  register: cm_remove_requirement
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_create
+    state: absent
+  register: nm_remove_requirement
+
+- name: Verify create compliance requirement
+  assert:
+    that:
+      - cm_create_requirement.current.associatedSites | length == 1
+      - cm_create_requirement.current.configurationType == "TEMPLATE_BASED_CONFIGURATION_COMPLIANCE"
+      - cm_create_requirement.current.enabled == false
+      - cm_create_requirement.current.name == "ansible-test-1"
+      - cm_create_requirement.current.requirementType == "CONFIGURATION_COMPLIANCE"
+      - cm_create_requirement.current.uploadFileType == "TEMPLATE_BASED_CONFIG"
+      - cm_create_requirement.current.uploadedFileExtension == "json"
+      - cm_create_requirement.current.uploadedFileName == "ansible-test"
+      - cm_create_requirement.current.enableSelectorBasedOnTags == false
+      - cm_create_requirement.current.enableEqualityCheck == false
+      - nm_create_requirement.current.associatedSites | length == 1
+      - nm_create_requirement.current.configurationType == "TEMPLATE_BASED_CONFIGURATION_COMPLIANCE"
+      - nm_create_requirement.current.enabled == false
+      - nm_create_requirement.current.name == "ansible-test-1"
+      - nm_create_requirement.current.requirementType == "CONFIGURATION_COMPLIANCE"
+      - nm_create_requirement.current.uploadFileType == "TEMPLATE_BASED_CONFIG"
+      - nm_create_requirement.current.uploadedFileExtension == "json"
+      - nm_create_requirement.current.uploadedFileName == "ansible-test"
+      - nm_create_requirement.current.enableSelectorBasedOnTags == false
+      - nm_create_requirement.current.enableEqualityCheck == false
+      - nm_create_requirement_again is not changed
+      - nm_create_requirement_again_with_change.current.enabled == true
+      - cm_remove_requirement.current == {}
+      - nm_remove_requirement.current == {}
+
+- name: Create a compliance requirement ( without description )
+  cisco.nd.nd_compliance_requirement_config_template: &requirement_description
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    state: present
+
+- name: Query compliance requirements ( without description )
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_description
+    state: query
+  register: create_requirement_description_none
+
+- name: Create a compliance requirement ( with description )
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_description
+    description: ansible-test-description
+    state: present
+
+- name: Query compliance requirements ( with description )
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_description
+    state: query
+  register: create_requirement_description
+
+- name: Create a compliance requirement ( without description )
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_description
+    state: present
+
+- name: Query compliance requirements ( without description )
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_description
+    state: query
+  register: create_requirement_description_none_again
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_description
+    state: absent
+  register: remove_requirement_description
+
+- name: Verify create compliance requirement ( with description )
+  assert:
+    that:
+      - create_requirement_description_none.current.description is not defined
+      - create_requirement_description.current.description == "ansible-test-description"
+      - create_requirement_description_none_again.current.description == " "
+      - remove_requirement_description.current == {}
+
+# FAIL TESTS
+
+- name: Create a compliance requirement with incorrect file
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_create
+    file: targets/nd_compliance_requirement_config_template/files/ansible-test-fail.json
+    state: present
+  ignore_errors: yes
+  register: err_create_requirement_incorrect_file
+
+- name: Create a compliance requirement
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_create
+    state: present
+
+- name: Change a compliance requirement file
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_create
+    file: targets/nd_compliance_requirement_config_template/files/ansible-test-fail.json
+    state: present
+  ignore_errors: yes
+  register: err_change_requirement_file
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_config_template:
+    <<: *requirement_create
+    state: absent
+
+- name: Verify errors
+  assert:
+    that:
+      - err_change_requirement_file.msg == "File provided 'ansible-test-fail.json' is not matching file 'ansible-test.json' of existing requirement"
+      - err_create_requirement_incorrect_file.payload.messages.0.message == "The configuration file has invalid content. Object must have exactly one type but has 0"

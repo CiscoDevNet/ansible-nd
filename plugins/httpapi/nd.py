@@ -1,5 +1,8 @@
-# Copyright (c) 2020 Cisco and/or its affiliates.
-#
+# -*- coding: utf-8 -*-
+
+# Copyright: (c) 2020, Lionel Hercot (@lhercot) <lhercot@cisco.com>
+# Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 
@@ -9,8 +12,6 @@ __metaclass__ = type
 
 DOCUMENTATION = """
 ---
-author:
-- Lionel Hercot (@lhercot)
 name: nd
 short_description: Nexus Dashboard Ansible HTTPAPI Plugin.
 description:

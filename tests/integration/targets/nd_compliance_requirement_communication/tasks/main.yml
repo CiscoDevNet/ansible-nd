@@ -1,0 +1,877 @@
+# Test code for the ND modules
+# Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have an Nexus Dashboard host, username and password
+  fail:
+    msg: 'Please define the following variables: nd_hostname, nd_username and nd_password.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined
+
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      host: '{{ nd_hostname }}'
+      username: '{{ nd_username }}'
+      password: '{{ nd_password }}'
+      validate_certs: '{{ nd_validate_certs | default(false) }}'
+      use_ssl: '{{ nd_use_ssl | default(true) }}'
+      use_proxy: '{{ nd_use_proxy | default(true) }}'
+      output_level: '{{ nd_output_level | default("info") }}'
+    ndi_info: &ndi_info
+      insights_group: d2o-tme
+    ndi_base: &ndi_base
+      name: ansible-test-1
+      sites:
+        - qa-fabric
+      enabled: false
+      communication_type: must
+    ndi_base_object: &ndi_base_object
+      from_object_type: epg
+      from_match_criteria:
+        - match_criteria_type: include
+          matches:
+            - object_type: vrf
+              object_attribute: DN
+              matches_pattern:
+                - match_type: tenant
+                  pattern_type: begins_with
+                  pattern: foo
+                - match_type: vrf
+                  pattern_type: contains
+                  pattern: bar
+      to_object_type: epg
+      to_match_criteria:
+        - match_criteria_type: include
+          matches:
+            - object_type: epg
+              matches_pattern:
+                - match_type: tenant
+                  pattern_type: contains
+                  pattern: foo
+                - match_type: ap
+                  pattern_type: contains
+                  pattern: bar
+                - match_type: epg
+                  pattern_type: contains
+                  pattern: bar
+    ndi_base_traffic: &ndi_base_traffic
+      traffic_selector_rules:
+        - ether_type: ip
+          protocol_type: all
+        - ether_type: arp
+        - ether_type: ip
+          protocol_type: tcp
+          from_object:
+            source: "1"
+            destination: "2"
+            check_tcp_flags: false
+            flags_set: ["ack", "fin", "res", "syn" ]
+            flags_not_set: []
+
+# CLEAN ENVIRONMENT
+- name: Query compliance requirements
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    state: query
+  register: clean_existing
+
+- name: Delete existing communication compliance requirements
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    name: "{{ item.name }}"
+    state: absent
+  loop: "{{ clean_existing.current }}"
+
+- name: Query compliance requirements
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    state: query
+  register: query_existing
+
+- name: Verify no compliance requirements are present
+  assert:
+    that:
+    - query_existing.current == []
+
+# PASS TESTS CREATE
+
+- name: Create a compliance requirement ( type may / TRAFFIC_RESTRICTION )
+  cisco.nd.nd_compliance_requirement_communication: &requirement_may_traffic_restriction
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    communication_type: may
+    state: present
+  check_mode: yes
+  register: cm_create_requirement_may_traffic_restriction
+
+- name: Create a compliance requirement ( type may / TRAFFIC_RESTRICTION )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    communication_type: may
+    state: present
+  register: nm_create_requirement_may_traffic_restriction
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_may_traffic_restriction
+    state: absent
+  register: remove_requirement_may_traffic_restriction
+
+- name: Verify create compliance requirement ( type may / TRAFFIC_RESTRICTION )
+  assert:
+    that:
+      - cm_create_requirement_may_traffic_restriction.current.communicationType == "MAY"
+      - cm_create_requirement_may_traffic_restriction.current.requirementType == "TRAFFIC_RESTRICTION"
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors | length == 3
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.0.etherType == "IP"
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.0.ipProtocol == "ALL"
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.0.reversePort == false
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.1.etherType == "ARP"
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.1.reversePort == false
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.etherType == "IP"
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.ipProtocol == "TCP"
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.dstPort == "2"
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.srcPort == "1"
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlag == false
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsNotSet == []
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsSet == ["ack", "fin", "res", "syn"]
+      - cm_create_requirement_may_traffic_restriction.current.enabled == false
+      - cm_create_requirement_may_traffic_restriction.current.associatedSites | length == 1
+      - cm_create_requirement_may_traffic_restriction.current.name == "ansible-test-1"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorA.excludes == []
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes | length == 1
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorA.selectorType == "OST_EPG"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches | length == 1
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches.0.vrfMatch.objectAttribute == "DN"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches.0.vrfMatch.tenant.pattern == "foo"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches.0.vrfMatch.tenant.type == "BEGINS_WITH"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.pattern == "bar"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.type == "CONTAINS"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorB.excludes == []
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes | length == 1
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorB.selectorType == "OST_EPG"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches | length == 1
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.objectAttribute == "DN"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.applicationEpg.pattern == "bar"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.applicationEpg.type == "CONTAINS"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.applicationProfile.pattern == "bar"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.applicationProfile.type == "CONTAINS"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.tenant.pattern == "foo"
+      - cm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.tenant.type == "CONTAINS"
+      - nm_create_requirement_may_traffic_restriction.current.communicationType == "MAY"
+      - nm_create_requirement_may_traffic_restriction.current.requirementType == "TRAFFIC_RESTRICTION"
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors | length == 3
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.0.etherType == "IP"
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.0.ipProtocol == "ALL"
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.0.reversePort == false
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.1.etherType == "ARP"
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.1.reversePort == false
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.etherType == "IP"
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.ipProtocol == "TCP"
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.dstPort == "2"
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.srcPort == "1"
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlag == false
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsNotSet == []
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsSet == ["ack", "fin", "res", "syn"]
+      - nm_create_requirement_may_traffic_restriction.current.enabled == false
+      - nm_create_requirement_may_traffic_restriction.current.associatedSites | length == 1
+      - nm_create_requirement_may_traffic_restriction.current.name == "ansible-test-1"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorA.excludes == []
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes | length == 1
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorA.selectorType == "OST_EPG"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches | length == 1
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches.0.vrfMatch.objectAttribute == "DN"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches.0.vrfMatch.tenant.pattern == "foo"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches.0.vrfMatch.tenant.type == "BEGINS_WITH"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.pattern == "bar"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.type == "CONTAINS"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorB.excludes == []
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes | length == 1
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorB.selectorType == "OST_EPG"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches | length == 1
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.objectAttribute == "DN"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.applicationEpg.pattern == "bar"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.applicationEpg.type == "CONTAINS"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.applicationProfile.pattern == "bar"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.applicationProfile.type == "CONTAINS"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.tenant.pattern == "foo"
+      - nm_create_requirement_may_traffic_restriction.current.objectSelectorB.includes.0.matches.0.applicationEpgmatch.tenant.type == "CONTAINS"
+
+# ADD ASSERTS FOR ALL BASE CONFIG
+
+- name: Create a compliance requirement ( type must_not / TRAFFIC_RESTRICTION )
+  cisco.nd.nd_compliance_requirement_communication: &requirement_must_not_traffic_restriction
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    communication_type: must_not
+    state: present
+  register: create_requirement_must_not_traffic_restriction
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_must_not_traffic_restriction
+    state: absent
+  register: remove_requirement_must_not_traffic_restriction
+
+- name: Verify create compliance requirement ( type must_not / TRAFFIC_RESTRICTION )
+  assert:
+    that:
+      - create_requirement_must_not_traffic_restriction.current.communicationType == "MUST_NOT"
+      - create_requirement_must_not_traffic_restriction.current.requirementType == "TRAFFIC_RESTRICTION"
+
+- name: Create a compliance requirement ( type must_not / SEGMENTATION )
+  cisco.nd.nd_compliance_requirement_communication: &requirement_must_not_segmentation
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    communication_type: must_not
+    state: present
+  register: create_requirement_must_not_segmentation
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_must_not_segmentation
+    state: absent
+  register: remove_requirement_must_not_segmentation
+
+- name: Verify create compliance requirement ( type must_not / SEGMENTATION )
+  assert:
+    that:
+      - create_requirement_must_not_segmentation.current.communicationType == "MUST_NOT"
+      - create_requirement_must_not_segmentation.current.requirementType == "SEGMENTATION"
+
+- name: Create a compliance requirement ( type must / SLA )
+  cisco.nd.nd_compliance_requirement_communication: &requirement_must_sla
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    communication_type: must
+    state: present
+  register: create_requirement_must_sla
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_must_sla
+    state: absent
+  register: remove_requirement_must_sla
+
+- name: Verify create compliance requirement ( type must / SLA )
+  assert:
+    that:
+      - create_requirement_must_sla.current.communicationType == "MUST"
+      - create_requirement_must_sla.current.requirementType == "SLA"
+
+# PASS TESTS DESCRIPTIONS RESET TO NONE ( EMPTY SPACE STRING )
+
+- name: Create a compliance requirement ( without description )
+  cisco.nd.nd_compliance_requirement_communication: &requirement_description
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    state: present
+
+- name: Query compliance requirements ( without description )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_description
+    state: query
+  register: create_requirement_description_none
+
+- name: Create a compliance requirement ( with description )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_description
+    description: ansible-test-description
+    state: present
+
+- name: Query compliance requirements ( with description )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_description
+    state: query
+  register: create_requirement_description
+
+- name: Create a compliance requirement ( without description )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_description
+    state: present
+
+- name: Query compliance requirements ( without description )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_description
+    state: query
+  register: create_requirement_description_none_again
+
+- name: Delete a compliance requirement
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_description
+    state: absent
+  register: remove_requirement_description
+
+- name: Verify create compliance requirement ( with description )
+  assert:
+    that:
+      - create_requirement_description_none.current.description is not defined
+      - create_requirement_description.current.description == "ansible-test-description"
+      - create_requirement_description_none_again.current.description == " "
+      - remove_requirement_description.current == {}
+
+# PASS TESTS PATTERNS SET TO NONE
+
+- name: Create a compliance requirement pattern set to None
+  cisco.nd.nd_compliance_requirement_communication: &pattern_none
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    from_match_criteria:
+      - match_criteria_type: include
+        matches:
+          - object_type: vrf
+            object_attribute: DN
+            matches_pattern:
+              - match_type: vrf
+                pattern_type: contains
+    state: present
+
+- name: Query compliance requirements pattern set to None
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *pattern_none
+    state: query
+  register: query_pattern_none
+
+- name: Create a compliance requirement pattern set to value
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *pattern_none
+    from_match_criteria:
+      - match_criteria_type: include
+        matches:
+          - object_type: vrf
+            object_attribute: DN
+            matches_pattern:
+              - match_type: vrf
+                pattern_type: contains
+                pattern: value
+    state: present
+
+- name: Query compliance requirements pattern set to value
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *pattern_none
+    state: query
+  register: query_pattern_value
+
+- name: Create a compliance requirement pattern set to None again
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *pattern_none
+    from_match_criteria:
+      - match_criteria_type: include
+        matches:
+          - object_type: vrf
+            object_attribute: DN
+            matches_pattern:
+              - match_type: vrf
+                pattern_type: contains
+    state: present
+
+- name: Query compliance requirements pattern set to None again
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *pattern_none
+    state: query
+  register: query_pattern_none_again
+
+- name: Verify create compliance requirement ( pattern == None )
+  assert:
+    that:
+      - query_pattern_none.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.pattern == ""
+      - query_pattern_value.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.pattern == "value"
+      - query_pattern_none_again.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.pattern == ""
+
+- name: Delete a non existing compliance requirement
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *pattern_none
+    state: absent
+  register: remove_pattern_none
+
+- name: Verify delete non existing compliance requirement
+  assert:
+    that:
+      - remove_pattern_none.current == {}
+
+# PASS TESTS TRAFFIC SELECTOR RULES
+
+- name: Create a compliance requirement with reverse port set to true
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    traffic_selector_rules:
+      - ether_type: ip
+        protocol_type: tcp
+        reverse_port: true
+        from_object:
+          source: "1"
+          destination: "2"
+          check_tcp_flags: false
+          flags_set: [ ]
+          flags_not_set: [ ]
+    state: present
+  register: reverse_port_true
+
+- name: Create a compliance requirement with source not set
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    traffic_selector_rules:
+      - ether_type: ip
+        protocol_type: tcp
+        reverse_port: true
+        from_object:
+          destination: "2"
+          check_tcp_flags: false
+          flags_set: [ ]
+          flags_not_set: [ ]
+    state: present
+  register: source_not_set
+
+- name: Create a compliance requirement with destination not set
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    traffic_selector_rules:
+      - ether_type: ip
+        protocol_type: tcp
+        reverse_port: true
+        from_object:
+          source: "1"
+          check_tcp_flags: false
+          flags_set: [ ]
+          flags_not_set: [ ]
+    state: present
+  register: destination_not_set
+
+- name: Create a compliance requirement with check_tcp_flags not set
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    traffic_selector_rules:
+      - ether_type: ip
+        protocol_type: tcp
+        reverse_port: true
+        from_object:
+          source: "1"
+          destination: "2"
+          flags_set: [ ]
+          flags_not_set: [ ]
+    state: present
+  register: check_tcp_flags_not_set
+
+- name: Create a compliance requirement with flags_set not set
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    traffic_selector_rules:
+      - ether_type: ip
+        protocol_type: tcp
+        reverse_port: true
+        from_object:
+          source: "1"
+          destination: "2"
+          check_tcp_flags: false
+          flags_not_set: [ ]
+    state: present
+  register: flags_set_not_set
+
+- name: Create a compliance requirement with reverse flags_not_set not set
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    traffic_selector_rules:
+      - ether_type: ip
+        protocol_type: tcp
+        reverse_port: true
+        from_object:
+          source: "1"
+          destination: "2"
+          check_tcp_flags: false
+          flags_set: [ ]
+    state: present
+  register: flags_not_set_not_set
+
+# TODO ADD ASSERTIONS
+
+# PASS TESTS QUERY
+
+- name: Create a compliance requirement for query 1
+  cisco.nd.nd_compliance_requirement_communication: &requirement_query_1
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    state: present
+
+- name: Query compliance requirements 1
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_query_1
+    state: query
+  register: query_with_name_1
+
+- name: Create a compliance requirement for query 2
+  cisco.nd.nd_compliance_requirement_communication: &requirement_query_2
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    name: ansible-test-2
+    state: present
+
+- name: Query compliance requirements 2
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_query_2
+    state: query
+  register: query_with_name_2
+
+- name: Query compliance requirements
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    state: query
+  register: query_existing
+
+- name: Verify 2 compliance requirements are present
+  assert:
+    that:
+    - query_existing.current | length == 2
+
+- name: Delete existing communication compliance requirements
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    name: "{{ item.name }}"
+    state: absent
+  loop: "{{ query_existing.current }}"
+
+- name: Query compliance requirements
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    state: query
+  register: query_existing
+
+- name: Verify no compliance requirements are present
+  assert:
+    that:
+    - query_existing.current == []
+
+- name: Query a non existing compliance requirement
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_query_1
+    state: query
+  register: query_non_existing
+
+- name: Verify no compliance requirements are present
+  assert:
+    that:
+    - query_non_existing.current == {}
+
+# PASS TESTS UPDATE AND IDEMPOTENCY
+
+- name: Create a compliance requirement for update and idempotency (check mode)
+  cisco.nd.nd_compliance_requirement_communication: &requirement_change
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    state: present
+  check_mode: yes
+  register: cm_requirement_change_start
+
+- name: Create a compliance requirement
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_change
+    state: present
+  register: nm_requirement_change_start
+
+- name: Create a compliance requirement again (idempotent)
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_change
+    state: present
+  register: requirement_change_idempotent
+
+- name: Create a compliance requirement again with change
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_change
+    enabled: true
+    state: present
+  register: requirement_change_end
+
+- name: Verify no compliance requirements are present
+  assert:
+    that:
+    - cm_requirement_change_start is changed
+    - nm_requirement_change_start is changed
+    - requirement_change_idempotent is not changed
+    - requirement_change_end is changed
+
+- name: Create a compliance requirement with to_object
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    traffic_selector_rules:
+      - ether_type: ip
+        protocol_type: tcp
+        reverse_port: false
+        to_object:
+          flags_set: [ "ack" ]
+    state: present
+  register: flags_set_wrong_choice_error
+
+# PASS TESTS REMOVE
+
+- name: Delete a compliance requirement for change (check mode)
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_change
+    state: absent
+  check_mode: yes
+  register: cm_remove_requirement_change
+
+- name: Delete a compliance requirement for change
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *requirement_change
+    state: absent
+  register: nm_remove_requirement_change
+
+- name: Verify no compliance requirement is removed
+  assert:
+    that:
+      - cm_remove_requirement_change.current == {}
+      - nm_remove_requirement_change.current == {}
+
+# FAIL TESTS WRONG INPUT CHOICE
+
+- name: Create a compliance requirement with wrong choice ( communication_type )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    communication_type: wrong_choice
+    state: present
+  ignore_errors: yes
+  register: communication_type_wrong_choice_error
+
+- name: Create a compliance requirement with wrong choice ( from_object_type )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    from_object_type: wrong_choice
+    state: present
+  ignore_errors: yes
+  register: from_object_type_wrong_choice_error
+
+- name: Create a compliance requirement with wrong choice ( to_object_type )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    to_object_type: wrong_choice
+    state: present
+  ignore_errors: yes
+  register: to_object_type_wrong_choice_error
+
+- name: Create a compliance requirement with wrong choice ( match_criteria_type )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    from_match_criteria:
+      - match_criteria_type: wrong_choice
+        matches:
+          - object_type: vrf
+            object_attribute: DN
+            matches_pattern:
+              - match_type: tenant
+                pattern_type: begins_with
+                pattern: foo
+              - match_type: vrf
+                pattern_type: contains
+                pattern: bar
+    state: present
+  ignore_errors: yes
+  register: match_criteria_type_wrong_choice_error
+
+- name: Create a compliance requirement with wrong choice ( object_type )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    from_match_criteria:
+      - match_criteria_type: include
+        matches:
+          - object_type: wrong_choice
+            object_attribute: DN
+            matches_pattern:
+              - match_type: tenant
+                pattern_type: begins_with
+                pattern: foo
+              - match_type: vrf
+                pattern_type: contains
+                pattern: bar
+    state: present
+  ignore_errors: yes
+  register: object_type_wrong_choice_error
+
+- name: Create a compliance requirement with wrong choice ( object_attribute )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    from_match_criteria:
+      - match_criteria_type: include
+        matches:
+          - object_type: vrf
+            object_attribute: wrong_choice
+            matches_pattern:
+              - match_type: tenant
+                pattern_type: begins_with
+                pattern: foo
+              - match_type: vrf
+                pattern_type: contains
+                pattern: bar
+    state: present
+  ignore_errors: yes
+  register: object_attribute_wrong_choice_error
+
+- name: Create a compliance requirement with wrong choice ( match_type )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    from_match_criteria:
+      - match_criteria_type: include
+        matches:
+          - object_type: vrf
+            object_attribute: DN
+            matches_pattern:
+              - match_type: wrong_choice
+                pattern_type: begins_with
+                pattern: foo
+              - match_type: vrf
+                pattern_type: contains
+                pattern: bar
+    state: present
+  ignore_errors: yes
+  register: match_type_wrong_choice_error
+
+- name: Create a compliance requirement with wrong choice ( pattern_type )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    <<: *ndi_base_traffic
+    from_match_criteria:
+      - match_criteria_type: include
+        matches:
+          - object_type: vrf
+            object_attribute: DN
+            matches_pattern:
+              - match_type: tenant
+                pattern_type: wrong_choice
+                pattern: foo
+              - match_type: vrf
+                pattern_type: contains
+                pattern: bar
+    state: present
+  ignore_errors: yes
+  register: pattern_type_wrong_choice_error
+
+- name: Create a compliance requirement with wrong choice ( flags_set )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    traffic_selector_rules:
+      - ether_type: ip
+        protocol_type: tcp
+        from_object:
+          flags_set: [ "wrong_choice" ]
+    state: present
+  ignore_errors: yes
+  register: flags_set_wrong_choice_error
+
+- name: Create a compliance requirement with wrong choice ( flags_not_set )
+  cisco.nd.nd_compliance_requirement_communication:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_base
+    <<: *ndi_base_object
+    traffic_selector_rules:
+      - ether_type: ip
+        protocol_type: tcp
+        from_object:
+          flags_not_set: [ "wrong_choice" ]
+    state: present
+  ignore_errors: yes
+  register: flags_not_set_wrong_choice_error
+
+- name: Verify wrong choice error
+  assert:
+    that:
+      - 'communication_type_wrong_choice_error.msg == "value of communication_type must be one of: must, must_not, may, got: wrong_choice"'
+      - 'from_object_type_wrong_choice_error.msg == "value of from_object_type must be one of: tenant, epg, got: wrong_choice"'
+      - 'to_object_type_wrong_choice_error.msg == "value of to_object_type must be one of: tenant, epg, got: wrong_choice"'
+      - 'match_criteria_type_wrong_choice_error.msg == "value of match_criteria_type must be one of: include, exclude, got: wrong_choice found in from_match_criteria"'
+      - 'object_type_wrong_choice_error.msg == "value of object_type must be one of: tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract, got: wrong_choice found in from_match_criteria -> matches"'
+      - 'object_attribute_wrong_choice_error.msg == "value of object_attribute must be one of: DN, got: wrong_choice found in from_match_criteria -> matches"'
+      - 'match_type_wrong_choice_error.msg == "value of match_type must be one of: tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract, got: wrong_choice found in from_match_criteria -> matches -> matches_pattern"'
+      - 'pattern_type_wrong_choice_error.msg == "value of pattern_type must be one of: contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with, got: wrong_choice found in from_match_criteria -> matches -> matches_pattern"'
+      - 'flags_set_wrong_choice_error.msg == "value of flags_set must be one or more of: ack, est, fin, res, syn. Got no match for: wrong_choice found in traffic_selector_rules -> from_object"'
+      - 'flags_not_set_wrong_choice_error.msg == "value of flags_not_set must be one or more of: ack, est, fin, res, syn. Got no match for: wrong_choice found in traffic_selector_rules -> from_object"'

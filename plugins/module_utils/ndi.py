@@ -2,7 +2,9 @@
 
 # Copyright: (c) 2021, Lionel Hercot (@lhercot) <lhercot@cisco.com>
 # Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
-# Simplified BSD License (see licenses/simplified_bsd.txt or https://opensource.org/licenses/BSD-2-Clause)
+# Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
 import json
@@ -14,6 +16,26 @@ try:
 except ImportError:
     HAS_JSONPATH_NG_PARSE = False
 __metaclass__ = type
+
+from ansible_collections.cisco.nd.plugins.module_utils.constants import OBJECT_TYPES, MATCH_TYPES
+
+
+def get_object_selector_payload(object_selector, object_type):
+    payload = {"includes": [], "excludes": [], "selectorType": OBJECT_TYPES.get(object_type)}
+    for match_criteria in object_selector:
+        criteria_payload = []
+        for match in match_criteria.get("matches"):
+            match_object_type = MATCH_TYPES.get(match["object_type"])
+            match_payload = {match_object_type.get("match_value"): {"objectAttribute": match.get("object_attribute")}}
+            for pattern in match.get("matches_pattern"):
+                pattern_value = MATCH_TYPES.get(pattern.get("match_type")).get("pattern_value")
+                match_payload[match_object_type.get("match_value")][pattern_value] = {
+                    "type": pattern.get("pattern_type").upper(),
+                    "pattern": pattern.get("pattern") if pattern.get("pattern") else "",
+                }
+            criteria_payload.append(match_payload)
+        payload["{0}s".format(match_criteria.get("match_criteria_type"))].append({"matches": criteria_payload})
+    return payload
 
 
 class NDI:
@@ -28,6 +50,7 @@ class NDI:
         self.run_analysis_ig_path = "{0}/fabric/{1}/runOnlineAnalysis"
         self.run_epoch_delta_ig_path = "{0}/fabric/{1}/runEpochDelta"
         self.jobs_ig_path = "jobs/summary.json"
+        self.requirements_path = "config/insightsGroup/{0}/requirements"
 
     def get_site_id(self, ig_name, site_name, **kwargs):
         obj = self.nd.query_obj(self.config_ig_path, **kwargs)
@@ -258,6 +281,20 @@ class NDI:
         else:
             self.nd.fail_json(msg="site name and prechange validation job name are required")
         return pcv_result
+
+    def query_requirements(self, ig_name):
+        requirements_path = "{0}/list".format(self.requirements_path.format(ig_name))
+        obj = self.nd.query_obj(requirements_path, prefix=self.prefix)
+        return obj.get("value", {}).get("data", []) if obj.get("value") else []
+
+    def set_requirement_details(self, requirements, name):
+        if name:
+            self.nd.existing = next((item for item in requirements if item.get("name") == name), {})
+            uuid = self.nd.existing.get("uuid")
+        else:
+            self.nd.existing = requirements
+            uuid = None
+        return uuid
 
     def is_json(self, myjson):
         try:
