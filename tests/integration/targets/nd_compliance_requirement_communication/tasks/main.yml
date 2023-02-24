@@ -65,9 +65,6 @@
           from_object:
             source: "1"
             destination: "2"
-            check_tcp_flags: false
-            flags_set: ["ack", "fin", "res", "syn" ]
-            flags_not_set: []
 
 # CLEAN ENVIRONMENT
 - name: Query compliance requirements
@@ -145,7 +142,7 @@
       - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.srcPort == "1"
       - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlag == false
       - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsNotSet == []
-      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsSet == ["ack", "fin", "res", "syn"]
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsSet == []
       - cm_create_requirement_may_traffic_restriction.current.enabled == false
       - cm_create_requirement_may_traffic_restriction.current.associatedSites | length == 1
       - cm_create_requirement_may_traffic_restriction.current.name == "ansible-test-1"
@@ -183,7 +180,7 @@
       - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.srcPort == "1"
       - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlag == false
       - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsNotSet == []
-      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsSet == ["ack", "fin", "res", "syn"]
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsSet == []
       - nm_create_requirement_may_traffic_restriction.current.enabled == false
       - nm_create_requirement_may_traffic_restriction.current.associatedSites | length == 1
       - nm_create_requirement_may_traffic_restriction.current.name == "ansible-test-1"
@@ -416,7 +413,7 @@
 
 # PASS TESTS TRAFFIC SELECTOR RULES
 
-- name: Create a compliance requirement with reverse port set to true
+- name: Create a compliance requirement with reverse port set to true and tcp flags not set
   cisco.nd.nd_compliance_requirement_communication:
     <<: *nd_info
     <<: *ndi_info
@@ -429,9 +426,6 @@
         from_object:
           source: "1"
           destination: "2"
-          check_tcp_flags: false
-          flags_set: [ ]
-          flags_not_set: [ ]
     state: present
   register: reverse_port_true
 
@@ -447,9 +441,6 @@
         reverse_port: true
         from_object:
           destination: "2"
-          check_tcp_flags: false
-          flags_set: [ ]
-          flags_not_set: [ ]
     state: present
   register: source_not_set
 
@@ -465,13 +456,11 @@
         reverse_port: true
         from_object:
           source: "1"
-          check_tcp_flags: false
-          flags_set: [ ]
-          flags_not_set: [ ]
     state: present
   register: destination_not_set
 
-- name: Create a compliance requirement with check_tcp_flags not set
+
+- name: Create a compliance requirement with flags_set to ack
   cisco.nd.nd_compliance_requirement_communication:
     <<: *nd_info
     <<: *ndi_info
@@ -484,12 +473,11 @@
         from_object:
           source: "1"
           destination: "2"
-          flags_set: [ ]
-          flags_not_set: [ ]
+          flags_set: [ "ack" ]
     state: present
-  register: check_tcp_flags_not_set
+  register: flags_set_to_ack
 
-- name: Create a compliance requirement with flags_set not set
+- name: Create a compliance requirement with flags_not_set to ack
   cisco.nd.nd_compliance_requirement_communication:
     <<: *nd_info
     <<: *ndi_info
@@ -502,30 +490,24 @@
         from_object:
           source: "1"
           destination: "2"
-          check_tcp_flags: false
-          flags_not_set: [ ]
+          flags_not_set: [ "ack" ]
     state: present
-  register: flags_set_not_set
+  register: flags_not_set_to_ack
 
-- name: Create a compliance requirement with reverse flags_not_set not set
-  cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
-    <<: *ndi_info
-    <<: *ndi_base
-    <<: *ndi_base_object
-    traffic_selector_rules:
-      - ether_type: ip
-        protocol_type: tcp
-        reverse_port: true
-        from_object:
-          source: "1"
-          destination: "2"
-          check_tcp_flags: false
-          flags_set: [ ]
-    state: present
-  register: flags_not_set_not_set
-
-# TODO ADD ASSERTIONS
+- name: Verify create compliance with flags
+  assert:
+    that:
+      - reverse_port_true.current.complianceTrafficSelector.includes.selectors.0.selectors.0.reversePort == true
+      - reverse_port_true.current.complianceTrafficSelector.includes.selectors.0.selectors.0.portSelectorAtoB.tcpFlagsNotSet == []
+      - reverse_port_true.current.complianceTrafficSelector.includes.selectors.0.selectors.0.portSelectorAtoB.tcpFlagsSet == []
+      - source_not_set.current.complianceTrafficSelector.includes.selectors.0.selectors.0.portSelectorAtoB.dstPort == "2"
+      - source_not_set.current.complianceTrafficSelector.includes.selectors.0.selectors.0.portSelectorAtoB.srcPort == ""
+      - destination_not_set.current.complianceTrafficSelector.includes.selectors.0.selectors.0.portSelectorAtoB.dstPort == ""
+      - destination_not_set.current.complianceTrafficSelector.includes.selectors.0.selectors.0.portSelectorAtoB.srcPort == "1"
+      - flags_set_to_ack.current.complianceTrafficSelector.includes.selectors.0.selectors.0.portSelectorAtoB.tcpFlag == true
+      - flags_set_to_ack.current.complianceTrafficSelector.includes.selectors.0.selectors.0.portSelectorAtoB.tcpFlagsSet == ["ack"]
+      - flags_not_set_to_ack.current.complianceTrafficSelector.includes.selectors.0.selectors.0.portSelectorAtoB.tcpFlag == true
+      - flags_not_set_to_ack.current.complianceTrafficSelector.includes.selectors.0.selectors.0.portSelectorAtoB.tcpFlagsNotSet == ["ack"]
 
 # PASS TESTS QUERY
 

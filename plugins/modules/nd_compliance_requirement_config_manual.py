@@ -130,6 +130,7 @@ regex, exact, at_least, at_most, all, none, at_least_one]
       value:
         description:
         - Value of the compliance configuration rule.
+        - WARNING be aware of case sensitivity !!
         type: str
         required: yes
   state:
@@ -165,7 +166,7 @@ EXAMPLES = r"""
     from_object_type: epg
     from_match_criteria:
     - from_match_criteria: include
-      match_criteria:
+      matches:
       - object_type: vrf
         object_attribute: DN
         matches_pattern:
@@ -174,16 +175,6 @@ EXAMPLES = r"""
           pattern: foo
         - match_type: vrf
           pattern_type: CONTAINS
-          pattern: bar
-      - from_match_criteria: include
-        object_type: bd
-        object_attribute: DN
-        matches_pattern:
-        - match_type: tenant
-          pattern_type: NOT_EQUAL_TO
-          pattern: foo
-        - match_type: bd
-          pattern_type: NOT_BEGINS_WITH
           pattern: bar
     config_rules:
     - attribute: name

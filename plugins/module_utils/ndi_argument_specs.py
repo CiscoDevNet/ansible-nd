@@ -49,7 +49,6 @@ def compliance_tcp_spec():
     return dict(
         source=dict(type="str"),
         destination=dict(type="str"),
-        check_tcp_flags=dict(type="bool"),
         flags_set=dict(type="list", elements="str", choices=list(TCP_FLAGS)),
         flags_not_set=dict(type="list", elements="str", choices=list(TCP_FLAGS)),
     )

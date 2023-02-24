@@ -210,10 +210,6 @@ options:
             description:
             - The destination port or port range.
             type: str
-          check_tcp_flags:
-            description:
-            - Check the tcp flags.
-            type: bool
           flags_set:
             description:
             - Confirm these flags are set.
@@ -239,10 +235,6 @@ options:
             description:
             - The destination port or port range.
             type: str
-          check_tcp_flags:
-            description:
-            - Check the tcp flags.
-            type: bool
           flags_set:
             description:
             - Confirm these flags are set.
@@ -489,11 +481,11 @@ def get_rule_payload(rule):
 
 def get_tcp_payload(tcp_object):
     return {
-        "srcPort": tcp_object.get("source"),
-        "dstPort": tcp_object.get("destination"),
-        "tcpFlag": tcp_object.get("check_tcp_flags"),
-        "tcpFlagsSet": tcp_object.get("flags_set"),
-        "tcpFlagsNotSet": tcp_object.get("flags_not_set"),
+        "srcPort": tcp_object.get("source") if tcp_object.get("source") else "",
+        "dstPort": tcp_object.get("destination") if tcp_object.get("destination") else "",
+        "tcpFlag": True if tcp_object.get("flags_set") or tcp_object.get("flags_not_set") else False,
+        "tcpFlagsSet": tcp_object.get("flags_set") if tcp_object.get("flags_set") else [],
+        "tcpFlagsNotSet": tcp_object.get("flags_not_set") if tcp_object.get("flags_not_set") else [],
     }
 
 
