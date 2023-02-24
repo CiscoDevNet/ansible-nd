@@ -169,7 +169,7 @@ def main():
             "configurationType": "JSON_XML_BASED_CONFIGURATION_COMPLIANCE",
             "requirementType": "CONFIGURATION_COMPLIANCE",
             "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, site, prefix=ndi.prefix)} for site in sites],
-            "enableEqualityCheck": allow_new_configuration_objects,
+            "enableEqualityCheck": not allow_new_configuration_objects,
             "uploadFileType": "FULL_CONFIG",
         }
 

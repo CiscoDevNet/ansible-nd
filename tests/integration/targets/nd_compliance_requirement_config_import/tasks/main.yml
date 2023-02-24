@@ -109,7 +109,7 @@
       - cm_create_requirement.current.uploadFileType == "FULL_CONFIG"
       - cm_create_requirement.current.uploadedFileExtension == "json"
       - cm_create_requirement.current.uploadedFileName == "ansible-test"
-      - cm_create_requirement.current.enableEqualityCheck == false
+      - cm_create_requirement.current.enableEqualityCheck == true
       - nm_create_requirement.current.associatedSites | length == 1
       - nm_create_requirement.current.configurationType == "JSON_XML_BASED_CONFIGURATION_COMPLIANCE"
       - nm_create_requirement.current.enabled == false
@@ -118,7 +118,7 @@
       - nm_create_requirement.current.uploadFileType == "FULL_CONFIG"
       - nm_create_requirement.current.uploadedFileExtension == "json"
       - nm_create_requirement.current.uploadedFileName == "ansible-test"
-      - nm_create_requirement.current.enableEqualityCheck == false
+      - nm_create_requirement.current.enableEqualityCheck == true
       - nm_create_requirement_again is not changed
       - nm_create_requirement_again_with_change.current.enabled == true
       - cm_remove_requirement.current == {}

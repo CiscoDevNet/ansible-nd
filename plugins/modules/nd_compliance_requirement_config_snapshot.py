@@ -89,7 +89,7 @@ EXAMPLES = r"""
     - siteName1
     - siteName2
     enabled: false
-    epoch_id: epoch_id
+    epoch_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
     state: present
 - name: Delete compliance snapshot configuration type requirement
   cisco.nd.nd_compliance_requirement_config_snapshot:
@@ -177,7 +177,7 @@ def main():
             "requirementType": "CONFIGURATION_COMPLIANCE",
             "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, site, prefix=ndi.prefix)} for site in sites],
             "baseEpochId": epoch_id,
-            "enableEqualityCheck": allow_new_configuration_objects,
+            "enableEqualityCheck": not allow_new_configuration_objects,
         }
 
         if description:

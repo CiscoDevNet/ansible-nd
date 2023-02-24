@@ -107,12 +107,14 @@
       - cm_create_requirement.current.enabled == false
       - cm_create_requirement.current.name == "ansible-test-1"
       - cm_create_requirement.current.requirementType == "CONFIGURATION_COMPLIANCE"
+      - cm_create_requirement.current.enableEqualityCheck == true
       - nm_create_requirement.current.associatedSites | length == 1
       - nm_create_requirement.current.baseEpochId is defined
       - nm_create_requirement.current.configurationType == "SNAPSHOT_BASED_CONFIGURATION_COMPLIANCE"
       - nm_create_requirement.current.enabled == false
       - nm_create_requirement.current.name == "ansible-test-1"
       - nm_create_requirement.current.requirementType == "CONFIGURATION_COMPLIANCE"
+      - nm_create_requirement.current.enableEqualityCheck == true
       - nm_create_requirement_again is not changed
       - nm_create_requirement_again_with_change.current.enabled == true
       - cm_remove_requirement.current == {}
