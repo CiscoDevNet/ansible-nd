@@ -36,9 +36,9 @@ import json
 import pickle
 import traceback
 import mimetypes
-
+import tempfile
 from ansible.module_utils.six import PY3
-from ansible.module_utils._text import to_text
+from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import ConnectionError
 from ansible.plugins.httpapi import HttpApiBase
 
@@ -211,8 +211,27 @@ class HttpApi(HttpApiBase):
             raise ConnectionError(json.dumps(self._verify_response(None, method, full_path, None)))
         return self._verify_response(response, method, full_path, rdata)
 
-    def send_file_request(self, method, path, file=None, data=None):
-        """This method handles all ND REST API requests other than login"""
+    def send_file_request(self, method, path, file=None, data=dict(), remote_path=None):
+        """This method handles file download and upload operations
+        :arg method (str): Method can be GET or POST
+        :arg path (str): Path should be the resource path
+        :arg file (str): The absolute file path of the target file
+        :arg data (dict): Data should be the dictionary object
+        :arg remote_path (str): Remote directory path to download/upload the file object
+
+        :returns: Dict object which contains the status of the REST API call.
+        The **response** contains the 'status' and other metadata. When a HttpError (status >= 400)
+        occurred then ``response['body']`` contains the error response data:
+
+        Example:
+            response = send_file_request(
+                            method="POST",
+                            path="/mso/api/v1/backups/remoteUpload/63a018e587d6e5f7A",
+                            file="/tmp/log.txt",
+                            data={},
+                            remote_path="/temp",
+                        )
+        """
 
         self.error = None
         self.path = ""
@@ -233,7 +252,11 @@ class HttpApi(HttpApiBase):
 
         try:
             # create fields for MultipartEncoder
-            fields = dict(data=("data.json", data_str, "application/json"), file=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
+            if remote_path:
+                fields = dict(rdir=remote_path, name=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
+            else:
+                fields = dict(data=("data.json", data_str, "application/json"), file=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
+
             if not HAS_MULTIPART_ENCODER:
                 self.nd.fail_json(msg="Cannot use requests_toolbelt MultipartEncoder() because requests_toolbelt module is not available")
             mp_encoder = MultipartEncoder(fields=fields)
@@ -322,3 +345,51 @@ class HttpApi(HttpApiBase):
                     temp_headers[name] = value
             info.update(temp_headers)
         return info
+
+    def get_remote_file_io_stream(self, path, tmpdir, method="GET"):
+        """This method handles file download and upload operations
+        :arg path (str): Path should be the resource path
+        :arg tmpdir (str): Ansible module temporary execution directory which is used to create the temporary file object
+        :arg method (str): Method can be GET or POST
+
+        :returns: Dict object which contains the status of the REST API call.
+        The **response** contains the 'status' and other metadata. When a HttpError (status >= 400)
+        occurred then ``response['body']`` contains the error response data:
+
+        Example:
+            response = get_remote_file_io_stream(
+                            path="/mso/api/v1/backups/remoteUpload/63a018e587d6e5f7A",
+                            tmpdir="/tmp",
+                            method="GET",
+                        )
+        """
+
+        self.error = None
+        self.path = ""
+        self.status = -1
+        self.info = {}
+
+        try:
+            response, rdata = self.connection.send(path, {}, method=method, headers=self.headers)
+            verified_response = self._verify_response(response, method, path, rdata)
+        except Exception as error:
+            raise ConnectionError("File download operation failed due to: {0}".format(error))
+
+        if verified_response["status"] in (301, 302, 303, 307):
+            return verified_response
+        elif verified_response["status"] == 404:
+            raise ConnectionError(json.dumps(verified_response))
+
+        fd, tmpsrc = tempfile.mkstemp(dir=tmpdir)
+        f = open(tmpsrc, "wb")
+        try:
+            f.write(rdata.getbuffer())
+        except Exception as e:
+            os.remove(tmpsrc)
+            f.close()
+            raise ConnectionError("Failed to the create temporary content file: {0}".format(to_native(e)))
+
+        f.close()
+
+        verified_response["tmpsrc"] = tmpsrc
+        return verified_response
