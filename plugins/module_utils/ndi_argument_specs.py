@@ -22,26 +22,27 @@ def compliance_base_spec():
     )
 
 
-def compliance_match_criteria_spec():
+def object_selector_spec(choices):
     return dict(
-        match_criteria_type=dict(type="str", required=True, choices=["include", "exclude"]),
-        matches=dict(type="list", required=True, elements="dict", options=compliance_match_spec()),
+        type=dict(type="str", required=True, choices=choices),
+        includes=dict(type="list", required=True, elements="dict", options=compliance_match_spec()),
+        excludes=dict(type="list", elements="dict", options=compliance_match_spec()),
     )
 
 
 def compliance_match_spec():
     return dict(
-        object_type=dict(type="str", required=True, choices=list(MATCH_TYPES)),
-        object_attribute=dict(type="str", default="DN", choices=["DN"]),
-        matches_pattern=dict(type="list", required=True, elements="dict", options=compliance_match_pattern_spec()),
+        type=dict(type="str", required=True, choices=list(MATCH_TYPES)),
+        attribute=dict(type="str", default="DN", choices=["DN"]),
+        patterns=dict(type="list", required=True, elements="dict", options=compliance_match_pattern_spec()),
     )
 
 
 def compliance_match_pattern_spec():
     return dict(
-        match_type=dict(type="str", required=True, choices=list(MATCH_TYPES)),
-        pattern_type=dict(type="str", required=True, choices=OPERATORS),
-        pattern=dict(type="str"),
+        type=dict(type="str", required=True, choices=list(MATCH_TYPES)),
+        operator=dict(type="str", required=True, choices=OPERATORS),
+        value=dict(type="str"),
     )
 
 
@@ -49,6 +50,6 @@ def compliance_tcp_spec():
     return dict(
         source=dict(type="str"),
         destination=dict(type="str"),
-        flags_set=dict(type="list", elements="str", choices=list(TCP_FLAGS)),
-        flags_not_set=dict(type="list", elements="str", choices=list(TCP_FLAGS)),
+        tcp_flags=dict(type="list", elements="str", choices=list(TCP_FLAGS), aliases=["tcp_flags_set"]),
+        tcp_flags_not_set=dict(type="list", elements="str", choices=list(TCP_FLAGS)),
     )

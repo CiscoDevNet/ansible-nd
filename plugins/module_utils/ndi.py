@@ -20,21 +20,23 @@ __metaclass__ = type
 from ansible_collections.cisco.nd.plugins.module_utils.constants import OBJECT_TYPES, MATCH_TYPES
 
 
-def get_object_selector_payload(object_selector, object_type):
-    payload = {"includes": [], "excludes": [], "selectorType": OBJECT_TYPES.get(object_type)}
-    for match_criteria in object_selector:
-        criteria_payload = []
-        for match in match_criteria.get("matches"):
-            match_object_type = MATCH_TYPES.get(match["object_type"])
-            match_payload = {match_object_type.get("match_value"): {"objectAttribute": match.get("object_attribute")}}
-            for pattern in match.get("matches_pattern"):
-                pattern_value = MATCH_TYPES.get(pattern.get("match_type")).get("pattern_value")
-                match_payload[match_object_type.get("match_value")][pattern_value] = {
-                    "type": pattern.get("pattern_type").upper(),
-                    "pattern": pattern.get("pattern") if pattern.get("pattern") else "",
-                }
-            criteria_payload.append(match_payload)
-        payload["{0}s".format(match_criteria.get("match_criteria_type"))].append({"matches": criteria_payload})
+def get_object_selector_payload(object_selector):
+    payload = {"includes": [], "excludes": [], "selectorType": OBJECT_TYPES.get(object_selector.get("type"))}
+    for direction in [d for d in payload.keys() if d != "selectorType"]:
+        if object_selector[direction]:
+            match_payloads = []
+            for match in object_selector[direction]:
+                match_object_type = MATCH_TYPES.get(match["type"])
+                match_payload = {match_object_type.get("match_value"): {"objectAttribute": match.get("attribute")}}
+                for pattern in match.get("patterns"):
+                    pattern_value = MATCH_TYPES.get(pattern.get("type")).get("pattern_value")
+                    match_payload[match_object_type.get("match_value")][pattern_value] = {
+                        "type": pattern.get("operator").upper(),
+                        "pattern": pattern.get("value") if pattern.get("value") else "",
+                    }
+                match_payloads.append(match_payload)
+            payload[direction].append({"matches": match_payloads})
+
     return payload
 
 

@@ -45,131 +45,205 @@ options:
     - Names of the Assurance Entities.
     type: list
     elements: str
-  communication_type:
+  type:
     description:
     - The communication type of the compliance requirement.
     type: str
     choices: [ must, must_not, may ]
-  from_object_type:
+  from_object:
     description:
-    - The object type of 'from' objects.
-    type: str
-    choices: [ tenant, epg ]
-  from_match_criteria:
-    description:
-    - Container for all matching criteria attached to the 'from' object.
-    type: list
-    elements: dict
+    - Container for all matching criteria attached to the object.
+    type: dict
     suboptions:
-      match_criteria_type:
+      type:
         description:
-        - Include or exclude the match criteria.
+        - The object type of the object.
         type: str
-        required: true
-        choices: [ include, exclude ]
-      matches:
+        required: yes
+        choices: [ tenant, epg ]
+      includes:
         description:
-        - Container for all matches in the match criteria.
+        - Container for all matching criteria to include.
         type: list
-        required: true
+        required: yes
         elements: dict
         suboptions:
-          object_type:
+          type:
             description:
             - The object type of the match.
             type: str
             required: yes
             choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
-          object_attribute:
+          attribute:
             description:
             - The attribute of the match.
             - The GUI represent this as 'By'.
             type: str
             choices: [ DN ]
             default: DN
-          matches_pattern:
+          patterns:
             description:
             - Container for all patterns attached to the match.
             type: list
             required: yes
             elements: dict
             suboptions:
-              match_type:
+              type:
                 description:
                 - The type of the match.
                 type: str
                 required: yes
                 choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
-              pattern_type:
+              operator:
                 description:
-                - The type (operator) of the pattern.
+                - The operator of the pattern.
                 type: str
                 required: yes
                 choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
-              pattern:
+              value:
                 description:
-                - The pattern to match on.
+                - The value of the pattern to match on.
                 - Not providing a pattern sets to ANY-STRING.
                 type: str
-  to_object_type:
-    description:
-    - The object type of 'to' objects.
-    type: str
-    choices: [ tenant, epg ]
-  to_match_criteria:
-    description:
-    - Container for all matching criteria attached to the 'to' object.
-    type: list
-    elements: dict
-    suboptions:
-      match_criteria_type:
+      excludes:
         description:
-        - Include or exclude the match criteria.
-        type: str
-        required: true
-        choices: [ include, exclude ]
-      matches:
-        description:
-        - Container for all matches in the match criteria.
+        - Container for all matching criteria to exclude.
         type: list
-        required: true
         elements: dict
         suboptions:
-          object_type:
+          type:
             description:
             - The object type of the match.
             type: str
             required: yes
             choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
-          object_attribute:
+          attribute:
             description:
             - The attribute of the match.
             - The GUI represent this as 'By'.
             type: str
             choices: [ DN ]
             default: DN
-          matches_pattern:
+          patterns:
             description:
             - Container for all patterns attached to the match.
             type: list
             required: yes
             elements: dict
             suboptions:
-              match_type:
+              type:
                 description:
                 - The type of the match.
                 type: str
                 required: yes
                 choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
-              pattern_type:
+              operator:
                 description:
-                - The type (operator) of the pattern.
+                - The operator of the pattern.
                 type: str
                 required: yes
                 choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
-              pattern:
+              value:
                 description:
-                - The pattern to match on.
+                - The value of the pattern to match on.
+                - Not providing a pattern sets to ANY-STRING.
+                type: str
+  to_object:
+    description:
+    - Container for all matching criteria attached to the object.
+    type: dict
+    suboptions:
+      type:
+        description:
+        - The object type of the object.
+        type: str
+        required: yes
+        choices: [ tenant, epg ]
+      includes:
+        description:
+        - Container for all matching criteria to include.
+        type: list
+        required: yes
+        elements: dict
+        suboptions:
+          type:
+            description:
+            - The object type of the match.
+            type: str
+            required: yes
+            choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
+          attribute:
+            description:
+            - The attribute of the match.
+            - The GUI represent this as 'By'.
+            type: str
+            choices: [ DN ]
+            default: DN
+          patterns:
+            description:
+            - Container for all patterns attached to the match.
+            type: list
+            required: yes
+            elements: dict
+            suboptions:
+              type:
+                description:
+                - The type of the match.
+                type: str
+                required: yes
+                choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
+              operator:
+                description:
+                - The operator of the pattern.
+                type: str
+                required: yes
+                choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
+              value:
+                description:
+                - The value of the pattern to match on.
+                - Not providing a pattern sets to ANY-STRING.
+                type: str
+      excludes:
+        description:
+        - Container for all matching criteria to exclude.
+        type: list
+        elements: dict
+        suboptions:
+          type:
+            description:
+            - The object type of the match.
+            type: str
+            required: yes
+            choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
+          attribute:
+            description:
+            - The attribute of the match.
+            - The GUI represent this as 'By'.
+            type: str
+            choices: [ DN ]
+            default: DN
+          patterns:
+            description:
+            - Container for all patterns attached to the match.
+            type: list
+            required: yes
+            elements: dict
+            suboptions:
+              type:
+                description:
+                - The type of the match.
+                type: str
+                required: yes
+                choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
+              operator:
+                description:
+                - The operator of the pattern.
+                type: str
+                required: yes
+                choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
+              value:
+                description:
+                - The value of the pattern to match on.
                 - Not providing a pattern sets to ANY-STRING.
                 type: str
   traffic_selector_rules:
@@ -184,7 +258,7 @@ options:
         type: str
         required: true
         choices: [ arp, fcoe, ip, mac_security, mpls_unicast, trill ]
-      protocol_type:
+      protocol:
         description:
         - The type of the traffic protocol.
         - Only significant when 'ip' is selected.
@@ -194,7 +268,7 @@ options:
         description:
         - The direction of the IP TCP/UDP rule.
         - Only significant when 'ip' is selected in combination with 'tcp' or 'udp'.
-        - When set to true the from_object option are used for both directions.
+        - When set to true the from_object option is used for both directions.
         type: bool
         default: false
       from_object:
@@ -210,13 +284,14 @@ options:
             description:
             - The destination port or port range.
             type: str
-          flags_set:
+          tcp_flags:
             description:
             - Confirm these flags are set.
             type: list
             elements: str
             choices: [ ack, est, fin, res, syn ]
-          flags_not_set:
+            aliases: [ tcp_flags_set ]
+          tcp_flags_not_set:
             description:
             - Confirm these flags are not set.
             type: list
@@ -235,13 +310,14 @@ options:
             description:
             - The destination port or port range.
             type: str
-          flags_set:
+          tcp_flags:
             description:
             - Confirm these flags are set.
             type: list
             elements: str
             choices: [ ack, est, fin, res, syn ]
-          flags_not_set:
+            aliases: [ tcp_flags_set ]
+          tcp_flags_not_set:
             description:
             - Confirm these flags are not set.
             type: list
@@ -276,59 +352,55 @@ EXAMPLES = r"""
     - siteName1
     - siteName2
     enabled: false
-    communication_type: may
-    from_object_type: epg
-    from_match_criteria:
-    - match_criteria_type: include
-      matches:
-        - object_type: tenant
-          object_attribute: DN
-          matches_pattern:
-            - match_type: tenant
-              pattern_type: begins_with
-              pattern: foo
-            - match_type: vrf
-              pattern_type: contains
-              pattern: bar
-    - match_criteria_type: include
-      matches:
-        - object_type: epg
-          object_attribute: DN
-          matches_pattern:
-            - match_type: tenant
-              pattern_type: contains
-              pattern: foo
-            - match_type: ap
-              pattern_type: contains
-              pattern: bar
-            - match_type: epg
-              pattern_type: contains
-              pattern: foobar
-    to_object_type: epg
-    to_match_criteria:
-    - match_criteria_type: include
-      matches:
-        - object_type: epg
-          matches_pattern:
-            - match_type: tenant
-              pattern_type: contains
-              pattern: foo
-            - match_type: ap
-              pattern_type: contains
-              pattern: bar
-            - match_type: epg
-              pattern_type: contains
-              pattern: bar
+    type: may
+    from_object:
+      type: epg
+      includes:
+        - type: vrf
+          attribute: DN
+          patterns:
+            - type: tenant
+              operator: begins_with
+              value: foo
+            - type: vrf
+              operator: contains
+              value: bar
+        - type: epg
+          attribute: DN
+          patterns:
+            - type: tenant
+              operator: contains
+              value: foo
+            - type: ap
+              operator: contains
+              value: bar
+            - type: epg
+              operator: contains
+              value: foobar
+    to_object:
+      type: epg
+      excludes:
+        - type: epg
+          patterns:
+            - type: tenant
+              operator: contains
+              value: foo
+            - type: ap
+              operator: contains
+              value: bar
+            - type: epg
+              operator: contains
+              value: bar
     traffic_selector_rules:
     - ether_type: ip
-      protocol_type: all
+      protocol: all
     - ether_type: arp
     - ether_type: ip
-      protocol_type: tcp
+      protocol: tcp
       from_object:
         source: "1"
         destination: "2"
-        flags_set: ["ack", "fin", "res", "syn" ]
+        tcp_flags: ["ack", "fin", "res", "syn" ]
     state: present
 - name: Delete compliance communication type requirement
   cisco.nd.nd_compliance_requirement_communication:
@@ -343,7 +415,7 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, sanitize_dict
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI, get_object_selector_payload
-from ansible_collections.cisco.nd.plugins.module_utils.ndi_argument_specs import compliance_base_spec, compliance_match_criteria_spec, compliance_tcp_spec
+from ansible_collections.cisco.nd.plugins.module_utils.ndi_argument_specs import compliance_base_spec, object_selector_spec, compliance_tcp_spec
 from ansible_collections.cisco.nd.plugins.module_utils.constants import ETHER_TYPES, PROTOCOL_TYPES
 
 
@@ -351,17 +423,15 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(compliance_base_spec())
     argument_spec.update(
-        communication_type=dict(type="str", choices=["must", "must_not", "may"]),
-        from_object_type=dict(type="str", choices=["tenant", "epg"]),  # sub list of list(OBJECT_TYPES)
-        from_match_criteria=dict(type="list", elements="dict", options=compliance_match_criteria_spec()),
-        to_object_type=dict(type="str", choices=["tenant", "epg"]),  # sub list of list(OBJECT_TYPES)
-        to_match_criteria=dict(type="list", elements="dict", options=compliance_match_criteria_spec()),
+        type=dict(type="str", choices=["must", "must_not", "may"]),
+        from_object=dict(type="dict", options=object_selector_spec(["tenant", "epg"])),
+        to_object=dict(type="dict", options=object_selector_spec(["tenant", "epg"])),
         traffic_selector_rules=dict(
             type="list",
             elements="dict",
             options=dict(
                 ether_type=dict(type="str", required=True, choices=ETHER_TYPES),
-                protocol_type=dict(type="str", choices=PROTOCOL_TYPES),
+                protocol=dict(type="str", choices=PROTOCOL_TYPES),
                 reverse_port=dict(type="bool", default=False),
                 from_object=dict(type="dict", options=compliance_tcp_spec()),
                 to_object=dict(type="dict", options=compliance_tcp_spec()),
@@ -377,10 +447,10 @@ def main():
             [
                 "state",
                 "present",
-                ["name", "sites", "enabled", "communication_type", "from_object_type", "from_match_criteria", "to_object_type", "to_match_criteria"],
+                ["name", "sites", "enabled", "type", "from_object", "to_object"],
             ],
-            ["communication_type", "must", ["traffic_selector_rules"]],
-            ["communication_type", "may", ["traffic_selector_rules"]],
+            ["type", "must", ["traffic_selector_rules"]],
+            ["type", "may", ["traffic_selector_rules"]],
         ],
     )
 
@@ -393,11 +463,9 @@ def main():
     enabled = nd.params.get("enabled")
     sites = nd.params.get("sites")
     state = nd.params.get("state")
-    communication_type = nd.params.get("communication_type")
-    from_object_type = nd.params.get("from_object_type")
-    from_match_criteria = nd.params.get("from_match_criteria")
-    to_object_type = nd.params.get("to_object_type")
-    to_match_criteria = nd.params.get("to_match_criteria")
+    communication_type = nd.params.get("type")
+    from_object_selector = nd.params.get("from_object")
+    to_object_selector = nd.params.get("to_object")
     traffic_selector_rules = nd.params.get("traffic_selector_rules")
 
     delete_keys = ["uuid", "insightsGroupName", "isAllTraffic", "lastEditedDate", "links", "removeNonConfigAttributes"]
@@ -423,8 +491,8 @@ def main():
             "communicationType": communication_type.upper(),
             "requirementType": get_requirement_type(communication_type, traffic_selector_rules),
             "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, site, prefix=ndi.prefix)} for site in sites],
-            "objectSelectorA": get_object_selector_payload(from_match_criteria, from_object_type),
-            "objectSelectorB": get_object_selector_payload(to_match_criteria, to_object_type),
+            "objectSelectorA": get_object_selector_payload(from_object_selector),
+            "objectSelectorB": get_object_selector_payload(to_object_selector),
         }
 
         if description:
@@ -469,9 +537,9 @@ def get_compliance_traffic_selector_payload(traffic_selector_rules):
 
 def get_rule_payload(rule):
     rule_payload = {"etherType": rule.get("ether_type").upper(), "reversePort": rule.get("reverse_port")}
-    if rule.get("protocol_type"):
-        rule_payload.update(ipProtocol=rule.get("protocol_type").upper())
-        if rule.get("protocol_type") == "tcp" or rule.get("protocol_type") == "udp":
+    if rule.get("protocol"):
+        rule_payload.update(ipProtocol=rule.get("protocol").upper())
+        if rule.get("protocol") == "tcp" or rule.get("protocol") == "udp":
             if rule.get("from_object"):
                 rule_payload.update(portSelectorAtoB=get_tcp_payload(rule.get("from_object")))
             if not rule.get("reverse_port") and rule.get("to_object"):
@@ -483,9 +551,9 @@ def get_tcp_payload(tcp_object):
     return {
         "srcPort": tcp_object.get("source") if tcp_object.get("source") else "",
         "dstPort": tcp_object.get("destination") if tcp_object.get("destination") else "",
-        "tcpFlag": True if tcp_object.get("flags_set") or tcp_object.get("flags_not_set") else False,
-        "tcpFlagsSet": tcp_object.get("flags_set") if tcp_object.get("flags_set") else [],
-        "tcpFlagsNotSet": tcp_object.get("flags_not_set") if tcp_object.get("flags_not_set") else [],
+        "tcpFlag": True if tcp_object.get("tcp_flags") or tcp_object.get("tcp_flags_not_set") else False,
+        "tcpFlagsSet": tcp_object.get("tcp_flags") if tcp_object.get("tcp_flags") else [],
+        "tcpFlagsNotSet": tcp_object.get("tcp_flags_not_set") if tcp_object.get("tcp_flags_not_set") else [],
     }
 
 

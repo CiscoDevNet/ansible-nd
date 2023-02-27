@@ -45,65 +45,102 @@ options:
     - Names of the Assurance Entities.
     type: list
     elements: str
-  from_object_type:
+  object:
     description:
-    - The object type of 'from' objects.
-    type: str
-    choices: [ tenant, vrf, bd, epg, contract, subject, filter ]
-  from_match_criteria:
-    description:
-    - Container for all matching criteria attached to the 'from' object.
-    type: list
-    elements: dict
+    - Container for all matching criteria attached to the object.
+    type: dict
     suboptions:
-      match_criteria_type:
+      type:
         description:
-        - Include or exclude the match criteria.
+        - The object type of the object.
         type: str
-        required: true
-        choices: [ include, exclude ]
-      matches:
+        required: yes
+        choices: [ tenant, vrf, bd, epg, contract, subject, filter ]
+      includes:
         description:
-        - Container for all matches in the match criteria.
+        - Container for all matching criteria to include.
         type: list
-        required: true
+        required: yes
         elements: dict
         suboptions:
-          object_type:
+          type:
             description:
             - The object type of the match.
             type: str
             required: yes
             choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
-          object_attribute:
+          attribute:
             description:
             - The attribute of the match.
             - The GUI represent this as 'By'.
             type: str
             choices: [ DN ]
             default: DN
-          matches_pattern:
+          patterns:
             description:
             - Container for all patterns attached to the match.
             type: list
             required: yes
             elements: dict
             suboptions:
-              match_type:
+              type:
                 description:
                 - The type of the match.
                 type: str
                 required: yes
                 choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
-              pattern_type:
+              operator:
                 description:
-                - The type (operator) of the pattern.
+                - The operator of the pattern.
                 type: str
                 required: yes
                 choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
-              pattern:
+              value:
                 description:
-                - The pattern to match on.
+                - The value of the pattern to match on.
+                - Not providing a pattern sets to ANY-STRING.
+                type: str
+      excludes:
+        description:
+        - Container for all matching criteria to exclude.
+        type: list
+        elements: dict
+        suboptions:
+          type:
+            description:
+            - The object type of the match.
+            type: str
+            required: yes
+            choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
+          attribute:
+            description:
+            - The attribute of the match.
+            - The GUI represent this as 'By'.
+            type: str
+            choices: [ DN ]
+            default: DN
+          patterns:
+            description:
+            - Container for all patterns attached to the match.
+            type: list
+            required: yes
+            elements: dict
+            suboptions:
+              type:
+                description:
+                - The type of the match.
+                type: str
+                required: yes
+                choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
+              operator:
+                description:
+                - The operator of the pattern.
+                type: str
+                required: yes
+                choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
+              value:
+                description:
+                - The value of the pattern to match on.
                 - Not providing a pattern sets to ANY-STRING.
                 type: str
   config_rules:
@@ -163,19 +200,30 @@ EXAMPLES = r"""
     - siteName2
     enabled: false
     communication_type: may
-    from_object_type: epg
-    from_match_criteria:
-    - from_match_criteria: include
-      matches:
-      - object_type: vrf
-        object_attribute: DN
-        matches_pattern:
-        - match_type: tenant
-          pattern_type: BEGINS_WITH
-          pattern: foo
-        - match_type: vrf
-          pattern_type: CONTAINS
-          pattern: bar
+    object:
+      type: epg
+      includes:
+        - type: vrf
+          attribute: DN
+          patterns:
+            - type: tenant
+              operator: begins_with
+              value: foo
+            - type: vrf
+              operator: contains
+              value: bar
+        - type: epg
+          attribute: DN
+          patterns:
+            - type: tenant
+              operator: contains
+              value: foo
+            - type: ap
+              operator: contains
+              value: bar
+            - type: epg
+              operator: contains
+              value: foobar
     config_rules:
     - attribute: name
       operator: CONTAINS
@@ -194,7 +242,7 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, sanitize_dict
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI, get_object_selector_payload
-from ansible_collections.cisco.nd.plugins.module_utils.ndi_argument_specs import compliance_base_spec, compliance_match_criteria_spec
+from ansible_collections.cisco.nd.plugins.module_utils.ndi_argument_specs import compliance_base_spec, object_selector_spec
 from ansible_collections.cisco.nd.plugins.module_utils.constants import OBJECT_TYPES, PARAMETER_TYPES, OPERATORS, CONFIG_OPERATORS
 
 
@@ -202,8 +250,7 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(compliance_base_spec())
     argument_spec.update(
-        from_object_type=dict(type="str", choices=list(OBJECT_TYPES)),
-        from_match_criteria=dict(type="list", elements="dict", options=compliance_match_criteria_spec()),
+        object=dict(type="dict", options=object_selector_spec(["tenant", "vrf", "bd", "epg", "contract", "subject", "filter"])),
         config_rules=dict(
             type="list",
             elements="dict",
@@ -220,7 +267,7 @@ def main():
         supports_check_mode=True,
         required_if=[
             ["state", "absent", ["name"]],
-            ["state", "present", ["name", "sites", "enabled", "from_object_type", "from_match_criteria", "config_rules"]],
+            ["state", "present", ["name", "sites", "enabled", "object", "config_rules"]],
         ],
     )
 
@@ -233,8 +280,7 @@ def main():
     enabled = nd.params.get("enabled")
     sites = nd.params.get("sites")
     state = nd.params.get("state")
-    from_object_type = nd.params.get("from_object_type")
-    from_match_criteria = nd.params.get("from_match_criteria")
+    object_selector = nd.params.get("object")
     config_rules = nd.params.get("config_rules")
 
     delete_keys = ["uuid", "insightsGroupName", "isAllTraffic", "lastEditedDate", "links", "removeNonConfigAttributes", "uploadedFileUploadDate"]
@@ -260,7 +306,7 @@ def main():
             "configurationType": "MANUAL_CONFIGURATION_COMPLIANCE",
             "requirementType": "CONFIGURATION_COMPLIANCE",
             "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, site, prefix=ndi.prefix)} for site in sites],
-            "objectSelectorA": get_object_selector_payload(from_match_criteria, from_object_type),
+            "objectSelectorA": get_object_selector_payload(object_selector),
             "configComplianceParameter": {
                 "andParameters": [
                     {

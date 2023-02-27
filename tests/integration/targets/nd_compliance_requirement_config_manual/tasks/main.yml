@@ -26,19 +26,18 @@
         - qa-fabric
       enabled: false
     ndi_base_object: &ndi_base_object
-      from_object_type: epg
-      from_match_criteria:
-        - match_criteria_type: include
-          matches:
-            - object_type: vrf
-              object_attribute: DN
-              matches_pattern:
-                - match_type: tenant
-                  pattern_type: begins_with
-                  pattern: foo
-                - match_type: vrf
-                  pattern_type: contains
-                  pattern: bar
+      object:
+        type: epg
+        includes:
+          - type: vrf
+            attribute: DN
+            patterns:
+              - type: tenant
+                operator: begins_with
+                value: foo
+              - type: vrf
+                operator: contains
+                value: bar
     ndi_base_config: &ndi_base_config
       config_rules:
         - attribute: name
