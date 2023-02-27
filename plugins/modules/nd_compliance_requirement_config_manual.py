@@ -243,7 +243,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, sanitize_dict
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI, get_object_selector_payload
 from ansible_collections.cisco.nd.plugins.module_utils.ndi_argument_specs import compliance_base_spec, object_selector_spec
-from ansible_collections.cisco.nd.plugins.module_utils.constants import OBJECT_TYPES, PARAMETER_TYPES, OPERATORS, CONFIG_OPERATORS
+from ansible_collections.cisco.nd.plugins.module_utils.constants import PARAMETER_TYPES, OPERATORS, CONFIG_OPERATORS
 
 
 def main():
