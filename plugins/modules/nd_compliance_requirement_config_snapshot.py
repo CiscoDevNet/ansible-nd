@@ -157,14 +157,12 @@ def main():
     uuid = ndi.set_requirement_details(requirements, name)
 
     if state == "absent" and uuid:
-
         nd.previous = sanitize_dict(nd.existing, delete_keys)
         if not module.check_mode:
             nd.request(path, method="DELETE", data={"ids": [uuid]}, prefix=ndi.prefix)
         nd.existing = {}
 
     elif state == "present":
-
         nd.previous = sanitize_dict(nd.existing, delete_keys)
 
         if not epoch_id:

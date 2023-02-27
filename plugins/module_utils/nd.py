@@ -24,7 +24,6 @@ from ansible.module_utils.connection import Connection
 
 
 def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
-
     if keys is None:
         keys = []
     if values is None:
