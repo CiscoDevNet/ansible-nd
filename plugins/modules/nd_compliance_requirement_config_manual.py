@@ -199,7 +199,6 @@ EXAMPLES = r"""
     - siteName1
     - siteName2
     enabled: false
-    communication_type: may
     object:
       type: epg
       includes:
