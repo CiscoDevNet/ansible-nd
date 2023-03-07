@@ -3,16 +3,31 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+- name: Test that we have an Nexus Dashboard host, username and password
+  fail:
+    msg: 'Please define the following variables: nd_hostname, nd_username, nd_password, insights_group, site_name.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined or insights_group is not defined or site_name is not defined
+
 - name: Set vars
   set_fact:
     nd_info: &nd_info
+      host: '{{ nd_hostname }}'
+      username: '{{ nd_username }}'
+      password: '{{ nd_password }}'
+      validate_certs: '{{ nd_validate_certs | default(false) }}'
+      use_ssl: '{{ nd_use_ssl | default(true) }}'
+      use_proxy: '{{ nd_use_proxy | default(true) }}'
       output_level: '{{ nd_output_level | default("info") }}'
+    ndi_info: &ndi_info
+      insights_group: '{{ insights_group }}'
+    ndi_site: &ndi_site
+      site: '{{ site_name }}'
 
 - name: Add pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     file: targets/nd_pcv/tasks/ansible_dump.json
     name: ansible_no_json
     state: present
@@ -24,7 +39,7 @@
     - pcv_no_json is changed
     - pcv_no_json.previous == {}
     - pcv_no_json.current.name == "ansible_no_json"
-    - pcv_no_json.current.assuranceEntityName == site_name
+    - pcv_no_json.current.assuranceEntityName == "{{ ndi_site.site }}"
     - pcv_no_json.current.analysisStatus is defined
     - pcv_no_json.current.analysisScheduleId is defined
     - pcv_no_json.current.baseEpochId is defined
@@ -32,12 +47,12 @@
     - pcv_no_json.current.jobId is defined
     - pcv_no_json.current.submitterName is defined
 
-# check whether pre-change validation complete
+# Check whether pre-change validation complete
 - name: Query Pre-Change analysis job pcv ansible_no_json
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: ansible_no_json
     state: query
   register: nm_query_ansible_no_json
@@ -53,7 +68,7 @@
     that:
     - nm_query_ansible_no_json is not changed
     - nm_query_ansible_no_json.current.name == "ansible_no_json"
-    - nm_query_ansible_no_json.current.assuranceEntityName == site_name
+    - nm_query_ansible_no_json.current.assuranceEntityName == "{{ ndi_site.site }}"
     - nm_query_ansible_no_json.current.analysisStatus == "COMPLETED"
     - nm_query_ansible_no_json.current.analysisScheduleId is defined
     - nm_query_ansible_no_json.current.baseEpochId is defined
@@ -67,8 +82,8 @@
 - name: Add pre-change analysis from file upload (JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     file: targets/nd_pcv/tasks/contract.json
     name: ansible_json
     state: present
@@ -80,7 +95,7 @@
     - pcv_json is changed
     - pcv_json.previous == {}
     - pcv_json.current.name == "ansible_json"
-    - pcv_json.current.assuranceEntityName == site_name
+    - pcv_json.current.assuranceEntityName == "{{ ndi_site.site }}"
     - pcv_json.current.analysisStatus is defined
     - pcv_json.current.analysisScheduleId is defined
     - pcv_json.current.baseEpochId is defined
@@ -91,8 +106,8 @@
 - name: Query Pre-Change analysis job pcv ansible_json (until RUNNING)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: ansible_json
     state: query
   register: query_ansible_json_until_running
@@ -103,8 +118,8 @@
 - name: Delete ansible_json pre-change analysis while RUNNING
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: ansible_json
     state: absent
   ignore_errors: yes
@@ -119,8 +134,8 @@
 - name: Query Pre-Change analysis job pcv ansible_json
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: ansible_json
     state: query
   register: nm_query_ansible_json
@@ -133,7 +148,7 @@
     that:
     - nm_query_ansible_json is not changed
     - nm_query_ansible_json.current.name == "ansible_json"
-    - nm_query_ansible_json.current.assuranceEntityName == site_name
+    - nm_query_ansible_json.current.assuranceEntityName == "{{ ndi_site.site }}"
     - nm_query_ansible_json.current.analysisStatus == "COMPLETED"
     - nm_query_ansible_json.current.analysisScheduleId is defined
     - nm_query_ansible_json.current.baseEpochId is defined
@@ -147,8 +162,8 @@
 - name: Add pre-change analysis from file upload with same file but different file name (JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     file: targets/nd_pcv/tasks/contract_identical.json
     name: ansible_json
     state: present
@@ -162,8 +177,8 @@
 - name: Add pre-change analysis from file upload with same filename but different name (JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     file: targets/nd_pcv/tasks/contract.json
     name: ansible_json_diff_name
     state: present
@@ -175,7 +190,7 @@
     - pcv_json_diff_name is changed
     - pcv_json_diff_name.previous == {}
     - pcv_json_diff_name.current.name == "ansible_json_diff_name"
-    - pcv_json_diff_name.current.assuranceEntityName == site_name
+    - pcv_json_diff_name.current.assuranceEntityName == "{{ ndi_site.site }}"
     - pcv_json_diff_name.current.analysisStatus is defined
     - pcv_json_diff_name.current.analysisScheduleId is defined
     - pcv_json_diff_name.current.baseEpochId is defined
@@ -186,8 +201,8 @@
 - name: Add pre-change analysis from file upload again (JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     file: targets/nd_pcv/tasks/contract.json
     name: ansible_json
     state: present
@@ -199,7 +214,7 @@
     - pcv_json_again is not changed
     - pcv_json_again.previous is defined
     - pcv_json_again.current.name == "ansible_json"
-    - pcv_json_again.current.assuranceEntityName == site_name
+    - pcv_json_again.current.assuranceEntityName == "{{ ndi_site.site }}"
     - pcv_json_again.current.analysisStatus is defined
     - pcv_json_again.current.analysisScheduleId is defined
     - pcv_json_again.current.baseEpochId is defined
@@ -210,8 +225,8 @@
 - name: Query Pre-Change analysis job ansible_json_diff_name
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: ansible_json_diff_name
     state: query
   register: nm_query_ansible_json_diff_name
@@ -224,7 +239,7 @@
     that:
     - nm_query_ansible_json_diff_name is not changed
     - nm_query_ansible_json_diff_name.current.name == "ansible_json_diff_name"
-    - nm_query_ansible_json_diff_name.current.assuranceEntityName == site_name
+    - nm_query_ansible_json_diff_name.current.assuranceEntityName == "{{ ndi_site.site }}"
     - nm_query_ansible_json_diff_name.current.analysisStatus == "COMPLETED"
     - nm_query_ansible_json_diff_name.current.analysisScheduleId is defined
     - nm_query_ansible_json_diff_name.current.baseEpochId is defined
@@ -238,8 +253,8 @@
 - name: Add another pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     file: targets/nd_pcv/tasks/tenant_delete_dump.json
     name: ansible_tenant_delete
     state: present
@@ -251,7 +266,7 @@
     - pcv_tenant_delete is changed
     - pcv_tenant_delete.previous == {}
     - pcv_tenant_delete.current.name == "ansible_tenant_delete"
-    - pcv_tenant_delete.current.assuranceEntityName == site_name
+    - pcv_tenant_delete.current.assuranceEntityName == "{{ ndi_site.site }}"
     - pcv_tenant_delete.current.analysisStatus is defined
     - pcv_tenant_delete.current.analysisScheduleId is defined
     - pcv_tenant_delete.current.baseEpochId is defined
@@ -262,8 +277,8 @@
 - name: Query Pre-Change analysis job pcv_tenant_delete
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: ansible_tenant_delete
     state: query
   register: nm_query_pcv_tenant_delete
@@ -276,7 +291,7 @@
     that:
     - nm_query_pcv_tenant_delete is not changed
     - nm_query_pcv_tenant_delete.current.name == "ansible_tenant_delete"
-    - nm_query_pcv_tenant_delete.current.assuranceEntityName == site_name
+    - nm_query_pcv_tenant_delete.current.assuranceEntityName == "{{ ndi_site.site }}"
     - nm_query_pcv_tenant_delete.current.analysisStatus == "COMPLETED"
     - nm_query_pcv_tenant_delete.current.analysisScheduleId is defined
     - nm_query_pcv_tenant_delete.current.baseEpochId is defined
@@ -287,11 +302,13 @@
   pause:
       minutes: 1
 
+# Static reference to a present tenant on QA fabric, might cause issues in future when tenant is not present
+# TODO: What is value add of this test since it has some dependencies which might break CI?
 - name: Create a new Pre-Change analysis from file
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: pcv_by_file
     file: targets/nd_pcv/tasks/out-ospf-to-l2vrf.json
     state: present
@@ -303,7 +320,7 @@
     - present_pcv is changed
     - present_pcv.previous == {}
     - present_pcv.current.name == "pcv_by_file"
-    - present_pcv.current.assuranceEntityName == site_name
+    - present_pcv.current.assuranceEntityName == "{{ ndi_site.site }}"
     - present_pcv.current.analysisStatus is defined
     - present_pcv.current.analysisScheduleId is defined
     - present_pcv.current.baseEpochId is defined
@@ -314,8 +331,8 @@
 - name: Query Pre-Change analysis job pcv_by_file
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: pcv_by_file
     state: query
   register: nm_query_present_pcv
@@ -327,7 +344,7 @@
   assert:
     that:
     - nm_query_present_pcv.current.name == "pcv_by_file"
-    - nm_query_present_pcv.current.assuranceEntityName == site_name
+    - nm_query_present_pcv.current.assuranceEntityName == "{{ ndi_site.site }}"
     - nm_query_present_pcv.current.uploadedFileName is defined
     - nm_query_present_pcv.current.analysisStatus == "COMPLETED"
     - nm_query_present_pcv.current.jobId is defined
@@ -342,8 +359,8 @@
 - name: Create a new Pre-Change analysis from non-existing file
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: pcv_non_existing
     file: /root/ansible/ansible_collections/cisco/nd/tests/integration/targets/nd_pcv/tasks/non-existing.json
     state: present
@@ -353,8 +370,8 @@
 - name: Query specific Pre-Change analysis job
   cisco.nd.nd_pcv: &nd_query
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: pcv_by_file
     state: query
   register: nm_query_pcv_file
@@ -363,7 +380,7 @@
   assert:
     that:
     - nm_query_pcv_file.current.name == "pcv_by_file"
-    - nm_query_pcv_file.current.assuranceEntityName == site_name
+    - nm_query_pcv_file.current.assuranceEntityName == "{{ ndi_site.site }}"
     - nm_query_pcv_file.current.uploadedFileName is defined
     - nm_query_pcv_file.current.analysisStatus is defined
     - nm_query_pcv_file.current.jobId is defined
@@ -374,7 +391,7 @@
 - name: Query all Pre-Change analysis jobs
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
+    <<: *ndi_info
     state: query
   register: nm_query_pcvs_file
 
@@ -386,8 +403,8 @@
 - name: Delete ansible_json pre-change analysis (check_mode)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: ansible_json
     state: absent
   check_mode: yes
@@ -396,8 +413,8 @@
 - name: Delete ansible_json pre-change analysis (normal_mode)
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: ansible_json
     state: absent
   register: nm_pcv_absent
@@ -405,8 +422,8 @@
 - name: Delete ansible_json pre-change analysis again
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: ansible_json
     state: absent
   register: pcv_absent_again
@@ -427,8 +444,8 @@
 - name: Try to create pcv_without_file_or_manual pre-change analysis
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: pcv_without_file_or_manual
     state: present
   ignore_errors: yes

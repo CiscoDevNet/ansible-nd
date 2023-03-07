@@ -3,23 +3,33 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-- name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+- name: Test that we have an Nexus Dashboard host, username and password
   fail:
-    msg: "Please define the following variables: ig_name, site_name."
-  when: ig_name is not defined or site_name is not defined
+    msg: 'Please define the following variables: nd_hostname, nd_username, nd_password, insights_group, and site_name.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined or insights_group is not defined or site_name is not defined
 
 # CLEAN ENVIRONMENT
 - name: Set vars
   set_fact:
     nd_info: &nd_info
+      host: '{{ nd_hostname }}'
+      username: '{{ nd_username }}'
+      password: '{{ nd_password }}'
+      validate_certs: '{{ nd_validate_certs | default(false) }}'
+      use_ssl: '{{ nd_use_ssl | default(true) }}'
+      use_proxy: '{{ nd_use_proxy | default(true) }}'
       output_level: '{{ nd_output_level | default("info") }}'
+    ndi_info: &ndi_info
+      insights_group: '{{ insights_group }}'
+    ndi_site: &ndi_site
+      site: '{{ site_name }}'
 
 # QUERY pre-change validation delta analysis results
 - name: Query a pre_change validation compliance result
   nd_pcv_compliance: &nd_query
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: manual
   register: query_manual_pcv
 
@@ -37,8 +47,8 @@
 - name: Query another pre_change validation compliance result
   nd_pcv_compliance:
     <<: *nd_query
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: pcv_by_file
   register: query_pcv_by_file
 
@@ -56,8 +66,8 @@
 - name: Query non_existing pre_change validation compliance result
   nd_pcv_compliance:
     <<: *nd_query
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: non_existing
   ignore_errors: yes
   register: query_non_existing

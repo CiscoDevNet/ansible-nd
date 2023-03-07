@@ -3,16 +3,31 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+- name: Test that we have an Nexus Dashboard host, username and password
+  fail:
+    msg: 'Please define the following variables: nd_hostname, nd_username, nd_password, insights_group, site_name.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined or insights_group is not defined or site_name is not defined
+
 - name: Set vars
   set_fact:
     nd_info: &nd_info
+      host: '{{ nd_hostname }}'
+      username: '{{ nd_username }}'
+      password: '{{ nd_password }}'
+      validate_certs: '{{ nd_validate_certs | default(false) }}'
+      use_ssl: '{{ nd_use_ssl | default(true) }}'
+      use_proxy: '{{ nd_use_proxy | default(true) }}'
       output_level: '{{ nd_output_level | default("info") }}'
+    ndi_info: &ndi_info
+      insights_group: '{{ insights_group }}'
+    ndi_site: &ndi_site
+      site: '{{ site_name }}'
 
 - name: Present Pre-Change analysis from manual changes
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: manual
     manual: |
         [
@@ -35,7 +50,7 @@
     - present_pcv_manual is changed
     - present_pcv_manual.previous == {}
     - present_pcv_manual.current.name == "manual"
-    - present_pcv_manual.current.assuranceEntityName == site_name
+    - present_pcv_manual.current.assuranceEntityName == "{{ ndi_site.site }}"
     - present_pcv_manual.current.analysisScheduleId is defined
     - present_pcv_manual.current.analysisStatus is defined
     - present_pcv_manual.current.baseEpochId is defined
@@ -47,8 +62,8 @@
 - name: Query specific Pre-Change analysis result
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: manual
     state: query
   register: nm_query_pcv
@@ -61,7 +76,7 @@
     that:
     - nm_query_pcv is not changed
     - nm_query_pcv.current.name == "manual"
-    - nm_query_pcv.current.assuranceEntityName == site_name
+    - nm_query_pcv.current.assuranceEntityName == "{{ ndi_site.site }}"
     - nm_query_pcv.current.analysisStatus is defined
     - nm_query_pcv.current.baseEpochId is defined
     - nm_query_pcv.current.imdata is defined
@@ -75,8 +90,8 @@
 - name: Present Pre-Change analysis for adding contract
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: add_contract
     manual: |
         [
@@ -106,7 +121,7 @@
     - present_contract is changed
     - present_contract.previous == {}
     - present_contract.current.name == "add_contract"
-    - present_contract.current.assuranceEntityName == site_name
+    - present_contract.current.assuranceEntityName == "{{ ndi_site.site }}"
     - present_contract.current.analysisScheduleId is defined
     - present_contract.current.analysisStatus is defined
     - present_contract.current.baseEpochId is defined
@@ -117,8 +132,8 @@
 - name: Query present_contract until completed
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: add_contract
     state: wait_and_query
   register: nm_query_add_contract
@@ -128,7 +143,7 @@
     that:
     - nm_query_add_contract is not changed
     - nm_query_add_contract.current.name == "add_contract"
-    - nm_query_add_contract.current.assuranceEntityName == site_name
+    - nm_query_add_contract.current.assuranceEntityName == "{{ ndi_site.site }}"
     - nm_query_add_contract.current.analysisStatus == "COMPLETED"
     - nm_query_add_contract.current.analysisScheduleId is defined
     - nm_query_add_contract.current.baseEpochId is defined
@@ -142,8 +157,8 @@
 - name: Present Pre-Change analysis for updating epg
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: update_epg
     manual: |
         [
@@ -186,7 +201,7 @@
     - present_epg is changed
     - present_epg.previous == {}
     - present_epg.current.name == "update_epg"
-    - present_epg.current.assuranceEntityName == site_name
+    - present_epg.current.assuranceEntityName == "{{ ndi_site.site }}"
     - present_epg.current.analysisScheduleId is defined
     - present_epg.current.analysisStatus is defined
     - present_epg.current.baseEpochId is defined
@@ -197,8 +212,8 @@
 - name: Query specific Pre-Change analysis result
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: update_epg
     state: query
   register: nm_present_epg
@@ -211,7 +226,7 @@
     that:
     - nm_present_epg is not changed
     - nm_present_epg.current.name == "update_epg"
-    - nm_present_epg.current.assuranceEntityName == site_name
+    - nm_present_epg.current.assuranceEntityName == "{{ ndi_site.site }}"
     - nm_present_epg.current.analysisStatus == "COMPLETED"
     - nm_present_epg.current.baseEpochId is defined
     - nm_present_epg.current.imdata is defined
@@ -225,7 +240,7 @@
 - name: Query Pre-Change analysis results
   cisco.nd.nd_pcv:
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
+    <<: *ndi_info
     state: query
   register: nm_query_pcvs
 
