@@ -79,15 +79,14 @@
     <<: *ndi_info
     <<: *ndi_base
     name: ansible-test-epg
-    from_object_type: epg
-    from_match_criteria:
-      - match_criteria_type: include
-        matches:
-          - object_type: tenant
-            object_attribute: DN
-            matches_pattern:
-              - match_type: tenant
-                pattern_type: contains
+    object:
+      type: epg
+      includes:
+        - type: tenant
+          attribute: DN 
+          patterns:
+            - type: tenant
+              operator: contains
     config_rules:
       - attribute: name
         operator: contains
@@ -100,15 +99,14 @@
     <<: *ndi_info
     <<: *ndi_base
     name: ansible-test-bd
-    from_object_type: bd
-    from_match_criteria:
-      - match_criteria_type: include
-        matches:
-          - object_type: tenant
-            object_attribute: DN
-            matches_pattern:
-              - match_type: tenant
-                pattern_type: contains
+    object:
+      type: bd
+      includes:
+        - type: tenant
+          attribute: DN 
+          patterns:
+            - type: tenant
+              operator: contains
     config_rules:
       - attribute: unicast_routing
         operator: equal_to
