@@ -5,8 +5,8 @@
 
 - name: Test that we have an Nexus Dashboard host, username and password
   fail:
-    msg: 'Please define the following variables: nd_hostname, nd_username and nd_password.'
-  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined
+    msg: 'Please define the following variables: nd_hostname, nd_username, nd_password, insights_group, and site_name.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined or insights_group is not defined or site_name is not defined
 
 - name: Set vars
   set_fact:
@@ -19,8 +19,9 @@
       use_proxy: '{{ nd_use_proxy | default(true) }}'
       output_level: '{{ nd_output_level | default("info") }}'
     ndi_info: &ndi_info
-      insights_group: d2o-tme
-      site: qa-fabric
+      insights_group: '{{ insights_group }}'
+    ndi_site: &ndi_site
+      site: '{{ site_name }}'
     date: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
     datetime: "{{ lookup('pipe', 'date +%Y-%m-%dU%H:%M:%S') }}"
 
@@ -30,6 +31,7 @@
   cisco.nd.nd_epoch:  
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     period: latest
   register: period_latest
 
@@ -37,6 +39,7 @@
   cisco.nd.nd_epoch:
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     period: last_week
   register: period_last_week
 
@@ -44,6 +47,7 @@
   cisco.nd.nd_epoch:  
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     period: last_week
     range: true
   register: period_range_last_week
@@ -52,6 +56,7 @@
   cisco.nd.nd_epoch:  
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     period: last_week
     range: true
     max_epochs: 2
@@ -61,6 +66,7 @@
   cisco.nd.nd_epoch:  
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     from_date: "{{ date }}"
   register: date_from_date
 
@@ -68,6 +74,7 @@
   cisco.nd.nd_epoch:  
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     to_date: "{{ datetime }}"
   register: date_to_date
 
@@ -75,6 +82,7 @@
   cisco.nd.nd_epoch:  
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     from_date: "{{ date }}"
     to_date: "{{ datetime }}"
   register: date_from_date_to_date
@@ -83,6 +91,7 @@
   cisco.nd.nd_epoch: 
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     from_date: "{{ date }}"
     to_date: "{{ datetime }}"
     range: true
@@ -92,6 +101,7 @@
   cisco.nd.nd_epoch:  
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     from_date: "{{ date }}"
     to_date: "{{ datetime }}"
     range: true
@@ -117,6 +127,7 @@
   cisco.nd.nd_epoch:
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     from_date: "invalid"
   ignore_errors: yes
   register: date_from_date_invalid
@@ -125,6 +136,7 @@
   cisco.nd.nd_epoch:
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     to_date: "invalid"
   ignore_errors: yes
   register: date_to_date_invalid
@@ -133,6 +145,7 @@
   cisco.nd.nd_epoch:  
     <<: *nd_info
     <<: *ndi_info
+    <<: *ndi_site
     period: "invalid"
   ignore_errors: yes
   register: period_invalid
