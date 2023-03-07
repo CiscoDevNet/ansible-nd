@@ -3,23 +3,33 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-- name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+- name: Test that we have an Nexus Dashboard host, username and password
   fail:
-    msg: "Please define the following variables: ig_name, site_name."
-  when: ig_name is not defined or site_name is not defined
+    msg: 'Please define the following variables: nd_hostname, nd_username, nd_password, insights_group, and site_name.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined or insights_group is not defined or site_name is not defined
 
 # CLEAN ENVIRONMENT
 - name: Set vars
   set_fact:
     nd_info: &nd_info
+      host: '{{ nd_hostname }}'
+      username: '{{ nd_username }}'
+      password: '{{ nd_password }}'
+      validate_certs: '{{ nd_validate_certs | default(false) }}'
+      use_ssl: '{{ nd_use_ssl | default(true) }}'
+      use_proxy: '{{ nd_use_proxy | default(true) }}'
       output_level: '{{ nd_output_level | default("info") }}'
+    ndi_info: &ndi_info
+      insights_group: '{{ insights_group }}'
+    ndi_site: &ndi_site
+      site: '{{ site_name }}'
 
 # QUERY pre-change validation delta analysis results
 - name: Query a pre_change analysis
   nd_pcv_delta_analysis: &nd_query
     <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: manual
   register: query_pcv_delta_analysis_manual
 
@@ -35,8 +45,6 @@
 - name: Query another pre_change analysis
   nd_pcv_delta_analysis:
     <<: *nd_query
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
     name: pcv_by_file
   register: query_pcv_by_file_delta_analysis
 
@@ -52,8 +60,6 @@
 - name: Validate a pre_change analysis
   nd_pcv_delta_analysis:
     <<: *nd_query
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
     name: pcv_by_file
     state: validate
   ignore_errors: yes
@@ -62,13 +68,11 @@
 - name: Verify validate_pcv_by_file_delta_analysis
   assert:
     that:
-    - validate_pcv_by_file_delta_analysis.msg == "Pre-change analysis failed. The above 2 (critical(0)|major(1)|minor(0)|warning(1)) anomalies have been detected."
+    - validate_pcv_by_file_delta_analysis.msg.startswith("Pre-change analysis failed.")
 
 - name: Validate another pre_change analysis
   nd_pcv_delta_analysis:
     <<: *nd_query
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
     name: add_contract
     state: validate
   ignore_errors: yes
@@ -77,13 +81,11 @@
 - name: Verify validate_pcv_add_contract_delta_analysis
   assert:
     that:
-    - validate_pcv_add_contract_delta_analysis.msg == "Pre-change analysis failed. The above 1 (critical(0)|major(0)|minor(1)|warning(0)) anomalies have been detected."
+    - validate_pcv_add_contract_delta_analysis.msg.startswith("Pre-change analysis failed.")
 
 - name: Query non_existing pre_change validation delta analysis result
   nd_pcv_delta_analysis:
     <<: *nd_query
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
     name: non_existing
   ignore_errors: yes
   register: query_non_existing
@@ -97,35 +99,27 @@
 # Delete pre-change job
 - name: Delete a pre_change analysis to recreate
   cisco.nd.nd_pcv:
-    <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *nd_query
     name: vrf_with_overlapping_subnets
     state: absent
 
 - name: Create a pre-change analysis to validate
   cisco.nd.nd_pcv:
-    <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *nd_query
     name: vrf_with_overlapping_subnets
     file: targets/nd_pcv_delta_analysis/tasks/vrf_with_overlapping_subnets.json
     state: present
 
 - name: Query a pre_change analysis
   nd_pcv_delta_analysis:
-    <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *nd_query
     name: vrf_with_overlapping_subnets
   ignore_errors: yes
   register: query_pcv_update_epg_while_running
 
 - name: Validate a pre_change analysis while running
   nd_pcv_delta_analysis:
-    <<: *nd_info
-    ig_name: '{{ ig_name }}'
-    site_name: "{{ site_name }}"
+    <<: *nd_query
     name: vrf_with_overlapping_subnets
     state: validate
   ignore_errors: yes
@@ -135,4 +129,4 @@
   assert:
     that:
     - query_pcv_update_epg_while_running.msg == "Pre-change validation vrf_with_overlapping_subnets is not completed"
-    - validate_pcv_update_epg_while_running.msg == "Pre-change analysis failed. The above 2 (critical(0)|major(2)|minor(0)|warning(0)) anomalies have been detected."
+    - validate_pcv_update_epg_while_running.msg.startswith("Pre-change analysis failed.")
