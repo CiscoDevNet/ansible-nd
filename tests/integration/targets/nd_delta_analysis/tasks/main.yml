@@ -3,26 +3,45 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-- name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+- name: Test that we have an Nexus Dashboard host, username and password
   fail:
-    msg: "Please define the following variables: ig_name, site_name."
-  when: ig_name is not defined or site_name is not defined
+    msg: 'Please define the following variables: nd_hostname, nd_username, nd_password, insights_group, and site_name.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined or insights_group is not defined or site_name is not defined
 
-# CLEAN ENVIRONMENT
 - name: Set vars
   set_fact:
     nd_info: &nd_info
+      host: '{{ nd_hostname }}'
+      username: '{{ nd_username }}'
+      password: '{{ nd_password }}'
+      validate_certs: '{{ nd_validate_certs | default(false) }}'
+      use_ssl: '{{ nd_use_ssl | default(true) }}'
+      use_proxy: '{{ nd_use_proxy | default(true) }}'
       output_level: '{{ nd_output_level | default("info") }}'
+    ndi_info: &ndi_info
+      insights_group: '{{ insights_group }}'
+    ndi_site: &ndi_site
+      site: '{{ site_name }}'
+
+- name: Get Epochs with period ( last_week )
+  cisco.nd.nd_epoch:
+    <<: *nd_info
+    <<: *ndi_info
+    <<: *ndi_site
+    period: last_week
+    range: true
+    max_epochs: 2
+  register: period_last_week
 
 # TRIGGER DELTA ANALYSIS USING EPOCH_ID
 - name: Trigger delta analysis using epoch_id
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-uuid
-    earlier_epoch_id: "{{epoch1}}"
-    later_epoch_id: "{{epoch2}}"
+    earlier_epoch_id: "{{ period_last_week.current.1.epochId }}"
+    later_epoch_id: "{{ period_last_week.current.0.epochId }}"
     state: present
   register: delta_analysis_w_uuid
 
@@ -31,17 +50,17 @@
     that:
       - delta_analysis_w_uuid is changed
       - delta_analysis_w_uuid.current.jobName == "testDeltaAnalysis-uuid"
-      - '"priorEpochUuid={{epoch1}}" in delta_analysis_w_uuid.current.configData'
-      - '"laterEpochUuid={{epoch2}}" in delta_analysis_w_uuid.current.configData'
+      - '"priorEpochUuid={{ period_last_week.current.1.epochId }}" in delta_analysis_w_uuid.current.configData'
+      - '"laterEpochUuid={{ period_last_week.current.0.epochId }}" in delta_analysis_w_uuid.current.configData'
 
 - name: Trigger same delta analysis again, and verify idempotency
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-uuid
-    earlier_epoch: "{{epoch1}}"
-    later_epoch: "{{epoch2}}"
+    earlier_epoch: "{{ period_last_week.current.1.epochId }}"
+    later_epoch: "{{ period_last_week.current.0.epochId }}"
     state: present
   register: delta_analysis_w_uuid
 
@@ -54,8 +73,8 @@
 - name: Wait until delta analysis is completed
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-uuid
     state: query
   register: delta_analysis_info
@@ -72,11 +91,11 @@
 - name: Trigger delta analysis using epoch_time
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-time
-    earlier_epoch_time: 2023-01-18T12:00:00.000Z
-    later_epoch_time: 2023-01-18T15:00:00.000Z
+    earlier_epoch_time: "{{ period_last_week.current.1.collectionTimeRfc3339 }}"
+    later_epoch_time: "{{ period_last_week.current.0.collectionTimeRfc3339 }}"
     state: present
   register: delta_analysis_w_time
 
@@ -90,8 +109,8 @@
 - name: Validate delta analysis
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-time
     state: validate
   register: delta_analysis_results
@@ -103,12 +122,13 @@
       - delta_analysis_results.current.anomalies is defined
       - delta_analysis_results.current.anomaly_count is defined
       # - delta_analysis_results.current.unhealthy_resources is defined
+
 # QUERY LIST OF INSTANT ANALYSIS
 - name: Get history of delta analysis jobs
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     state: query
   register: delta_analysis_history
 
@@ -121,8 +141,8 @@
 - name: Query delta analysis using aliases
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    ig_name: "{{ ig_name }}"
-    site: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     job_name: testDeltaAnalysis-uuid
     state: query
 
@@ -130,8 +150,8 @@
 - name: Test invalid state option
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     state: new
   ignore_errors: true
 
@@ -139,10 +159,10 @@
 - name: Test failure when missing insights_group
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    site_name: "{{ site_name }}"
+    <<: *ndi_site
     name: testDeltaAnalysis-uuid
-    earlier_epoch_id: "{{epoch1}}"
-    later_epoch_id: "{{epoch2}}"
+    earlier_epoch_id: "{{ period_last_week.current.1.epochId }}"
+    later_epoch_id: "{{ period_last_week.current.0.epochId }}"
     state: present
   register: delta_analysis_failure
   ignore_errors: true
@@ -150,10 +170,10 @@
 - name: Test failure when missing site_name
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
+    <<: *ndi_info
     name: testDeltaAnalysis-uuid
-    earlier_epoch_id: "{{epoch1}}"
-    later_epoch_id: "{{epoch2}}"
+    earlier_epoch_id: "{{ period_last_week.current.1.epochId }}"
+    later_epoch_id: "{{ period_last_week.current.0.epochId }}"
     state: present
   register: delta_analysis_failure
   ignore_errors: true
@@ -161,10 +181,10 @@
 - name: Test failure when missing name in present
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
-    earlier_epoch_id: "{{epoch1}}"
-    later_epoch_id: "{{epoch2}}"
+    <<: *ndi_info
+    <<: *ndi_site
+    earlier_epoch_id: "{{ period_last_week.current.1.epochId }}"
+    later_epoch_id: "{{ period_last_week.current.0.epochId }}"
     state: present
   register: delta_analysis_failure
   ignore_errors: true
@@ -172,8 +192,8 @@
 - name: Test failure when missing name in absent
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     state: absent
   register: delta_analysis_failure
   ignore_errors: true
@@ -181,8 +201,8 @@
 - name: Test failure when missing name in validate
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     state: validate
   register: delta_analysis_failure
   ignore_errors: true
@@ -190,8 +210,8 @@
 - name: Test failure when missing epoch info
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-uuid
     state: present
   register: delta_analysis_failure
@@ -200,11 +220,11 @@
 - name: Test failure when invalid combination of epoch info
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-uuid
-    earlier_epoch_id: "{{epoch1}}"
-    later_epoch_time: 2023-01-18T15:00:00.000Z
+    earlier_epoch_id: "{{ period_last_week.current.1.epochId }}"
+    later_epoch_time: "{{ period_last_week.current.0.collectionTimeRfc3339 }}"
     state: present
   register: delta_analysis_failure
   ignore_errors: true
@@ -212,11 +232,11 @@
 - name: Test failure when invalid combination of epoch info
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-uuid
-    earlier_epoch_time: 2023-01-18T15:00:00.000Z
-    later_epoch_id: "{{epoch1}}"
+    earlier_epoch_time: "{{ period_last_week.current.0.collectionTimeRfc3339 }}"
+    later_epoch_id: "{{ period_last_week.current.1.epochId }}"
     state: present
   register: delta_analysis_failure
   ignore_errors: true
@@ -224,10 +244,10 @@
 - name: Test failure when incomplete set of epoch info
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-uuid
-    earlier_epoch_time: 2023-01-18T15:00:00.000Z
+    earlier_epoch_time: "{{ period_last_week.current.0.collectionTimeRfc3339 }}"
     state: present
   register: delta_analysis_failure
   ignore_errors: true
@@ -235,10 +255,10 @@
 - name: Test failure when incomplete set of epoch info
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-uuid
-    later_epoch_id: "{{epoch1}}"
+    later_epoch_id: "{{ period_last_week.current.1.epochId }}"
     state: present
   register: delta_analysis_failure
   ignore_errors: true
@@ -247,11 +267,11 @@
 - name: Test Check Mode with state present
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-check
-    earlier_epoch: "{{epoch1}}"
-    later_epoch: "{{epoch2}}"
+    earlier_epoch: "{{ period_last_week.current.1.epochId }}"
+    later_epoch: "{{ period_last_week.current.0.epochId }}"
     state: present
   register: delta_analysis_check
   check_mode: true
@@ -259,8 +279,8 @@
 - name: Test Check Mode with state absent
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-check
     state: absent
   register: delta_analysis_check
@@ -270,8 +290,8 @@
 - name: Remove epoch delta testDeltaAnalysis-uuid
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-uuid
     state: absent
   register: delta_analysis_w_uuid
@@ -285,8 +305,8 @@
 - name: Remove epoch delta testDeltaAnalysis-time
   cisco.nd.nd_delta_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     name: testDeltaAnalysis-time
     state: absent
   register: delta_analysis_w_time

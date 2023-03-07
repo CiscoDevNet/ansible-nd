@@ -3,23 +3,32 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-- name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+- name: Test that we have an Nexus Dashboard host, username and password
   fail:
-    msg: "Please define the following variables: ig_name, site_name."
-  when: ig_name is not defined or site_name is not defined
+    msg: 'Please define the following variables: nd_hostname, nd_username, nd_password, insights_group, and site_name.'
+  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined or insights_group is not defined or site_name is not defined
 
-# CLEAN ENVIRONMENT
 - name: Set vars
   set_fact:
     nd_info: &nd_info
+      host: '{{ nd_hostname }}'
+      username: '{{ nd_username }}'
+      password: '{{ nd_password }}'
+      validate_certs: '{{ nd_validate_certs | default(false) }}'
+      use_ssl: '{{ nd_use_ssl | default(true) }}'
+      use_proxy: '{{ nd_use_proxy | default(true) }}'
       output_level: '{{ nd_output_level | default("info") }}'
+    ndi_info: &ndi_info
+      insights_group: '{{ insights_group }}'
+    ndi_site: &ndi_site
+      site: '{{ site_name }}'
 
 # TRIGGER INSTANT ASSURANCE ANALYSIS
 - name: Trigger instant assurance analysis job
   cisco.nd.nd_instant_assurance_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     state: present
   register: instant_analysis_triggered
 
@@ -27,8 +36,8 @@
 - name: Wait until instant assurance analysis is completed
   cisco.nd.nd_instant_assurance_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     job_id: "{{ instant_analysis_triggered.current.jobId }}"
     state: query
   register: instant_analysis_info
@@ -47,8 +56,8 @@
 - name: Get history of instant assurance analysis
   cisco.nd.nd_instant_assurance_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     state: query
   register: instant_analysis_history
 
@@ -56,8 +65,8 @@
 - name: Get history of instant assurance analysis using aliases
   cisco.nd.nd_instant_assurance_analysis:
     <<: *nd_info
-    ig_name: "{{ ig_name }}"
-    site: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     state: query
   register: instant_analysis_history_aliases
 
@@ -72,8 +81,8 @@
 - name: Test invalid state option
   cisco.nd.nd_instant_assurance_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     state: absent
   ignore_errors: true
   register: invalid_state
@@ -82,7 +91,7 @@
 - name: Test failure when missing insights_group
   cisco.nd.nd_instant_assurance_analysis:
     <<: *nd_info
-    site_name: "{{ site_name }}"
+    <<: *ndi_site
     state: present
   ignore_errors: true
   register: missing_insights_group
@@ -90,7 +99,7 @@
 - name: Test failure when missing site_name
   cisco.nd.nd_instant_assurance_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
+    <<: *ndi_info
     state: present
   ignore_errors: true
   register: missing_site_name
@@ -106,8 +115,8 @@
 - name: Test Check Mode
   cisco.nd.nd_instant_assurance_analysis:
     <<: *nd_info
-    insights_group: "{{ ig_name }}"
-    site_name: "{{ site_name }}"
+    <<: *ndi_info
+    <<: *ndi_site
     state: present
   check_mode: true
   register: instant_analysis_info
