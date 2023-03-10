@@ -61,21 +61,21 @@ extends_documentation_fragment: cisco.nd.modules
 """
 
 EXAMPLES = r"""
-- name: Get latest epoch id
+- name: Get the latest epoch id
   cisco.nd.nd_epoch:
     insights_group: igName
     site: siteName
     period: latest
   register: query_results
 
-- name: Get epoch id from period
+- name: Get the epoch id from period
   cisco.nd.nd_epoch:
     insights_group: igName
     site: siteName
     period: last_week
   register: period_last_week
 
-- name: Get all epoch id from last week
+- name: Get all epoch ids from last week
   cisco.nd.nd_epoch:
     insights_group: igName
     site: siteName
@@ -83,7 +83,7 @@ EXAMPLES = r"""
     range: true
   register: period_last_week
 
-- name: Get 3 epoch id from last week closest to latest
+- name: Get 3 epoch ids from last week closest to latest
   cisco.nd.nd_epoch:
     insights_group: igName
     site: siteName
@@ -92,7 +92,7 @@ EXAMPLES = r"""
     max_epochs: 3
   register: period_last_week
 
-- name: Get all epoch id from date range
+- name: Get all epoch ids from date range
   cisco.nd.nd_epoch:
     insights_group: igName
     site: siteName

@@ -17,34 +17,10 @@ module: nd_compliance_requirement_config_snapshot
 version_added: "0.3.0"
 short_description: Manage snapshot configuration type compliance requirements
 description:
-- Manage snapshot configuration type on Cisco Nexus Dashboard Insights (NDI).
+- Manage snapshot configuration type compliance requirements on Cisco Nexus Dashboard Insights (NDI).
 author:
 - Akini Ross (@akinross)
 options:
-  insights_group:
-    description:
-    - The name of the insights group.
-    type: str
-    required: yes
-    aliases: [ fab_name, ig_name ]
-  name:
-    description:
-    - The name of the compliance requirement.
-    type: str
-  description:
-    description:
-    - The description of the compliance requirement.
-    type: str
-    aliases: [ descr ]
-  enabled:
-    description:
-    - Enable the compliance requirement.
-    type: bool
-  sites:
-    description:
-    - Names of the Assurance Entities.
-    type: list
-    elements: str
   baseline_site:
     description:
     - Name of the Assurance Entity to set as baseline.
@@ -60,28 +36,24 @@ options:
     - Allow addition of new configuration objects.
     type: bool
     default: false
-  state:
-    description:
-    - Use C(query) for retrieving the version object.
-    type: str
-    choices: [ query, absent, present ]
-    default: query
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.ndi_compliance_base
 """
 
 EXAMPLES = r"""
-- name: Get all compliance snapshot configuration type requirements
+- name: Get all snapshot configuration type compliance requirements
   cisco.nd.nd_compliance_requirement_config_snapshot:
     insights_group: igName
     state: query
   register: query_results
-- name: Get a specific compliance snapshot configuration type requirement
+- name: Get a specific snapshot configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_snapshot:
     insights_group: igName
     name: complianceRequirementName
     state: query
   register: query_results
-- name: Create compliance snapshot configuration type requirement
+- name: Create snapshot configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_snapshot:
     insights_group: igName
     name: complianceRequirementName
@@ -91,7 +63,7 @@ EXAMPLES = r"""
     enabled: false
     epoch_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
     state: present
-- name: Delete compliance snapshot configuration type requirement
+- name: Delete snapshot configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_snapshot:
     insights_group: igName
     name: complianceRequirementName
