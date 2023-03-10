@@ -14,7 +14,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_compliance_analysis
-version_added: "0.2.1"
+version_added: "0.3.0"
 short_description: Query compliance analysis data from Cisco Nexus Dashboard Insights (NDI)
 description:
 - Query compliance analysis data from Cisco Nexus Dashboard Insights (NDI).

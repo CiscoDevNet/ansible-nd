@@ -14,7 +14,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_epoch
-version_added: "0.2.1"
+version_added: "0.3.0"
 short_description: Query epoch data from Cisco Nexus Dashboard Insights (NDI)
 description:
 - Query epoch data from Cisco Nexus Dashboard Insights (NDI).
