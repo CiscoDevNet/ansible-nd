@@ -29,7 +29,7 @@ options:
     aliases: [ fab_name, ig_name ]
   site:
     description:
-    - Names of the Assurance Entity.
+    - The names of the site.
     type: str
     required: yes
   epoch_id:

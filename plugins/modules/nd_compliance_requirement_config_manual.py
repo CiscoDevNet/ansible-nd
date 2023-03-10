@@ -17,34 +17,10 @@ module: nd_compliance_requirement_config_manual
 version_added: "0.3.0"
 short_description: Manage manual configuration type compliance requirements
 description:
-- Manage manual configuration type on Cisco Nexus Dashboard Insights (NDI).
+- Manage manual configuration type compliance requirements on Cisco Nexus Dashboard Insights (NDI).
 author:
 - Akini Ross (@akinross)
 options:
-  insights_group:
-    description:
-    - The name of the insights group.
-    type: str
-    required: yes
-    aliases: [ fab_name, ig_name ]
-  name:
-    description:
-    - The name of the compliance requirement.
-    type: str
-  description:
-    description:
-    - The description of the compliance requirement.
-    type: str
-    aliases: [ descr ]
-  enabled:
-    description:
-    - Enable the compliance requirement.
-    type: bool
-  sites:
-    description:
-    - Names of the Assurance Entities.
-    type: list
-    elements: str
   object:
     description:
     - Container for all matching criteria attached to the object.
@@ -98,7 +74,7 @@ options:
               value:
                 description:
                 - The value of the pattern to match on.
-                - Not providing a pattern sets to ANY-STRING.
+                - NDO defaults to a wildcard string, displayed in UI as ANY-STRING, when unset during creation.
                 type: str
       excludes:
         description:
@@ -141,7 +117,7 @@ options:
               value:
                 description:
                 - The value of the pattern to match on.
-                - Not providing a pattern sets to ANY-STRING.
+                - NDO defaults to a wildcard string, displayed in UI as ANY-STRING, when unset during creation.
                 type: str
   config_rules:
     description:
@@ -170,28 +146,24 @@ regex, exact, at_least, at_most, all, none, at_least_one]
         - WARNING be aware of case sensitivity !!
         type: str
         required: yes
-  state:
-    description:
-    - Use C(query) for retrieving the version object.
-    type: str
-    choices: [ query, absent, present ]
-    default: query
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.ndi_compliance_base
 """
 
 EXAMPLES = r"""
-- name: Get all compliance manual configuration type requirements
+- name: Get all manual configuration type compliance requirements
   cisco.nd.nd_compliance_requirement_config_manual:
     insights_group: igName
     state: query
   register: query_results
-- name: Get a specific compliance manual configuration type requirement
+- name: Get a specific manual configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_manual:
     insights_group: igName
     name: complianceRequirementName
     state: query
   register: query_results
-- name: Create compliance manual configuration type requirement
+- name: Create manual configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_manual:
     insights_group: igName
     name: complianceRequirementName
@@ -228,7 +200,7 @@ EXAMPLES = r"""
       operator: CONTAINS
       value: foo
     state: present
-- name: Delete compliance manual configuration type requirement
+- name: Delete manual configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_manual:
     insights_group: igName
     name: complianceRequirementName

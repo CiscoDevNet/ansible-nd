@@ -21,30 +21,6 @@ description:
 author:
 - Akini Ross (@akinross)
 options:
-  insights_group:
-    description:
-    - The name of the insights group.
-    type: str
-    required: yes
-    aliases: [ fab_name, ig_name ]
-  name:
-    description:
-    - The name of the compliance requirement.
-    type: str
-  description:
-    description:
-    - The description of the compliance requirement.
-    type: str
-    aliases: [ descr ]
-  enabled:
-    description:
-    - Enable the compliance requirement.
-    type: bool
-  sites:
-    description:
-    - Names of the Assurance Entities.
-    type: list
-    elements: str
   type:
     description:
     - The communication type of the compliance requirement.
@@ -103,7 +79,7 @@ options:
               value:
                 description:
                 - The value of the pattern to match on.
-                - Not providing a pattern sets to ANY-STRING.
+                - NDO defaults to a wildcard string, displayed in UI as ANY-STRING, when unset during creation.
                 type: str
       excludes:
         description:
@@ -146,7 +122,7 @@ options:
               value:
                 description:
                 - The value of the pattern to match on.
-                - Not providing a pattern sets to ANY-STRING.
+                - NDO defaults to a wildcard string, displayed in UI as ANY-STRING, when unset during creation.
                 type: str
   to_object:
     description:
@@ -201,7 +177,7 @@ options:
               value:
                 description:
                 - The value of the pattern to match on.
-                - Not providing a pattern sets to ANY-STRING.
+                - NDO defaults to a wildcard string, displayed in UI as ANY-STRING, when unset during creation.
                 type: str
       excludes:
         description:
@@ -244,7 +220,7 @@ options:
               value:
                 description:
                 - The value of the pattern to match on.
-                - Not providing a pattern sets to ANY-STRING.
+                - NDO defaults to a wildcard string, displayed in UI as ANY-STRING, when unset during creation.
                 type: str
   traffic_selector_rules:
     description:
@@ -323,28 +299,24 @@ options:
             type: list
             elements: str
             choices: [ ack, est, fin, res, syn ]
-  state:
-    description:
-    - Use C(query) for retrieving the version object.
-    type: str
-    choices: [ query, absent, present ]
-    default: query
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.ndi_compliance_base
 """
 
 EXAMPLES = r"""
-- name: Get all compliance communication type requirements
+- name: Get all communication type compliance requirements
   cisco.nd.nd_compliance_requirement_communication:
     insights_group: igName
     state: query
   register: query_results
-- name: Get a specific compliance communication type requirement
+- name: Get a specific communication type compliance requirement
   cisco.nd.nd_compliance_requirement_communication:
     insights_group: igName
     name: complianceRequirementName
     state: query
   register: query_results
-- name: Create compliance communication type requirement
+- name: Create communication type compliance requirement
   cisco.nd.nd_compliance_requirement_communication:
     insights_group: igName
     name: complianceRequirementName
@@ -402,7 +374,7 @@ EXAMPLES = r"""
         destination: "2"
         tcp_flags: ["ack", "fin", "res", "syn" ]
     state: present
-- name: Delete compliance communication type requirement
+- name: Delete communication type compliance requirement
   cisco.nd.nd_compliance_requirement_communication:
     insights_group: igName
     name: complianceRequirementName
