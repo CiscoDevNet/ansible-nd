@@ -14,7 +14,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_compliance_requirement_communication
-version_added: "0.2.1"
+version_added: "0.3.0"
 short_description: Manage communication type compliance requirements
 description:
 - Manage communication type compliance requirements on Cisco Nexus Dashboard Insights (NDI).
