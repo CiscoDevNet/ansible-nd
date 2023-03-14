@@ -4,27 +4,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-- name: Test that we have an Nexus Dashboard host, username and password
-  fail:
-    msg: 'Please define the following variables: nd_hostname, nd_username and nd_password.'
-  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined
-
-# CLEAN ENVIRONMENT
-- name: Set vars
-  set_fact:
-    nd_info: &nd_info
-      host: '{{ nd_hostname }}'
-      username: '{{ nd_username }}'
-      password: '{{ nd_password }}'
-      validate_certs: '{{ nd_validate_certs | default(false) }}'
-      use_ssl: '{{ nd_use_ssl | default(true) }}'
-      use_proxy: '{{ nd_use_proxy | default(true) }}'
-      output_level: '{{ nd_output_level | default("info") }}'
-
 # QUERY VERSION
 - name: Query ND version
   nd_version: &nd_query
-    <<: *nd_info
     state: query
   check_mode: yes
   register: cm_query_version

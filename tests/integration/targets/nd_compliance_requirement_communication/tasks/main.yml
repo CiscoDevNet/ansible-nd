@@ -3,21 +3,8 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-- name: Test that we have an Nexus Dashboard host, username and password
-  fail:
-    msg: 'Please define the following variables: nd_hostname, nd_username, nd_password, insights_group, and site_name.'
-  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined or insights_group is not defined or site_name is not defined
-
 - name: Set vars
   set_fact:
-    nd_info: &nd_info
-      host: '{{ nd_hostname }}'
-      username: '{{ nd_username }}'
-      password: '{{ nd_password }}'
-      validate_certs: '{{ nd_validate_certs | default(false) }}'
-      use_ssl: '{{ nd_use_ssl | default(true) }}'
-      use_proxy: '{{ nd_use_proxy | default(true) }}'
-      output_level: '{{ nd_output_level | default("info") }}'
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
     ndi_base: &ndi_base
@@ -80,14 +67,12 @@
 
 - name: Query compliance requirements
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     state: query
   register: clean_existing
 
 - name: Delete existing communication compliance requirements
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     name: "{{ item.name }}"
     state: absent
@@ -95,7 +80,6 @@
 
 - name: Query compliance requirements
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     state: query
   register: query_existing
@@ -109,7 +93,6 @@
 
 - name: Create a compliance requirement ( type may / TRAFFIC_RESTRICTION )
   cisco.nd.nd_compliance_requirement_communication: &requirement_may_traffic_restriction
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -121,7 +104,6 @@
 
 - name: Create a compliance requirement ( type may / TRAFFIC_RESTRICTION )
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -236,7 +218,6 @@
 
 - name: Create a compliance requirement ( type must_not / TRAFFIC_RESTRICTION )
   cisco.nd.nd_compliance_requirement_communication: &requirement_must_not_traffic_restriction
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -259,7 +240,6 @@
 
 - name: Create a compliance requirement ( type must_not / SEGMENTATION )
   cisco.nd.nd_compliance_requirement_communication: &requirement_must_not_segmentation
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -281,7 +261,6 @@
 
 - name: Create a compliance requirement ( type must / SLA )
   cisco.nd.nd_compliance_requirement_communication: &requirement_must_sla
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -306,7 +285,6 @@
 
 - name: Create a compliance requirement ( without description )
   cisco.nd.nd_compliance_requirement_communication: &requirement_description
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -360,7 +338,6 @@
 
 - name: Create a compliance requirement pattern set to None
   cisco.nd.nd_compliance_requirement_communication: &pattern_none
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -442,7 +419,6 @@
 
 - name: Create a compliance requirement with reverse port set to true and tcp flags not set
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -458,7 +434,6 @@
 
 - name: Create a compliance requirement with source not set
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -473,7 +448,6 @@
 
 - name: Create a compliance requirement with destination not set
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -489,7 +463,6 @@
 
 - name: Create a compliance requirement with flags_set to ack
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -506,7 +479,6 @@
 
 - name: Create a compliance requirement with flags_not_set to ack
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -540,7 +512,6 @@
 
 - name: Create a compliance requirement for query 1
   cisco.nd.nd_compliance_requirement_communication: &requirement_query_1
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -555,7 +526,6 @@
 
 - name: Create a compliance requirement for query 2
   cisco.nd.nd_compliance_requirement_communication: &requirement_query_2
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -571,7 +541,6 @@
 
 - name: Query compliance requirements
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     state: query
   register: query_existing
@@ -583,7 +552,6 @@
 
 - name: Delete existing communication compliance requirements
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     name: "{{ item.name }}"
     state: absent
@@ -591,7 +559,6 @@
 
 - name: Query compliance requirements
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     state: query
   register: query_existing
@@ -616,7 +583,6 @@
 
 - name: Create a compliance requirement for update and idempotency (check mode)
   cisco.nd.nd_compliance_requirement_communication: &requirement_change
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -677,7 +643,6 @@
 
 - name: Create a compliance requirement with wrong choice ( type )
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -689,7 +654,6 @@
 
 - name: Create a compliance requirement with wrong choice ( object_type )
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -712,7 +676,6 @@
 
 - name: Create a compliance requirement with wrong choice ( object_attribute )
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -735,7 +698,6 @@
 
 - name: Create a compliance requirement with wrong choice ( match_type )
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -758,7 +720,6 @@
 
 - name: Create a compliance requirement with wrong choice ( pattern_type )
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -781,7 +742,6 @@
 
 - name: Create a compliance requirement with wrong choice ( flags_set )
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object
@@ -796,7 +756,6 @@
 
 - name: Create a compliance requirement with wrong choice ( flags_not_set )
   cisco.nd.nd_compliance_requirement_communication:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_base
     <<: *ndi_base_object

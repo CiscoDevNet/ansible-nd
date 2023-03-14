@@ -3,22 +3,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-- name: Test that we have an Nexus Dashboard host, username and password
-  fail:
-    msg: 'Please define the following variables: nd_hostname, nd_username, nd_password, insights_group, and site_name.'
-  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined or insights_group is not defined or site_name is not defined
-
 # CLEAN ENVIRONMENT
 - name: Set vars
   set_fact:
-    nd_info: &nd_info
-      host: '{{ nd_hostname }}'
-      username: '{{ nd_username }}'
-      password: '{{ nd_password }}'
-      validate_certs: '{{ nd_validate_certs | default(false) }}'
-      use_ssl: '{{ nd_use_ssl | default(true) }}'
-      use_proxy: '{{ nd_use_proxy | default(true) }}'
-      output_level: '{{ nd_output_level | default("info") }}'
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
     ndi_site: &ndi_site
@@ -27,7 +14,6 @@
 # QUERY pre-change validation delta analysis results
 - name: Query a pre_change validation compliance result
   nd_pcv_compliance: &nd_query
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: manual

@@ -1,5 +1,5 @@
 [nd]
-nd ansible_host=<TODO> nd_hostname=<TODO>
+nd ansible_host=<TODO>
 
 [nd:vars]
 ansible_connection=ansible.netcommon.httpapi
@@ -9,9 +9,7 @@ ansible_httpapi_validate_certs=False
 ansible_httpapi_use_ssl=True
 ansible_httpapi_use_proxy=True
 ansible_user=ansible_github_ci
-ansible_ssh_pass="2j31oi2j90d1u23901pj2e1j2"
-nd_username="ansible_github_ci"
-nd_password="2j31oi2j90d1u23901pj2e1j2"
+ansible_ssh_pass=<TODO>
 insights_group=<TODO>
 site_name=<TODO>
 site_host=<TODO>
