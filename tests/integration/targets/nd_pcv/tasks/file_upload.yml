@@ -3,21 +3,8 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-- name: Test that we have an Nexus Dashboard host, username and password
-  fail:
-    msg: 'Please define the following variables: nd_hostname, nd_username, nd_password, insights_group, site_name.'
-  when: nd_hostname is not defined or nd_username is not defined or nd_password is not defined or insights_group is not defined or site_name is not defined
-
 - name: Set vars
   set_fact:
-    nd_info: &nd_info
-      host: '{{ nd_hostname }}'
-      username: '{{ nd_username }}'
-      password: '{{ nd_password }}'
-      validate_certs: '{{ nd_validate_certs | default(false) }}'
-      use_ssl: '{{ nd_use_ssl | default(true) }}'
-      use_proxy: '{{ nd_use_proxy | default(true) }}'
-      output_level: '{{ nd_output_level | default("info") }}'
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
     ndi_site: &ndi_site
@@ -25,7 +12,6 @@
 
 - name: Add pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     file: targets/nd_pcv/tasks/ansible_dump.json
@@ -50,7 +36,6 @@
 # Check whether pre-change validation complete
 - name: Query Pre-Change analysis job pcv ansible_no_json
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: ansible_no_json
@@ -81,7 +66,6 @@
 
 - name: Add pre-change analysis from file upload (JSON format)
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     file: targets/nd_pcv/tasks/contract.json
@@ -105,7 +89,6 @@
 
 - name: Query Pre-Change analysis job pcv ansible_json (until RUNNING)
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: ansible_json
@@ -117,7 +100,6 @@
 
 - name: Delete ansible_json pre-change analysis while RUNNING
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: ansible_json
@@ -133,7 +115,6 @@
 
 - name: Query Pre-Change analysis job pcv ansible_json
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: ansible_json
@@ -161,7 +142,6 @@
 
 - name: Add pre-change analysis from file upload with same file but different file name (JSON format)
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     file: targets/nd_pcv/tasks/contract_identical.json
@@ -176,7 +156,6 @@
 
 - name: Add pre-change analysis from file upload with same filename but different name (JSON format)
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     file: targets/nd_pcv/tasks/contract.json
@@ -200,7 +179,6 @@
 
 - name: Add pre-change analysis from file upload again (JSON format)
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     file: targets/nd_pcv/tasks/contract.json
@@ -224,7 +202,6 @@
 
 - name: Query Pre-Change analysis job ansible_json_diff_name
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: ansible_json_diff_name
@@ -252,7 +229,6 @@
 
 - name: Add another pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     file: targets/nd_pcv/tasks/tenant_delete_dump.json
@@ -276,7 +252,6 @@
 
 - name: Query Pre-Change analysis job pcv_tenant_delete
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: ansible_tenant_delete
@@ -302,11 +277,9 @@
   pause:
       minutes: 1
 
-# Static reference to a present tenant on QA fabric, might cause issues in future when tenant is not present
-# TODO: What is value add of this test since it has some dependencies which might break CI?
+# TODO: Static reference to a present tenant on QA fabric, might cause issues in future when tenant is not present
 - name: Create a new Pre-Change analysis from file
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: pcv_by_file
@@ -330,7 +303,6 @@
 
 - name: Query Pre-Change analysis job pcv_by_file
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: pcv_by_file
@@ -358,7 +330,6 @@
 
 - name: Create a new Pre-Change analysis from non-existing file
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: pcv_non_existing
@@ -369,7 +340,6 @@
 
 - name: Query specific Pre-Change analysis job
   cisco.nd.nd_pcv: &nd_query
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: pcv_by_file
@@ -390,7 +360,6 @@
 
 - name: Query all Pre-Change analysis jobs
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     state: query
   register: nm_query_pcvs_file
@@ -402,7 +371,6 @@
 
 - name: Delete ansible_json pre-change analysis (check_mode)
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: ansible_json
@@ -412,7 +380,6 @@
 
 - name: Delete ansible_json pre-change analysis (normal_mode)
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: ansible_json
@@ -421,7 +388,6 @@
 
 - name: Delete ansible_json pre-change analysis again
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: ansible_json
@@ -443,7 +409,6 @@
 
 - name: Try to create pcv_without_file_or_manual pre-change analysis
   cisco.nd.nd_pcv:
-    <<: *nd_info
     <<: *ndi_info
     <<: *ndi_site
     name: pcv_without_file_or_manual
