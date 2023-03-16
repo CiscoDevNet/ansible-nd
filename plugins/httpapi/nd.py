@@ -50,7 +50,7 @@ try:
 except ImportError:
     HAS_MULTIPART_ENCODER = False
 
-if sys.version <= "3":
+if sys.version_info.major == 2:
     from StringIO import StringIO  # For Python 2+
 else:
     from io import StringIO  # For Python 3+
@@ -266,11 +266,15 @@ class HttpApi(HttpApiBase):
                 fields = dict(data=("data.json", data_str, "application/json"), file=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
 
             if not HAS_MULTIPART_ENCODER:
-                self.nd.fail_json(msg="Cannot use requests_toolbelt MultipartEncoder() because requests_toolbelt module is not available")
+                if sys.version_info.major == 2:
+                    raise ImportError("Cannot use requests_toolbelt MultipartEncoder() because requests_toolbelt module is not available")
+                else:
+                    raise ModuleNotFoundError("Cannot use requests_toolbelt MultipartEncoder() because requests_toolbelt module is not available")
+
             mp_encoder = MultipartEncoder(fields=fields)
             multiheader = {"Content-Type": mp_encoder.content_type, "Accept": "*/*", "Accept-Encoding": "gzip, deflate, br"}
 
-            if sys.version <= "3":
+            if sys.version_info.major == 2:
                 # For Python 2+
                 py2_default_encoding = sys.getdefaultencoding()
                 reload(sys)
@@ -283,7 +287,7 @@ class HttpApi(HttpApiBase):
             response, rdata = self.connection.send(path, mp_data, method=method, headers=multiheader)
 
             # Resetting it to the default encoding
-            if sys.version <= "3":
+            if sys.version_info.major == 2:
                 # For Python 2+
                 reload(sys)
                 sys.setdefaultencoding(py2_default_encoding)
