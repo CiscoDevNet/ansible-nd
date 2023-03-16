@@ -36,6 +36,7 @@ import json
 import pickle
 import traceback
 import mimetypes
+import sys
 import tempfile
 from ansible.module_utils.six import PY3
 from ansible.module_utils._text import to_native, to_text
@@ -48,6 +49,11 @@ try:
     HAS_MULTIPART_ENCODER = True
 except ImportError:
     HAS_MULTIPART_ENCODER = False
+
+if sys.version <= "3":
+    from StringIO import StringIO  # For Python 2+
+else:
+    from io import StringIO  # For Python 3+
 
 
 class HttpApi(HttpApiBase):
@@ -246,7 +252,7 @@ class HttpApi(HttpApiBase):
         try:
             # create data field
             data["uploadedFileName"] = os.path.basename(file)
-            data_str = io.StringIO()
+            data_str = StringIO()
             json.dump(data, data_str)
         except Exception as e:
             self.error = dict(code=self.status, message="ND HTTPAPI create data field Exception: {0} - {1}".format(e, traceback.format_exc()))
@@ -263,7 +269,24 @@ class HttpApi(HttpApiBase):
                 self.nd.fail_json(msg="Cannot use requests_toolbelt MultipartEncoder() because requests_toolbelt module is not available")
             mp_encoder = MultipartEncoder(fields=fields)
             multiheader = {"Content-Type": mp_encoder.content_type, "Accept": "*/*", "Accept-Encoding": "gzip, deflate, br"}
-            response, rdata = self.connection.send(path, mp_encoder.to_string(), method=method, headers=multiheader)
+
+            if sys.version <= "3":
+                # For Python 2+
+                py2_default_encoding = sys.getdefaultencoding()
+                reload(sys)
+                sys.setdefaultencoding("latin-1")  # To handle UnicodeDecodeError exception during the send function call
+                mp_data = mp_encoder.to_string()
+            else:
+                # For Python 3+
+                mp_data = mp_encoder.to_string()
+
+            response, rdata = self.connection.send(path, mp_data, method=method, headers=multiheader)
+
+            # Resetting it to the default encoding
+            if sys.version <= "3":
+                # For Python 2+
+                reload(sys)
+                sys.setdefaultencoding(py2_default_encoding)
         except Exception as e:
             self.error = dict(code=self.status, message="ND HTTPAPI MultipartEncoder Exception: {0} - {1} ".format(e, traceback.format_exc()))
             raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
