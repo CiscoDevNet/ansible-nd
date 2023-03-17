@@ -5,6 +5,21 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 .. contents:: Topics
 
 
+v0.2.1
+======
+
+Release Summary
+---------------
+
+Release v0.2.1 of the ``ansible-nd`` collection on 2023-03-17.
+This changelog describes all changes made to the modules and plugins included in this collection since v0.2.0.
+
+
+Bugfixes
+--------
+
+- Ensure python2 compatible methods are used for the bytes io object (#41) Co-authored-by: Sabari Jaganathan <93724860+sajagana@users.noreply.github.com>
+
 v0.2.0
 ======
 
