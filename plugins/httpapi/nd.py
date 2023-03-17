@@ -238,7 +238,7 @@ class HttpApi(HttpApiBase):
                             remote_path="/temp",
                         )
         """
-        if not data:
+        if data is None:
             data = dict()
 
         self.error = None
@@ -273,24 +273,7 @@ class HttpApi(HttpApiBase):
 
             mp_encoder = MultipartEncoder(fields=fields)
             multiheader = {"Content-Type": mp_encoder.content_type, "Accept": "*/*", "Accept-Encoding": "gzip, deflate, br"}
-
-            if sys.version_info.major == 2:
-                # For Python 2+
-                py2_default_encoding = sys.getdefaultencoding()
-                reload(sys)
-                sys.setdefaultencoding("latin-1")  # To handle UnicodeDecodeError exception during the send function call
-                mp_data = mp_encoder.to_string()
-            else:
-                # For Python 3+
-                mp_data = mp_encoder.to_string()
-
-            response, rdata = self.connection.send(path, mp_data, method=method, headers=multiheader)
-
-            # Resetting it to the default encoding
-            if sys.version_info.major == 2:
-                # For Python 2+
-                reload(sys)
-                sys.setdefaultencoding(py2_default_encoding)
+            response, rdata = self.connection.send(path, mp_encoder.to_string(), method=method, headers=multiheader)
         except Exception as e:
             self.error = dict(code=self.status, message="ND HTTPAPI MultipartEncoder Exception: {0} - {1} ".format(e, traceback.format_exc()))
             raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
