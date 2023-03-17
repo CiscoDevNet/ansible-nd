@@ -7,6 +7,7 @@
   set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
+      output_level: '{{ site_output_level | default("info") }}'
     ndi_site: &ndi_site
       site: '{{ site_name }}'
 
@@ -277,7 +278,6 @@
   pause:
       minutes: 1
 
-# TODO: Static reference to a present tenant on QA fabric, might cause issues in future when tenant is not present
 - name: Create a new Pre-Change analysis from file
   cisco.nd.nd_pcv:
     <<: *ndi_info
@@ -339,7 +339,7 @@
   ignore_errors: yes
 
 - name: Query specific Pre-Change analysis job
-  cisco.nd.nd_pcv: &nd_query
+  cisco.nd.nd_pcv:
     <<: *ndi_info
     <<: *ndi_site
     name: pcv_by_file

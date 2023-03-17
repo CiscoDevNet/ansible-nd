@@ -111,7 +111,6 @@
     <<: *ndi_info
     <<: *ndi_site
     period: latest
-    site: qa-fabric
   register: period_latest
 
 - name: Run compliance analysis for latest epoch id

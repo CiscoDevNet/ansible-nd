@@ -7,6 +7,8 @@
   set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
+    ndi_site: &ndi_site
+      site: '{{ site_name }}'
     ndi_base: &ndi_base
       name: ansible-test-1
       sites:
@@ -107,8 +109,8 @@
 - name: Get Epoch with period ( latest )
   cisco.nd.nd_epoch:  
     <<: *ndi_info
+    <<: *ndi_site
     period: latest
-    site: qa-fabric
   register: period_latest
 
 - name: Create a compliance requirement with epoch id set

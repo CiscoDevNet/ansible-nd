@@ -5,7 +5,7 @@
                 "attributes": {
                     "annotation": "",
                     "descr": "",
-                    "dn": "uni/tn-dpita/out-ospf-to-vrf1",
+                    "dn": "uni/tn-AnsibleTest/out-ospf-to-vrf1",
                     "enforceRtctrl": "export",
                     "mplsEnabled": "no",
                     "name": "ospf-to-vrf1",
@@ -287,7 +287,7 @@
                                             "intent": "install",
                                             "matchT": "AtleastOne",
                                             "prio": "unspecified",
-                                            "tnVzBrCPName": "dpita-icmp",
+                                            "tnVzBrCPName": "AnsibleTest-icmp",
                                             "userdom": ":all:"
                                         }
                                     }
@@ -332,7 +332,7 @@
                                             "annotation": "",
                                             "intent": "install",
                                             "prio": "unspecified",
-                                            "tnVzBrCPName": "dpita-icmp",
+                                            "tnVzBrCPName": "AnsibleTest-icmp",
                                             "userdom": ":all:common:"
                                         }
                                     }

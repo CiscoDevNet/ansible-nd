@@ -7,6 +7,7 @@
   set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
+      output_level: '{{ site_output_level | default("info") }}'
     ndi_site: &ndi_site
       site: '{{ site_name }}'
 
