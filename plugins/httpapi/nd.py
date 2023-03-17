@@ -36,6 +36,7 @@ import json
 import pickle
 import traceback
 import mimetypes
+import sys
 import tempfile
 from ansible.module_utils.six import PY3
 from ansible.module_utils._text import to_native, to_text
@@ -48,6 +49,11 @@ try:
     HAS_MULTIPART_ENCODER = True
 except ImportError:
     HAS_MULTIPART_ENCODER = False
+
+if sys.version_info.major == 2:
+    from StringIO import StringIO  # For Python 2+
+else:
+    from io import StringIO  # For Python 3+
 
 
 class HttpApi(HttpApiBase):
@@ -108,7 +114,7 @@ class HttpApi(HttpApiBase):
 
                 # Handle ND response
                 self.status = response.getcode()
-                if self.status not in [200, 201] or (self.status == 200 and response_data.getbuffer().nbytes == 0):
+                if self.status not in [200, 201] or (self.status == 200 and response_data.seek(0, 2) == 0):
                     self.connection.queue_message("error", "login() - login status incorrect or response empty. HTTP status={0}".format(self.status))
                     json_response = "Most likely a wrong login domain was provided, the provided login_domain was {0}".format(self.get_option("login_domain"))
                     if self.status not in [200, 201]:
@@ -211,7 +217,7 @@ class HttpApi(HttpApiBase):
             raise ConnectionError(json.dumps(self._verify_response(None, method, full_path, None)))
         return self._verify_response(response, method, full_path, rdata)
 
-    def send_file_request(self, method, path, file=None, data=dict(), remote_path=None):
+    def send_file_request(self, method, path, file=None, data=None, remote_path=None):
         """This method handles file download and upload operations
         :arg method (str): Method can be GET or POST
         :arg path (str): Path should be the resource path
@@ -232,6 +238,8 @@ class HttpApi(HttpApiBase):
                             remote_path="/temp",
                         )
         """
+        if data is None:
+            data = dict()
 
         self.error = None
         self.path = ""
@@ -244,7 +252,7 @@ class HttpApi(HttpApiBase):
         try:
             # create data field
             data["uploadedFileName"] = os.path.basename(file)
-            data_str = io.StringIO()
+            data_str = StringIO()
             json.dump(data, data_str)
         except Exception as e:
             self.error = dict(code=self.status, message="ND HTTPAPI create data field Exception: {0} - {1}".format(e, traceback.format_exc()))
@@ -258,7 +266,11 @@ class HttpApi(HttpApiBase):
                 fields = dict(data=("data.json", data_str, "application/json"), file=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
 
             if not HAS_MULTIPART_ENCODER:
-                self.nd.fail_json(msg="Cannot use requests_toolbelt MultipartEncoder() because requests_toolbelt module is not available")
+                if sys.version_info.major == 2:
+                    raise ImportError("Cannot use requests_toolbelt MultipartEncoder() because requests_toolbelt module is not available")
+                else:
+                    raise ModuleNotFoundError("Cannot use requests_toolbelt MultipartEncoder() because requests_toolbelt module is not available")
+
             mp_encoder = MultipartEncoder(fields=fields)
             multiheader = {"Content-Type": mp_encoder.content_type, "Accept": "*/*", "Accept-Encoding": "gzip, deflate, br"}
             response, rdata = self.connection.send(path, mp_encoder.to_string(), method=method, headers=multiheader)
@@ -383,7 +395,7 @@ class HttpApi(HttpApiBase):
         fd, tmpsrc = tempfile.mkstemp(dir=tmpdir)
         f = open(tmpsrc, "wb")
         try:
-            f.write(rdata.getbuffer())
+            f.write(rdata.getvalue())
         except Exception as e:
             os.remove(tmpsrc)
             f.close()
