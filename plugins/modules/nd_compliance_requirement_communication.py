@@ -35,20 +35,20 @@ options:
         description:
         - The object type of the object.
         type: str
-        required: yes
+        required: true
         choices: [ tenant, epg ]
       includes:
         description:
         - Container for all matching criteria to include.
         type: list
-        required: yes
+        required: true
         elements: dict
         suboptions:
           type:
             description:
             - The object type of the match.
             type: str
-            required: yes
+            required: true
             choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
           attribute:
             description:
@@ -61,20 +61,20 @@ options:
             description:
             - Container for all patterns attached to the match.
             type: list
-            required: yes
+            required: true
             elements: dict
             suboptions:
               type:
                 description:
                 - The type of the match.
                 type: str
-                required: yes
+                required: true
                 choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
               operator:
                 description:
                 - The operator of the pattern.
                 type: str
-                required: yes
+                required: true
                 choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
               value:
                 description:
@@ -91,7 +91,7 @@ options:
             description:
             - The object type of the match.
             type: str
-            required: yes
+            required: true
             choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
           attribute:
             description:
@@ -104,20 +104,20 @@ options:
             description:
             - Container for all patterns attached to the match.
             type: list
-            required: yes
+            required: true
             elements: dict
             suboptions:
               type:
                 description:
                 - The type of the match.
                 type: str
-                required: yes
+                required: true
                 choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
               operator:
                 description:
                 - The operator of the pattern.
                 type: str
-                required: yes
+                required: true
                 choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
               value:
                 description:
@@ -133,20 +133,20 @@ options:
         description:
         - The object type of the object.
         type: str
-        required: yes
+        required: true
         choices: [ tenant, epg ]
       includes:
         description:
         - Container for all matching criteria to include.
         type: list
-        required: yes
+        required: true
         elements: dict
         suboptions:
           type:
             description:
             - The object type of the match.
             type: str
-            required: yes
+            required: true
             choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
           attribute:
             description:
@@ -159,20 +159,20 @@ options:
             description:
             - Container for all patterns attached to the match.
             type: list
-            required: yes
+            required: true
             elements: dict
             suboptions:
               type:
                 description:
                 - The type of the match.
                 type: str
-                required: yes
+                required: true
                 choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
               operator:
                 description:
                 - The operator of the pattern.
                 type: str
-                required: yes
+                required: true
                 choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
               value:
                 description:
@@ -189,7 +189,7 @@ options:
             description:
             - The object type of the match.
             type: str
-            required: yes
+            required: true
             choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
           attribute:
             description:
@@ -202,20 +202,20 @@ options:
             description:
             - Container for all patterns attached to the match.
             type: list
-            required: yes
+            required: true
             elements: dict
             suboptions:
               type:
                 description:
                 - The type of the match.
                 type: str
-                required: yes
+                required: true
                 choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
               operator:
                 description:
                 - The operator of the pattern.
                 type: str
-                required: yes
+                required: true
                 choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
               value:
                 description:
@@ -416,11 +416,7 @@ def main():
         supports_check_mode=True,
         required_if=[
             ["state", "absent", ["name"]],
-            [
-                "state",
-                "present",
-                ["name", "sites", "enabled", "type", "from_object", "to_object"],
-            ],
+            ["state", "present", ["name", "sites", "enabled", "type", "from_object", "to_object"]],
             ["type", "must", ["traffic_selector_rules"]],
             ["type", "may", ["traffic_selector_rules"]],
         ],

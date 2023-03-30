@@ -30,10 +30,7 @@ def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remo
         values = []
 
     result = deepcopy(dict_to_sanitize)
-    for (
-        k,
-        v,
-    ) in dict_to_sanitize.items():
+    for k, v in dict_to_sanitize.items():
         if k in keys:
             del result[k]
         elif v in values or (v is None and remove_none_values):

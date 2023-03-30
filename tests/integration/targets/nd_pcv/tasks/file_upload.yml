@@ -105,7 +105,7 @@
     <<: *ndi_site
     name: ansible_json
     state: absent
-  ignore_errors: yes
+  ignore_errors: true
   register: pcv_absent_while_running
 
 - name: Verify pcv_absent_while_running
@@ -149,7 +149,7 @@
     name: ansible_json
     state: present
   register: pcv_json_diff_filename
-  ignore_errors: yes
+  ignore_errors: true
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
   pause:
@@ -336,7 +336,7 @@
     file: /root/ansible/ansible_collections/cisco/nd/tests/integration/targets/nd_pcv/tasks/non-existing.json
     state: present
   register: present_pcv_non_existing
-  ignore_errors: yes
+  ignore_errors: true
 
 - name: Query specific Pre-Change analysis job
   cisco.nd.nd_pcv:
@@ -375,7 +375,7 @@
     <<: *ndi_site
     name: ansible_json
     state: absent
-  check_mode: yes
+  check_mode: true
   register: cm_pcv_absent
 
 - name: Delete ansible_json pre-change analysis (normal_mode)
@@ -413,7 +413,7 @@
     <<: *ndi_site
     name: pcv_without_file_or_manual
     state: present
-  ignore_errors: yes
+  ignore_errors: true
   register: pcv_without_file_or_manual
 
 - name: Verify pcv_without_file_or_manual

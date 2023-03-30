@@ -24,18 +24,18 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: yes
+    required: true
     aliases: [ fab_name, ig_name ]
   name:
     description:
     - The name of the pre-change validation.
     type: str
-    required: yes
+    required: true
   site_name:
     description:
     - Name of the Assurance Entity.
     type: str
-    required: yes
+    required: true
     aliases: [ site ]
   epoch_choice:
     description:

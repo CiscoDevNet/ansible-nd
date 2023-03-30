@@ -15,7 +15,7 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: yes
+    required: true
     aliases: [ fab_name, ig_name ]
   name:
     description:
@@ -37,7 +37,8 @@ options:
     elements: str
   state:
     description:
-    - Use C(query) for retrieving the version object.
+    - Use C(present) or C(absent) for adding or removing.
+    - Use C(query) for listing an object or multiple objects.
     type: str
     choices: [ query, absent, present ]
     default: query

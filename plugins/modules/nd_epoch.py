@@ -26,13 +26,13 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: yes
+    required: true
     aliases: [ fab_name, ig_name ]
   site:
     description:
     - Names of the Assurance Entity.
     type: str
-    required: yes
+    required: true
   period:
     description:
     - Epoch period.
@@ -150,7 +150,7 @@ def main():
             to_date = dt.fromisoformat(to_date) if to_date else dt.today()
             from_date = dt.fromisoformat(from_date) if from_date else dt.fromtimestamp(0)
         except ValueError as e:
-            nd.fail_json(msg="{0}".format(e))
+            nd.fail_json(msg="Query epoch data failed due to: {0}".format(e))
 
     to_collection, from_collection = get_collection_times(to_date, from_date)
 

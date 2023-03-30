@@ -24,7 +24,7 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: yes
+    required: true
     aliases: [ fab_name, ig_name ]
   name:
     description:

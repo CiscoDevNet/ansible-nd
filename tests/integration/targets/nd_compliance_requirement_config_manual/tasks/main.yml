@@ -66,7 +66,7 @@
     <<: *ndi_base_object
     <<: *ndi_base_config
     state: present
-  check_mode: yes
+  check_mode: true
   register: cm_create_requirement
 
 - name: Create a compliance requirement
@@ -92,7 +92,7 @@
   cisco.nd.nd_compliance_requirement_config_manual:
     <<: *requirement_create
     state: absent
-  check_mode: yes
+  check_mode: true
   register: cm_remove_requirement
 
 - name: Delete a compliance requirement
