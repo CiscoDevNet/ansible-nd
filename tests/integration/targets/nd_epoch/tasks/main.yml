@@ -106,7 +106,7 @@
     <<: *ndi_info
     <<: *ndi_site
     from_date: "invalid"
-  ignore_errors: yes
+  ignore_errors: true
   register: date_from_date_invalid
 
 - name: Get Epochs with date ( to_date invalid )
@@ -114,7 +114,7 @@
     <<: *ndi_info
     <<: *ndi_site
     to_date: "invalid"
-  ignore_errors: yes
+  ignore_errors: true
   register: date_to_date_invalid
 
 - name: Get Epochs with period ( invalid )
@@ -122,12 +122,12 @@
     <<: *ndi_info
     <<: *ndi_site
     period: "invalid"
-  ignore_errors: yes
+  ignore_errors: true
   register: period_invalid
 
-- name: Verify errors
+- name: Verify invalid isoformat input and invalid period error
   assert:
     that:
-      - date_from_date_invalid.msg.startswith("Invalid isoformat string")
-      - date_to_date_invalid.msg.startswith("Invalid isoformat string")
+      - date_from_date_invalid.msg.startswith("Query epoch data failed due to: Invalid isoformat string")
+      - date_to_date_invalid.msg.startswith("Query epoch data failed due to: Invalid isoformat string")
       - period_invalid.payload.msg.startswith("value of period must be one of: latest, last_15_min, last_hour, last_2_hours, last_6_hours, last_day, last_week")

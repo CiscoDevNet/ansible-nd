@@ -47,7 +47,7 @@
     <<: *ndi_info
     <<: *ndi_base
     state: present
-  check_mode: yes
+  check_mode: true
   register: cm_create_requirement
 
 - name: Create a compliance requirement
@@ -73,7 +73,7 @@
   cisco.nd.nd_compliance_requirement_config_import:
     <<: *requirement_create
     state: absent
-  check_mode: yes
+  check_mode: true
   register: cm_remove_requirement
 
 - name: Delete a compliance requirement
@@ -164,7 +164,7 @@
     <<: *requirement_create
     file: targets/nd_compliance_requirement_config_import/files/ansible-test-fail.json
     state: present
-  ignore_errors: yes
+  ignore_errors: true
   register: err_create_requirement_incorrect_file
 
 - name: Create a compliance requirement
@@ -177,7 +177,7 @@
     <<: *requirement_create
     file: targets/nd_compliance_requirement_config_import/files/ansible-test-fail.json
     state: present
-  ignore_errors: yes
+  ignore_errors: true
   register: err_change_requirement_file
 
 - name: Delete a compliance requirement
@@ -185,8 +185,8 @@
     <<: *requirement_create
     state: absent
 
-- name: Verify errors
+- name: Verify incorrect file name and invalid file content error
   assert:
     that:
-      - err_change_requirement_file.msg == "File provided 'ansible-test-fail.json' is not matching file 'ansible-test.json' of existing requirement"
+      - err_change_requirement_file.msg == "The provided file 'ansible-test-fail.json' is not matching the file 'ansible-test.json' uploaded to the existing import configuration type compliance requirement"
       - 'err_create_requirement_incorrect_file.payload.messages.0.message == "The configuration file has invalid content. Found unexpected MO structure: {}"'

@@ -30,20 +30,20 @@ options:
         description:
         - The object type of the object.
         type: str
-        required: yes
+        required: true
         choices: [ tenant, vrf, bd, epg, contract, subject, filter ]
       includes:
         description:
         - Container for all matching criteria to include.
         type: list
-        required: yes
+        required: true
         elements: dict
         suboptions:
           type:
             description:
             - The object type of the match.
             type: str
-            required: yes
+            required: true
             choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
           attribute:
             description:
@@ -56,20 +56,20 @@ options:
             description:
             - Container for all patterns attached to the match.
             type: list
-            required: yes
+            required: true
             elements: dict
             suboptions:
               type:
                 description:
                 - The type of the match.
                 type: str
-                required: yes
+                required: true
                 choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
               operator:
                 description:
                 - The operator of the pattern.
                 type: str
-                required: yes
+                required: true
                 choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
               value:
                 description:
@@ -86,7 +86,7 @@ options:
             description:
             - The object type of the match.
             type: str
-            required: yes
+            required: true
             choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
           attribute:
             description:
@@ -99,20 +99,20 @@ options:
             description:
             - Container for all patterns attached to the match.
             type: list
-            required: yes
+            required: true
             elements: dict
             suboptions:
               type:
                 description:
                 - The type of the match.
                 type: str
-                required: yes
+                required: true
                 choices: [ tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract ]
               operator:
                 description:
                 - The operator of the pattern.
                 type: str
-                required: yes
+                required: true
                 choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with ]
               value:
                 description:
@@ -129,7 +129,7 @@ options:
         description:
         - Attribute of the compliance configuration rule.
         type: str
-        required: yes
+        required: true
         choices: [ name, name_alias, enforcement_preference, enforcement_direction, preferred_group, bd_enforcement,
 bd_type, l2_unknown_unicast, l3_unknown_unicast_flooding, bd_multi_destination_flooding, pim, arp_flooding,
 limit_ip_learning_to_subnet, unicast_routing, epg_association_count, subnets, preferred_group_member, qos_class ]
@@ -137,7 +137,7 @@ limit_ip_learning_to_subnet, unicast_routing, epg_association_count, subnets, pr
         description:
         - Operation of the compliance configuration rule.
         type: str
-        required: yes
+        required: true
         choices: [ contains, begins_with, ends_with, equal_to, not_equal_to, not_contains, not_begins_with, not_ends_with,
 regex, exact, at_least, at_most, all, none, at_least_one]
       value:
@@ -145,7 +145,7 @@ regex, exact, at_least, at_most, all, none, at_least_one]
         - Value of the compliance configuration rule.
         - WARNING be aware of case sensitivity !!
         type: str
-        required: yes
+        required: true
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.ndi_compliance_base

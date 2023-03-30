@@ -25,13 +25,13 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: yes
+    required: true
     aliases: [ fab_name, ig_name ]
   site:
     description:
     - The names of the site.
     type: str
-    required: yes
+    required: true
   epoch_id:
     description:
     - The id of the epoch.

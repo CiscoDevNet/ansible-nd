@@ -55,7 +55,7 @@
     <<: *ndi_info
     <<: *ndi_site
     name: non_existing
-  ignore_errors: yes
+  ignore_errors: true
   register: query_non_existing
 
 - name: Verify query_non_existing

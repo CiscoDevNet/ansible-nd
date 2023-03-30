@@ -129,7 +129,11 @@ def main():
         if uuid:
             filename = "{0}.{1}".format(nd.existing.get("uploadedFileName"), nd.existing.get("uploadedFileExtension"))
             if filename != os.path.basename(file):
-                nd.module.fail_json(msg="File provided '{0}' is not matching file '{1}' of existing requirement".format(os.path.basename(file), filename))
+                nd.module.fail_json(
+                    msg="The provided file '{0}' is not matching the file '{1}' uploaded to the existing template configuration type compliance requirement".format(
+                        os.path.basename(file), filename
+                    )
+                )
 
         nd.previous = sanitize_dict(nd.existing, delete_keys)
 

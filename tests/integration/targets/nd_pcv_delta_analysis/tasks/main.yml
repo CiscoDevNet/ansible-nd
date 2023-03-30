@@ -48,7 +48,7 @@
     <<: *nd_query
     name: pcv_by_file
     state: validate
-  ignore_errors: yes
+  ignore_errors: true
   register: validate_pcv_by_file_delta_analysis
 
 - name: Verify validate_pcv_by_file_delta_analysis
@@ -61,7 +61,7 @@
     <<: *nd_query
     name: add_contract
     state: validate
-  ignore_errors: yes
+  ignore_errors: true
   register: validate_pcv_add_contract_delta_analysis
 
 - name: Verify validate_pcv_add_contract_delta_analysis
@@ -73,7 +73,7 @@
   nd_pcv_delta_analysis:
     <<: *nd_query
     name: non_existing
-  ignore_errors: yes
+  ignore_errors: true
   register: query_non_existing
 
 - name: Verify query_non_existing
@@ -100,7 +100,7 @@
   nd_pcv_delta_analysis:
     <<: *nd_query
     name: vrf_with_overlapping_subnets
-  ignore_errors: yes
+  ignore_errors: true
   register: query_pcv_update_epg_while_running
 
 - name: Validate a pre_change analysis while running
@@ -108,7 +108,7 @@
     <<: *nd_query
     name: vrf_with_overlapping_subnets
     state: validate
-  ignore_errors: yes
+  ignore_errors: true
   register: validate_pcv_update_epg_while_running
 
 - name: Verify query_pcv_update_epg_while_running and validate_pcv_update_epg_while_running

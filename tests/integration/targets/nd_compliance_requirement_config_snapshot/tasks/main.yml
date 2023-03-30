@@ -49,7 +49,7 @@
     <<: *ndi_info
     <<: *ndi_base
     state: present
-  check_mode: yes
+  check_mode: true
   register: cm_create_requirement
 
 - name: Create a compliance requirement
@@ -75,7 +75,7 @@
   cisco.nd.nd_compliance_requirement_config_snapshot:
     <<: *requirement_create
     state: absent
-  check_mode: yes
+  check_mode: true
   register: cm_remove_requirement
 
 - name: Delete a compliance requirement
@@ -188,7 +188,7 @@
     <<: *requirement_create
     epoch_id: "invalid"
     state: present
-  ignore_errors: yes
+  ignore_errors: true
   register: err_create_requirement_epoch_id_invalid
 
 - name: Verify invaliud epoch id

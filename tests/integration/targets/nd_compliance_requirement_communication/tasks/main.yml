@@ -99,7 +99,7 @@
     <<: *ndi_base_traffic
     type: may
     state: present
-  check_mode: yes
+  check_mode: true
   register: cm_create_requirement_may_traffic_restriction
 
 - name: Create a compliance requirement ( type may / TRAFFIC_RESTRICTION )
@@ -588,7 +588,7 @@
     <<: *ndi_base_object
     <<: *ndi_base_traffic
     state: present
-  check_mode: yes
+  check_mode: true
   register: cm_requirement_change_start
 
 - name: Create a compliance requirement
@@ -624,7 +624,7 @@
   cisco.nd.nd_compliance_requirement_communication:
     <<: *requirement_change
     state: absent
-  check_mode: yes
+  check_mode: true
   register: cm_remove_requirement_change
 
 - name: Delete a compliance requirement for change
@@ -649,7 +649,7 @@
     <<: *ndi_base_traffic
     type: wrong_choice
     state: present
-  ignore_errors: yes
+  ignore_errors: true
   register: type_wrong_choice_error
 
 - name: Create a compliance requirement with wrong choice ( object_type )
@@ -671,7 +671,7 @@
               operator: contains
               value: bar
     state: present
-  ignore_errors: yes
+  ignore_errors: true
   register: object_type_wrong_choice_error
 
 - name: Create a compliance requirement with wrong choice ( object_attribute )
@@ -693,7 +693,7 @@
               operator: contains
               value: bar
     state: present
-  ignore_errors: yes
+  ignore_errors: true
   register: attribute_wrong_choice_error
 
 - name: Create a compliance requirement with wrong choice ( match_type )
@@ -715,7 +715,7 @@
               operator: contains
               value: bar
     state: present
-  ignore_errors: yes
+  ignore_errors: true
   register: match_type_wrong_choice_error
 
 - name: Create a compliance requirement with wrong choice ( pattern_type )
@@ -737,7 +737,7 @@
               operator: contains
               value: bar
     state: present
-  ignore_errors: yes
+  ignore_errors: true
   register: operator_type_wrong_choice_error
 
 - name: Create a compliance requirement with wrong choice ( flags_set )
@@ -751,7 +751,7 @@
         from_object:
           tcp_flags: [ "wrong_choice" ]
     state: present
-  ignore_errors: yes
+  ignore_errors: true
   register: flags_set_wrong_choice_error
 
 - name: Create a compliance requirement with wrong choice ( flags_not_set )
@@ -765,7 +765,7 @@
         from_object:
           tcp_flags_not_set: [ "wrong_choice" ]
     state: present
-  ignore_errors: yes
+  ignore_errors: true
   register: flags_not_set_wrong_choice_error
 
 - name: Verify wrong choice error
