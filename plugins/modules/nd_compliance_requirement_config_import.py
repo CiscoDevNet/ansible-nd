@@ -132,9 +132,10 @@ def main():
         if uuid:
             filename = "{0}.{1}".format(nd.existing.get("uploadedFileName"), nd.existing.get("uploadedFileExtension"))
             if filename != os.path.basename(file):
+                module_name = "import configuration type compliance requirement"
                 nd.module.fail_json(
-                    msg="The provided filename '{0}' is not matching the filename '{1}' uploaded to the existing import configuration type compliance requirement".format(
-                        os.path.basename(file), filename
+                    msg="The provided filename '{0}' is not matching the filename '{1}' uploaded to the existing {2}".format(
+                        os.path.basename(file), filename, module_name
                     )
                 )
 
