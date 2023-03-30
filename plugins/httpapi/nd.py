@@ -31,7 +31,6 @@ options:
 """
 
 import os
-import io
 import re
 import json
 import pickle
