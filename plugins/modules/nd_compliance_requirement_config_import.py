@@ -41,12 +41,14 @@ EXAMPLES = r"""
     insights_group: igName
     state: query
   register: query_results
+
 - name: Get a specific import configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_import:
     insights_group: igName
     name: complianceRequirementName
     state: query
   register: query_results
+
 - name: Create import configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_import:
     insights_group: igName
@@ -57,6 +59,7 @@ EXAMPLES = r"""
     enabled: false
     file: fileName.json
     state: present
+
 - name: Delete import configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_import:
     insights_group: igName

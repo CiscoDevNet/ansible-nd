@@ -310,12 +310,14 @@ EXAMPLES = r"""
     insights_group: igName
     state: query
   register: query_results
+
 - name: Get a specific communication type compliance requirement
   cisco.nd.nd_compliance_requirement_communication:
     insights_group: igName
     name: complianceRequirementName
     state: query
   register: query_results
+
 - name: Create communication type compliance requirement
   cisco.nd.nd_compliance_requirement_communication:
     insights_group: igName
@@ -374,6 +376,7 @@ EXAMPLES = r"""
         destination: "2"
         tcp_flags: ["ack", "fin", "res", "syn" ]
     state: present
+
 - name: Delete communication type compliance requirement
   cisco.nd.nd_compliance_requirement_communication:
     insights_group: igName
@@ -389,6 +392,44 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_ar
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI, get_object_selector_payload
 from ansible_collections.cisco.nd.plugins.module_utils.ndi_argument_specs import compliance_base_spec, object_selector_spec, compliance_tcp_spec
 from ansible_collections.cisco.nd.plugins.module_utils.constants import ETHER_TYPES, PROTOCOL_TYPES
+
+
+def get_requirement_type(communication_type, traffic_selector_rules):
+    if communication_type == "must":
+        return "SLA"
+    elif communication_type == "must_not" and not traffic_selector_rules:
+        return "SEGMENTATION"
+    else:
+        return "TRAFFIC_RESTRICTION"
+
+
+def get_compliance_traffic_selector_payload(traffic_selector_rules):
+    payload = []
+    for rule in traffic_selector_rules:
+        payload.append(get_rule_payload(rule))
+    return payload
+
+
+def get_rule_payload(rule):
+    rule_payload = {"etherType": rule.get("ether_type").upper(), "reversePort": rule.get("reverse_port")}
+    if rule.get("protocol"):
+        rule_payload.update(ipProtocol=rule.get("protocol").upper())
+        if rule.get("protocol") == "tcp" or rule.get("protocol") == "udp":
+            if rule.get("from_object"):
+                rule_payload.update(portSelectorAtoB=get_tcp_payload(rule.get("from_object")))
+            if not rule.get("reverse_port") and rule.get("to_object"):
+                rule_payload.update(portSelectorBtoA=get_tcp_payload(rule.get("to_object")))
+    return rule_payload
+
+
+def get_tcp_payload(tcp_object):
+    return {
+        "srcPort": tcp_object.get("source") if tcp_object.get("source") else "",
+        "dstPort": tcp_object.get("destination") if tcp_object.get("destination") else "",
+        "tcpFlag": True if tcp_object.get("tcp_flags") or tcp_object.get("tcp_flags_not_set") else False,
+        "tcpFlagsSet": tcp_object.get("tcp_flags") if tcp_object.get("tcp_flags") else [],
+        "tcpFlagsNotSet": tcp_object.get("tcp_flags_not_set") if tcp_object.get("tcp_flags_not_set") else [],
+    }
 
 
 def main():
@@ -484,44 +525,6 @@ def main():
             nd.existing = payload
 
     nd.exit_json()
-
-
-def get_requirement_type(communication_type, traffic_selector_rules):
-    if communication_type == "must":
-        return "SLA"
-    elif communication_type == "must_not" and not traffic_selector_rules:
-        return "SEGMENTATION"
-    else:
-        return "TRAFFIC_RESTRICTION"
-
-
-def get_compliance_traffic_selector_payload(traffic_selector_rules):
-    payload = []
-    for rule in traffic_selector_rules:
-        payload.append(get_rule_payload(rule))
-    return payload
-
-
-def get_rule_payload(rule):
-    rule_payload = {"etherType": rule.get("ether_type").upper(), "reversePort": rule.get("reverse_port")}
-    if rule.get("protocol"):
-        rule_payload.update(ipProtocol=rule.get("protocol").upper())
-        if rule.get("protocol") == "tcp" or rule.get("protocol") == "udp":
-            if rule.get("from_object"):
-                rule_payload.update(portSelectorAtoB=get_tcp_payload(rule.get("from_object")))
-            if not rule.get("reverse_port") and rule.get("to_object"):
-                rule_payload.update(portSelectorBtoA=get_tcp_payload(rule.get("to_object")))
-    return rule_payload
-
-
-def get_tcp_payload(tcp_object):
-    return {
-        "srcPort": tcp_object.get("source") if tcp_object.get("source") else "",
-        "dstPort": tcp_object.get("destination") if tcp_object.get("destination") else "",
-        "tcpFlag": True if tcp_object.get("tcp_flags") or tcp_object.get("tcp_flags_not_set") else False,
-        "tcpFlagsSet": tcp_object.get("tcp_flags") if tcp_object.get("tcp_flags") else [],
-        "tcpFlagsNotSet": tcp_object.get("tcp_flags_not_set") if tcp_object.get("tcp_flags_not_set") else [],
-    }
 
 
 if __name__ == "__main__":

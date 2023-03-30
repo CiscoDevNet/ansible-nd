@@ -112,6 +112,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 from ansible_collections.cisco.nd.plugins.module_utils.constants import EPOCH_DELTA_TYPES
 
 
+def get_collection_times(to_date_time, from_date_time=None):
+    return get_time_delta_msec(from_date_time) if from_date_time else 0, get_time_delta_msec(to_date_time)
+
+
+def get_time_delta_msec(date_time):
+    return int((date_time - dt.fromtimestamp(0)).total_seconds() * 1000)
+
+
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
@@ -173,14 +181,6 @@ def main():
         nd.existing = {}
 
     nd.exit_json()
-
-
-def get_collection_times(to_date_time, from_date_time=None):
-    return get_time_delta_msec(from_date_time) if from_date_time else 0, get_time_delta_msec(to_date_time)
-
-
-def get_time_delta_msec(date_time):
-    return int((date_time - dt.fromtimestamp(0)).total_seconds() * 1000)
 
 
 if __name__ == "__main__":
