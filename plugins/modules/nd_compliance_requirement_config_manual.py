@@ -157,12 +157,14 @@ EXAMPLES = r"""
     insights_group: igName
     state: query
   register: query_results
+
 - name: Get a specific manual configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_manual:
     insights_group: igName
     name: complianceRequirementName
     state: query
   register: query_results
+
 - name: Create manual configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_manual:
     insights_group: igName
@@ -200,6 +202,7 @@ EXAMPLES = r"""
       operator: CONTAINS
       value: foo
     state: present
+
 - name: Delete manual configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_manual:
     insights_group: igName

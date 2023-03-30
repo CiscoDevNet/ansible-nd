@@ -47,12 +47,14 @@ EXAMPLES = r"""
     insights_group: igName
     state: query
   register: query_results
+
 - name: Get a specific snapshot configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_snapshot:
     insights_group: igName
     name: complianceRequirementName
     state: query
   register: query_results
+
 - name: Create snapshot configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_snapshot:
     insights_group: igName
@@ -63,6 +65,7 @@ EXAMPLES = r"""
     enabled: false
     epoch_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
     state: present
+
 - name: Delete snapshot configuration type compliance requirement
   cisco.nd.nd_compliance_requirement_config_snapshot:
     insights_group: igName
