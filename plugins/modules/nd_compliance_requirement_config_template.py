@@ -132,9 +132,10 @@ def main():
         if uuid:
             filename = "{0}.{1}".format(nd.existing.get("uploadedFileName"), nd.existing.get("uploadedFileExtension"))
             if filename != os.path.basename(file):
+                module_name = "template configuration type compliance requirement"
                 nd.module.fail_json(
-                    msg="The provided file '{0}' is not matching the file '{1}' uploaded to the existing template configuration type compliance requirement".format(
-                        os.path.basename(file), filename
+                    msg="The provided filename '{0}' is not matching the filename '{1}' uploaded to the existing {2}".format(
+                        os.path.basename(file), filename, module_name
                     )
                 )
 
