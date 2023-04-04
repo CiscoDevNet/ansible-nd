@@ -3,6 +3,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+- name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+  fail:
+    msg: "Please define the following variables: insights_group, site_name."
+  when: insights_group is not defined or site_name is not defined
+
 - name: Set vars
   set_fact:
     ndi_info: &ndi_info
@@ -191,7 +196,7 @@
   ignore_errors: true
   register: err_create_requirement_epoch_id_invalid
 
-- name: Verify invaliud epoch id
+- name: Verify invalid epoch id
   assert:
     that:
       - err_create_requirement_epoch_id_invalid.payload.messages.0.message == "The epoch with id invalid is not valid."
