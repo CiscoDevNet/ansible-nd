@@ -67,6 +67,9 @@
           from_object:
             source: "1"
             destination: "2"
+          to_object:
+            source: "2"
+            destination: "1"
 
 # CLEAN ENVIRONMENT
 
@@ -141,6 +144,11 @@
       - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlag == false
       - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsNotSet == []
       - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsSet == []
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorBtoA.dstPort == "1"
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorBtoA.srcPort == "2"
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorBtoA.tcpFlag == false
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorBtoA.tcpFlagsNotSet == []
+      - cm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorBtoA.tcpFlagsSet == []
       - cm_create_requirement_may_traffic_restriction.current.enabled == false
       - cm_create_requirement_may_traffic_restriction.current.associatedSites | length == 1
       - cm_create_requirement_may_traffic_restriction.current.name == "ansible-test-1"
@@ -187,6 +195,11 @@
       - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlag == false
       - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsNotSet == []
       - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorAtoB.tcpFlagsSet == []
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorBtoA.dstPort == "1"
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorBtoA.srcPort == "2"
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorBtoA.tcpFlag == false
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorBtoA.tcpFlagsNotSet == []
+      - nm_create_requirement_may_traffic_restriction.current.complianceTrafficSelector.includes.selectors.0.selectors.2.portSelectorBtoA.tcpFlagsSet == []
       - nm_create_requirement_may_traffic_restriction.current.enabled == false
       - nm_create_requirement_may_traffic_restriction.current.associatedSites | length == 1
       - nm_create_requirement_may_traffic_restriction.current.name == "ansible-test-1"

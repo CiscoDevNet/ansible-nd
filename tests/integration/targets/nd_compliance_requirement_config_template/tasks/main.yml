@@ -195,5 +195,5 @@
 - name: Verify incorrect file name and invalid file content error
   assert:
     that:
-      - err_change_requirement_file.msg == "The provided file 'ansible-test-fail.json' is not matching the file 'ansible-test.json' uploaded to the existing template configuration type compliance requirement"
+      - err_change_requirement_file.msg == "The provided filename 'ansible-test-fail.json' is not matching the filename 'ansible-test.json' uploaded to the existing template configuration type compliance requirement"
       - err_create_requirement_incorrect_file.payload.messages.0.message == "The configuration file has invalid content. Object must have exactly one type but has 0"
