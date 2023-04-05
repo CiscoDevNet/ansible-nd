@@ -5,6 +5,37 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 .. contents:: Topics
 
 
+v0.3.0
+======
+
+Release Summary
+---------------
+
+Release v0.3.0 of the ``ansible-nd`` collection on 2023-04-05.
+This changelog describes all changes made to the modules and plugins included in this collection since v0.2.0.
+
+
+Minor Changes
+-------------
+
+- Add module nd_compliance_analysis and nd_compliance_requirement_communication and nd_compliance_requirement_config_import and nd_compliance_requirement_config_manual and nd_compliance_requirement_config_snapshot and nd_compliance_requirement_config_template and nd_epoch
+
+Bugfixes
+--------
+
+- Ensure python2 compatible methods are used for the bytes io object in ND HTTPAPI Connection Plugin (#41)
+
+New Modules
+-----------
+
+- cisco.nd.nd_compliance_analysis - Query compliance analysis data from Cisco Nexus Dashboard Insights (NDI)
+- cisco.nd.nd_compliance_requirement_communication - Manage communication type compliance requirements
+- cisco.nd.nd_compliance_requirement_config_import - Manage import configuration type compliance requirements
+- cisco.nd.nd_compliance_requirement_config_manual - Manage manual configuration type compliance requirements
+- cisco.nd.nd_compliance_requirement_config_snapshot - Manage snapshot configuration type compliance requirements
+- cisco.nd.nd_compliance_requirement_config_template - Manage template configuration type compliance requirements
+- cisco.nd.nd_epoch - Query epoch data from Cisco Nexus Dashboard Insights (NDI)
+
 v0.2.0
 ======
 
