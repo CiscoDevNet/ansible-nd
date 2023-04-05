@@ -2,7 +2,14 @@
 requires_ansible: '>=2.9.10'
 action_groups:
   all:
+    - nd_compliance_analysis
+    - nd_compliance_requirement_communication
+    - nd_compliance_requirement_config_import
+    - nd_compliance_requirement_config_manual
+    - nd_compliance_requirement_config_snapshot
+    - nd_compliance_requirement_config_template
     - nd_delta_analysis
+    - nd_epoch
     - nd_instant_assurance_analysis
     - nd_pcv
     - nd_pcv_compliance

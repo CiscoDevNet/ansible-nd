@@ -52,3 +52,43 @@ releases:
       name: nd_pcv_delta_analysis
       namespace: ''
     release_date: '2023-02-04'
+  0.3.0:
+    changes:
+      bugfixes:
+      - Ensure python2 compatible methods are used for the bytes io object in ND HTTPAPI
+        Connection Plugin (#41)
+      minor_changes:
+      - Add module nd_compliance_analysis and nd_compliance_requirement_communication
+        and nd_compliance_requirement_config_import and nd_compliance_requirement_config_manual
+        and nd_compliance_requirement_config_snapshot and nd_compliance_requirement_config_template
+        and nd_epoch
+      release_summary: 'Release v0.3.0 of the ``ansible-nd`` collection on 2023-04-05.
+
+        This changelog describes all changes made to the modules and plugins included
+        in this collection since v0.2.0.
+
+        '
+    modules:
+    - description: Query compliance analysis data from Cisco Nexus Dashboard Insights
+        (NDI)
+      name: nd_compliance_analysis
+      namespace: ''
+    - description: Manage communication type compliance requirements
+      name: nd_compliance_requirement_communication
+      namespace: ''
+    - description: Manage import configuration type compliance requirements
+      name: nd_compliance_requirement_config_import
+      namespace: ''
+    - description: Manage manual configuration type compliance requirements
+      name: nd_compliance_requirement_config_manual
+      namespace: ''
+    - description: Manage snapshot configuration type compliance requirements
+      name: nd_compliance_requirement_config_snapshot
+      namespace: ''
+    - description: Manage template configuration type compliance requirements
+      name: nd_compliance_requirement_config_template
+      namespace: ''
+    - description: Query epoch data from Cisco Nexus Dashboard Insights (NDI)
+      name: nd_epoch
+      namespace: ''
+    release_date: '2023-04-05'
