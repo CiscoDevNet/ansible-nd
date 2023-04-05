@@ -171,14 +171,13 @@ def main():
 
     results = nd.query_obj(path, prefix=ndi.prefix).get("value", {}).get("data", [])
 
+    nd.existing = {}
     if period == "latest":
         nd.existing = results[0]
     elif nd.params.get("range"):
         nd.existing = results[0:max_epochs] if max_epochs else results
     elif results:
         nd.existing = results[-1]
-    else:
-        nd.existing = {}
 
     nd.exit_json()
 
