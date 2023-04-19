@@ -1,0 +1,95 @@
+# Test code for the ND modules
+# Copyright: (c) 2023, Anvitha Jain (@anvitha-jain) <anvjain@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+#   fail:
+#     msg: "Please define the following variables: insights_group, site_name."
+#   when: insights_group is not defined or site_name is not defined
+
+- name: Set vars
+  set_fact:
+    aci_info: &aci_info
+      output_level: '{{ site_output_level | default("debug") }}'
+
+
+# CLEAN ENVIRONMENT
+- name: Delete site
+  cisco.nd.nd_site: &delete_site
+    <<: *aci_info
+    name: test
+    apic_username: ansible_github_ci
+    apic_password: "sJ94G92#8dq2hx*K4qh"
+    state: absent
+  register: remove_site
+
+- name: Query All Sites
+  cisco.nd.nd_site:
+    <<: *aci_info
+    state: query
+  register: query_all_sites
+
+- name: Query one Sites
+  cisco.nd.nd_site:
+    <<: *aci_info
+    site: '{{ mso_site | default("ansible_test") }}'
+    state: query
+  register: query_site
+
+- name: Delete site again
+  cisco.nd.nd_site:
+    <<: *delete_site
+  register: remove_site_again
+
+- name: Verify remove_site_again
+  assert:
+    that:
+    - remove_site_again is not changed
+
+
+# # ADD SITE
+# - name: Add site (check_mode)
+#   mso_site: &site_present
+#     <<: *mso_info
+#     site: '{{ mso_site | default("ansible_test") }}'
+#     url: {{ apic_hostname }}
+#     apic_username: '{{ apic_username }}'
+#     apic_password: '{{ apic_password }}'
+#     latitude: 50.887318
+#     longitude: 4.447084
+#     site_type: ACI
+#     state: present
+#   check_mode: true
+#   register: cm_add_site
+
+# - name: Verify cm_add_site
+#   assert:
+#     that:
+#     - cm_add_site is changed
+
+- name: Create site
+  cisco.nd.nd_site: &add_site
+    <<: *aci_info
+    name: test
+    url: 173.36.219.69
+    apic_username: ansible_github_ci
+    apic_password: "sJ94G92#8dq2hx*K4qh"
+    site_type: ACI
+    state: present
+  register: add_site
+
+- name: Verify nm_add_site
+  assert:
+    that:
+    - nm_add_site is changed
+
+- name: ADD site again
+  cisco.nd.nd_site:
+    <<: *add_site
+  register: add_site_again
+
+- name: Verify add_site_again
+  assert:
+    that:
+    - add_site_again is not changed
