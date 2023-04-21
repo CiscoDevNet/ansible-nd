@@ -13,28 +13,27 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_site
-short_description: Manage sites
+short_description: Manage sites on Nexus Dashboard.
 description:
-- Manage sites on Cisco ACI Multi-Site.
+- Manage sites on Nexus Dashboard which are then used by Nexus Dashboard Orchestrator (NDO).
 author:
 - Anvitha Jain (@anvitha-jain)
 options:
-  apic_password:
+  site_password:
     description:
-    - The password for the APICs.
+    - The password for the APIC.
     type: str
-  apic_username:
+  site_username:
     description:
-    - The username for the APICs.
+    - The username for the APIC.
     type: str
-    default: admin
-  apic_login_domain:
+  login_domain:
     description:
-    - The AAA login domain for the username for the APICs.
+    - The AAA login domain for the username for the APIC.
     type: str
-  apic_inband_epg:
+  inband_epg:
     description:
-    - The AAA login domain for the username for the APICs.
+    - The AAA login domain for the username for the APIC.
     type: str
   site:
     description:
@@ -62,7 +61,13 @@ options:
     description:
     - The site type of the APICs.
     type: str
-    choices: [ ACI, DCNM, ThirdParty, CloudACI, DCNMNG ]
+    choices: [ aci, dcnm, third_party, cloud_aci, dcnm_ng ]
+  re_register:
+    description:
+    - To modify the APIC parameters (site_username, site_password and login_domain).
+    - This option can be set
+    type: bool
+    default: false
   state:
     description:
     - Use C(present) or C(absent) for adding or removing.
@@ -81,8 +86,8 @@ EXAMPLES = r"""
     password: SomeSecretPassword
     site: north_europe
     description: North European Datacenter
-    apic_username: nd_admin
-    apic_password: AnotherSecretPassword
+    site_username: nd_admin
+    site_password: AnotherSecretPassword
     urls:
     - 10.2.3.4
     labels:
@@ -129,7 +134,7 @@ RETURN = r"""
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
+from ansible_collections.cisco.nd.plugins.module_utils.constants import SITE_TYPE_MAP
 
 
 def validate_not_none(val):
@@ -137,19 +142,19 @@ def validate_not_none(val):
 
 
 def main():
-
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        apic_password=dict(type="str", no_log=True),
-        apic_username=dict(type="str", default="admin"),
-        apic_login_domain=dict(type="str"),
-        apic_inband_epg=dict(type="str"),
+        site_password=dict(type="str", no_log=True),
+        site_username=dict(type="str"),
+        login_domain=dict(type="str"),
+        inband_epg=dict(type="str"),
         site=dict(type="str", aliases=["name"]),
         url=dict(type="str"),
-        site_type=dict(type="str", choices=["ACI", "DCNM", "ThirdParty", "CloudACI", "DCNMNG"]),
+        site_type=dict(type="str", choices=["aci", "dcnm", "third_party", "cloud_aci", "dcnm_ng"]),
         security_domains=dict(type="list", elements="str"),
         latitude=dict(type="float"),
         longitude=dict(type="float"),
+        re_register=dict(type="bool", default=False),
         state=dict(type="str", default="present", choices=["absent", "present", "query"]),
     )
 
@@ -158,89 +163,86 @@ def main():
         supports_check_mode=True,
         required_if=[
             ["state", "absent", ["site"]],
-            ["state", "present", ["site", "apic_username", "apic_password", "url", "site_type"]],
+            ["state", "present", ["site", "site_username", "site_password", "url", "site_type"]],
         ],
     )
 
     nd = NDModule(module)
 
-    apic_username = nd.params.get("apic_username")
-    apic_password = nd.params.get("apic_password")
-    apic_inband_epg = validate_not_none(nd.params.get("apic_inband_epg"))
-    apic_login_domain = validate_not_none(nd.params.get("apic_login_domain"))
+    site_username = nd.params.get("site_username")
+    site_password = nd.params.get("site_password")
+    inband_epg = validate_not_none(nd.params.get("inband_epg"))
+    login_domain = validate_not_none(nd.params.get("login_domain"))
     site = nd.params.get("site")
     url = nd.params.get("url")
     site_type = nd.params.get("site_type")
     latitude = validate_not_none(nd.params.get("latitude"))
     longitude = validate_not_none(nd.params.get("longitude"))
     security_domains = nd.params.get("security_domains")
+    re_register = nd.params.get("site_type")
     state = nd.params.get("state")
 
     path = "/api/config/class/v2/sites/"
 
-    # Query for existing object(s)
     if site:
-        site_info = next((site_dict.get('name') for site_dict in nd.query_obj(path) if site_dict.get('name') == site), None)
+        site_info = next((site_dict.get("name") for site_dict in nd.query_obj(path) if site_dict.get("name") == site), None)
         if site_info:
             path = "/api/config/dn/v2/sites/{0}".format(site)
             nd.existing = nd.query_obj(path)
     else:
         nd.existing = nd.query_obj(path)
 
+    nd.previous = nd.existing
+
     if state == "query":
         pass
     elif state == "absent":
-        nd.previous = nd.existing
         if nd.existing:
-            if module.check_mode:
-                nd.existing = {}
-            else:
+            if not module.check_mode:
                 rm_path = "/api/config/v2/deletesite/"
                 rm_payload = {
                     "name": site,
                     "aci": {
-                        "userName": apic_username,
-                        "password": apic_password,
-                        "loginDomain": apic_login_domain,
-                    }
+                        "userName": site_username,
+                        "password": site_password,
+                        "loginDomain": login_domain,
+                    },
                 }
                 rm_resp = nd.request(rm_path, method="POST", data=rm_payload)
                 if rm_resp["response"] is not None:
                     nd.existing = {}
+            nd.existing = {}
     elif state == "present":
-        nd.previous = nd.existing
-        add_path = "/api/config/v2"
-        if nd.existing:
-            payload = nd.existing
-        else:
-            payload = {
-                "name": site,
-                "url": url,
-                "siteType": site_type,
-                "aci": {
-                    "userName": apic_username,
-                    "password": apic_password,
-                    "loginDomain": apic_login_domain,
-                    "inbandEpgDN": apic_inband_epg,
-                },
-                "latitude": latitude,
-                "longitude": longitude,
-                "securityDomains": security_domains if security_domains is not None else [],
-            }
+        add_path = "/api/config/v2/addsite/"
+        payload = {
+            "name": site,
+            "url": url,
+            "siteType": SITE_TYPE_MAP.get(site_type),
+            "aci": {
+                "userName": site_username,
+                "password": site_password,
+                "loginDomain": login_domain,
+                "inbandEpgDN": inband_epg,
+            },
+            "latitude": str(latitude),
+            "longitude": str(longitude),
+            "securityDomains": security_domains if security_domains is not None else [],
+        }
 
-        nd.sanitize(payload, collate=True)
+        nd.sanitize(payload, collate=True)  # check it is applies everything or just modified value.
 
-        if nd.existing:
-            if nd.check_changed():
-                if module.check_mode:
-                    nd.existing = nd.proposed
-                else:
-                    nd.existing = nd.request("{0}/{1}/".format(add_path, "modifysite"), method="PUT", data=payload)
-        else:
-            if module.check_mode:
-                nd.existing = nd.proposed
+        if not module.check_mode:
+            if nd.existing:
+                add_path = "/api/config/v2/modifysite/"
+
+            unwanted = ["url", ["aci", "userName"], ["aci", "password"], ["aci", "loginDomain"], ["aci", "switches"], ["aci", "appUserName"]]
+            if nd.get_diff(unwanted):
+                nd.existing = nd.request(add_path, method="POST", data=payload)
             else:
-                nd.existing = nd.request("{0}/{1}/".format(add_path, "addsite"), method="POST", data=payload)
+                nd.has_modified = True
+                nd.result["changed"] = False
+
+    nd.existing = nd.proposed
 
     nd.exit_json()
 

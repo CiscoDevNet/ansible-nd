@@ -7,6 +7,7 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
+from functools import reduce
 
 __metaclass__ = type
 
@@ -462,3 +463,38 @@ class NDModule(object):
         if "password" in existing:
             existing["password"] = self.sent.get("password")
         return not issubset(self.sent, existing)
+
+    def get_diff(self, unwanted=[]):
+        """Check if existing payload and sent payload and removing keys that are not required"""
+        if not self.existing and self.sent:
+            return True
+
+        existing = self.existing
+        sent = self.sent
+
+        for key in unwanted:
+            if type(key) is str:
+                if key in existing:
+                    # existing[key] = self.sent.get(key)
+                    try:
+                        del existing[key]
+                    except KeyError:
+                        pass
+                    try:
+                        del sent[key]
+                    except KeyError:
+                        pass
+            elif type(key) is list:
+                key_path, last = key[:-1], key[-1]
+                try:
+                    existing_parent = reduce(dict.get, key_path, existing)
+                    del existing_parent[last]
+                except KeyError:
+                    pass
+                try:
+                    sent_parent = reduce(dict.get, key_path, sent)
+                    del sent_parent[last]
+                except KeyError:
+                    pass
+
+        return not issubset(sent, existing)
