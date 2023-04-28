@@ -475,7 +475,6 @@ class NDModule(object):
         for key in unwanted:
             if type(key) is str:
                 if key in existing:
-                    # existing[key] = self.sent.get(key)
                     try:
                         del existing[key]
                     except KeyError:

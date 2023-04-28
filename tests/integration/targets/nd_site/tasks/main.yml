@@ -14,28 +14,24 @@
       output_level: '{{ site_output_level | default("debug") }}'
 
 
-# CLEAN ENVIRONMENT
-- name: Delete site
+# # CLEAN ENVIRONMENT
+- name: Delete site (check_mode)
   cisco.nd.nd_site: &delete_site
     <<: *aci_info
+    name: "{{ item }}"
+    state: absent
+  check_mode: true
+  register: remove_site_cm
+  loop:
+    - test
+    - cloud_test
+
+- name: Delete site
+  cisco.nd.nd_site:
+    <<: *aci_info
     name: test
-    apic_username: ansible_github_ci
-    apic_password: "sJ94G92#8dq2hx*K4qh"
     state: absent
   register: remove_site
-
-- name: Query All Sites
-  cisco.nd.nd_site:
-    <<: *aci_info
-    state: query
-  register: query_all_sites
-
-- name: Query one Sites
-  cisco.nd.nd_site:
-    <<: *aci_info
-    site: '{{ mso_site | default("ansible_test") }}'
-    state: query
-  register: query_site
 
 - name: Delete site again
   cisco.nd.nd_site:
@@ -46,38 +42,50 @@
   assert:
     that:
     - remove_site_again is not changed
+    
+- name: Query All Sites
+  cisco.nd.nd_site:
+    <<: *aci_info
+    state: query
+  register: query_all_sites
+
+- name: Query one Sites
+  cisco.nd.nd_site:
+    <<: *aci_info
+    site: test1
+    # site: '{{ mso_site | default("ansible_test") }}'
+    state: query
+  register: query_site
 
 
 # # ADD SITE
-# - name: Add site (check_mode)
-#   mso_site: &site_present
-#     <<: *mso_info
-#     site: '{{ mso_site | default("ansible_test") }}'
-#     url: {{ apic_hostname }}
-#     apic_username: '{{ apic_username }}'
-#     apic_password: '{{ apic_password }}'
-#     latitude: 50.887318
-#     longitude: 4.447084
-#     site_type: ACI
-#     state: present
-#   check_mode: true
-#   register: cm_add_site
+- name: Add site (check_mode)
+  cisco.nd.nd_site: &site_present
+    <<: *aci_info
+    url: {{ apic_ip_address }}
+    site_username: '{{ site_username }}'
+    site_password: '{{ site_password }}'
+    name: test
+    site_type: aci
+    latitude: 50.887318
+    longitude: 4.447084
+    login_domain: "DefaultAuth"
+    # security_domains: ["all"]
+    inband_epg: In-Band-EPG
+    state: present
+  check_mode: true
+  register: cm_add_site
 
-# - name: Verify cm_add_site
-#   assert:
-#     that:
-#     - cm_add_site is changed
+- name: Verify cm_add_site
+  assert:
+    that:
+    - cm_add_site is changed
 
 - name: Create site
-  cisco.nd.nd_site: &add_site
-    <<: *aci_info
-    name: test
-    url: 173.36.219.69
-    apic_username: ansible_github_ci
-    apic_password: "sJ94G92#8dq2hx*K4qh"
-    site_type: ACI
+  cisco.nd.nd_site:
+    <<: *site_present
     state: present
-  register: add_site
+  register: nm_add_site
 
 - name: Verify nm_add_site
   assert:
@@ -86,10 +94,46 @@
 
 - name: ADD site again
   cisco.nd.nd_site:
-    <<: *add_site
+    <<: *site_present
   register: add_site_again
 
 - name: Verify add_site_again
   assert:
     that:
     - add_site_again is not changed
+
+- name: Modify site
+  cisco.nd.nd_site:
+    <<: *site_present
+    # security_domains: ["all", "test_sec_domain"]
+    # # inband_epg:
+    latitude: 51.887318
+    longitude: 5.447084
+    state: present
+  register: modify_site
+
+- name: Verify modify_site
+  assert:
+    that:
+    - modify_site is changed
+
+- name: Create Cloud site 
+  cisco.nd.nd_site:
+    <<: *aci_info
+    url: {{ apic_ip_address }}
+    site_username: '{{ site_username }}'
+    site_password: '{{ site_password }}'
+    name: cloud_test
+    site_type: aci
+    latitude: 50.887318
+    longitude: 4.447084
+    login_domain: "DefaultAuth"
+    # security_domains: ["all"]
+    inband_epg: In-Band-EPG
+    state: present
+  register: nm_add_cloud_site
+
+- name: Verify nm_add_cloud_site
+  assert:
+    that:
+    - nm_add_cloud_site is changed
