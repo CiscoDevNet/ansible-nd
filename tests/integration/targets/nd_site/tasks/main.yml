@@ -23,13 +23,13 @@
   check_mode: true
   register: remove_site_cm
   loop:
-    - test
-    - cloud_test
+  - aci_site
+  - cloud_test
 
 - name: Delete site
   cisco.nd.nd_site:
     <<: *aci_info
-    name: test
+    name: aci_site
     state: absent
   register: remove_site
 
@@ -52,8 +52,7 @@
 - name: Query one Sites
   cisco.nd.nd_site:
     <<: *aci_info
-    site: test1
-    # site: '{{ mso_site | default("ansible_test") }}'
+    name: '{{ mso_site | default("ansible_test") }}'
     state: query
   register: query_site
 
@@ -65,7 +64,7 @@
     url: {{ apic_ip_address }}
     site_username: '{{ site_username }}'
     site_password: '{{ site_password }}'
-    name: test
+    name: aci_site
     site_type: aci
     latitude: 50.887318
     longitude: 4.447084
@@ -106,7 +105,7 @@
   cisco.nd.nd_site:
     <<: *site_present
     # security_domains: ["all", "test_sec_domain"]
-    # # inband_epg:
+    # inband_epg:
     latitude: 51.887318
     longitude: 5.447084
     state: present
@@ -120,11 +119,11 @@
 - name: Create Cloud site 
   cisco.nd.nd_site:
     <<: *aci_info
-    url: {{ apic_ip_address }}
+    url: {{ apic_hostname }}
     site_username: '{{ site_username }}'
     site_password: '{{ site_password }}'
     name: cloud_test
-    site_type: aci
+    site_type: cloud_aci
     latitude: 50.887318
     longitude: 4.447084
     login_domain: "DefaultAuth"
@@ -137,3 +136,40 @@
   assert:
     that:
     - nm_add_cloud_site is changed
+
+
+- name: Create NDFC site 
+  cisco.nd.nd_site:
+    <<: *aci_info
+    url: {{ apic_hostname }}
+    site_username: '{{ site_username }}'
+    site_password: '{{ site_password }}'
+    name: fabric-standalone
+    site_type: ndfc
+    login_domain: "DefaultAuth"
+    # security_domains: ["all"]
+    state: present
+  register: nm_add_ndfc_site
+
+- name: Verify nm_add_ndfc_site
+  assert:
+    that:
+    - nm_add_ndfc_site is changed
+
+- name: Create DCNM site 
+  cisco.nd.nd_site:
+    <<: *aci_info
+    url: {{ apic_hostname }}
+    site_username: '{{ site_username }}'
+    site_password: '{{ site_password }}'
+    name: fabric-standalone
+    site_type: dcnm
+    login_domain: "DefaultAuth"
+    # security_domains: ["all"]
+    state: present
+  register: nm_add_dcnm_site
+
+- name: Verify nm_add_dcnm_site
+  assert:
+    that:
+    - nm_add_dcnm_site is changed

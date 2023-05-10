@@ -36,7 +36,7 @@ options:
     description:
     - The AAA login domain for the username for the APIC.
     type: str
-  site:
+  site_name:
     description:
     - The name of the site.
     type: str
@@ -86,7 +86,7 @@ EXAMPLES = r"""
     url: nd_host
     username: admin
     password: SomeSecretPassword
-    site: north_europe
+    site_name: north_europe
     description: North European Datacenter
     site_username: nd_admin
     site_password: AnotherSecretPassword
@@ -101,7 +101,7 @@ EXAMPLES = r"""
     url: nd_host
     username: admin
     password: SomeSecretPassword
-    site: north_europe
+    site_name: north_europe
     state: absent
   delegate_to: localhost
 
@@ -110,7 +110,7 @@ EXAMPLES = r"""
     url: nd_host
     username: admin
     password: SomeSecretPassword
-    site: north_europe
+    site_name: north_europe
     state: query
   delegate_to: localhost
   register: query_result
@@ -144,7 +144,7 @@ def main():
         site_username=dict(type="str"),
         login_domain=dict(type="str"),
         inband_epg=dict(type="str"),
-        site=dict(type="str", aliases=["name"]),
+        site_name=dict(type="str", aliases=["name", "fabric_name"]),
         url=dict(type="str", aliases=["host_name", "ip_address"]),
         site_type=dict(type="str", choices=list(SITE_TYPE_MAP.keys())),
         security_domains=dict(type="list", elements="str"),
@@ -158,8 +158,8 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
         required_if=[
-            ["state", "absent", ["site"]],
-            ["state", "present", ["site", "site_username", "site_password", "url", "site_type"]],
+            ["state", "absent", ["site_name"]],
+            ["state", "present", ["site_name", "site_username", "site_password", "url", "site_type"]],
         ],
     )
 
@@ -177,7 +177,7 @@ def main():
         inband_epg = "uni/tn-mgmt/mgmtp-default/inb-{0}".format(inband_epg)
 
     login_domain = validate_not_none(nd.params.get("login_domain"))
-    site = nd.params.get("site")
+    site_name = nd.params.get("site_name")
     url = nd.params.get("url")
     site_type = nd.params.get("site_type")
     latitude = validate_not_none(nd.params.get("latitude"))
@@ -188,10 +188,10 @@ def main():
 
     path = "/nexus/api/sitemanagement/v4/sites"
 
-    if site:
-        site_info = next((site_dict.get("spec").get("name") for site_dict in nd.query_obj(path).get("items") if site_dict.get("spec").get("name") == site), None)
+    if site_name:
+        site_info = next((site_dict.get("spec").get("name") for site_dict in nd.query_obj(path).get("items") if site_dict.get("spec").get("name") == site_name), None)
         if site_info:
-            path = "{0}/{1}".format(path, site)
+            path = "{0}/{1}".format(path, site_name)
             nd.existing = nd.query_obj(path)
     else:
         nd.existing = nd.query_obj(path).get('items')
@@ -208,9 +208,32 @@ def main():
                     nd.existing = {}
             nd.existing = {}
     elif state == "present":
-        payload ={
+        site_configuration = {}
+        if site_type == "aci" or site_type == "cloud_aci":
+            site_type_param = site_type
+            if site_type == "cloud_aci":
+                site_type_param = SITE_TYPE_MAP.get(site_type)
+            site_configuration.update(
+                {
+                    site_type_param: {
+                        "InbandEPGDN": inband_epg,
+                    }
+                }
+            )
+        elif site_type == "ndfc" or site_type == "dcnm":
+            site_configuration.update(
+                {
+                    site_type: {
+                        "fabricName": site_name,
+                        "fabricTechnology": "External",
+                        "fabricType": "External"
+                    }
+                }
+            )
+
+        payload = {
             "spec": {
-                "name": site,
+                "name": site_name,
                 "siteType": SITE_TYPE_MAP.get(site_type),
                 "host": url,
                 "userName": site_username,
@@ -220,11 +243,7 @@ def main():
                 "latitude": str(latitude),
                 "longitude": str(longitude),
                 # "securityDomains": security_domains if security_domains is not None else [],
-                "siteConfig": {
-                    "aci": {
-                        "InbandEPGDN": inband_epg,
-                    }
-            }
+                "siteConfig": site_configuration
             },
         }
 

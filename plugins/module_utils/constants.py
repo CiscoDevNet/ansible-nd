@@ -128,4 +128,4 @@ TCP_FLAGS = {"ack": "ACKNOWLEDGEMENT", "est": "ESTABLISHED", "fin": "FINISH", "r
 
 EPOCH_DELTA_TYPES = {"latest": 0, "last_15_min": 900, "last_hour": 3600, "last_2_hours": 7200, "last_6_hours": 21600, "last_day": 86400, "last_week": 604800}
 
-SITE_TYPE_MAP = {"aci": "ACI", "dcnm": "DCNM", "third_party": "ThirdParty", "cloud_aci": "CloudACI", "dcnm_ng": "DCNMNG"}
+SITE_TYPE_MAP = {"aci": "ACI", "dcnm": "DCNM", "third_party": "ThirdParty", "cloud_aci": "CloudACI", "dcnm_ng": "DCNMNG", "ndfc": "NDFC"}
