@@ -87,12 +87,14 @@ EXAMPLES = r"""
     username: admin
     password: SomeSecretPassword
     site_name: north_europe
-    description: North European Datacenter
     site_username: nd_admin
-    site_password: AnotherSecretPassword
+    site_password: SomeSecretPassword
+    site_type: aci
     location:
       latitude: 50.887318
       longitude: 4.447084
+    login_domain: "DefaultAuth"
+    inband_epg: In-Band-EPG
     state: present
   delegate_to: localhost
 
@@ -209,6 +211,8 @@ def main():
             nd.existing = {}
     elif state == "present":
         site_configuration = {}
+        if re_register:
+            nd.request(path, method="DELETE")
         if site_type == "aci" or site_type == "cloud_aci":
             site_type_param = site_type
             if site_type == "cloud_aci":
@@ -246,6 +250,7 @@ def main():
                 "siteConfig": site_configuration
             },
         }
+        # ToDo: To avail the securityDomains feature, ND v4 API update is required.
 
         nd.sanitize(payload, collate=True)
 
