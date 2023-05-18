@@ -16,7 +16,7 @@ DOCUMENTATION = r"""
 module: nd_site
 short_description: Manage sites on Nexus Dashboard.
 description:
-- Manage sites on Nexus Dashboard which are then used by Nexus Dashboard Orchestrator (NDO).
+- Manage sites on Nexus Dashboard which are then used by Nexus Dashboard Orchestrator (NDO) >= 2.2(2d).
 author:
 - Anvitha Jain (@anvitha-jain)
 options:
@@ -67,7 +67,7 @@ options:
   re_register:
     description:
     - To modify the APIC parameters (site_username, site_password and login_domain).
-    - This option can be set
+    - Using this option deletes the existing site and re-creates it.
     type: bool
     default: false
   state:
@@ -135,10 +135,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_ar
 from ansible_collections.cisco.nd.plugins.module_utils.constants import SITE_TYPE_MAP
 
 
-def validate_not_none(val):
-    return val if val is not None else ""
-
-
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
@@ -174,16 +170,16 @@ def main():
         # Make password base64 encoded
         site_password = (base64.b64encode(str.encode(site_password))).decode("utf-8")
 
-    inband_epg = validate_not_none(nd.params.get("inband_epg"))
-    if inband_epg is not '':
+    inband_epg = nd.set_to_empty_string_when_none(nd.params.get("inband_epg"))
+    if inband_epg is not "":
         inband_epg = "uni/tn-mgmt/mgmtp-default/inb-{0}".format(inband_epg)
 
-    login_domain = validate_not_none(nd.params.get("login_domain"))
+    login_domain = nd.set_to_empty_string_when_none(nd.params.get("login_domain"))
     site_name = nd.params.get("site_name")
     url = nd.params.get("url")
     site_type = nd.params.get("site_type")
-    latitude = validate_not_none(nd.params.get("latitude"))
-    longitude = validate_not_none(nd.params.get("longitude"))
+    latitude = nd.set_to_empty_string_when_none(nd.params.get("latitude"))
+    longitude = nd.set_to_empty_string_when_none(nd.params.get("longitude"))
     security_domains = nd.params.get("security_domains")
     re_register = nd.params.get("re_register")
     state = nd.params.get("state")
@@ -193,8 +189,11 @@ def main():
     if site_name:
         site_info = next((site_dict.get("spec").get("name") for site_dict in nd.query_obj(path).get("items") if site_dict.get("spec").get("name") == site_name), None)
         if site_info:
-            path = "{0}/{1}".format(path, site_name)
-            nd.existing = nd.query_obj(path)
+            if re_register:
+                nd.request(path, method="DELETE")
+            else: 
+                path = "{0}/{1}".format(path, site_name)
+                nd.existing = nd.query_obj(path)
     else:
         nd.existing = nd.query_obj(path).get('items')
 
@@ -211,8 +210,6 @@ def main():
             nd.existing = {}
     elif state == "present":
         site_configuration = {}
-        if re_register:
-            nd.request(path, method="DELETE")
         if site_type == "aci" or site_type == "cloud_aci":
             site_type_param = site_type
             if site_type == "cloud_aci":

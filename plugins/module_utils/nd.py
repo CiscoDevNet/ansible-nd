@@ -497,3 +497,6 @@ class NDModule(object):
                     pass
 
         return not issubset(sent, existing)
+    
+    def set_to_empty_string_when_none(self, val):
+        return val if val is not None else ""
