@@ -464,8 +464,10 @@ class NDModule(object):
             existing["password"] = self.sent.get("password")
         return not issubset(self.sent, existing)
 
-    def get_diff(self, unwanted=[]):
+    def get_diff(self, unwanted=None):
         """Check if existing payload and sent payload and removing keys that are not required"""
+        if unwanted is None:
+            unwanted = []
         if not self.existing and self.sent:
             return True
 
@@ -495,8 +497,7 @@ class NDModule(object):
                     del sent_parent[last]
                 except KeyError:
                     pass
-
         return not issubset(sent, existing)
-    
+
     def set_to_empty_string_when_none(self, val):
         return val if val is not None else ""

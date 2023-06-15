@@ -10,13 +10,13 @@
 
 - name: Set vars
   set_fact:
-    aci_info: &aci_info
-      output_level: '{{ site_output_level | default("debug") }}'
+    nd_info: &nd_info
+      output_level: '{{ site_output_level | default("info") }}'
 
 # CLEAN ENVIRONMENT
 - name: Delete existing sites
   cisco.nd.nd_site:
-    <<: *aci_info
+    <<: *nd_info
     name: "{{ item }}"
     state: absent
   register: remove_sites
@@ -29,8 +29,8 @@
 # ADD SITE
 - name: Add site (check mode)
   cisco.nd.nd_site: &site_present
-    <<: *aci_info
-    url: {{ apic_ip_address }}
+    <<: *nd_info
+    url: '{{ apic_ip_address }}'
     site_username: '{{ site_username }}'
     site_password: '{{ site_password }}'
     site_name: aci_site
@@ -38,11 +38,19 @@
     latitude: 50.887318
     longitude: 4.447084
     login_domain: "DefaultAuth"
-    # security_domains: ["all"]
     inband_epg: In-Band-EPG
     state: present
   check_mode: True
   register: cm_add_site
+
+- name: Verify cm_add_site
+  assert:
+    that:
+    - cm_add_site is changed
+    - cm_add_site.current.spec.siteType == "ACI"
+    - cm_add_site.current.spec.name == "aci_site"
+    - cm_add_site.current.spec.latitude == "50.887318"
+    - cm_add_site.current.spec.longitude == "4.447084"
 
 # ADD SITE (Type - ACI)
 - name: Create site (normal mode)
@@ -81,7 +89,6 @@
 - name: Modify site
   cisco.nd.nd_site:
     <<: *site_present
-    # security_domains: ["all", "test_sec_domain"]
     latitude: 51.887318
     longitude: 5.447084
     state: present
@@ -97,10 +104,10 @@
     - modify_site.current.spec.longitude == "5.447084"
 
 # ADD SITE (Type - Cloud)
-- name: Create Cloud site 
+- name: Create Cloud site
   cisco.nd.nd_site:
-    <<: *aci_info
-    url: {{ apic_ip_address }}
+    <<: *nd_info
+    url: '{{ apic_ip_address }}'
     site_username: '{{ site_username }}'
     site_password: '{{ site_password }}'
     site_name: cloud_site
@@ -108,7 +115,6 @@
     latitude: 50.887318
     longitude: 4.447084
     login_domain: "DefaultAuth"
-    # security_domains: ["all"]
     inband_epg: In-Band-EPG
     state: present
   register: nm_add_cloud_site
@@ -121,16 +127,15 @@
     - nm_add_cloud_site.current.spec.name == "cloud_site"
 
 # ADD SITE (Type - NDFC)
-- name: Create NDFC site 
+- name: Create NDFC site
   cisco.nd.nd_site:
-    <<: *aci_info
-    url: {{ apic_ip_address }}
+    <<: *nd_info
+    url: '{{ apic_ip_address }}'
     site_username: '{{ site_username }}'
     site_password: '{{ site_password }}'
     site_name: fabric-standalone
     site_type: ndfc
     login_domain: "DefaultAuth"
-    # security_domains: ["all"]
     state: present
   register: nm_add_ndfc_site
 
@@ -142,16 +147,15 @@
     - nm_add_ndfc_site.current.spec.name == "fabric-standalone"
 
 # ADD SITE (Type - DCNM)
-- name: Create DCNM site 
+- name: Create DCNM site
   cisco.nd.nd_site:
-    <<: *aci_info
-    url: {{ apic_ip_address }}
+    <<: *nd_info
+    url: '{{ apic_ip_address }}'
     site_username: '{{ site_username }}'
     site_password: '{{ site_password }}'
     site_name: edge
     site_type: dcnm
     login_domain: "DefaultAuth"
-    # security_domains: ["all"]
     state: present
   register: nm_add_dcnm_site
 
@@ -165,7 +169,7 @@
 # QUERY SITEs
 - name: Query All Sites
   cisco.nd.nd_site:
-    <<: *aci_info
+    <<: *nd_info
     state: query
   register: query_all_sites
 
@@ -175,10 +179,9 @@
     - query_all_sites is not changed
     - query_all_sites.current | length >=4
 
-- name: Query one Sites
+- name: Query one site
   cisco.nd.nd_site:
-    <<: *aci_info
-    # site_name: '{{ mso_site | default("ansible_test") }}'
+    <<: *nd_info
     site_name: aci_site
     state: query
   register: query_site
@@ -192,7 +195,7 @@
 # DELETE SITEs
 - name: Delete site (check mode)
   cisco.nd.nd_site: &delete_site
-    <<: *aci_info
+    <<: *nd_info
     site_name: cloud_site
     state: absent
   check_mode: True
@@ -224,8 +227,8 @@
 # MODIFY SITE by re-registering the site
 - name: Re-register site
   cisco.nd.nd_site:
-    <<: *aci_info
-    url: {{ apic_ip_address }}
+    <<: *nd_info
+    url: '{{ apic_ip_address }}'
     site_username: '{{ site_username }}'
     site_password: '{{ site_password }}'
     site_name: aci_site

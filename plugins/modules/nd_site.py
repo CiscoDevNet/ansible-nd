@@ -5,7 +5,6 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
-import base64
 
 __metaclass__ = type
 
@@ -30,22 +29,23 @@ options:
     type: str
   login_domain:
     description:
-    - The AAA login domain for the username for the APIC.
+    - The AAA login domain for the username of the APIC.
     type: str
   inband_epg:
     description:
-    - The AAA login domain for the username for the APIC.
+    - The In-Band Endpoint Group (EPG) used to connect Nexus Dashboard to the fabric.
     type: str
   site_name:
     description:
     - The name of the site.
     type: str
-    aliases: [ name ]
-  security_domains:
-    description:
-    - The security_domains for this site.
-    type: list
-    elements: str
+    aliases: [ name, fabric_name ]
+  # ToDo: To avail the securityDomains feature, ND v4 API update is required.
+  # security_domains:
+  #   description:
+  #   - The security_domains for this site.
+  #   type: list
+  #   elements: str
   latitude:
     description:
     - The latitude of the location of the site.
@@ -58,12 +58,12 @@ options:
     description:
     - The URL to reference the APICs.
     type: str
-    aliases=[ host_name, ip_address]
+    aliases: [ host_name, ip_address, site_url]
   site_type:
     description:
     - The site type of the APICs.
     type: str
-    choices: [ aci, dcnm, third_party, cloud_aci, dcnm_ng ]
+    choices: [ aci, dcnm, third_party, cloud_aci, dcnm_ng, ndfc ]
   re_register:
     description:
     - To modify the APIC parameters (site_username, site_password and login_domain).
@@ -83,12 +83,9 @@ extends_documentation_fragment: cisco.nd.modules
 EXAMPLES = r"""
 - name: Add a new site
   cisco.nd.nd_site:
-    url: nd_host
-    username: admin
-    password: SomeSecretPassword
-    site_name: north_europe
-    site_username: nd_admin
-    site_password: SomeSecretPassword
+    url: SiteURL
+    site_username: SiteUsername
+    site_password: SitePassword
     site_type: aci
     location:
       latitude: 50.887318
@@ -100,18 +97,12 @@ EXAMPLES = r"""
 
 - name: Remove a site
   cisco.nd.nd_site:
-    url: nd_host
-    username: admin
-    password: SomeSecretPassword
     site_name: north_europe
     state: absent
   delegate_to: localhost
 
 - name: Query a site
   cisco.nd.nd_site:
-    url: nd_host
-    username: admin
-    password: SomeSecretPassword
     site_name: north_europe
     state: query
   delegate_to: localhost
@@ -119,9 +110,6 @@ EXAMPLES = r"""
 
 - name: Query all sites
   cisco.nd.nd_site:
-    url: nd_host
-    username: admin
-    password: SomeSecretPassword
     state: query
   delegate_to: localhost
   register: query_result
@@ -133,6 +121,7 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.constants import SITE_TYPE_MAP
+import base64
 
 
 def main():
@@ -143,9 +132,10 @@ def main():
         login_domain=dict(type="str"),
         inband_epg=dict(type="str"),
         site_name=dict(type="str", aliases=["name", "fabric_name"]),
-        url=dict(type="str", aliases=["host_name", "ip_address"]),
+        url=dict(type="str", aliases=["host_name", "ip_address", "site_url"]),
         site_type=dict(type="str", choices=list(SITE_TYPE_MAP.keys())),
-        security_domains=dict(type="list", elements="str"),
+        # ToDo: To avail the securityDomains feature, ND v4 API update is required.
+        # security_domains=dict(type="list", elements="str"),
         latitude=dict(type="float"),
         longitude=dict(type="float"),
         re_register=dict(type="bool", default=False),
@@ -171,7 +161,7 @@ def main():
         site_password = (base64.b64encode(str.encode(site_password))).decode("utf-8")
 
     inband_epg = nd.set_to_empty_string_when_none(nd.params.get("inband_epg"))
-    if inband_epg is not "":
+    if inband_epg != "":
         inband_epg = "uni/tn-mgmt/mgmtp-default/inb-{0}".format(inband_epg)
 
     login_domain = nd.set_to_empty_string_when_none(nd.params.get("login_domain"))
@@ -180,22 +170,21 @@ def main():
     site_type = nd.params.get("site_type")
     latitude = nd.set_to_empty_string_when_none(nd.params.get("latitude"))
     longitude = nd.set_to_empty_string_when_none(nd.params.get("longitude"))
-    security_domains = nd.params.get("security_domains")
+    # ToDo: To avail the securityDomains feature, ND v4 API update is required.
+    # security_domains = nd.params.get("security_domains")
     re_register = nd.params.get("re_register")
     state = nd.params.get("state")
 
     path = "/nexus/api/sitemanagement/v4/sites"
+    site_obj = nd.query_obj(path).get("items")
 
     if site_name:
-        site_info = next((site_dict.get("spec").get("name") for site_dict in nd.query_obj(path).get("items") if site_dict.get("spec").get("name") == site_name), None)
+        site_info = next((site_dict for site_dict in site_obj if site_dict.get("spec").get("name") == site_name), None)
         if site_info:
-            if re_register:
-                nd.request(path, method="DELETE")
-            else: 
-                path = "{0}/{1}".format(path, site_name)
-                nd.existing = nd.query_obj(path)
+            site_path = "{0}/{1}".format(path, site_name)
+            nd.existing = site_info
     else:
-        nd.existing = nd.query_obj(path).get('items')
+        nd.existing = site_obj
 
     nd.previous = nd.existing
 
@@ -204,9 +193,7 @@ def main():
     elif state == "absent":
         if nd.existing:
             if not module.check_mode:
-                rm_resp = nd.request(path, method="DELETE")
-                if rm_resp is {}:
-                    nd.existing = {}
+                nd.request(site_path, method="DELETE")
             nd.existing = {}
     elif state == "present":
         site_configuration = {}
@@ -222,15 +209,7 @@ def main():
                 }
             )
         elif site_type == "ndfc" or site_type == "dcnm":
-            site_configuration.update(
-                {
-                    site_type: {
-                        "fabricName": site_name,
-                        "fabricTechnology": "External",
-                        "fabricType": "External"
-                    }
-                }
-            )
+            site_configuration.update({site_type: {"fabricName": site_name, "fabricTechnology": "External", "fabricType": "External"}})
 
         payload = {
             "spec": {
@@ -240,21 +219,24 @@ def main():
                 "userName": site_username,
                 "password": site_password,
                 "loginDomain": login_domain,
-                "loginDomain": "DefaultAuth",
                 "latitude": str(latitude),
                 "longitude": str(longitude),
+                # ToDo: To avail the securityDomains feature, ND v4 API update is required.
                 # "securityDomains": security_domains if security_domains is not None else [],
-                "siteConfig": site_configuration
+                "siteConfig": site_configuration,
             },
         }
-        # ToDo: To avail the securityDomains feature, ND v4 API update is required.
 
         nd.sanitize(payload, collate=True)
 
         if not module.check_mode:
             method = "POST"
-            if nd.existing:
+            if re_register:
+                nd.request(site_path, method="DELETE")
+                nd.existing = {}
+            if nd.existing and not re_register:
                 method = "PUT"
+                path = site_path
 
             unwanted = [
                 "metadata",
@@ -266,7 +248,7 @@ def main():
                 ["spec", "loginDomain"],
                 ["spec", "useProxy"],
                 ["spec", "secureVerify"],
-                ["spec", "internalOnboard"]
+                ["spec", "internalOnboard"],
             ]
             if nd.get_diff(unwanted):
                 nd.existing = nd.request(path, method=method, data=payload)
