@@ -3,92 +3,107 @@ releases:
   0.1.0:
     changes:
       release_summary: Initial release of Nexus Dashboard collection
-    release_date: '2021-06-02'
+    release_date: "2021-06-02"
   0.1.1:
     changes:
       bugfixes:
-      - Fix ND HTTAPI plugin to support remote users
-      - Remove required params for attributes that are handled by the HTTPAPI plugin
+        - Fix ND HTTAPI plugin to support remote users
+        - Remove required params for attributes that are handled by the HTTPAPI plugin
       release_summary: New release v0.1.1
-    release_date: '2021-11-29'
+    release_date: "2021-11-29"
   0.1.2:
     changes:
       bugfixes:
-      - Fix ND HTTAPI plugin login_domain issue when used with cisco.mso collection
-      - Fix default user when not defining the user. Default username "admin" has
-        been removed. Always specify username via module attribute or define the ansible_user
-        variable in inventory.
-      - Remove empty sanity ignore files
+        - Fix ND HTTAPI plugin login_domain issue when used with cisco.mso collection
+        - Fix default user when not defining the user. Default username "admin" has
+          been removed. Always specify username via module attribute or define the ansible_user
+          variable in inventory.
+        - Remove empty sanity ignore files
       release_summary: New release v0.1.2
-    release_date: '2021-12-09'
+    release_date: "2021-12-09"
   0.2.0:
     changes:
       bugfixes:
-      - Allow local to be set as login_domain && set DefaultAuth as default for login_domain
-      - Fix HTTPAPI Connection plugin when wrong login_domain is provided
-      - Fix HTTPAPI ND connection plugin missing login_domain definition
+        - Allow local to be set as login_domain && set DefaultAuth as default for login_domain
+        - Fix HTTPAPI Connection plugin when wrong login_domain is provided
+        - Fix HTTPAPI ND connection plugin missing login_domain definition
       minor_changes:
-      - Add ansible_httpapi_login_domain global inventory variable
-      release_summary: 'Release v0.2.0 of the ``ansible-nd`` collection on 2023-02-04.
+        - Add ansible_httpapi_login_domain global inventory variable
+      release_summary:
+        "Release v0.2.0 of the ``ansible-nd`` collection on 2023-02-04.
 
         This changelog describes all changes made to the modules and plugins included
         in this collection since v0.1.2.
 
-        '
+        "
     modules:
-    - description: Manage delta analysis jobs
-      name: nd_delta_analysis
-      namespace: ''
-    - description: Manage instant online assurance analysis jobs
-      name: nd_instant_assurance_analysis
-      namespace: ''
-    - description: Manage pre-change validation job
-      name: nd_pcv
-      namespace: ''
-    - description: Query pre-change validation compliance
-      name: nd_pcv_compliance
-      namespace: ''
-    - description: Query delta analysis of pre-change validation
-      name: nd_pcv_delta_analysis
-      namespace: ''
-    release_date: '2023-02-04'
+      - description: Manage delta analysis jobs
+        name: nd_delta_analysis
+        namespace: ""
+      - description: Manage instant online assurance analysis jobs
+        name: nd_instant_assurance_analysis
+        namespace: ""
+      - description: Manage pre-change validation job
+        name: nd_pcv
+        namespace: ""
+      - description: Query pre-change validation compliance
+        name: nd_pcv_compliance
+        namespace: ""
+      - description: Query delta analysis of pre-change validation
+        name: nd_pcv_delta_analysis
+        namespace: ""
+    release_date: "2023-02-04"
   0.3.0:
     changes:
       bugfixes:
-      - Ensure python2 compatible methods are used for the bytes io object in ND HTTPAPI
-        Connection Plugin (#41)
+        - Ensure python2 compatible methods are used for the bytes io object in ND HTTPAPI
+          Connection Plugin (#41)
       minor_changes:
-      - Add module nd_compliance_analysis and nd_compliance_requirement_communication
-        and nd_compliance_requirement_config_import and nd_compliance_requirement_config_manual
-        and nd_compliance_requirement_config_snapshot and nd_compliance_requirement_config_template
-        and nd_epoch
-      release_summary: 'Release v0.3.0 of the ``ansible-nd`` collection on 2023-04-05.
+        - Add module nd_compliance_analysis and nd_compliance_requirement_communication
+          and nd_compliance_requirement_config_import and nd_compliance_requirement_config_manual
+          and nd_compliance_requirement_config_snapshot and nd_compliance_requirement_config_template
+          and nd_epoch
+      release_summary:
+        "Release v0.3.0 of the ``ansible-nd`` collection on 2023-04-05.
 
         This changelog describes all changes made to the modules and plugins included
         in this collection since v0.2.0.
 
-        '
+        "
     modules:
-    - description: Query compliance analysis data from Cisco Nexus Dashboard Insights
-        (NDI)
-      name: nd_compliance_analysis
-      namespace: ''
-    - description: Manage communication type compliance requirements
-      name: nd_compliance_requirement_communication
-      namespace: ''
-    - description: Manage import configuration type compliance requirements
-      name: nd_compliance_requirement_config_import
-      namespace: ''
-    - description: Manage manual configuration type compliance requirements
-      name: nd_compliance_requirement_config_manual
-      namespace: ''
-    - description: Manage snapshot configuration type compliance requirements
-      name: nd_compliance_requirement_config_snapshot
-      namespace: ''
-    - description: Manage template configuration type compliance requirements
-      name: nd_compliance_requirement_config_template
-      namespace: ''
-    - description: Query epoch data from Cisco Nexus Dashboard Insights (NDI)
-      name: nd_epoch
-      namespace: ''
-    release_date: '2023-04-05'
+      - description:
+          Query compliance analysis data from Cisco Nexus Dashboard Insights
+          (NDI)
+        name: nd_compliance_analysis
+        namespace: ""
+      - description: Manage communication type compliance requirements
+        name: nd_compliance_requirement_communication
+        namespace: ""
+      - description: Manage import configuration type compliance requirements
+        name: nd_compliance_requirement_config_import
+        namespace: ""
+      - description: Manage manual configuration type compliance requirements
+        name: nd_compliance_requirement_config_manual
+        namespace: ""
+      - description: Manage snapshot configuration type compliance requirements
+        name: nd_compliance_requirement_config_snapshot
+        namespace: ""
+      - description: Manage template configuration type compliance requirements
+        name: nd_compliance_requirement_config_template
+        namespace: ""
+      - description: Query epoch data from Cisco Nexus Dashboard Insights (NDI)
+        name: nd_epoch
+        namespace: ""
+    release_date: "2023-04-05"
+  0.4.0:
+    changes:
+      minor_changes:
+        - Add new module nd_site (#47)
+      release_summary:
+        "Release v0.4.0 of the ``ansible-nd`` collection on 2023-08-04.
+
+        This changelog describes all changes made to the modules and plugins included
+        in this collection since v0.3.0.
+
+        "
+    release_date: "2023-08-04"
