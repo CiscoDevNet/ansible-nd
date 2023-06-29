@@ -1,0 +1,246 @@
+# Test code for the ND modules
+# Copyright: (c) 2023, Anvitha Jain (@anvitha-jain) <anvjain@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+#   fail:
+#     msg: "Please define the following variables: insights_group, site_name."
+#   when: insights_group is not defined or site_name is not defined
+
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      output_level: '{{ site_output_level | default("info") }}'
+
+# CLEAN ENVIRONMENT
+- name: Delete existing sites
+  cisco.nd.nd_site:
+    <<: *nd_info
+    name: "{{ item }}"
+    state: absent
+  register: remove_sites
+  loop:
+  - aci_site
+  - cloud_site
+  - fabric-standalone
+  - edge
+
+# ADD SITE
+- name: Add site (check mode)
+  cisco.nd.nd_site: &site_present
+    <<: *nd_info
+    url: '{{ apic_ip_address }}'
+    site_username: '{{ site_username }}'
+    site_password: '{{ site_password }}'
+    site_name: aci_site
+    site_type: aci
+    latitude: 50.887318
+    longitude: 4.447084
+    login_domain: "DefaultAuth"
+    inband_epg: In-Band-EPG
+    state: present
+  check_mode: True
+  register: cm_add_site
+
+- name: Verify cm_add_site
+  assert:
+    that:
+    - cm_add_site is changed
+    - cm_add_site.current.spec.siteType == "ACI"
+    - cm_add_site.current.spec.name == "aci_site"
+    - cm_add_site.current.spec.latitude == "50.887318"
+    - cm_add_site.current.spec.longitude == "4.447084"
+
+# ADD SITE (Type - ACI)
+- name: Create site (normal mode)
+  cisco.nd.nd_site:
+    <<: *site_present
+    state: present
+  register: nm_add_site
+
+- name: Verify create site
+  assert:
+    that:
+    - nm_add_site is changed
+    - cm_add_site is changed
+    - nm_add_site.previous == cm_add_site.previous == {}
+    - nm_add_site.current.spec.siteType == cm_add_site.current.spec.siteType == "ACI"
+    - nm_add_site.current.spec.name == cm_add_site.current.spec.name == "aci_site"
+    - nm_add_site.current.spec.latitude == cm_add_site.current.spec.latitude == "50.887318"
+    - nm_add_site.current.spec.longitude == cm_add_site.current.spec.longitude == "4.447084"
+
+# ADD SITE again
+- name: ADD site again
+  cisco.nd.nd_site:
+    <<: *site_present
+  register: add_site_again
+
+- name: Verify add_site_again
+  assert:
+    that:
+    - add_site_again is not changed
+    - add_site_again.current.spec.siteType == "ACI"
+    - add_site_again.current.spec.name == "aci_site"
+    - add_site_again.current.spec.latitude == "50.887318"
+    - add_site_again.current.spec.longitude == "4.447084"
+
+# MODIFY SITE
+- name: Modify site
+  cisco.nd.nd_site:
+    <<: *site_present
+    latitude: 51.887318
+    longitude: 5.447084
+    state: present
+  register: modify_site
+
+- name: Verify modify_site
+  assert:
+    that:
+    - modify_site is changed
+    - modify_site.current.spec.siteType == "ACI"
+    - modify_site.current.spec.name == "aci_site"
+    - modify_site.current.spec.latitude == "51.887318"
+    - modify_site.current.spec.longitude == "5.447084"
+
+# ADD SITE (Type - Cloud)
+- name: Create Cloud site
+  cisco.nd.nd_site:
+    <<: *nd_info
+    url: '{{ apic_ip_address }}'
+    site_username: '{{ site_username }}'
+    site_password: '{{ site_password }}'
+    site_name: cloud_site
+    site_type: cloud_aci
+    latitude: 50.887318
+    longitude: 4.447084
+    login_domain: "DefaultAuth"
+    inband_epg: In-Band-EPG
+    state: present
+  register: nm_add_cloud_site
+
+- name: Verify nm_add_cloud_site
+  assert:
+    that:
+    - nm_add_cloud_site is changed
+    - nm_add_cloud_site.current.spec.siteType == "CloudACI"
+    - nm_add_cloud_site.current.spec.name == "cloud_site"
+
+# ADD SITE (Type - NDFC)
+- name: Create NDFC site
+  cisco.nd.nd_site:
+    <<: *nd_info
+    url: '{{ apic_ip_address }}'
+    site_username: '{{ site_username }}'
+    site_password: '{{ site_password }}'
+    site_name: fabric-standalone
+    site_type: ndfc
+    login_domain: "DefaultAuth"
+    state: present
+  register: nm_add_ndfc_site
+
+- name: Verify nm_add_ndfc_site
+  assert:
+    that:
+    - nm_add_ndfc_site is changed
+    - nm_add_ndfc_site.current.spec.siteType == "NDFC"
+    - nm_add_ndfc_site.current.spec.name == "fabric-standalone"
+
+# ADD SITE (Type - DCNM)
+- name: Create DCNM site
+  cisco.nd.nd_site:
+    <<: *nd_info
+    url: '{{ apic_ip_address }}'
+    site_username: '{{ site_username }}'
+    site_password: '{{ site_password }}'
+    site_name: edge
+    site_type: dcnm
+    login_domain: "DefaultAuth"
+    state: present
+  register: nm_add_dcnm_site
+
+- name: Verify nm_add_dcnm_site
+  assert:
+    that:
+    - nm_add_dcnm_site is changed
+    - nm_add_dcnm_site.current.spec.siteType == "DCNM"
+    - nm_add_dcnm_site.current.spec.name == "edge"
+
+# QUERY SITEs
+- name: Query All Sites
+  cisco.nd.nd_site:
+    <<: *nd_info
+    state: query
+  register: query_all_sites
+
+- name: Verify query_all_sites
+  assert:
+    that:
+    - query_all_sites is not changed
+    - query_all_sites.current | length >=4
+
+- name: Query one site
+  cisco.nd.nd_site:
+    <<: *nd_info
+    site_name: aci_site
+    state: query
+  register: query_site
+
+- name: Verify query_site
+  assert:
+    that:
+    - query_site is not changed
+    - query_site.current
+
+# DELETE SITEs
+- name: Delete site (check mode)
+  cisco.nd.nd_site: &delete_site
+    <<: *nd_info
+    site_name: cloud_site
+    state: absent
+  check_mode: True
+  register: remove_site_cm
+
+- name: Delete site (normal mode)
+  cisco.nd.nd_site:
+    <<: *delete_site
+    state: absent
+  register: remove_site
+
+- name: Verify site deletion
+  assert:
+    that:
+    - remove_site_cm is changed
+    - remove_site is changed
+    - remove_site_cm.current == remove_site.current == {}
+
+- name: Delete site again
+  cisco.nd.nd_site:
+    <<: *delete_site
+  register: remove_site_again
+
+- name: Verify remove_site_again
+  assert:
+    that:
+    - remove_site_again is not changed
+
+# MODIFY SITE by re-registering the site
+- name: Re-register site
+  cisco.nd.nd_site:
+    <<: *nd_info
+    url: '{{ apic_ip_address }}'
+    site_username: '{{ site_username }}'
+    site_password: '{{ site_password }}'
+    site_name: aci_site
+    site_type: aci
+    latitude: 53.887318
+    longitude: 2.447084
+    login_domain: "DefaultAuth"
+    re_register: True
+    state: present
+  register: re_register_site
+
+- name: Verify re_register_site
+  assert:
+    that:
+    - re_register_site is changed
