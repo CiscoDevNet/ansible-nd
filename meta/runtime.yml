@@ -14,4 +14,5 @@ action_groups:
     - nd_pcv
     - nd_pcv_compliance
     - nd_pcv_delta_analysis
+    - nd_site
     - nd_version
