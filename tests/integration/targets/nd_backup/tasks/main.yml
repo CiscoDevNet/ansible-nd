@@ -1,0 +1,148 @@
+# Test code for the ND modules
+# Copyright: (c) 2023, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Create a backup nexus in check mode
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus
+    encryption_key: testtest
+    file_location: "{{ role_path }}/backups/nexus.tgz"
+    state: backup
+  check_mode: true
+  register: cm_add_nexus
+
+- name: Create a backup nexus
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus
+    encryption_key: testtest
+    file_location: "{{ role_path }}/backups/nexus.tgz"
+    state: backup
+  register: add_nexus
+
+- name: Create a backup nexus2
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus2
+    encryption_key: testtest
+    file_location: "{{ role_path }}/backups/nexus2.tgz"
+    state: backup
+  register: add_nexus2
+
+- name: Query backup nexus2
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus2
+    state: query
+  register: query_nexus2
+
+- name: Query all backups
+  cisco.nd.nd_backup:
+    output_level: debug
+    state: query
+  register: query_all
+
+- name: Delete backup nexus in check mode
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus
+    state: absent
+  check_mode: true
+  register: cm_remove_nexus
+
+- name: Delete backup nexus 
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus
+    state: absent
+  register: delete_nexus
+
+- name: Delete backup nexus2
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus2
+    state: absent
+  register: delete_nexus2
+
+- name: Create backups with the same name
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: "{{ item }}"
+    encryption_key: testtest
+    file_location: "{{ role_path }}/backups/nexus.tgz"
+    state: backup
+  loop:
+    - nexus
+    - nexus
+
+# Failure scenarios
+- name: Create backup with password having a length < 8 characters
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus
+    encryption_key: test
+    file_location: "{{ role_path }}/backups/nexus.tgz"
+    state: backup
+  ignore_errors: true
+  register: add_nexus_incorrect_pwd_length
+
+- name: Try querying backup nexus
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus
+    state: query
+  ignore_errors: true
+  register: query_duplicate_nexus
+
+- name: Try deleting backup nexus
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus
+    state: absent
+  ignore_errors: true
+  register: delete_duplicate_nexus
+
+- name: Delete Backup with the wrong backup key
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus
+    backup_key: 0
+    state: absent
+  ignore_errors: true
+  register: delete_wrong_key_nexus
+
+- name: Verify all assertions
+  assert:
+    that:
+    - cm_add_nexus.changed is true
+    - cm_add_nexus.current.spec.description == "nexus"
+    - cm_add_nexus.current.spec.password == "testtest"
+    - add_nexus.changed is true
+    - add_nexus.current.spec.description == "nexus"
+    - add_nexus.current.spec.password == "testtest"
+    - add_nexus2.changed is true
+    - add_nexus2.current.spec.description == "nexus2"
+    - add_nexus2.current.spec.password == "testtest"
+    - query_nexus2.changed is false
+    - query_nexus2.current.description == "nexus2"
+    - cm_remove_nexus.current == delete_nexus.current == delete_nexus2.current == {}
+    - add_nexus_incorrect_pwd_length.msg == "Please provide a minimum of 8 characters for the encryption key."
+    - query_duplicate_nexus.msg == delete_duplicate_nexus.msg == "Multiple backups with the name 'nexus' found. Please provide a backup key for the corresponding backup."
+    - delete_wrong_key_nexus.msg == "Provided key for the backup 'nexus' not found. Please provide a valid backup key by querying all the backups and looking up the desired backup key."
+
+- name: Query all backups for deleting them
+  cisco.nd.nd_backup:
+    output_level: debug
+    state: query
+  register: backups
+
+- name: Delete all backups to clean up environment
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus
+    backup_key: "{{ item }}"
+    state: absent
+  loop: "{{ backups.current | map(attribute='key') | list }}"
+  
