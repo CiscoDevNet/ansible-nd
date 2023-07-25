@@ -126,7 +126,7 @@ def nd_argument_spec():
 
 
 # Copied from ansible's module uri.py (url): https://github.com/ansible/ansible/blob/cdf62edc65f564fff6b7e575e084026fa7faa409/lib/ansible/modules/uri.py
-def write_file(module, url, dest, content):
+def write_file(module, dest, content):
     # create a tempfile with some test content
     fd, tmpsrc = tempfile.mkstemp(dir=module.tmpdir)
     f = open(tmpsrc, "wb")
@@ -202,6 +202,7 @@ class NDModule(object):
         self.response = None
         self.status = None
         self.url = None
+        self.raw_output = None
         self.httpapi_logs = list()
 
         if self.module._debug:
@@ -249,6 +250,7 @@ class NDModule(object):
 
         self.response = info.get("msg")
         self.status = info.get("status", -1)
+        self.raw_output = info.get("raw")
 
         self.result["socket"] = self.module._socket_path
 
@@ -395,7 +397,7 @@ class NDModule(object):
     def exit_json(self, **kwargs):
         """Custom written method to exit from module."""
 
-        if self.params.get("state") in ("absent", "present", "upload", "restore", "download", "move"):
+        if self.params.get("state") in ("absent", "present", "upload", "restore", "download", "move", "backup"):
             if self.params.get("output_level") in ("debug", "info"):
                 self.result["previous"] = self.previous
             # FIXME: Modified header only works for PATCH
@@ -430,7 +432,7 @@ class NDModule(object):
     def fail_json(self, msg, **kwargs):
         """Custom written method to return info on failure."""
 
-        if self.params.get("state") in ("absent", "present"):
+        if self.params.get("state") in ("absent", "present", "backup"):
             if self.params.get("output_level") in ("debug", "info"):
                 self.result["previous"] = self.previous
             # FIXME: Modified header only works for PATCH
