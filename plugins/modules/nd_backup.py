@@ -125,8 +125,10 @@ def main():
             if len(backups_info) == 1:
                 backup_key = backup_keys[0]
             elif backup_key is not None and backup_key not in backup_keys:
-                nd.fail_json("Provided key for the backup '{0}' not found."
-                             " Please provide a valid backup key by querying all the backups and looking up the desired backup key.".format(name))
+                nd.fail_json(
+                    "Provided key for the backup '{0}' not found."
+                    " Please provide a valid backup key by querying all the backups and looking up the desired backup key.".format(name)
+                )
         nd.existing = next((file_dict for file_dict in backups_info if file_dict.get("key") == backup_key), {})
     else:
         nd.existing = backup_objs
