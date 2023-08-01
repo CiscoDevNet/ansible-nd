@@ -57,18 +57,18 @@ EXAMPLES = r"""
     file_location: ./nexus.tgz
     state: backup
 
-- name: Query a Backup
+- name: Query a Backup job
   cisco.nd.nd_backup:
     name: nexus
     state: query
   register: query_result
 
-- name: Query all the backups
+- name: Query all the backup jobs
   cisco.nd.nd_backup:
     state: query
   register: query_results
 
-- name: Delete a Backup log
+- name: Delete a Backup job
   cisco.nd.nd_backup:
     name: nexus
     state: absent
@@ -153,8 +153,8 @@ def main():
         nd.sanitize(payload, collate=True)
 
         if not module.check_mode:
-            nd.request(path, method="POST", data=payload)
-            write_file(module, file_location, to_bytes(nd.raw_output))
+            response = nd.request(path, method="POST", data=payload, output_format="raw")
+            write_file(module, file_location, to_bytes(response))
         nd.existing = nd.proposed
 
     nd.exit_json()

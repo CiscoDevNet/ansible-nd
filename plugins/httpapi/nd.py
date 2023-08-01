@@ -220,7 +220,7 @@ class HttpApi(HttpApiBase):
             raise ConnectionError(json.dumps(self._verify_response(None, method, full_path, None)))
         return self._verify_response(response, method, full_path, rdata)
 
-    def send_file_request(self, method, path, file=None, data=None, remote_path=None):
+    def send_file_request(self, method, path, file=None, data=None, remote_path=None, file_key="file"):
         """This method handles file download and upload operations
         :arg method (str): Method can be GET or POST
         :arg path (str): Path should be the resource path
@@ -266,7 +266,10 @@ class HttpApi(HttpApiBase):
             if remote_path:
                 fields = dict(rdir=remote_path, name=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
             else:
-                fields = dict(data=("data.json", data_str, "application/json"), file=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
+                if file_key == "importfile":
+                    fields = dict(spec=(json.dumps(data)), importfile=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
+                else:
+                    fields = dict(data=("data.json", data_str, "application/json"), file=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
 
             if not HAS_MULTIPART_ENCODER:
                 if sys.version_info.major == 2:
