@@ -68,8 +68,14 @@ RETURN = r"""
 """
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.six.moves.urllib.parse import quote
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, sanitize_dict
+
+try:
+    from ansible.module_utils.six.moves.urllib.parse import quote
+
+    HAS_QUOTE = True
+except Exception:
+    HAS_QUOTE = False
 
 MATCH_MAPPING = dict(
     data="Data",
@@ -103,6 +109,8 @@ def main():
     path = "/nexus/infra/api/platform/v1/routes"
     route_objs = nd.query_obj(path).get("items")
     if destination_ip:
+        if not HAS_QUOTE:
+            nd.fail_json(msg="quote is not installed")
         destination_path = "{0}/{1}".format(path, quote(destination_ip, safe=""))
         nd.existing = next((route_dict for route_dict in route_objs if route_dict.get("spec").get("destination") == destination_ip), {})
     else:
@@ -110,12 +118,9 @@ def main():
 
     unwanted_keys = ["metadata", "status"]
 
-    if isinstance(nd.existing, dict):
-        dict_to_sanitize = nd.existing 
-    else:
-        dict_to_sanitize = {k: v for element in nd.existing for k, v in element.items()}
-
-    nd.previous = sanitize_dict(dict_to_sanitize, unwanted_keys)
+    nd.previous = sanitize_dict(
+        nd.existing if isinstance(nd.existing, dict) else dict((k, v) for element in nd.existing for k, v in element.items()), unwanted_keys
+    )
 
     if state == "absent":
         if nd.existing:
