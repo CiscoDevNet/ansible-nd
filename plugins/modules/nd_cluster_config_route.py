@@ -110,7 +110,10 @@ def main():
 
     unwanted_keys = ["metadata", "status"]
 
-    dict_to_sanitize = nd.existing if isinstance(nd.existing, dict) else {k: v for element in nd.existing for k, v in element.items()}
+    if isinstance(nd.existing, dict):
+        dict_to_sanitize = nd.existing 
+    else:
+        dict_to_sanitize = {k: v for element in nd.existing for k, v in element.items()}
 
     nd.previous = sanitize_dict(dict_to_sanitize, unwanted_keys)
 
@@ -120,7 +123,6 @@ def main():
                 nd.request(destination_path, method="DELETE")
             nd.existing = {}
     elif state == "present":
-
         payload = {
             "spec": {
                 "destination": destination_ip,
