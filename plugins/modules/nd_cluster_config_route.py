@@ -110,7 +110,9 @@ def main():
 
     unwanted_keys = ["metadata", "status"]
 
-    nd.previous = sanitize_dict(nd.existing if isinstance(nd.existing, dict) else {k: v for element in nd.existing for k, v in element.items()}, unwanted_keys)
+    dict_to_sanitize = nd.existing if isinstance(nd.existing, dict) else {k: v for element in nd.existing for k, v in element.items()}
+
+    nd.previous = sanitize_dict(dict_to_sanitize, unwanted_keys)
 
     if state == "absent":
         if nd.existing:
