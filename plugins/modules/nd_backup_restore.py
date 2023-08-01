@@ -22,7 +22,7 @@ options:
   name:
     description:
     - The name given for a backup to be restored.
-    - This can be different from the backup file. 
+    - This can be different from the backup file.
     - This is assigned to the job once the restore is complete.
     aliases: [ restore_name ]
     type: str

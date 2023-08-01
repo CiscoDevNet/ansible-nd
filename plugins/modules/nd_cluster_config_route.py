@@ -76,6 +76,7 @@ MATCH_MAPPING = dict(
     management="Management",
 )
 
+
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
@@ -102,14 +103,14 @@ def main():
     path = "/nexus/infra/api/platform/v1/routes"
     route_objs = nd.query_obj(path).get("items")
     if destination_ip:
-        destination_path = "{0}/{1}".format(path, quote(destination_ip, safe=''))
-        nd.existing = next((route_dict for route_dict in route_objs if route_dict.get("spec").get("destination") == destination_ip),{})
+        destination_path = "{0}/{1}".format(path, quote(destination_ip, safe=""))
+        nd.existing = next((route_dict for route_dict in route_objs if route_dict.get("spec").get("destination") == destination_ip), {})
     else:
         nd.existing = route_objs
 
     unwanted_keys = ["metadata", "status"]
 
-    nd.previous = sanitize_dict(nd.existing if isinstance(nd.existing, dict) else {k:v for element in nd.existing for k,v in element.items()}, unwanted_keys)
+    nd.previous = sanitize_dict(nd.existing if isinstance(nd.existing, dict) else {k: v for element in nd.existing for k, v in element.items()}, unwanted_keys)
 
     if state == "absent":
         if nd.existing:
@@ -119,19 +120,19 @@ def main():
     elif state == "present":
 
         payload = {
-          "spec": {
-              "destination": destination_ip,
-              "targetNetwork": target_network,
-          }
+            "spec": {
+                "destination": destination_ip,
+                "targetNetwork": target_network,
+            }
         }
 
         nd.sanitize(payload, collate=True, unwanted=unwanted_keys)
 
         if not module.check_mode:
-          if nd.existing and payload != nd.previous:
-              nd.request(destination_path, "PUT", data=payload)
-          elif nd.existing == {}:
-              nd.request(path, "POST", data=payload)
+            if nd.existing and payload != nd.previous:
+                nd.request(destination_path, "PUT", data=payload)
+            elif nd.existing == {}:
+                nd.request(path, "POST", data=payload)
         nd.existing = nd.proposed
 
     nd.exit_json()
