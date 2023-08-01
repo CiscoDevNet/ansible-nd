@@ -3,12 +3,18 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+- name: Create a directory if it does not exist
+  ansible.builtin.file:
+    path: "{{ role_path }}/backups"
+    state: directory
+    mode: 0775
+
 - name: Create a backup nexus in check mode
   cisco.nd.nd_backup:
     output_level: debug
     name: nexus
     encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus.tgz"
+    file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
     state: backup
   check_mode: true
   register: cm_add_nexus
@@ -18,7 +24,7 @@
     output_level: debug
     name: nexus
     encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus.tgz"
+    file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
     state: backup
   register: add_nexus
 
@@ -27,9 +33,21 @@
     output_level: debug
     name: nexus2
     encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus2.tgz"
+    file_location: "{{ role_path }}/backups/nexus2_{{ ansible_host }}.tgz"
     state: backup
   register: add_nexus2
+
+- name: Find backup nexus to ensure that it was created
+  find:
+    paths: "{{ role_path }}/backups"
+    patterns: "nexus_{{ ansible_host }}.tgz"
+  register: find_nexus
+
+- name: Find backup nexus2 to ensure that it was created
+  find:
+    paths: "{{ role_path }}/backups"
+    patterns: "nexus2_{{ ansible_host }}.tgz"
+  register: find_nexus2
 
 - name: Query backup nexus2
   cisco.nd.nd_backup:
@@ -59,6 +77,13 @@
     state: absent
   register: delete_nexus
 
+- name: Delete backup nexus again
+  cisco.nd.nd_backup:
+    output_level: debug
+    name: nexus
+    state: absent
+  register: delete_nexus_again
+
 - name: Delete backup nexus2
   cisco.nd.nd_backup:
     output_level: debug
@@ -71,7 +96,7 @@
     output_level: debug
     name: "{{ item }}"
     encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus.tgz"
+    file_location: "{{ role_path }}/backups/nexus2_{{ ansible_host }}.tgz"
     state: backup
   loop:
     - nexus
@@ -83,7 +108,7 @@
     output_level: debug
     name: nexus
     encryption_key: test
-    file_location: "{{ role_path }}/backups/nexus.tgz"
+    file_location: "{{ role_path }}/backups/nexus2_{{ ansible_host }}.tgz"
     state: backup
   ignore_errors: true
   register: add_nexus_incorrect_pwd_length
@@ -125,9 +150,17 @@
     - add_nexus2.changed is true
     - add_nexus2.current.spec.description == "nexus2"
     - add_nexus2.current.spec.password == "testtest"
+    - find_nexus.matched == 1
+    - find_nexus2.matched == 1
     - query_nexus2.changed is false
     - query_nexus2.current.description == "nexus2"
-    - cm_remove_nexus.current == delete_nexus.current == delete_nexus2.current == {}
+    - query_all.changed is false
+    - query_all.current | length >= 2
+    - cm_remove_nexus.changed is true
+    - delete_nexus.changed is true
+    - delete_nexus_again.changed is false
+    - delete_nexus2.changed is true
+    - cm_remove_nexus.current == delete_nexus.current == delete_nexus2.current == delete_nexus_again.current == {}
     - add_nexus_incorrect_pwd_length.msg == "Please provide a minimum of 8 characters for the encryption key."
     - query_duplicate_nexus.msg == delete_duplicate_nexus.msg == "Multiple backups with the name 'nexus' found. Please provide a backup key for the corresponding backup."
     - delete_wrong_key_nexus.msg == "Provided key for the backup 'nexus' not found. Please provide a valid backup key by querying all the backups and looking up the desired backup key."

@@ -202,14 +202,13 @@ class NDModule(object):
         self.response = None
         self.status = None
         self.url = None
-        self.raw_output = None
         self.httpapi_logs = list()
 
         if self.module._debug:
             self.module.warn("Enable debug output because ANSIBLE_DEBUG was set.")
             self.params["output_level"] = "debug"
 
-    def request(self, path, method=None, data=None, file=None, qs=None, prefix=""):
+    def request(self, path, method=None, data=None, file=None, qs=None, prefix="", file_key="file", output_format="json"):
         """Generic HTTP method for ND requests."""
         self.path = path
 
@@ -229,7 +228,7 @@ class NDModule(object):
             uri = uri + update_qs(qs)
         try:
             if file is not None:
-                info = conn.send_file_request(method, uri, file, data)
+                info = conn.send_file_request(method, uri, file, data, None, file_key)
             else:
                 if data:
                     info = conn.send_request(method, uri, json.dumps(data))
@@ -250,7 +249,6 @@ class NDModule(object):
 
         self.response = info.get("msg")
         self.status = info.get("status", -1)
-        self.raw_output = info.get("raw")
 
         self.result["socket"] = self.module._socket_path
 
@@ -264,6 +262,8 @@ class NDModule(object):
 
         # 200: OK, 201: Created, 202: Accepted, 204: No Content
         if self.status in (200, 201, 202, 204):
+            if output_format == "raw":
+                return info.get("raw")
             return info.get("body")
 
         # 404: Not Found
@@ -294,6 +294,7 @@ class NDModule(object):
                 else:
                     self.fail_json(msg="ND Error: Unknown error no error code in decoded payload".format(**payload), data=data, info=info, payload=payload)
             else:
+                self.result["raw"] = info.get("raw")
                 # Connection error
                 msg = "Connection failed for {0}. {1}".format(info.get("url"), info.get("msg"))
                 self.error = msg

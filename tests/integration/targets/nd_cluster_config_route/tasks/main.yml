@@ -1,0 +1,196 @@
+# Test code for the ND modules
+# Copyright: (c) 2023, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Create a data route in check mode
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.68/32
+    target_network: data
+    state: present
+  check_mode: true
+  register: add_data_route_cm
+
+- name: Create a data route
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.68/32
+    target_network: data
+    state: present
+  register: add_data_route
+
+- name: Create the data route again
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.68/32
+    target_network: data
+    state: present
+  register: add_data_route_again
+
+- name: Create another data route
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.70/32
+    target_network: data
+    state: present
+  register: add_data_route2
+
+- name: Create a management route in check mode
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 15.23.45.68/32
+    target_network: management
+    state: present
+  check_mode: true
+  register: add_mgmt_route_cm
+
+- name: Create a management route
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 15.23.45.68/32
+    target_network: management
+    state: present
+  register: add_mgmt_route
+
+- name: Create the management route again
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 15.23.45.68/32
+    target_network: management
+    state: present
+  register: add_mgmt_route_again
+
+- name: Create another management route
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 15.23.45.70/32
+    target_network: management
+    state: present
+  register: add_mgmt_route2
+
+- name: Query a data route
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.68/32
+    state: query
+  register: query_data_route
+
+- name: Query a management route
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 15.23.45.70/32
+    state: query
+  register: query_mgmt_route
+
+- name: Query all routes
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    state: query
+  register: query_all_routes
+
+- name: Change a data route to management
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.68/32
+    target_network: management
+    state: present
+  register: change_data_to_management
+
+- name: Change the management route back to data
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.68/32
+    target_network: data
+    state: present
+  register: change_management_to_data
+
+- name: Delete a data route in check mode
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.68/32
+    state: absent
+  check_mode: true
+  register: delete_data_route_cm
+
+- name: Delete a data route
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.68/32
+    state: absent
+  register: delete_data_route
+
+- name: Delete a data route again
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.68/32
+    state: absent
+  register: delete_data_route_again
+
+- name: Delete a management route
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 15.23.45.70/32
+    state: absent
+  register: delete_mgmt_route
+
+- name: Verify all assertions
+  assert:
+    that:
+      - add_data_route_cm.changed is true
+      - add_data_route.changed is true
+      - add_data_route_again.changed is false
+      - add_data_route_cm.current.spec.destination == add_data_route.current.spec.destination == add_data_route_again.current.spec.destination == "12.23.45.68/32"
+      - add_data_route_cm.current.spec.targetNetwork == add_data_route.current.spec.targetNetwork == add_data_route_again.current.spec.targetNetwork == "Data"
+      - add_data_route_cm.proposed.spec.destination == add_data_route.proposed.spec.destination == add_data_route_again.proposed.spec.destination == "12.23.45.68/32"
+      - add_data_route_cm.proposed.spec.targetNetwork == add_data_route.proposed.spec.targetNetwork == add_data_route_again.proposed.spec.targetNetwork == "Data"
+      - add_data_route_cm.sent.spec.destination == add_data_route.sent.spec.destination == add_data_route_again.sent.spec.destination == "12.23.45.68/32"
+      - add_data_route_cm.sent.spec.targetNetwork == add_data_route.sent.spec.targetNetwork == add_data_route_again.sent.spec.targetNetwork == "Data"
+      - add_data_route2.changed is true
+      - add_data_route2.current.spec.destination == "12.23.45.70/32"
+      - add_data_route2.current.spec.targetNetwork == "Data"
+      - add_mgmt_route_cm.changed is true
+      - add_mgmt_route.changed is true
+      - add_mgmt_route_again.changed is false
+      - add_mgmt_route_cm.current.spec.destination == add_mgmt_route.current.spec.destination == add_mgmt_route_again.current.spec.destination == "15.23.45.68/32"
+      - add_mgmt_route_cm.current.spec.targetNetwork == add_mgmt_route.current.spec.targetNetwork == add_mgmt_route_again.current.spec.targetNetwork == "Management"
+      - add_mgmt_route_cm.proposed.spec.destination == add_mgmt_route.proposed.spec.destination == add_mgmt_route_again.proposed.spec.destination == "15.23.45.68/32"
+      - add_mgmt_route_cm.proposed.spec.targetNetwork == add_mgmt_route.proposed.spec.targetNetwork == add_mgmt_route_again.proposed.spec.targetNetwork == "Management"
+      - add_mgmt_route_cm.sent.spec.destination == add_mgmt_route.sent.spec.destination == add_mgmt_route_again.sent.spec.destination == "15.23.45.68/32"
+      - add_mgmt_route_cm.sent.spec.targetNetwork == add_mgmt_route.sent.spec.targetNetwork == add_mgmt_route_again.sent.spec.targetNetwork == "Management"
+      - add_mgmt_route2.changed is true
+      - add_mgmt_route2.current.spec.destination == "15.23.45.70/32"
+      - add_mgmt_route2.current.spec.targetNetwork == "Management"
+      - query_data_route.changed is false
+      - query_data_route.current.spec.destination == "12.23.45.68/32"
+      - query_data_route.current.spec.targetNetwork == "Data"
+      - query_mgmt_route.changed is false
+      - query_mgmt_route.current.spec.destination == "15.23.45.70/32"
+      - query_mgmt_route.current.spec.targetNetwork == "Management"
+      - query_all_routes.changed is false
+      - query_all_routes.current | length >= 4
+      - change_data_to_management.current.spec.destination == "12.23.45.68/32"
+      - change_data_to_management.current.spec.targetNetwork == "Management"
+      - change_management_to_data.current.spec.destination == "12.23.45.68/32"
+      - change_management_to_data.current.spec.targetNetwork == "Data"
+      - change_data_to_management.previous.spec.targetNetwork == "Data"
+      - change_management_to_data.previous.spec.targetNetwork == "Management"
+      - delete_data_route_cm.changed is true
+      - delete_data_route.changed is true
+      - delete_data_route_again.changed is false
+      - delete_data_route_cm.current == delete_data_route.current == delete_data_route_again.current == {}
+      - delete_data_route.previous.spec.destination == "12.23.45.68/32"
+      - delete_data_route.previous.spec.targetNetwork == "Data"
+      - delete_mgmt_route.changed is true
+      - delete_mgmt_route.current == {}
+      - delete_mgmt_route.previous.spec.destination == "15.23.45.70/32"
+      - delete_mgmt_route.previous.spec.targetNetwork == "Management"
+
+- name: Delete other routes to clean up environment
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: "{{ item }}"
+    state: absent
+  loop:
+    - 12.23.45.70/32
+    - 15.23.45.68/32
