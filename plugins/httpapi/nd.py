@@ -268,9 +268,7 @@ class HttpApi(HttpApiBase):
             elif file_key == "importfile":
                 fields = dict(spec=(json.dumps(data)), importfile=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
             else:
-                fields = dict(
-                    data=("data.json", data_str, "application/json"), file=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file))
-                )
+                fields = dict(data=("data.json", data_str, "application/json"), file=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
 
             if not HAS_MULTIPART_ENCODER:
                 if sys.version_info.major == 2:
