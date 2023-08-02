@@ -116,20 +116,18 @@ def main():
     path = "/nexus/infra/api/platform/v1/imports"
     # The below path for GET operation is to be replaced by an official documented API endpoint once it becomes available.
     restored_objs = nd.query_obj("/api/config/class/imports")
-    restored_info = []
+
     if name:
         restored_info = [file_dict for file_dict in restored_objs if file_dict.get("description") == name]
         if len(restored_info) > 1 and restore_key is None and encryption_key is None:
             nd.fail_json("Multiple restore jobs with the name '{0}' found. Please provide a restore key for the corresponding restored job.".format(name))
-        else:
-            restore_keys = [file_dict.get("key") for file_dict in restored_info]
-            if len(restored_info) == 1:
-                restore_key = restore_keys[0]
-            elif restore_key is not None and restore_key not in restore_keys:
-                nd.fail_json(
-                    "Provided key for the restore '{0}' not found."
-                    " Please provide a valid restore key by querying all the restored jobs and looking up the desired restore key.".format(name)
-                )
+        elif len(restored_info) == 1:
+            restore_key = restored_info[0].get("key")
+        elif restore_key is not None and restore_key not in [file_dict.get("key") for file_dict in restored_info]:
+            nd.fail_json(
+                "Provided key for the restore '{0}' not found."
+                " Please provide a valid restore key by querying all the restored jobs and looking up the desired restore key.".format(name)
+            )
         nd.existing = next((file_dict for file_dict in restored_info if file_dict.get("key") == restore_key), {})
     else:
         nd.existing = restored_objs

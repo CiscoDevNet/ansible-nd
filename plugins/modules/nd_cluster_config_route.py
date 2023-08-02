@@ -54,12 +54,12 @@ EXAMPLES = r"""
   register: query_result
 
 - name: Query all the routes
-  cisco.nd.nd_backup_restore:
+  cisco.nd.nd_cluster_config_route:
     state: query
   register: query_results
 
 - name: Delete a route
-  cisco.nd.nd_backup_restore:
+  cisco.nd.nd_cluster_config_route:
     destination_ip: 12.23.45.68/32
     state: absent
 """
@@ -76,11 +76,6 @@ try:
     HAS_QUOTE = True
 except Exception:
     HAS_QUOTE = False
-
-MATCH_MAPPING = dict(
-    data="Data",
-    management="Management",
-)
 
 
 def main():
@@ -103,7 +98,7 @@ def main():
     nd = NDModule(module)
 
     destination_ip = nd.params.get("destination_ip")
-    target_network = MATCH_MAPPING.get(nd.params.get("target_network"))
+    target_network = nd.params.get("target_network").capitalize() if nd.params.get("target_network") else nd.params.get("target_network")
     state = nd.params.get("state")
 
     path = "/nexus/infra/api/platform/v1/routes"

@@ -115,20 +115,18 @@ def main():
     path = "/nexus/infra/api/platform/v1/exports"
     # The below path for GET operation is to be replaced by an official documented API endpoint once it becomes available.
     backup_objs = nd.query_obj("/api/config/class/exports")
-    backups_info = []
+
     if name:
         backups_info = [file_dict for file_dict in backup_objs if file_dict.get("description") == name]
         if len(backups_info) > 1 and backup_key is None and encryption_key is None:
             nd.fail_json("Multiple backups with the name '{0}' found. Please provide a backup key for the corresponding backup.".format(name))
-        else:
-            backup_keys = [file_dict.get("key") for file_dict in backups_info]
-            if len(backups_info) == 1:
-                backup_key = backup_keys[0]
-            elif backup_key is not None and backup_key not in backup_keys:
-                nd.fail_json(
-                    "Provided key for the backup '{0}' not found."
-                    " Please provide a valid backup key by querying all the backups and looking up the desired backup key.".format(name)
-                )
+        elif len(backups_info) == 1:
+            backup_key = backups_info[0].get("key")
+        elif backup_key is not None and backup_key not in [file_dict.get("key") for file_dict in backups_info]:
+            nd.fail_json(
+                "Provided key for the backup '{0}' not found."
+                " Please provide a valid backup key by querying all the backups and looking up the desired backup key.".format(name)
+            )
         nd.existing = next((file_dict for file_dict in backups_info if file_dict.get("key") == backup_key), {})
     else:
         nd.existing = backup_objs
