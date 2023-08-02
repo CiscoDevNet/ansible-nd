@@ -266,7 +266,7 @@ class HttpApi(HttpApiBase):
             if remote_path:
                 fields = dict(rdir=remote_path, name=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
             elif file_key == "importfile":
-                    fields = dict(spec=(json.dumps(data)), importfile=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
+                fields = dict(spec=(json.dumps(data)), importfile=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
             else:
                 fields = dict(
                     data=("data.json", data_str, "application/json"), file=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file))
