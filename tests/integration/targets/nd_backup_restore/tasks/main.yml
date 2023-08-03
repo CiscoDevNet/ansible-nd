@@ -9,6 +9,13 @@
     state: directory
     mode: 0775
 
+- name: Create a route to have some config in the route cluster configuration
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.68/32
+    target_network: data
+    state: present
+
 - name: Create a backup nexus
   cisco.nd.nd_backup:
     output_level: debug
@@ -234,3 +241,9 @@
     backup_key: "{{ item }}"
     state: absent
   loop: "{{ backups.current | map(attribute='key') | list }}"
+
+- name: Delete the route created in the beginning of this test
+  cisco.nd.nd_cluster_config_route:
+    output_level: debug
+    destination_ip: 12.23.45.68/32
+    state: absent
