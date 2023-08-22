@@ -121,9 +121,12 @@ class HttpApi(HttpApiBase):
                         json_response = self._response_to_json(response_data)
                     self.error = dict(code=self.status, message="Authentication failed: {0}".format(json_response))
                     raise ConnectionError(json.dumps(self._verify_response(response, method, full_path, response_data)))
+                token = self._response_to_json(response_data).get("token")
+                if token is None:
+                    token = self._response_to_json(response_data).get("jwttoken")
                 self.connection._auth = {
-                    "Authorization": "Bearer {0}".format(self._response_to_json(response_data).get("token")),
-                    "Cookie": "AuthCookie={0}".format(self._response_to_json(response_data).get("token")),
+                    "Authorization": "Bearer {0}".format(token),
+                    "Cookie": "AuthCookie={0}".format(token),
                 }
 
             except ConnectionError as connection_err:
