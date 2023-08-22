@@ -1,0 +1,126 @@
+# Test code for the ND modules
+# Copyright: (c) 2023, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Install ND in check mode
+  cisco.nd.nd_setup:
+    output_level: debug
+    cluster_name: cluster-one
+    ntp_server: 173.36.212.205
+    dns_server: 208.67.222.222
+    dns_search_domain: cisco.com
+    app_network: 172.17.0.1/16
+    service_network: 100.80.0.0/16
+    nodes:
+      - hostname: Test
+        serial_number: 2B0A86A4D02D
+        management_ip_address: 173.36.219.33
+        username: rescue-user
+        password: ins3965!
+        management_network: 
+          ipv4_address: 173.36.219.33/24
+          ipv4_gateway: 173.36.219.1
+        data_network:
+          ipv4_address: 12.34.56.22/24
+          ipv4_gateway: 12.34.56.1
+  check_mode: true
+  register: cluster_cm
+
+- name: Install ND with an in-valid cluster name
+  cisco.nd.nd_setup:
+    output_level: debug
+    cluster_name: cluster_one
+    ntp_server: 173.36.212.205
+    dns_server: 208.67.222.222
+    dns_search_domain: cisco.com
+    app_network: 172.17.0.1/16
+    service_network: 100.80.0.0/16
+    nodes:
+      - hostname: Test
+        serial_number: 2B0A86A4D02D
+        management_ip_address: 173.36.219.33
+        username: rescue-user
+        password: ins3965!
+        management_network: 
+          ipv4_address: 173.36.219.33/24
+          ipv4_gateway: 173.36.219.1
+        data_network:
+          ipv4_address: 12.34.56.22/24
+          ipv4_gateway: 12.34.56.1
+  ignore_errors: true
+  register: cluster_name_error
+
+- name: Install ND in normal mode
+  cisco.nd.nd_setup:
+    output_level: debug
+    cluster_name: cluster-one
+    ntp_server: 173.36.212.205
+    dns_server: 208.67.222.222
+    dns_search_domain: cisco.com
+    app_network: 172.17.0.1/16
+    service_network: 100.80.0.0/16
+    nodes:
+      - hostname: Test
+        serial_number: 2B0A86A4D02D
+        management_ip_address: 173.36.219.33
+        username: rescue-user
+        password: ins3965!
+        management_network: 
+          ipv4_address: 173.36.219.33/24
+          ipv4_gateway: 173.36.219.1
+        data_network:
+          ipv4_address: 12.34.56.22/24
+          ipv4_gateway: 12.34.56.1
+  register: cluster_nm
+
+- name: Wait for 30 seconds to establish connection
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: Check installation status of ND
+  cisco.nd.nd_setup:
+    state: query
+  register: installation_status
+  until: (installation_status.current.state is defined) and (installation_status.current.state == "Completed")
+  retries: 100
+  delay: 18
+
+- name: Verify all assertions
+  assert:
+    that:
+      - cluster_name_error.msg == "A length of 1 to 63 characters is allowed and valid characters include letters, digits and hyphen. The name cannot start or end with a hyphen."
+      - cluster_cm.current.clusterConfig.appNetwork == "172.17.0.1/16"
+      - cluster_cm.current.clusterConfig.nameServers.0 == "208.67.222.222"
+      - cluster_cm.current.clusterConfig.ntpServers.0 == "173.36.212.205"
+      - cluster_cm.current.clusterConfig.searchDomains.0 == "cisco.com"
+      - cluster_cm.current.clusterConfig.serviceNetwork == "100.80.0.0/16"
+      - cluster_cm.current.nodes.0.dataNetwork.gateway == "12.34.56.1"
+      - cluster_cm.current.nodes.0.dataNetwork.ipSubnet == "12.34.56.22/24"
+      - cluster_cm.current.nodes.0.managementNetwork.gateway == "173.36.219.1"
+      - cluster_cm.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.33/24"
+      - cluster_cm.current.nodes.0.serialNumber == "2B0A86A4D02D"
+      - cluster_cm.current.nodes.0.hostName == "Test"
+      - cluster_nm.current.clusterConfig.appNetwork == "172.17.0.1/16"
+      - cluster_nm.current.clusterConfig.nameServers.0 == "208.67.222.222"
+      - cluster_nm.current.clusterConfig.ntpServers.0 == "173.36.212.205"
+      - cluster_nm.current.clusterConfig.searchDomains.0 == "cisco.com"
+      - cluster_nm.current.clusterConfig.serviceNetwork == "100.80.0.0/16"
+      - cluster_nm.current.nodes.0.dataNetwork.gateway == "12.34.56.1"
+      - cluster_nm.current.nodes.0.dataNetwork.ipSubnet == "12.34.56.22/24"
+      - cluster_nm.current.nodes.0.managementNetwork.gateway == "173.36.219.1"
+      - cluster_nm.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.33/24"
+      - cluster_nm.current.nodes.0.serialNumber == "2B0A86A4D02D"
+      - cluster_nm.current.nodes.0.hostName == "Test"
+      - installation_status.current.clusterConfig.appNetwork == "172.17.0.1/16"
+      - installation_status.current.clusterConfig.nameServers.0 == "208.67.222.222"
+      - installation_status.current.clusterConfig.ntpServers.0 == "173.36.212.205"
+      - installation_status.current.clusterConfig.searchDomains.0 == "cisco.com"
+      - installation_status.current.clusterConfig.serviceNetwork == "100.80.0.0/16"
+      - installation_status.current.nodes.0.dataNetwork.gateway == "12.34.56.1"
+      - installation_status.current.nodes.0.dataNetwork.ipSubnet == "12.34.56.22/24"
+      - installation_status.current.nodes.0.managementNetwork.gateway == "173.36.219.1"
+      - installation_status.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.33/24"
+      - installation_status.current.nodes.0.serialNumber == "2B0A86A4D02D"
+      - installation_status.current.nodes.0.hostName == "Test"
+      - installation_status.current.state == "Completed"
