@@ -9,23 +9,16 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 
-def management_network_spec():
-    return dict(
+def network_spec(vlan=False):
+    spec = dict(
         ipv4_address=dict(type="str", required=True),
         ipv4_gateway=dict(type="str", required=True),
         ipv6_address=dict(type="str"),
         ipv6_gateway=dict(type="str"),
     )
-
-
-def data_network_spec():
-    return dict(
-        ipv4_address=dict(type="str", required=True),
-        ipv4_gateway=dict(type="str", required=True),
-        ipv6_address=dict(type="str"),
-        ipv6_gateway=dict(type="str"),
-        vlan=dict(type="str"),
-    )
+    if vlan:
+        spec["vlan"] = dict(type="int")
+    return spec
 
 
 def bgp_spec():
