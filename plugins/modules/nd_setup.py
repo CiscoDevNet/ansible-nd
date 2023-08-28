@@ -125,7 +125,7 @@ options:
             type: str
       data_network:
         description:
-        - The network that is used for for clustering and communication between sites and applications.
+        - The network that is used for clustering and communication between sites and applications.
         type: dict
         required: true
         suboptions:
@@ -150,7 +150,7 @@ options:
           vlan:
             description:
             - The VLAN of the data network.
-            - Native VLAN or access port does not require require VLAN.
+            - Native VLAN or access port does not require VLAN.
             type: int
       bgp:
         description:
