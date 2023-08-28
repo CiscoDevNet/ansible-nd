@@ -21,17 +21,17 @@ author:
 options:
   cluster_name:
     description:
-    - The name of a cluster.
+    - The name of the ND cluster.
     type: str
   ntp_server:
     description:
-    - The NTP IP address.
+    - The IP address of the NTP server.
     type: list
     elements: str
     aliases: [ ntp_servers ]
   dns_server:
     description:
-    - The DNS provider IP address.
+    - The IP address of the DNS server.
     type: list
     elements: str
     aliases: [ dns_servers ]
@@ -60,12 +60,13 @@ options:
     aliases: [ dns_search_domains ]
   app_network:
     description:
-    - App subnet is 'pod-to-pod' network.
-    - This is used to run inter pod traffic.
+    - The app subnet.
+    - This is a 'pod-to-pod' network and is used to run inter pod traffic.
     type: str
   service_network:
     description:
-    - Service subnet is a virtual level subnet used for communication within the cluster.
+    - The service subnet.
+    - This is a virtual level subnet used for communication within the cluster.
     type: str
   nodes:
     description:
@@ -75,7 +76,7 @@ options:
     suboptions:
       hostname:
         description:
-        - The host name for the node.
+        - The host name of the node.
         type: str
         required: true
       serial_number:
@@ -85,22 +86,22 @@ options:
         required: true
       management_ip_address:
         description:
-        - The management IP address for adding a node.
+        - The management IP address of the node.
         type: str
         required: true
       username:
         description:
-        - The username for adding a node.
+        - The username of the node.
         type: str
         required: true
       password:
         description:
-        - The password for adding a node.
+        - The password of the node.
         type: str
         required: true
       management_network:
         description:
-        - Used for DNS and NTP communication
+        - The network that is used for DNS and NTP communication.
         type: dict
         required: true
         suboptions:
@@ -124,7 +125,7 @@ options:
             type: str
       data_network:
         description:
-        - Used for clustering and communication between sites and applications.
+        - The network that is used for for clustering and communication between sites and applications.
         type: dict
         required: true
         suboptions:
@@ -148,8 +149,9 @@ options:
             type: str
           vlan:
             description:
-            - This can be left empty if connecting through the native VLAN or an access port.
-            type: str
+            - The VLAN of the data network.
+            - Native VLAN or access port does not require require VLAN.
+            type: int
       bgp:
         description:
         - This is used for enabling BGP.
@@ -162,18 +164,18 @@ options:
             required: true
           peers:
             description:
-            - BGP peer details.
+            - The BGP peer details.
             type: list
             elements: dict
             suboptions:
               ip:
                 description:
-                - The peer IPv4 Address.
+                - The IPv4 Address of the BGP peer.
                 type: str
                 required: true
               asn:
                 description:
-                - The peer ASN.
+                - The ASN of the BGP peer.
                 type: int
                 required: true
   state:
@@ -227,7 +229,7 @@ RETURN = r"""
 import re
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import management_network_spec, data_network_spec, bgp_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import network_spec, bgp_spec
 
 
 def main():
@@ -252,8 +254,8 @@ def main():
                 management_ip_address=dict(type="str", required=True),
                 username=dict(type="str", required=True),
                 password=dict(type="str", required=True, no_log=True),
-                management_network=dict(type="dict", required=True, options=management_network_spec()),
-                data_network=dict(type="dict", required=True, options=data_network_spec()),
+                management_network=dict(type="dict", required=True, options=network_spec()),
+                data_network=dict(type="dict", required=True, options=network_spec(vlan=True)),
                 bgp=dict(type="dict", options=bgp_spec()),
             ),
         ),
@@ -321,6 +323,7 @@ def main():
                         "gateway": node.get("data_network").get("ipv4_gateway"),
                         "ipv6Subnet": node.get("data_network").get("ipv6_address"),
                         "gatewayv6": node.get("data_network").get("ipv6_gateway"),
+                        "vlan": node.get("data_network").get("vlan"),
                     },
                     "managementNetwork": {
                         "ipSubnet": node.get("management_network").get("ipv4_address"),

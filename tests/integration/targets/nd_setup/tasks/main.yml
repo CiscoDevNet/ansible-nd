@@ -72,6 +72,7 @@
         data_network:
           ipv4_address: 12.34.56.22/24
           ipv4_gateway: 12.34.56.1
+          vlan: 1
   register: cluster_nm
 
 - name: Wait for 30 seconds to establish connection
