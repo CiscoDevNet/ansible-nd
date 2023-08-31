@@ -291,11 +291,12 @@ def main():
     if state == "query":
         nd.existing = nd.request("/clusterstatus/install", method="GET")
     else:
-        if len(cluster_name) > 63 or len(re.findall(r"[^a-zA-Z0-9 -]|^-| *-$", cluster_name)) > 0:
-            nd.fail_json(
-                "A length of 1 to 63 characters is allowed and valid characters include letters, digits and hyphen. "
-                "The name cannot start or end with a hyphen."
-            )
+        if len(cluster_name) > 63:
+            nd.fail_json("A length of 1 to 63 characters is allowed.")
+        elif len(re.findall(r"[^a-zA-Z0-9-]", cluster_name)) > 0:
+            nd.fail_json("Valid characters include letters, digits and hyphen.")
+        elif len(re.findall(r"^-|-$", cluster_name)) > 0:
+            nd.fail_json("The name cannot start or end with a hyphen.")
 
         payload = {
             "clusterConfig": {
