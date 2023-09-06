@@ -26,6 +26,7 @@ options:
   ntp_server:
     description:
     - The IP address of the NTP server.
+    - This option is only applicable and required for ND version 2.3.2d and its variants.
     type: list
     elements: str
     aliases: [ ntp_servers ]
@@ -68,6 +69,70 @@ options:
     - The service subnet.
     - This is a virtual level subnet used for communication within the cluster.
     type: str
+  app_network_ipv6:
+    description:
+    - The IPv6 app subnet.
+    - This option is only applicable for ND version 3.0.1f and its variants.
+    type: str
+  service_network_ipv6:
+    description:
+    - The IPv6 service subnet.
+    - This option is only applicable for ND version 3.0.1f and its variants.
+    type: str
+  ntp_config:
+    description:
+    - This is used for configuring NTP server and its other options.
+    - This option is only applicable and required for ND version 3.0.1f and its variants.
+    type: dict
+    suboptions:
+      servers:
+        description:
+        - This option is used for setting up the NTP host.
+        type: list
+        required: true
+        elements: dict
+        suboptions:
+          ntp_host:
+            description:
+            - The IP address of the NTP server.
+            type: str
+            required: true
+          ntp_key_id:
+            description:
+            - The NTP Key ID.
+            type: int
+          preferred:
+            description:
+            - The preferred status of the NTP host.
+            type: bool
+            default: false
+      keys:
+        description:
+        - This option is used for setting up the NTP keys.
+        type: list
+        elements: dict
+        suboptions:
+          ntp_key_id:
+            description:
+            - The NTP Key ID.
+            type: int
+            required: true
+          ntp_key:
+            description:
+            - The value of the NTP key.
+            type: str
+            required: true
+          authentication_type:
+            description:
+            - The authentication type for the NTP key.
+            type: str
+            choices: [ AES128CMAC, SHA1, MD5 ]
+            required: true
+          trusted:
+            description:
+            - The trusted status of the NTP key.
+            type: bool
+            default: false
   nodes:
     description:
     - The node details to set up Nexus Dashboard and bring up the User Interface.
@@ -186,14 +251,25 @@ options:
     default: present
     choices: [ present, query ]
 extends_documentation_fragment: cisco.nd.modules
+
+notes:
+- This module only supports setting up the Nexus Dashboard having version 2.3.2d or higher.
 """
 
 EXAMPLES = r"""
 - name: Setup ND
   cisco.nd.nd_setup:
     cluster_name: cluster1
-    ntp_server:
-      - 179.37.212.207
+    ntp_config:
+      servers:
+        - ntp_host: 173.36.212.205
+          ntp_key_id: 1
+          preferred: true
+      keys:
+        - ntp_key_id: 1
+          ntp_key: "1"
+          authentication_type: "AES128CMAC"
+          trusted: true
     dns_server:
       -  210.69.111.224
     dns_search_domain:
@@ -229,7 +305,7 @@ RETURN = r"""
 import re
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import network_spec, bgp_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import network_spec, bgp_spec, ntp_server_spec, ntp_keys_spec
 
 
 def main():
@@ -245,6 +321,15 @@ def main():
         dns_search_domain=dict(type="list", aliases=["dns_search_domains"], elements="str"),
         app_network=dict(type="str"),
         service_network=dict(type="str"),
+        app_network_ipv6=dict(type="str"),
+        service_network_ipv6=dict(type="str"),
+        ntp_config=dict(
+            type="dict",
+            options=dict(
+                servers=dict(type="list", required=True, options=ntp_server_spec(), elements="dict"),
+                keys=dict(type="list", options=ntp_keys_spec(), elements="dict", no_log=False),
+            ),
+        ),
         nodes=dict(
             type="list",
             elements="dict",
@@ -266,7 +351,7 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
         required_if=[
-            ["state", "present", ["cluster_name", "ntp_server", "dns_server", "app_network", "service_network", "nodes"]],
+            ["state", "present", ["cluster_name", "dns_server", "app_network", "service_network", "nodes"]],
         ],
         required_together=[
             ["proxy_username", "proxy_password"],
@@ -285,6 +370,9 @@ def main():
     dns_search_domain = nd.params.get("dns_search_domain")
     app_network = nd.params.get("app_network")
     service_network = nd.params.get("service_network")
+    app_network_ipv6 = nd.params.get("app_network_ipv6")
+    service_network_ipv6 = nd.params.get("service_network_ipv6")
+    ntp_config = nd.params.get("ntp_config")
     nodes = nd.params.get("nodes")
     state = nd.params.get("state")
 
@@ -303,6 +391,25 @@ def main():
                 "name": cluster_name,
                 "ntpServers": ntp_server,
                 "nameServers": dns_server,
+                "ntpConfig": {
+                    "servers": [
+                        {
+                            "host": server.get("ntp_host"),
+                            "keyID": server.get("ntp_key_id"),
+                            "prefer": server.get("preferred"),
+                        }
+                        for server in ([] if ntp_config is None else ntp_config.get("servers"))
+                    ],
+                    "keys": [
+                        {
+                            "id": key.get("ntp_key_id"),
+                            "key": key.get("ntp_key"),
+                            "authType": key.get("authentication_type"),
+                            "trusted": key.get("trusted"),
+                        }
+                        for key in ([] if ntp_config is None else ntp_config.get("keys", []))
+                    ],
+                },
                 "searchDomains": dns_search_domain,
                 "ignoreHosts": ignore_proxy,
                 "proxyServers": [
@@ -314,6 +421,8 @@ def main():
                 ],
                 "appNetwork": app_network,
                 "serviceNetwork": service_network,
+                "appNetworkV6": app_network_ipv6,
+                "serviceNetworkV6": service_network_ipv6,
             },
             "nodes": [
                 {
