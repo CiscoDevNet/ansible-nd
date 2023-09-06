@@ -356,6 +356,9 @@ def main():
         required_together=[
             ["proxy_username", "proxy_password"],
         ],
+        mutually_exclusive=[
+            ["ntp_server", "ntp_config"],
+        ],
     )
 
     nd = NDModule(module)
