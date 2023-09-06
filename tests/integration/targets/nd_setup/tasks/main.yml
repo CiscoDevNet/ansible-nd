@@ -12,14 +12,24 @@
     dns_search_domain: cisco.com
     app_network: 172.17.0.1/16
     service_network: 100.80.0.0/16
+    ntp_config:
+      servers:
+        - ntp_host: 173.36.212.205
+          ntp_key_id: 1
+          preferred: true
+      keys:
+        - ntp_key_id: 1
+          ntp_key: "1"
+          authentication_type: "AES128CMAC"
+          trusted: true
     nodes:
       - hostname: Test
-        serial_number: 2B0A86A4D02D
-        management_ip_address: 173.36.219.33
+        serial_number: 0BCCC16E2AAC
+        management_ip_address: 173.36.219.34
         username: rescue-user
         password: ins3965!
         management_network: 
-          ipv4_address: 173.36.219.33/24
+          ipv4_address: 173.36.219.34/24
           ipv4_gateway: 173.36.219.1
         data_network:
           ipv4_address: 12.34.56.22/24
@@ -38,12 +48,12 @@
     service_network: 100.80.0.0/16
     nodes:
       - hostname: Test
-        serial_number: 2B0A86A4D02D
-        management_ip_address: 173.36.219.33
+        serial_number: 0BCCC16E2AAC
+        management_ip_address: 173.36.219.34
         username: rescue-user
         password: ins3965!
         management_network: 
-          ipv4_address: 173.36.219.33/24
+          ipv4_address: 173.36.219.34/24
           ipv4_gateway: 173.36.219.1
         data_network:
           ipv4_address: 12.34.56.22/24
@@ -62,12 +72,12 @@
     service_network: 100.80.0.0/16
     nodes:
       - hostname: Test
-        serial_number: 2B0A86A4D02D
-        management_ip_address: 173.36.219.33
+        serial_number: 0BCCC16E2AAC
+        management_ip_address: 173.36.219.34
         username: rescue-user
         password: ins3965!
         management_network: 
-          ipv4_address: 173.36.219.33/24
+          ipv4_address: 173.36.219.34/24
           ipv4_gateway: 173.36.219.1
         data_network:
           ipv4_address: 12.34.56.22/24
@@ -86,12 +96,12 @@
     service_network: 100.80.0.0/16
     nodes:
       - hostname: Test
-        serial_number: 2B0A86A4D02D
-        management_ip_address: 173.36.219.33
+        serial_number: 0BCCC16E2AAC
+        management_ip_address: 173.36.219.34
         username: rescue-user
         password: ins3965!
         management_network: 
-          ipv4_address: 173.36.219.33/24
+          ipv4_address: 173.36.219.34/24
           ipv4_gateway: 173.36.219.1
         data_network:
           ipv4_address: 12.34.56.22/24
@@ -103,19 +113,28 @@
   cisco.nd.nd_setup:
     output_level: debug
     cluster_name: cluster-one
-    ntp_server: 173.36.212.205
     dns_server: 208.67.222.222
     dns_search_domain: cisco.com
     app_network: 172.17.0.1/16
     service_network: 100.80.0.0/16
+    ntp_config:
+      servers:
+        - ntp_host: 173.36.212.205
+          ntp_key_id: 1
+          preferred: true
+      keys:
+          - ntp_key_id: 1
+            ntp_key: "1"
+            authentication_type: "AES128CMAC"
+            trusted: true
     nodes:
       - hostname: Test
-        serial_number: 2B0A86A4D02D
-        management_ip_address: 173.36.219.33
+        serial_number: 0BCCC16E2AAC
+        management_ip_address: 173.36.219.34
         username: rescue-user
         password: ins3965!
         management_network: 
-          ipv4_address: 173.36.219.33/24
+          ipv4_address: 173.36.219.34/24
           ipv4_gateway: 173.36.219.1
         data_network:
           ipv4_address: 12.34.56.22/24
@@ -143,25 +162,29 @@
       - cluster_name_invalid_hyphen.msg == "The name cannot start or end with a hyphen."
       - cluster_cm.current.clusterConfig.appNetwork == "172.17.0.1/16"
       - cluster_cm.current.clusterConfig.nameServers.0 == "208.67.222.222"
-      - cluster_cm.current.clusterConfig.ntpServers.0 == "173.36.212.205"
+      - cluster_cm.current.clusterConfig.ntpConfig.servers.0.host == "173.36.212.205"
+      - cluster_cm.current.clusterConfig.ntpConfig.servers.0.keyID == 1
+      - cluster_cm.current.clusterConfig.ntpConfig.servers.0.prefer == true
       - cluster_cm.current.clusterConfig.searchDomains.0 == "cisco.com"
       - cluster_cm.current.clusterConfig.serviceNetwork == "100.80.0.0/16"
       - cluster_cm.current.nodes.0.dataNetwork.gateway == "12.34.56.1"
       - cluster_cm.current.nodes.0.dataNetwork.ipSubnet == "12.34.56.22/24"
       - cluster_cm.current.nodes.0.managementNetwork.gateway == "173.36.219.1"
-      - cluster_cm.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.33/24"
-      - cluster_cm.current.nodes.0.serialNumber == "2B0A86A4D02D"
+      - cluster_cm.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.34/24"
+      - cluster_cm.current.nodes.0.serialNumber == "0BCCC16E2AAC"
       - cluster_cm.current.nodes.0.hostName == "Test"
       - cluster_nm.current.clusterConfig.appNetwork == "172.17.0.1/16"
       - cluster_nm.current.clusterConfig.nameServers.0 == "208.67.222.222"
-      - cluster_nm.current.clusterConfig.ntpServers.0 == "173.36.212.205"
+      - cluster_nm.current.clusterConfig.ntpConfig.servers.0.host == "173.36.212.205"
+      - cluster_nm.current.clusterConfig.ntpConfig.servers.0.keyID == 1
+      - cluster_nm.current.clusterConfig.ntpConfig.servers.0.prefer == true
       - cluster_nm.current.clusterConfig.searchDomains.0 == "cisco.com"
       - cluster_nm.current.clusterConfig.serviceNetwork == "100.80.0.0/16"
       - cluster_nm.current.nodes.0.dataNetwork.gateway == "12.34.56.1"
       - cluster_nm.current.nodes.0.dataNetwork.ipSubnet == "12.34.56.22/24"
       - cluster_nm.current.nodes.0.managementNetwork.gateway == "173.36.219.1"
-      - cluster_nm.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.33/24"
-      - cluster_nm.current.nodes.0.serialNumber == "2B0A86A4D02D"
+      - cluster_nm.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.34/24"
+      - cluster_nm.current.nodes.0.serialNumber == "0BCCC16E2AAC"
       - cluster_nm.current.nodes.0.hostName == "Test"
       - installation_status.current.clusterConfig.appNetwork == "172.17.0.1/16"
       - installation_status.current.clusterConfig.nameServers.0 == "208.67.222.222"
@@ -171,7 +194,7 @@
       - installation_status.current.nodes.0.dataNetwork.gateway == "12.34.56.1"
       - installation_status.current.nodes.0.dataNetwork.ipSubnet == "12.34.56.22/24"
       - installation_status.current.nodes.0.managementNetwork.gateway == "173.36.219.1"
-      - installation_status.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.33/24"
-      - installation_status.current.nodes.0.serialNumber == "2B0A86A4D02D"
+      - installation_status.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.34/24"
+      - installation_status.current.nodes.0.serialNumber == "0BCCC16E2AAC"
       - installation_status.current.nodes.0.hostName == "Test"
       - installation_status.current.state == "Completed"
