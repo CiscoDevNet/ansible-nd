@@ -13,9 +13,9 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_setup
-short_description: Manages setting up ND.
+short_description: Manages setting up the Nexus Dashboard.
 description:
-- Manages setting up the Nexus Dashboard.
+- Manages setting up the Nexus Dashboard (ND).
 author:
 - Shreyas Srish (@shrsr)
 options:
@@ -166,7 +166,7 @@ options:
         required: true
       management_network:
         description:
-        - The network that is used for DNS and NTP communication.
+        - The network used for DNS and NTP communication.
         type: dict
         required: true
         suboptions:
@@ -190,7 +190,7 @@ options:
             type: str
       data_network:
         description:
-        - The network that is used for clustering and communication between sites and applications.
+        - The network used for clustering and communication between sites and applications.
         type: dict
         required: true
         suboptions:
