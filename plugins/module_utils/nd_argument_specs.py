@@ -20,7 +20,7 @@ def ntp_server_spec():
 def ntp_keys_spec():
     return dict(
         ntp_key_id=dict(type="int", required=True, no_log=False),
-        ntp_key=dict(type="str", required=True, no_log=False),
+        ntp_key=dict(type="str", required=True, no_log=True),
         authentication_type=dict(type="str", required=True, choices=["AES128CMAC", "SHA1", "MD5"]),
         trusted=dict(type="bool", default=False),
     )
@@ -28,8 +28,8 @@ def ntp_keys_spec():
 
 def network_spec(vlan=False):
     spec = dict(
-        ipv4_address=dict(type="str", required=True),
-        ipv4_gateway=dict(type="str", required=True),
+        ipv4_address=dict(type="str", aliases=["ip"], required=True),
+        ipv4_gateway=dict(type="str", aliases=["gateway"], required=True),
         ipv6_address=dict(type="str"),
         ipv6_gateway=dict(type="str"),
     )

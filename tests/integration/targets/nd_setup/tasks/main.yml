@@ -7,32 +7,32 @@
   cisco.nd.nd_setup:
     output_level: debug
     cluster_name: cluster-one
-    dns_server: 208.67.222.222
+    dns_server: "{{ dns_server }}"
     dns_search_domain: cisco.com
-    app_network: 172.17.0.1/16
-    service_network: 100.80.0.0/16
+    app_network: "{{ app_network }}"
+    service_network: "{{ service_network }}"
     ntp_config:
       servers:
-        - ntp_host: 173.36.212.205
+        - ntp_host: "{{ ntp_server }}"
           ntp_key_id: 1
           preferred: true
       keys:
         - ntp_key_id: 1
-          ntp_key: "1"
+          ntp_key: "ntp_secure_key"
           authentication_type: "AES128CMAC"
           trusted: true
     nodes:
       - hostname: Test
-        serial_number: 0BCCC16E2AAC
-        management_ip_address: 173.36.219.34
-        username: rescue-user
-        password: ins3965!
+        serial_number: "{{ serial_number }}"
+        management_ip_address: "{{ management_ip_address }}"
+        username: "{{ deployment_username | default('rescue-user') }}"
+        password: "{{ deployment_password }}"
         management_network: 
-          ipv4_address: 173.36.219.34/24
-          ipv4_gateway: 173.36.219.1
+          ipv4_address: "{{ management_ip }}"
+          ipv4_gateway: "{{ management_gateway }}"
         data_network:
-          ipv4_address: 12.34.56.22/24
-          ipv4_gateway: 12.34.56.1
+          ipv4_address: "{{ data_ip }}"
+          ipv4_gateway: "{{ data_gateway }}"
   check_mode: true
   register: cluster_cm
 
@@ -40,23 +40,23 @@
   cisco.nd.nd_setup:
     output_level: debug
     cluster_name: clusteroneclusteroneclusteroneclusteroneclusteroneclusteroneclusterone
-    ntp_server: 173.36.212.205
-    dns_server: 208.67.222.222
+    ntp_server: "{{ ntp_server }}"
+    dns_server: "{{ dns_server }}"
     dns_search_domain: cisco.com
-    app_network: 172.17.0.1/16
-    service_network: 100.80.0.0/16
+    app_network: "{{ app_network }}"
+    service_network: "{{ service_network }}"
     nodes:
       - hostname: Test
-        serial_number: 0BCCC16E2AAC
-        management_ip_address: 173.36.219.34
-        username: rescue-user
-        password: ins3965!
+        serial_number: "{{ serial_number }}"
+        management_ip_address: "{{ management_ip_address }}"
+        username: "{{ deployment_username | default('rescue-user') }}"
+        password: "{{ deployment_password }}"
         management_network: 
-          ipv4_address: 173.36.219.34/24
-          ipv4_gateway: 173.36.219.1
+          ipv4_address: "{{ management_ip }}"
+          ipv4_gateway: "{{ management_gateway }}"
         data_network:
-          ipv4_address: 12.34.56.22/24
-          ipv4_gateway: 12.34.56.1
+          ipv4_address: "{{ data_ip }}"
+          ipv4_gateway: "{{ data_gateway }}"
   ignore_errors: true
   register: cluster_name_length_error
 
@@ -64,23 +64,23 @@
   cisco.nd.nd_setup:
     output_level: debug
     cluster_name: cluster_one
-    ntp_server: 173.36.212.205
-    dns_server: 208.67.222.222
+    ntp_server: "{{ ntp_server }}"
+    dns_server: "{{ dns_server }}"
     dns_search_domain: cisco.com
-    app_network: 172.17.0.1/16
-    service_network: 100.80.0.0/16
+    app_network: "{{ app_network }}"
+    service_network: "{{ service_network }}"
     nodes:
       - hostname: Test
-        serial_number: 0BCCC16E2AAC
-        management_ip_address: 173.36.219.34
-        username: rescue-user
-        password: ins3965!
+        serial_number: "{{ serial_number }}"
+        management_ip_address: "{{ management_ip_address }}"
+        username: "{{ deployment_username | default('rescue-user') }}"
+        password: "{{ deployment_password }}"
         management_network: 
-          ipv4_address: 173.36.219.34/24
-          ipv4_gateway: 173.36.219.1
+          ipv4_address: "{{ management_ip }}"
+          ipv4_gateway: "{{ management_gateway }}"
         data_network:
-          ipv4_address: 12.34.56.22/24
-          ipv4_gateway: 12.34.56.1
+          ipv4_address: "{{ data_ip }}"
+          ipv4_gateway: "{{ data_gateway }}"
   ignore_errors: true
   register: cluster_name_invalid_chars
 
@@ -88,23 +88,23 @@
   cisco.nd.nd_setup:
     output_level: debug
     cluster_name: clusterone-
-    ntp_server: 173.36.212.205
-    dns_server: 208.67.222.222
+    ntp_server: "{{ ntp_server }}"
+    dns_server: "{{ dns_server }}"
     dns_search_domain: cisco.com
-    app_network: 172.17.0.1/16
-    service_network: 100.80.0.0/16
+    app_network: "{{ app_network }}"
+    service_network: "{{ service_network }}"
     nodes:
       - hostname: Test
-        serial_number: 0BCCC16E2AAC
-        management_ip_address: 173.36.219.34
-        username: rescue-user
-        password: ins3965!
+        serial_number: "{{ serial_number }}"
+        management_ip_address: "{{ management_ip_address }}"
+        username: "{{ deployment_username | default('rescue-user') }}"
+        password: "{{ deployment_password }}"
         management_network: 
-          ipv4_address: 173.36.219.34/24
-          ipv4_gateway: 173.36.219.1
+          ipv4_address: "{{ management_ip }}"
+          ipv4_gateway: "{{ management_gateway }}"
         data_network:
-          ipv4_address: 12.34.56.22/24
-          ipv4_gateway: 12.34.56.1
+          ipv4_address: "{{ data_ip }}"
+          ipv4_gateway: "{{ data_gateway }}"
   ignore_errors: true
   register: cluster_name_invalid_hyphen
 
@@ -112,32 +112,32 @@
   cisco.nd.nd_setup:
     output_level: debug
     cluster_name: cluster-one
-    dns_server: 208.67.222.222
+    dns_server: "{{ dns_server }}"
     dns_search_domain: cisco.com
-    app_network: 172.17.0.1/16
-    service_network: 100.80.0.0/16
+    app_network: "{{ app_network }}"
+    service_network: "{{ service_network }}"
     ntp_config:
       servers:
-        - ntp_host: 173.36.212.205
+        - ntp_host: "{{ ntp_server }}"
           ntp_key_id: 1
           preferred: true
       keys:
           - ntp_key_id: 1
-            ntp_key: "1"
+            ntp_key: "ntp_secure_key"
             authentication_type: "AES128CMAC"
             trusted: true
     nodes:
       - hostname: Test
-        serial_number: 0BCCC16E2AAC
-        management_ip_address: 173.36.219.34
-        username: rescue-user
-        password: ins3965!
+        serial_number: "{{ serial_number }}"
+        management_ip_address: "{{ management_ip_address }}"
+        username: "{{ deployment_username | default('rescue-user') }}"
+        password: "{{ deployment_password }}"
         management_network: 
-          ipv4_address: 173.36.219.34/24
-          ipv4_gateway: 173.36.219.1
+          ipv4_address: "{{ management_ip }}"
+          ipv4_gateway: "{{ management_gateway }}"
         data_network:
-          ipv4_address: 12.34.56.22/24
-          ipv4_gateway: 12.34.56.1
+          ipv4_address: "{{ data_ip }}"
+          ipv4_gateway: "{{ data_gateway }}"
           vlan: 1
   register: cluster_nm
 
@@ -159,41 +159,41 @@
       - cluster_name_length_error.msg == "A length of 1 to 63 characters is allowed."
       - cluster_name_invalid_chars.msg == "Valid characters include letters, digits and hyphen."
       - cluster_name_invalid_hyphen.msg == "The name cannot start or end with a hyphen."
-      - cluster_cm.current.clusterConfig.appNetwork == "172.17.0.1/16"
-      - cluster_cm.current.clusterConfig.nameServers.0 == "208.67.222.222"
-      - cluster_cm.current.clusterConfig.ntpConfig.servers.0.host == "173.36.212.205"
+      - cluster_cm.current.clusterConfig.appNetwork == "{{ app_network }}"
+      - cluster_cm.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
+      - cluster_cm.current.clusterConfig.ntpConfig.servers.0.host == "{{ ntp_server }}"
       - cluster_cm.current.clusterConfig.ntpConfig.servers.0.keyID == 1
       - cluster_cm.current.clusterConfig.ntpConfig.servers.0.prefer == true
       - cluster_cm.current.clusterConfig.searchDomains.0 == "cisco.com"
-      - cluster_cm.current.clusterConfig.serviceNetwork == "100.80.0.0/16"
-      - cluster_cm.current.nodes.0.dataNetwork.gateway == "12.34.56.1"
-      - cluster_cm.current.nodes.0.dataNetwork.ipSubnet == "12.34.56.22/24"
-      - cluster_cm.current.nodes.0.managementNetwork.gateway == "173.36.219.1"
-      - cluster_cm.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.34/24"
-      - cluster_cm.current.nodes.0.serialNumber == "0BCCC16E2AAC"
+      - cluster_cm.current.clusterConfig.serviceNetwork == "{{ service_network }}"
+      - cluster_cm.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
+      - cluster_cm.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
+      - cluster_cm.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
+      - cluster_cm.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
+      - cluster_cm.current.nodes.0.serialNumber == "{{ serial_number }}"
       - cluster_cm.current.nodes.0.hostName == "Test"
-      - cluster_nm.current.clusterConfig.appNetwork == "172.17.0.1/16"
-      - cluster_nm.current.clusterConfig.nameServers.0 == "208.67.222.222"
-      - cluster_nm.current.clusterConfig.ntpConfig.servers.0.host == "173.36.212.205"
+      - cluster_nm.current.clusterConfig.appNetwork == "{{ app_network }}"
+      - cluster_nm.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
+      - cluster_nm.current.clusterConfig.ntpConfig.servers.0.host == "{{ ntp_server }}"
       - cluster_nm.current.clusterConfig.ntpConfig.servers.0.keyID == 1
       - cluster_nm.current.clusterConfig.ntpConfig.servers.0.prefer == true
       - cluster_nm.current.clusterConfig.searchDomains.0 == "cisco.com"
-      - cluster_nm.current.clusterConfig.serviceNetwork == "100.80.0.0/16"
-      - cluster_nm.current.nodes.0.dataNetwork.gateway == "12.34.56.1"
-      - cluster_nm.current.nodes.0.dataNetwork.ipSubnet == "12.34.56.22/24"
-      - cluster_nm.current.nodes.0.managementNetwork.gateway == "173.36.219.1"
-      - cluster_nm.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.34/24"
-      - cluster_nm.current.nodes.0.serialNumber == "0BCCC16E2AAC"
+      - cluster_nm.current.clusterConfig.serviceNetwork == "{{ service_network }}"
+      - cluster_nm.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
+      - cluster_nm.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
+      - cluster_nm.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
+      - cluster_nm.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
+      - cluster_nm.current.nodes.0.serialNumber == "{{ serial_number }}"
       - cluster_nm.current.nodes.0.hostName == "Test"
-      - installation_status.current.clusterConfig.appNetwork == "172.17.0.1/16"
-      - installation_status.current.clusterConfig.nameServers.0 == "208.67.222.222"
-      - installation_status.current.clusterConfig.ntpServers.0 == "173.36.212.205"
+      - installation_status.current.clusterConfig.appNetwork == "{{ app_network }}"
+      - installation_status.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
+      - installation_status.current.clusterConfig.ntpServers.0 == "{{ ntp_server }}"
       - installation_status.current.clusterConfig.searchDomains.0 == "cisco.com"
-      - installation_status.current.clusterConfig.serviceNetwork == "100.80.0.0/16"
-      - installation_status.current.nodes.0.dataNetwork.gateway == "12.34.56.1"
-      - installation_status.current.nodes.0.dataNetwork.ipSubnet == "12.34.56.22/24"
-      - installation_status.current.nodes.0.managementNetwork.gateway == "173.36.219.1"
-      - installation_status.current.nodes.0.managementNetwork.ipSubnet == "173.36.219.34/24"
-      - installation_status.current.nodes.0.serialNumber == "0BCCC16E2AAC"
+      - installation_status.current.clusterConfig.serviceNetwork == "{{ service_network }}"
+      - installation_status.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
+      - installation_status.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
+      - installation_status.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
+      - installation_status.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
+      - installation_status.current.nodes.0.serialNumber == "{{ serial_number }}"
       - installation_status.current.nodes.0.hostName == "Test"
       - installation_status.current.state == "Completed"
