@@ -26,7 +26,7 @@ options:
   ntp_server:
     description:
     - The IP address of the NTP server.
-    - This option is only applicable and required for ND version 2.3.2d and its variants.
+    - This option is only applicable and required for ND version 2.3.2d and later.
     type: list
     elements: str
     aliases: [ ntp_servers ]
@@ -72,17 +72,17 @@ options:
   app_network_ipv6:
     description:
     - The IPv6 app subnet.
-    - This option is only applicable for ND version 3.0.1f and its variants.
+    - This option is only applicable for ND version 3.0.1f and later.
     type: str
   service_network_ipv6:
     description:
     - The IPv6 service subnet.
-    - This option is only applicable for ND version 3.0.1f and its variants.
+    - This option is only applicable for ND version 3.0.1f and later.
     type: str
   ntp_config:
     description:
     - This is used for configuring NTP server and its other options.
-    - This option is only applicable and required for ND version 3.0.1f and its variants.
+    - This option is only applicable and required for ND version 3.0.1f and later.
     type: dict
     suboptions:
       servers:
@@ -175,11 +175,13 @@ options:
             - The IPv4 address of the management network.
             type: str
             required: true
+            aliases: [ ip ]
           ipv4_gateway:
             description:
             - The IPv4 gateway of the management network.
             type: str
             required: true
+            aliases: [ gateway ]
           ipv6_address:
             description:
             - The IPv6 address of the management network.
@@ -199,11 +201,13 @@ options:
             - The IPv4 address of the data network.
             type: str
             required: true
+            aliases: [ ip ]
           ipv4_gateway:
             description:
             - The IPv4 gateway of the data network.
             type: str
             required: true
+            aliases: [ gateway ]
           ipv6_address:
             description:
             - The IPv6 address of the data network.
@@ -432,17 +436,17 @@ def main():
                     "hostName": node.get("hostname"),
                     "serialNumber": node.get("serial_number"),
                     "dataNetwork": {
-                        "ipSubnet": node.get("data_network").get("ipv4_address"),
-                        "gateway": node.get("data_network").get("ipv4_gateway"),
-                        "ipv6Subnet": node.get("data_network").get("ipv6_address"),
-                        "gatewayv6": node.get("data_network").get("ipv6_gateway"),
-                        "vlan": node.get("data_network").get("vlan"),
+                        "ipSubnet": node["data_network"].get("ipv4_address"),
+                        "gateway": node["data_network"].get("ipv4_gateway"),
+                        "ipv6Subnet": node["data_network"].get("ipv6_address"),
+                        "gatewayv6": node["data_network"].get("ipv6_gateway"),
+                        "vlan": node["data_network"].get("vlan"),
                     },
                     "managementNetwork": {
-                        "ipSubnet": node.get("management_network").get("ipv4_address"),
-                        "gateway": node.get("management_network").get("ipv4_gateway"),
-                        "ipv6Subnet": node.get("management_network").get("ipv6_address"),
-                        "gatewayv6": node.get("management_network").get("ipv6_gateway"),
+                        "ipSubnet": node["management_network"].get("ipv4_address"),
+                        "gateway": node["management_network"].get("ipv4_gateway"),
+                        "ipv6Subnet": node["management_network"].get("ipv6_address"),
+                        "gatewayv6": node["management_network"].get("ipv6_gateway"),
                     },
                     "bgpConfig": {
                         "as": node.get("bgp").get("asn") if node.get("bgp") is not None else None,
