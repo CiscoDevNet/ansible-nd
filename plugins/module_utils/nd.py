@@ -187,6 +187,7 @@ class NDModule(object):
         # nd_rest output
         self.jsondata = None
         self.error = dict(code=None, message=None, info=None)
+        self.ignore_not_found_error = False
 
         # info output
         self.previous = dict()
@@ -238,7 +239,7 @@ class NDModule(object):
 
             self.url = info.get("url")
             self.httpapi_logs.extend(conn.pop_messages())
-            info.pop("date")
+            info.pop("date", None)
         except Exception as e:
             try:
                 error_obj = json.loads(to_text(e))
@@ -292,6 +293,8 @@ class NDModule(object):
                 elif "messages" in payload and len(payload.get("messages")) > 0:
                     self.fail_json(msg="ND Error {code} ({severity}): {message}".format(**payload["messages"][0]), data=data, info=info, payload=payload)
                 else:
+                    if self.ignore_not_found_error:
+                        return {}
                     self.fail_json(msg="ND Error: Unknown error no error code in decoded payload".format(**payload), data=data, info=info, payload=payload)
             else:
                 self.result["raw"] = info.get("raw")
@@ -398,7 +401,7 @@ class NDModule(object):
     def exit_json(self, **kwargs):
         """Custom written method to exit from module."""
 
-        if self.params.get("state") in ("absent", "present", "upload", "restore", "download", "move", "backup"):
+        if self.params.get("state") in ("absent", "present", "upload", "restore", "download", "move", "backup", "enable", "disable", "restart", "delete"):
             if self.params.get("output_level") in ("debug", "info"):
                 self.result["previous"] = self.previous
             # FIXME: Modified header only works for PATCH

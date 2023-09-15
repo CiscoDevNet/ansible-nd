@@ -1,0 +1,270 @@
+# Test code for the ND modules
+# Copyright: (c) 2023, Sabari Jaganathan (@sajagana) <sajagana@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Note: idempotent test not supported for present state
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      output_level: "info"
+
+# Cleanup part - remove all imported service packages
+- name: Query all imported service packages to clear the environment
+  cisco.nd.nd_service:
+    <<: *nd_info
+    state: query
+  register: query_all_packages_env_cleanup
+
+- name: Remove all imported service packages to clear the environment
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_id: "{{ item.metadata.id }}"
+    state: absent
+  loop: "{{ query_all_packages_env_cleanup.current }}"
+
+# Test part
+- name: Import cisco-terraform v0.1.16 from the remote location with check mode
+  cisco.nd.nd_service: &cm_imp_v16
+    <<: *nd_info
+    import_url: "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+    state: present
+  register: cm_imp_v16
+  check_mode: true
+
+- name: Assertions check for import cisco-terraform v0.1.16 from the remote location with check mode
+  assert:
+    that:
+      - cm_imp_v16 is not changed
+      - cm_imp_v16.current == {}
+      - cm_imp_v16.previous == {}
+
+- name: Import cisco-terraform v0.1.16 from the remote location with normal mode
+  cisco.nd.nd_service: &nm_imp_v16
+    <<: *cm_imp_v16
+  register: nm_imp_v16
+
+- name: Query a imported cisco-terraform v0.1.16 with import_id
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_id: "{{ nm_imp_v16.current.0.metadata.id }}"
+    state: query
+  register: query_v16_with_id
+  until:
+    - query_v16_with_id.current is defined
+    - query_v16_with_id.current != []
+    - query_v16_with_id.current.0.status.downloadPercentage == 100
+  retries: 5
+  delay: 5
+
+- name: Import cisco-terraform v0.1.16 from the remote location with normal mode again
+  cisco.nd.nd_service:
+    <<: *cm_imp_v16
+  register: nm_imp_v16_again
+
+- name: Import cisco-terraform v0.1.16 from the remote location with normal mode again
+  cisco.nd.nd_service:
+    <<: *cm_imp_v16
+  register: nm_imp_v16_again_1
+
+- name: Query a duplicate imported cisco-terraform v0.1.16 with import_id to check the status
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_id: "{{ nm_imp_v16_again_1.current.0.metadata.id }}"
+    state: query
+  register: query_v16_with_id_again
+  until:
+    - query_v16_with_id_again.current is defined
+    - query_v16_with_id_again.current != []
+    - query_v16_with_id_again.current.0.status.downloadPercentage == 100
+  retries: 5
+  delay: 5
+
+- name: Import cisco-terraform v0.1.15 from the remote location with normal mode
+  cisco.nd.nd_service:
+    <<: *cm_imp_v16
+    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+  register: nm_imp_v15
+
+- name: Query all imported service packages
+  cisco.nd.nd_service:
+    <<: *nd_info
+    state: query
+  register: query_all_packages
+
+- name: Query all imported service packages with import_url
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+    state: query
+  register: query_all_packages_with_url
+
+- name: Query a imported service package with import_id
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_id: "{{ query_all_packages_with_url.current.0.metadata.id }}"
+    state: query
+  register: query_package_with_id
+
+- name: Assertions check for query a imported service package with import_id and import_url
+  assert:
+    that:
+      - query_all_packages is not changed
+      - query_all_packages.current != []
+      - query_package_with_id is not changed
+      - query_package_with_id.current | length == 1
+      - query_package_with_id.current.0.status.downloadPercentage == 100
+      - query_package_with_id.current.0.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+      - query_all_packages_with_url is not changed
+      - query_all_packages_with_url.current | length == 1
+      - query_all_packages_with_url.current.0.status.downloadPercentage == 100
+      - query_all_packages_with_url.current.0.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+
+- name: Remove a imported service package with import_id - check mode
+  cisco.nd.nd_service: &cm_rm_package_with_id
+    <<: *nd_info
+    import_id: "{{ query_v16_with_id_again.current.0.metadata.id }}"
+    state: absent
+  check_mode: true
+  register: cm_rm_package_with_id
+
+- name: Remove a imported service package with import_id - normal mode
+  cisco.nd.nd_service:
+    <<: *cm_rm_package_with_id
+  register: nm_rm_package_with_id
+
+- name: Remove a imported service package with import_id - normal mode again
+  cisco.nd.nd_service:
+    <<: *cm_rm_package_with_id
+  register: nm_rm_package_with_id_again
+
+- name: Assertions check for remove a imported service package with import_id
+  assert:
+    that:
+      - cm_rm_package_with_id is not changed
+      - cm_rm_package_with_id.current != []
+      - cm_rm_package_with_id.previous != []
+      - cm_rm_package_with_id.current.0.spec.importURL == cm_rm_package_with_id.previous.0.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - nm_rm_package_with_id is changed
+      - nm_rm_package_with_id.current == {}
+      - nm_rm_package_with_id.previous != []
+      - nm_rm_package_with_id.previous.0.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - nm_rm_package_with_id_again is not changed
+      - nm_rm_package_with_id_again.current == {}
+      - nm_rm_package_with_id_again.previous == {}
+
+- name: Remove a imported service package with import_url
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+    state: absent
+  register: rm_package_with_url
+
+- name: Assertions check for remove a imported service package with import_url
+  assert:
+    that:
+      - rm_package_with_url is changed
+      - rm_package_with_url.current == {}
+      - rm_package_with_url.previous != []
+      - rm_package_with_url.previous.0.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+
+- name: Remove a imported service package with import_url to catch errors
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_url: "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+    state: absent
+  register: nt_rm_package_with_url
+  ignore_errors: true
+
+- name: Assertions check for remove a imported service package with import_url to catch errors
+  assert:
+    that:
+      - nt_rm_package_with_url is not changed
+      - nt_rm_package_with_url.current != []
+      - nt_rm_package_with_url.previous != []
+      - nt_rm_package_with_url.msg == "More than one service package found. Provide a unique import_id to delete the service package"
+
+# Cleanup part
+- name: Query all imported service packages
+  cisco.nd.nd_service:
+    <<: *nd_info
+    state: query
+  register: query_all_packages_env_cleanup
+
+- name: Assertions check for query all imported service packages
+  assert:
+    that:
+      - query_all_packages_env_cleanup is not changed
+      - query_all_packages_env_cleanup.current != []
+
+- name: Remove all imported service packages with import_id
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_id: "{{ item.metadata.id }}"
+    state: absent
+  loop: "{{ query_all_packages_env_cleanup.current }}"
+
+- name: Query all imported service packages again
+  cisco.nd.nd_service:
+    <<: *nd_info
+    state: query
+  register: query_all_packages_env_cleanup_again
+
+- name: Assertions check for query all imported service packages again
+  assert:
+    that:
+      - query_all_packages_env_cleanup_again is not changed
+      - query_all_packages_env_cleanup_again.current == []
+
+# Negative tests
+- name: Invalid test - Remove a imported service package with import_url
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+    import_id: "xyz"
+    state: absent
+  register: nt_rm_package
+  ignore_errors: true
+
+- name: Invalid test - import service package without import_url
+  cisco.nd.nd_service:
+    <<: *nd_info
+    state: present
+  register: nt_imp_package_without_url
+  ignore_errors: true
+
+- name: Invalid test - import service package with invalid import_url
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_url: "http://test_url.com/cisco-terraform-v0.1.15.aci"
+    state: present
+  register: nt_imp_package_invalid_url
+  ignore_errors: true
+
+- name: Query a imported service packages with invalid url
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_url: "http://test_url.com/cisco-terraform-v0.1.15.aci"
+    state: query
+  register: nt_query_check
+  until:
+    - nt_query_check.current is defined
+    - nt_query_check.current != []
+    - nt_query_check.current.0.status.downloadPercentage == 100
+  retries: 5
+  delay: 5
+  ignore_errors: true
+
+- name: Assertions check for negative tests
+  assert:
+    that:
+      - nt_rm_package is not changed
+      - nt_rm_package.msg == "parameters are mutually exclusive{{':'}} import_url|import_id"
+      - nt_imp_package_without_url is not changed
+      - nt_imp_package_without_url.msg == "state is present but all of the following are missing{{':'}} import_url"
+      - nt_imp_package_invalid_url is changed
+      - nt_imp_package_invalid_url.current != []
+      - nt_imp_package_invalid_url.current.0.spec.importURL == "http{{':'}}//test_url.com/cisco-terraform-v0.1.15.aci"
+      - nt_query_check is not changed
+      - nt_query_check.current.0.status.downloadPercentage == 0
+      - nt_query_check.current.0.spec.importURL == "http://test_url.com/cisco-terraform-v0.1.15.aci"
