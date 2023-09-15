@@ -1,0 +1,387 @@
+# Test code for the ND modules
+# Copyright: (c) 2023, Sabari Jaganathan (@sajagana) <sajagana@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Note: idempotent test not supported for enabled and restart states
+- name: Set vars
+  set_fact:
+    nd_info: &nd_info
+      output_level: "info"
+
+# Cleanup part
+- name: Delete an existing service instance - v0.1.16
+  cisco.nd.nd_service_instance: &del_v16_instance
+    <<: *nd_info
+    name: "cisco-terraform"
+    target_version: "0.1.16"
+    state: delete
+
+- name: Delete an existing service instance - v0.1.15
+  cisco.nd.nd_service_instance: &del_v15_instance
+    <<: *del_v16_instance
+    target_version: "0.1.15"
+
+# Remove all imported service packages
+- name: Query all imported service packages
+  cisco.nd.nd_service:
+    <<: *nd_info
+    state: query
+  register: query_all_packages_env_cleanup
+
+- name: Remove all imported service packages
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_id: "{{ item.metadata.id }}"
+    state: absent
+  loop: "{{ query_all_packages_env_cleanup.current }}"
+
+# Setup part - Install new service package
+- name: Install cisco-terraform v0.1.16 from the remote location
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_url: "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+    state: present
+  register: install_v16
+
+- name: Query cisco-terraform v0.1.16 with import id
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_id: "{{ install_v16.current.0.metadata.id }}"
+    state: query
+  register: query_v16_with_id
+  until:
+    - query_v16_with_id.current is defined
+    - query_v16_with_id.current != []
+    - query_v16_with_id.current.0.status.downloadPercentage == 100
+  retries: 5
+  delay: 5
+
+- name: Install cisco-terraform v0.1.15 from the remote location
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+    state: present
+  register: install_v15
+
+- name: Query cisco-terraform v0.1.15 with import id
+  cisco.nd.nd_service:
+    <<: *nd_info
+    import_id: "{{ install_v15.current.0.metadata.id  }}"
+    state: query
+  register: query_v15_with_id
+  until:
+    - query_v15_with_id.current is defined
+    - query_v15_with_id.current != []
+    - query_v15_with_id.current.0.status.downloadPercentage == 100
+  retries: 5
+  delay: 5
+
+- name: Enable an existing service instance - version 0.1.15 with check mode
+  cisco.nd.nd_service_instance: &cm_enable_service_instance_v15
+    <<: *nd_info
+    name: "cisco-terraform"
+    instance_name: "default"
+    target_version: "0.1.15"
+    state: enable
+  register: cm_enable_service_instance_v15
+  check_mode: true
+
+- name: Assertions check for enable an existing service instance - version 0.1.15 with check mode
+  assert:
+    that:
+      - cm_enable_service_instance_v15.current is not changed
+      - cm_enable_service_instance_v15.current == {}
+
+- name: Query a service instance with name and instance_name after the check mode enable - version 0.1.15
+  cisco.nd.nd_service_instance: &query_service_instance_with_name
+    <<: *nd_info
+    name: "cisco-terraform"
+    instance_name: "default"
+    state: query
+  register: query_service_instance_v15_after_enable
+  until:
+  - query_service_instance_v15_after_enable.current is defined
+  - query_service_instance_v15_after_enable.current == {}
+  retries: 5
+  delay: 5
+
+- name: Enable an existing service instance - version 0.1.15 with normal mode
+  cisco.nd.nd_service_instance: &enable_service_instance_v15
+    <<: *cm_enable_service_instance_v15
+  register: enable_service_instance_v15
+
+- name: Assertions check for enable an existing service instance - version 0.1.15 with normal mode
+  assert:
+    that:
+      - enable_service_instance_v15 is changed
+      - enable_service_instance_v15.current is defined
+      - enable_service_instance_v15.current != {}
+      - enable_service_instance_v15.current.status.operState == "Enabling"
+
+- name: Query a service instance with name and instance_name
+  cisco.nd.nd_service_instance:
+    <<: *query_service_instance_with_name
+    state: query
+  register: query_service_instance_v15
+  until:
+  - query_service_instance_v15.current is defined
+  - query_service_instance_v15.current != {}
+  - query_service_instance_v15.current.status.operState == "Running"
+  - query_service_instance_v15.current.spec.targetVersion == "0.1.15"
+  retries: 5
+  delay: 5
+
+- name: Restart an existing service instance - version 0.1.15 with check mode
+  cisco.nd.nd_service_instance: &cm_restart_service_instance_v15
+    <<: *nd_info
+    name: "cisco-terraform"
+    instance_name: "default"
+    state: restart
+  register: cm_restart_service_instance_v15
+  check_mode: true
+
+- name: Assertions check for restart an existing service instance - version 0.1.15 with check mode
+  assert:
+    that:
+      - cm_restart_service_instance_v15 is not changed
+      - cm_restart_service_instance_v15.current is defined
+      - cm_restart_service_instance_v15.current != {}
+      - cm_restart_service_instance_v15.current.status.operState == "Running"
+      - cm_restart_service_instance_v15.current.spec.targetVersion == "0.1.15"
+
+- name: Restart an existing service instance - version 0.1.15 with normal mode
+  cisco.nd.nd_service_instance:
+    <<: *cm_restart_service_instance_v15
+  register: restart_service_instance_v15
+
+- name: Assertions check for restart an existing service instance - version 0.1.15 with normal mode
+  assert:
+    that:
+      - restart_service_instance_v15 is changed
+      - restart_service_instance_v15.current is defined
+      - restart_service_instance_v15.current != {}
+      - restart_service_instance_v15.current.status.operState == "Restarting"
+
+- name: Query a service instance with name and instance_name
+  cisco.nd.nd_service_instance:
+    <<: *query_service_instance_with_name
+  register: query_service_instance_v15_after_restart
+  until:
+    - query_service_instance_v15_after_restart.current is defined
+    - query_service_instance_v15_after_restart.current != {}
+    - query_service_instance_v15_after_restart.current.status.operState == "Running"
+    - query_service_instance_v15_after_restart.current.spec.targetVersion == "0.1.15"
+  retries: 5
+  delay: 5
+
+- name: Disable an active (0.1.15) service instance with check mode
+  cisco.nd.nd_service_instance: &cm_disable_service_instance_v15
+    <<: *nd_info
+    name: "cisco-terraform"
+    instance_name: "default"
+    state: disable
+  check_mode: true
+  register: cm_disable_service_instance_v15
+
+- name: Assertions check for disable an active (0.1.15) service instance with check mode
+  assert:
+    that:
+      - cm_disable_service_instance_v15 is not changed
+      - cm_disable_service_instance_v15.current is defined
+      - cm_disable_service_instance_v15.current != {}
+      - cm_disable_service_instance_v15.current.status.operState == "Running"
+      - cm_disable_service_instance_v15.current.spec.targetVersion == "0.1.15"
+
+- name: Disable an active (0.1.15) service instance with normal mode
+  cisco.nd.nd_service_instance:
+    <<: *cm_disable_service_instance_v15
+  register: disable_service_instance_v15
+
+- name: Query a service instance with name and instance_name after disable
+  cisco.nd.nd_service_instance:
+    <<: *query_service_instance_with_name
+    state: query
+  register: query_service_instance_v15_after_disable
+  until:
+  - query_service_instance_v15_after_disable.current is defined
+  - query_service_instance_v15_after_disable.current == {}
+  retries: 5
+  delay: 5
+
+- name: Disable an active (0.1.15) service instance with normal mode again
+  cisco.nd.nd_service_instance:
+    <<: *cm_disable_service_instance_v15
+  register: disable_service_instance_v15_again
+
+- name: Assertions check for disable an active (0.1.15) service instance with normal mode
+  assert:
+    that:
+      - disable_service_instance_v15 is changed
+      - disable_service_instance_v15.current is defined
+      - disable_service_instance_v15.current == {}
+      - disable_service_instance_v15_again is not changed
+      - disable_service_instance_v15_again.current == {}
+      - disable_service_instance_v15_again.previous == {}
+
+- name: Query a service instance with name and instance_name
+  cisco.nd.nd_service_instance:
+    <<: *query_service_instance_with_name
+  register: query_service_instance_v15_after_disable
+  until:
+    - query_service_instance_v15_after_disable.current is defined
+    - query_service_instance_v15_after_disable.current == {}
+  retries: 5
+  delay: 5
+
+- name: Upgrade an existing service instance - version 0.1.16
+  cisco.nd.nd_service_instance:
+    <<: *enable_service_instance_v15
+    target_version: "0.1.16"
+  register: upgrade_service_instance_v16
+
+- name: Assertions check for upgrade an existing service instance - version 0.1.16
+  assert:
+    that:
+      - upgrade_service_instance_v16 is changed
+      - upgrade_service_instance_v16.current is defined
+      - upgrade_service_instance_v16.current != {}
+      - upgrade_service_instance_v16.current.status.operState == "Enabling"
+
+- name: Query a service instance with name and instance_name
+  cisco.nd.nd_service_instance:
+    <<: *query_service_instance_with_name
+    state: query
+  register: query_service_instance_v16
+  until:
+    - query_service_instance_v16.current is defined
+    - query_service_instance_v16.current != {}
+    - query_service_instance_v16.current.status.operState == "Running"
+    - query_service_instance_v16.current.spec.targetVersion == "0.1.16"
+  retries: 5
+  delay: 5
+
+- name: Query all service instances
+  cisco.nd.nd_service_instance:
+    state: query
+  register: query_all_service_instance
+
+- name: Assertions check for query all service instances
+  assert:
+    that:
+      - query_all_service_instance is not changed
+      - query_all_service_instance.current != {}
+
+- name: Disable an active (0.1.16) service instance
+  cisco.nd.nd_service_instance:
+    <<: *nd_info
+    name: "cisco-terraform"
+    instance_name: "default"
+    state: disable
+  register: disable_service_instance_v16
+
+- name: Assertions check for disable an active (0.1.16) service instance
+  assert:
+    that:
+      - disable_service_instance_v16 is changed
+      - disable_service_instance_v16.current == {}
+
+- name: Query a service instance with name and instance_name
+  cisco.nd.nd_service_instance:
+    <<: *query_service_instance_with_name
+  register: query_service_instance_v16_after_disable
+  until:
+    - query_service_instance_v16_after_disable.current is defined
+    - query_service_instance_v16_after_disable.current == {}
+  retries: 5
+  delay: 5
+
+# Cleanup part
+- name: Delete an existing service instance - v01.16 - check mode
+  cisco.nd.nd_service_instance:
+    <<: *del_v16_instance
+  check_mode: true
+  register: cm_del_v16_instance
+
+- name: Delete an existing service instance - v01.16 - normal mode
+  cisco.nd.nd_service_instance:
+    <<: *del_v16_instance
+  register: nm_del_v16_instance
+
+- name: Delete an existing service instance - v01.16 - normal mode again
+  cisco.nd.nd_service_instance:
+    <<: *del_v16_instance
+  register: nm_del_v16_instance_again
+
+- name: Assertions check for delete an existing service instance - v01.16
+  assert:
+    that:
+      - cm_del_v16_instance is not changed
+      - cm_del_v16_instance.current != {}
+      - cm_del_v16_instance.previous != {}
+      - nm_del_v16_instance is changed
+      - nm_del_v16_instance.current == {}
+      - nm_del_v16_instance.previous != {}
+      - nm_del_v16_instance_again is not changed
+      - nm_del_v16_instance_again.current == {}
+      - nm_del_v16_instance_again.previous == {}
+
+- name: Delete an existing service instance - v01.15 - cleanup part
+  cisco.nd.nd_service_instance:
+    <<: *del_v15_instance
+  register: del_v15_instance_cleanup
+
+- name: Assertions check for delete an existing service instance - v01.15 - cleanup part
+  assert:
+    that:
+      - del_v15_instance_cleanup is changed
+      - del_v15_instance_cleanup.current == {}
+      - del_v15_instance_cleanup.previous != {}
+      - del_v15_instance_cleanup.previous.spec.serviceID == "cisco-terraform:0.1.15"
+
+# Negative tests
+- name: Enable a service instance without target version
+  cisco.nd.nd_service_instance:
+    <<: *nd_info
+    name: "cisco-terraform"
+    instance_name: "default"
+    state: enable
+  register: nt_enable_without_version
+  ignore_errors: true
+
+- name: Delete a service instance without target version
+  cisco.nd.nd_service_instance:
+    <<: *nd_info
+    name: "cisco-terraform"
+    instance_name: "default"
+    state: delete
+  register: nt_delete_without_version
+  ignore_errors: true
+
+- name: Restart a service instance without instance name
+  cisco.nd.nd_service_instance:
+    <<: *nd_info
+    name: "cisco-terraform"
+    state: restart
+  register: nt_restart_without_instance_name
+  ignore_errors: true
+
+- name: Disable a service instance without instance name
+  cisco.nd.nd_service_instance:
+    <<: *nd_info
+    name: "cisco-terraform"
+    state: restart
+  register: nt_disable_without_instance_name
+  ignore_errors: true
+
+- name: Assertions check for negative tests
+  assert:
+    that:
+      - nt_enable_without_version is not changed
+      - nt_enable_without_version.msg == "state is enable but all of the following are missing{{':'}} target_version"
+      - nt_delete_without_version is not changed
+      - nt_delete_without_version.msg == "state is delete but all of the following are missing{{':'}} target_version"
+      - nt_restart_without_instance_name is not changed
+      - nt_restart_without_instance_name.msg == "state is restart but all of the following are missing{{':'}} instance_name"
+      - nt_disable_without_instance_name is not changed
+      - nt_disable_without_instance_name.msg == "state is restart but all of the following are missing{{':'}} instance_name"
