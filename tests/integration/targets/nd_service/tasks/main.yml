@@ -47,13 +47,13 @@
 - name: Query a imported cisco-terraform v0.1.16 with import_id
   cisco.nd.nd_service:
     <<: *nd_info
-    import_id: "{{ nm_imp_v16.current.0.metadata.id }}"
+    import_id: "{{ nm_imp_v16.current.metadata.id }}"
     state: query
   register: query_v16_with_id
   until:
     - query_v16_with_id.current is defined
-    - query_v16_with_id.current != []
-    - query_v16_with_id.current.0.status.downloadPercentage == 100
+    - query_v16_with_id.current != {}
+    - query_v16_with_id.current.status.downloadPercentage == 100
   retries: 5
   delay: 5
 
@@ -70,13 +70,13 @@
 - name: Query a duplicate imported cisco-terraform v0.1.16 with import_id to check the status
   cisco.nd.nd_service:
     <<: *nd_info
-    import_id: "{{ nm_imp_v16_again_1.current.0.metadata.id }}"
+    import_id: "{{ nm_imp_v16_again_1.current.metadata.id }}"
     state: query
   register: query_v16_with_id_again
   until:
     - query_v16_with_id_again.current is defined
-    - query_v16_with_id_again.current != []
-    - query_v16_with_id_again.current.0.status.downloadPercentage == 100
+    - query_v16_with_id_again.current != {}
+    - query_v16_with_id_again.current.status.downloadPercentage == 100
   retries: 5
   delay: 5
 
@@ -112,9 +112,8 @@
       - query_all_packages is not changed
       - query_all_packages.current != []
       - query_package_with_id is not changed
-      - query_package_with_id.current | length == 1
-      - query_package_with_id.current.0.status.downloadPercentage == 100
-      - query_package_with_id.current.0.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+      - query_package_with_id.current.status.downloadPercentage == 100
+      - query_package_with_id.current.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
       - query_all_packages_with_url is not changed
       - query_all_packages_with_url.current | length == 1
       - query_all_packages_with_url.current.0.status.downloadPercentage == 100
@@ -123,7 +122,7 @@
 - name: Remove a imported service package with import_id - check mode
   cisco.nd.nd_service: &cm_rm_package_with_id
     <<: *nd_info
-    import_id: "{{ query_v16_with_id_again.current.0.metadata.id }}"
+    import_id: "{{ query_v16_with_id_again.current.metadata.id }}"
     state: absent
   check_mode: true
   register: cm_rm_package_with_id
@@ -142,13 +141,13 @@
   assert:
     that:
       - cm_rm_package_with_id is not changed
-      - cm_rm_package_with_id.current != []
-      - cm_rm_package_with_id.previous != []
-      - cm_rm_package_with_id.current.0.spec.importURL == cm_rm_package_with_id.previous.0.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - cm_rm_package_with_id.current != {}
+      - cm_rm_package_with_id.previous != {}
+      - cm_rm_package_with_id.current.spec.importURL == cm_rm_package_with_id.previous.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
       - nm_rm_package_with_id is changed
       - nm_rm_package_with_id.current == {}
-      - nm_rm_package_with_id.previous != []
-      - nm_rm_package_with_id.previous.0.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - nm_rm_package_with_id.previous != {}
+      - nm_rm_package_with_id.previous.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
       - nm_rm_package_with_id_again is not changed
       - nm_rm_package_with_id_again.current == {}
       - nm_rm_package_with_id_again.previous == {}
@@ -264,7 +263,7 @@
       - nt_imp_package_without_url.msg == "state is present but all of the following are missing{{':'}} import_url"
       - nt_imp_package_invalid_url is changed
       - nt_imp_package_invalid_url.current != []
-      - nt_imp_package_invalid_url.current.0.spec.importURL == "http{{':'}}//test_url.com/cisco-terraform-v0.1.15.aci"
+      - nt_imp_package_invalid_url.current.spec.importURL == "http{{':'}}//test_url.com/cisco-terraform-v0.1.15.aci"
       - nt_query_check is not changed
       - nt_query_check.current.0.status.downloadPercentage == 0
       - nt_query_check.current.0.spec.importURL == "http://test_url.com/cisco-terraform-v0.1.15.aci"

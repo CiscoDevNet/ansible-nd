@@ -132,50 +132,47 @@ def main():
     # To avoid object not found error while querying the object
     nd.ignore_not_found_error = True
 
+    unwanted = [
+        "metadata",
+        "status",
+        ["spec", "serviceReference"],
+    ]
+
     # Delete part
     if state == "delete":
         service_object = nd.query_obj("/nexus/infra/api/firmware/v1/services/{0}:{1}".format(name, target_version))
         if service_object:
             nd.existing = service_object
-        else:
-            nd.previous = nd.existing = {}
-            nd.exit_json()
-
-    # Enable, Disable and Restart part
     elif name and instance_name:
+        # Enable, Disable and Restart part
         absent_instance_path = "{0}/serviceinstances/serviceName/{1}/instanceName/{2}".format(base_path, name, instance_name)
         service_object = nd.query_obj(absent_instance_path)
         if service_object:
             nd.existing = service_object
     else:
+        # Query all objects
         nd.existing = nd.query_obj(instance_path)
 
     nd.previous = nd.existing
-    if state == "query" or ((state == "disable" or state == "restart") and not nd.existing):
-        nd.exit_json()
-
-    if state == "restart":
-        restart_instance_path = "{0}/serviceinstancerestarts/serviceName/{1}/instanceName/{2}".format(base_path, name, instance_name)
 
     if state == "enable":
         payload = {"spec": {"name": instance_name, "serviceName": name, "targetVersion": target_version}}
-        nd.sanitize(payload, collate=True)
+        nd.sanitize(payload, collate=False, required=None, unwanted=unwanted)
         nd.proposed = payload
-        nd.previous = {}
         if not module.check_mode:
             nd.existing = nd.request(instance_path, method="POST", data=payload)
-    elif state == "restart":
+    elif state == "restart" and nd.existing:
+        restart_instance_path = "{0}/serviceinstancerestarts/serviceName/{1}/instanceName/{2}".format(base_path, name, instance_name)
         payload = {"spec": {"name": instance_name, "serviceName": name}}
-        nd.sanitize(payload, collate=True)
+        nd.sanitize(payload, collate=False, required=None, unwanted=unwanted)
         nd.proposed = payload
         if not module.check_mode:
             nd.existing = nd.request(restart_instance_path, method="PUT", data=payload)
-    elif state == "disable":
-        if not module.check_mode:
-            nd.existing = nd.request(absent_instance_path, method="DELETE")
-    else:
-        if not module.check_mode:
-            nd.existing = nd.request("/sedgeapi/v1/firmwared/api/applications/{0}:{1}/cleanup".format(name, target_version), method="POST")
+    elif state == "disable" and nd.existing and not module.check_mode:
+        nd.existing = nd.request(absent_instance_path, method="DELETE")
+    elif state == "delete" and nd.existing and not module.check_mode:
+        # TODO: Need to change the url when the api is ready
+        nd.existing = nd.request("/sedgeapi/v1/firmwared/api/applications/{0}:{1}/cleanup".format(name, target_version), method="POST")
 
     nd.exit_json()
 

@@ -107,50 +107,39 @@ def main():
     import_id = nd.params.get("import_id")
     state = nd.params.get("state")
 
+    # To avoid object not found error while querying the object
     nd.ignore_not_found_error = True
+
     base_path = "/nexus/infra/api/firmware/v1/servicepackageimports"
     if import_id:
         # Query a object with meta id
         service_package = nd.query_obj("{0}/{1}".format(base_path, import_id))
         if service_package:
-            nd.existing = [service_package]
-        else:
-            nd.previous = nd.existing = {}
+            nd.existing = service_package
     elif state == "absent" or state == "query":
         service_packages = nd.query_obj(base_path)
-        filtered_service_packages = []
         if import_url:
             # Query all objects with import url
-            for service_package in service_packages.get("items"):
-                if service_package.get("spec").get("importURL") == import_url:
-                    filtered_service_packages.append(service_package)
-            nd.existing = filtered_service_packages
+            nd.existing = [service_package for service_package in service_packages.get("items") if service_package.get("spec").get("importURL") == import_url]
         else:
             # Query all objects
             nd.existing = service_packages.get("items")
-    else:
-        nd.previous = nd.existing = {}
-
-    if state == "query":
-        nd.exit_json()
 
     if state == "present":
         payload = {"spec": {"importURL": import_url}}
         nd.sanitize(payload, collate=True)
         nd.proposed = payload
         if not module.check_mode:
-            nd.existing = [nd.request(base_path, method="POST", data=payload)]
-    else:
-        # Absent part
-        if not nd.existing:
-            nd.previous = nd.existing = {}
-        elif len(nd.existing) == 1:
+            nd.existing = nd.request(base_path, method="POST", data=payload)
+    elif state == "absent":
+        if len(nd.existing) == 1 or (nd.existing and isinstance(nd.existing, dict)):
             nd.previous = nd.existing
             if not module.check_mode:
+                # TODO: Need to change the url when the api is ready
                 if not import_id:
                     import_id = nd.existing[0].get("metadata").get("id")
                 nd.existing = nd.request("/sedgeapi/v1/firmwared/api/imports/{0}".format(import_id.split("::")[-1]), method="DELETE")
-        else:
+        elif len(nd.existing) > 1 and (nd.existing and isinstance(nd.existing, list)):
             nd.previous = nd.existing
             nd.fail_json(msg="More than one service package found. Provide a unique import_id to delete the service package")
 
