@@ -35,8 +35,9 @@
 - name: Assertions check for import cisco-terraform v0.1.16 from the remote location with check mode
   assert:
     that:
-      - cm_imp_v16 is not changed
-      - cm_imp_v16.current == {}
+      - cm_imp_v16 is changed
+      - cm_imp_v16.current != {}
+      - cm_imp_v16.current.spec.importURL == "http{{':'}}//173.36.219.254/cisco-terraform-v0.1.16.aci"
       - cm_imp_v16.previous == {}
 
 - name: Import cisco-terraform v0.1.16 from the remote location with normal mode
@@ -49,6 +50,7 @@
     <<: *nd_info
     import_id: "{{ nm_imp_v16.current.metadata.id }}"
     state: query
+    output_level: "debug"
   register: query_v16_with_id
   until:
     - query_v16_with_id.current is defined
