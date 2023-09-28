@@ -2,6 +2,9 @@
 requires_ansible: '>=2.9.10'
 action_groups:
   all:
+    - nd_backup
+    - nd_backup_restore
+    - nd_cluster_config_route
     - nd_compliance_analysis
     - nd_compliance_requirement_communication
     - nd_compliance_requirement_config_import
@@ -14,5 +17,6 @@ action_groups:
     - nd_pcv
     - nd_pcv_compliance
     - nd_pcv_delta_analysis
+    - nd_setup
     - nd_site
     - nd_version

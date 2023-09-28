@@ -5,6 +5,23 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 .. contents:: Topics
 
 
+v0.5.0
+======
+
+Release Summary
+---------------
+
+Release v0.5.0 of the ``ansible-nd`` collection on 2023-09-28.
+This changelog describes all changes made to the modules and plugins included in this collection since v0.4.0.
+
+
+Minor Changes
+-------------
+
+- Addition of a new module: nd_backup and its test file
+- Addition of module nd_setup which manages setting up ND
+- Addition of modules:  nd_backup_restore ,  nd_cluster_config_route  and their test files
+
 v0.4.0
 ======
 
