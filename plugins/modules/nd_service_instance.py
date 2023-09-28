@@ -36,12 +36,13 @@ options:
   state:
     description:
     - Use C(enable) for enabling a Service Instance.
-    - Use C(restart) for restarting a Service Instance.
     - Use C(query) for listing all Service Instance.
+    - Use C(restart) for restarting a Service Instance.
+    - Use C(update) for upgrading a Service Instance.
     - Use C(disable) for disabling a Service Instance.
-    - Use C(delete) for deleting a Service Instance. The C(delete) destroys an active service instance directly.
+    - Use C(delete) for deleting a Service Instance.
     type: str
-    choices: [ enable, restart, query, disable, delete ]
+    choices: [ enable, query, restart, update, disable, delete]
     default: enable
 extends_documentation_fragment: cisco.nd.modules
 """
@@ -59,7 +60,7 @@ EXAMPLES = r"""
     name: "cisco-terraform"
     instance_name: "default"
     target_version: "0.1.16"
-    state: enable
+    state: update
 
 - name: Restart a Service Instance
   cisco.nd.nd_service_instance:
@@ -105,7 +106,7 @@ def main():
         name=dict(type="str", aliases=["service_name"]),
         instance_name=dict(type="str", aliases=["service_instance_name"]),
         target_version=dict(type="str"),
-        state=dict(type="str", default="enable", choices=["enable", "query", "disable", "restart", "delete"]),
+        state=dict(type="str", default="enable", choices=["enable", "query", "restart", "update", "disable", "delete"]),
     )
 
     module = AnsibleModule(
@@ -113,6 +114,7 @@ def main():
         supports_check_mode=True,
         required_if=[
             ["state", "enable", ["name", "instance_name", "target_version"]],
+            ["state", "update", ["name", "instance_name", "target_version"]],
             ["state", "restart", ["name", "instance_name"]],
             ["state", "disable", ["name", "instance_name"]],
             ["state", "delete", ["name", "target_version"]],
@@ -152,12 +154,13 @@ def main():
         ["spec", "serviceReference"],
     ]
 
-    if state == "enable":
+    if state == "enable" or (state == "update" and nd.existing):
         payload = {"spec": {"name": instance_name, "serviceName": name, "targetVersion": target_version}}
         nd.sanitize(payload, collate=False, required=None, unwanted=unwanted)
         nd.proposed = payload
+        method, path = ("POST", instance_path) if state == "enable" else ("PUT", absent_instance_path)
         if not module.check_mode:
-            nd.existing = nd.request(instance_path, method="POST", data=payload)
+            nd.existing = nd.request(path, method=method, data=payload)
         else:
             nd.existing = payload
     elif state == "restart" and nd.existing:
@@ -172,8 +175,7 @@ def main():
     elif state == "disable" and nd.existing and not module.check_mode:
         nd.existing = nd.request(absent_instance_path, method="DELETE")
     elif state == "delete" and nd.existing and not module.check_mode:
-        # TODO: Need to change the url when the api is ready
-        nd.existing = nd.request("/sedgeapi/v1/firmwared/api/applications/{0}:{1}/cleanup".format(name, target_version), method="POST")
+        nd.existing = nd.request("/nexus/infra/api/firmware/v1/services/{0}:{1}".format(name, target_version), method="DELETE")
 
     nd.exit_json()
 

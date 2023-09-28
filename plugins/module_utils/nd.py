@@ -400,7 +400,20 @@ class NDModule(object):
     def exit_json(self, **kwargs):
         """Custom written method to exit from module."""
 
-        if self.params.get("state") in ("absent", "present", "upload", "restore", "download", "move", "backup", "enable", "disable", "restart", "delete"):
+        if self.params.get("state") in (
+            "absent",
+            "present",
+            "upload",
+            "restore",
+            "download",
+            "move",
+            "backup",
+            "enable",
+            "disable",
+            "restart",
+            "delete",
+            "update",
+        ):
             if self.params.get("output_level") in ("debug", "info"):
                 self.result["previous"] = self.previous
             # FIXME: Modified header only works for PATCH
@@ -417,7 +430,20 @@ class NDModule(object):
             self.result["url"] = self.url
             self.result["httpapi_logs"] = self.httpapi_logs
 
-            if self.params.get("state") in ("absent", "present", "upload", "restore", "download", "move", "backup", "enable", "disable", "restart", "delete"):
+            if self.params.get("state") in (
+                "absent",
+                "present",
+                "upload",
+                "restore",
+                "download",
+                "move",
+                "backup",
+                "enable",
+                "disable",
+                "restart",
+                "delete",
+                "update",
+            ):
                 self.result["sent"] = self.sent
                 self.result["proposed"] = self.proposed
 
@@ -435,7 +461,20 @@ class NDModule(object):
     def fail_json(self, msg, **kwargs):
         """Custom written method to return info on failure."""
 
-        if self.params.get("state") in ("absent", "present", "upload", "restore", "download", "move", "backup", "enable", "disable", "restart", "delete"):
+        if self.params.get("state") in (
+            "absent",
+            "present",
+            "upload",
+            "restore",
+            "download",
+            "move",
+            "backup",
+            "enable",
+            "disable",
+            "restart",
+            "delete",
+            "update",
+        ):
             if self.params.get("output_level") in ("debug", "info"):
                 self.result["previous"] = self.previous
             # FIXME: Modified header only works for PATCH
@@ -453,7 +492,20 @@ class NDModule(object):
                 self.result["url"] = self.url
                 self.result["httpapi_logs"] = self.httpapi_logs
 
-            if self.params.get("state") in ("absent", "present", "upload", "restore", "download", "move", "backup", "enable", "disable", "restart", "delete"):
+            if self.params.get("state") in (
+                "absent",
+                "present",
+                "upload",
+                "restore",
+                "download",
+                "move",
+                "backup",
+                "enable",
+                "disable",
+                "restart",
+                "delete",
+                "update",
+            ):
                 self.result["sent"] = self.sent
                 self.result["proposed"] = self.proposed
 

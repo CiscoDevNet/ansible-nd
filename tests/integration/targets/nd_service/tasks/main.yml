@@ -132,6 +132,7 @@
 - name: Remove a imported service package with import_id - normal mode
   cisco.nd.nd_service:
     <<: *cm_rm_package_with_id
+    output_level: "debug"
   register: nm_rm_package_with_id
 
 - name: Remove a imported service package with import_id - normal mode again
@@ -149,7 +150,8 @@
       - nm_rm_package_with_id is changed
       - nm_rm_package_with_id.current == {}
       - nm_rm_package_with_id.previous != {}
-      - nm_rm_package_with_id.previous.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - nm_rm_package_with_id.method == "DELETE"
+      - nm_rm_package_with_id.url is match("^http.+?/nexus/infra/api/firmware/v1/servicepackageimports/")
       - nm_rm_package_with_id_again is not changed
       - nm_rm_package_with_id_again.current == {}
       - nm_rm_package_with_id_again.previous == {}
