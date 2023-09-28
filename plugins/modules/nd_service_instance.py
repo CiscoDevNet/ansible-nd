@@ -129,24 +129,15 @@ def main():
     base_path = "/nexus/infra/api/firmware/v1"
     instance_path = "{0}/serviceinstances".format(base_path)
 
-    # To avoid object not found error while querying the object
-    nd.ignore_not_found_error = True
-
-    unwanted = [
-        "metadata",
-        "status",
-        ["spec", "serviceReference"],
-    ]
-
     # Delete part
     if state == "delete":
-        service_object = nd.query_obj("/nexus/infra/api/firmware/v1/services/{0}:{1}".format(name, target_version))
+        service_object = nd.query_obj("/nexus/infra/api/firmware/v1/services/{0}:{1}".format(name, target_version), ignore_not_found_error=True)
         if service_object:
             nd.existing = service_object
     elif name and instance_name:
         # Enable, Disable and Restart part
         absent_instance_path = "{0}/serviceinstances/serviceName/{1}/instanceName/{2}".format(base_path, name, instance_name)
-        service_object = nd.query_obj(absent_instance_path)
+        service_object = nd.query_obj(absent_instance_path, ignore_not_found_error=True)
         if service_object:
             nd.existing = service_object
     else:
@@ -155,12 +146,20 @@ def main():
 
     nd.previous = nd.existing
 
+    unwanted = [
+        "metadata",
+        "status",
+        ["spec", "serviceReference"],
+    ]
+
     if state == "enable":
         payload = {"spec": {"name": instance_name, "serviceName": name, "targetVersion": target_version}}
         nd.sanitize(payload, collate=False, required=None, unwanted=unwanted)
         nd.proposed = payload
         if not module.check_mode:
             nd.existing = nd.request(instance_path, method="POST", data=payload)
+        else:
+            nd.existing = payload
     elif state == "restart" and nd.existing:
         restart_instance_path = "{0}/serviceinstancerestarts/serviceName/{1}/instanceName/{2}".format(base_path, name, instance_name)
         payload = {"spec": {"name": instance_name, "serviceName": name}}
@@ -168,6 +167,8 @@ def main():
         nd.proposed = payload
         if not module.check_mode:
             nd.existing = nd.request(restart_instance_path, method="PUT", data=payload)
+        else:
+            nd.existing = payload
     elif state == "disable" and nd.existing and not module.check_mode:
         nd.existing = nd.request(absent_instance_path, method="DELETE")
     elif state == "delete" and nd.existing and not module.check_mode:

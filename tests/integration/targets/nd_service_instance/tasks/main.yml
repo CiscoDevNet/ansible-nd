@@ -90,8 +90,11 @@
 - name: Assertions check for enable an existing service instance - version 0.1.15 with check mode
   assert:
     that:
-      - cm_enable_service_instance_v15.current is not changed
-      - cm_enable_service_instance_v15.current == {}
+      - cm_enable_service_instance_v15 is changed
+      - cm_enable_service_instance_v15.current != {}
+      - cm_enable_service_instance_v15.current.spec.targetVersion == "0.1.15"
+      - cm_enable_service_instance_v15.current.spec.serviceName == "cisco-terraform"
+      - cm_enable_service_instance_v15.current.spec.name == "default"
 
 - name: Query a service instance with name and instance_name after the check mode enable - version 0.1.15
   cisco.nd.nd_service_instance: &query_service_instance_with_name
@@ -138,17 +141,21 @@
     name: "cisco-terraform"
     instance_name: "default"
     state: restart
+    output_level: "debug"
   register: cm_restart_service_instance_v15
   check_mode: true
 
 - name: Assertions check for restart an existing service instance - version 0.1.15 with check mode
   assert:
     that:
-      - cm_restart_service_instance_v15 is not changed
-      - cm_restart_service_instance_v15.current is defined
+      - cm_restart_service_instance_v15 is changed
+      - cm_restart_service_instance_v15.method == "GET"
+      - cm_restart_service_instance_v15.url is match("^http.+?/nexus/infra/api/firmware/v1/serviceinstances/serviceName/cisco-terraform/instanceName/default")
       - cm_restart_service_instance_v15.current != {}
-      - cm_restart_service_instance_v15.current.status.operState == "Running"
-      - cm_restart_service_instance_v15.current.spec.targetVersion == "0.1.15"
+      - cm_restart_service_instance_v15.current.spec.serviceName == "cisco-terraform"
+      - cm_restart_service_instance_v15.current.spec.name == "default"
+      - cm_restart_service_instance_v15.previous.status.operState == "Running"
+      - cm_restart_service_instance_v15.previous.spec.targetVersion == "0.1.15"
 
 - name: Restart an existing service instance - version 0.1.15 with normal mode
   cisco.nd.nd_service_instance:

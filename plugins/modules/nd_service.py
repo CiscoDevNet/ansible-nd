@@ -107,13 +107,10 @@ def main():
     import_id = nd.params.get("import_id")
     state = nd.params.get("state")
 
-    # To avoid object not found error while querying the object
-    nd.ignore_not_found_error = True
-
     base_path = "/nexus/infra/api/firmware/v1/servicepackageimports"
     if import_id:
         # Query a object with meta id
-        service_package = nd.query_obj("{0}/{1}".format(base_path, import_id))
+        service_package = nd.query_obj("{0}/{1}".format(base_path, import_id), ignore_not_found_error=True)
         if service_package:
             nd.existing = service_package
     elif state == "absent" or state == "query":
@@ -131,6 +128,8 @@ def main():
         nd.proposed = payload
         if not module.check_mode:
             nd.existing = nd.request(base_path, method="POST", data=payload)
+        else:
+            nd.existing = payload
     elif state == "absent":
         if len(nd.existing) == 1 or (nd.existing and isinstance(nd.existing, dict)):
             nd.previous = nd.existing

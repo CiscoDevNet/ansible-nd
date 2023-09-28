@@ -187,7 +187,6 @@ class NDModule(object):
         # nd_rest output
         self.jsondata = None
         self.error = dict(code=None, message=None, info=None)
-        self.ignore_not_found_error = False
 
         # info output
         self.previous = dict()
@@ -209,7 +208,7 @@ class NDModule(object):
             self.module.warn("Enable debug output because ANSIBLE_DEBUG was set.")
             self.params["output_level"] = "debug"
 
-    def request(self, path, method=None, data=None, file=None, qs=None, prefix="", file_key="file", output_format="json"):
+    def request(self, path, method=None, data=None, file=None, qs=None, prefix="", file_key="file", output_format="json", ignore_not_found_error=False):
         """Generic HTTP method for ND requests."""
         self.path = path
 
@@ -293,7 +292,7 @@ class NDModule(object):
                 elif "messages" in payload and len(payload.get("messages")) > 0:
                     self.fail_json(msg="ND Error {code} ({severity}): {message}".format(**payload["messages"][0]), data=data, info=info, payload=payload)
                 else:
-                    if self.ignore_not_found_error:
+                    if ignore_not_found_error:
                         return {}
                     self.fail_json(msg="ND Error: Unknown error no error code in decoded payload".format(**payload), data=data, info=info, payload=payload)
             else:
@@ -307,7 +306,7 @@ class NDModule(object):
     def query_objs(self, path, key=None, **kwargs):
         """Query the ND REST API for objects in a path"""
         found = []
-        objs = self.request(path, method="GET")
+        objs = self.request(path, method="GET", ignore_not_found_error=kwargs.pop("ignore_not_found_error", False))
 
         if objs == {}:
             return found
@@ -331,7 +330,7 @@ class NDModule(object):
     def query_obj(self, path, **kwargs):
         """Query the ND REST API for the whole object at a path"""
         prefix = kwargs.pop("prefix", "")
-        obj = self.request(path, method="GET", prefix=prefix)
+        obj = self.request(path, method="GET", prefix=prefix, ignore_not_found_error=kwargs.pop("ignore_not_found_error", False))
         if obj == {}:
             return {}
         for kw_key, kw_value in kwargs.items():
