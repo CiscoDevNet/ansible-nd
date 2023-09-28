@@ -10,6 +10,26 @@
       output_level: "info"
 
 # Cleanup part
+- name: Disable an active service instance - setup part
+  cisco.nd.nd_service_instance:
+    <<: *nd_info
+    name: "cisco-terraform"
+    instance_name: "default"
+    state: disable
+
+- name: Query a service instance - setup part
+  cisco.nd.nd_service_instance:
+    <<: *nd_info
+    name: "cisco-terraform"
+    instance_name: "default"
+    state: query
+  register: query_service_instance_setup
+  until:
+    - query_service_instance_setup.current is defined
+    - query_service_instance_setup.current == {}
+  retries: 5
+  delay: 5
+
 - name: Delete an existing service instance - v0.1.16
   cisco.nd.nd_service_instance: &del_v16_instance
     <<: *nd_info
@@ -182,69 +202,12 @@
   retries: 5
   delay: 5
 
-- name: Disable an active (0.1.15) service instance with check mode
-  cisco.nd.nd_service_instance: &cm_disable_service_instance_v15
-    <<: *nd_info
-    name: "cisco-terraform"
-    instance_name: "default"
-    state: disable
-  check_mode: true
-  register: cm_disable_service_instance_v15
-
-- name: Assertions check for disable an active (0.1.15) service instance with check mode
-  assert:
-    that:
-      - cm_disable_service_instance_v15 is not changed
-      - cm_disable_service_instance_v15.current is defined
-      - cm_disable_service_instance_v15.current != {}
-      - cm_disable_service_instance_v15.current.status.operState == "Running"
-      - cm_disable_service_instance_v15.current.spec.targetVersion == "0.1.15"
-
-- name: Disable an active (0.1.15) service instance with normal mode
-  cisco.nd.nd_service_instance:
-    <<: *cm_disable_service_instance_v15
-  register: disable_service_instance_v15
-
-- name: Query a service instance with name and instance_name after disable
-  cisco.nd.nd_service_instance:
-    <<: *query_service_instance_with_name
-    state: query
-  register: query_service_instance_v15_after_disable
-  until:
-  - query_service_instance_v15_after_disable.current is defined
-  - query_service_instance_v15_after_disable.current == {}
-  retries: 5
-  delay: 5
-
-- name: Disable an active (0.1.15) service instance with normal mode again
-  cisco.nd.nd_service_instance:
-    <<: *cm_disable_service_instance_v15
-  register: disable_service_instance_v15_again
-
-- name: Assertions check for disable an active (0.1.15) service instance with normal mode
-  assert:
-    that:
-      - disable_service_instance_v15 is changed
-      - disable_service_instance_v15.current is defined
-      - disable_service_instance_v15.current == {}
-      - disable_service_instance_v15_again is not changed
-      - disable_service_instance_v15_again.current == {}
-      - disable_service_instance_v15_again.previous == {}
-
-- name: Query a service instance with name and instance_name
-  cisco.nd.nd_service_instance:
-    <<: *query_service_instance_with_name
-  register: query_service_instance_v15_after_disable
-  until:
-    - query_service_instance_v15_after_disable.current is defined
-    - query_service_instance_v15_after_disable.current == {}
-  retries: 5
-  delay: 5
-
-- name: Upgrade an existing service instance - version 0.1.16
+- name: Update an existing (0.1.15) service instance to version 0.1.16
   cisco.nd.nd_service_instance:
     <<: *enable_service_instance_v15
     target_version: "0.1.16"
+    state: update
+    output_level: debug
   register: upgrade_service_instance_v16
 
 - name: Assertions check for upgrade an existing service instance - version 0.1.16
@@ -253,7 +216,19 @@
       - upgrade_service_instance_v16 is changed
       - upgrade_service_instance_v16.current is defined
       - upgrade_service_instance_v16.current != {}
-      - upgrade_service_instance_v16.current.status.operState == "Enabling"
+      - upgrade_service_instance_v16.current.status.operState == "Updating"
+      - upgrade_service_instance_v16.current.spec.targetVersion == "0.1.16"
+      - upgrade_service_instance_v16.current.spec.serviceName == "cisco-terraform"
+      - upgrade_service_instance_v16.current.spec.name == "default"
+      - upgrade_service_instance_v16.previous.status.operState == "Running"
+      - upgrade_service_instance_v16.previous.spec.targetVersion == "0.1.15"
+      - upgrade_service_instance_v16.previous.spec.serviceName == "cisco-terraform"
+      - upgrade_service_instance_v16.previous.spec.name == "default"
+      - upgrade_service_instance_v16.sent.spec.targetVersion == "0.1.16"
+      - upgrade_service_instance_v16.sent.spec.serviceName == "cisco-terraform"
+      - upgrade_service_instance_v16.sent.spec.name == "default"
+      - upgrade_service_instance_v16.url is match("^http.+?/nexus/infra/api/firmware/v1/serviceinstances/serviceName/cisco-terraform/instanceName/default")
+      - upgrade_service_instance_v16.method == "PUT"
 
 - name: Query a service instance with name and instance_name
   cisco.nd.nd_service_instance:
@@ -334,12 +309,11 @@
       - nm_del_v16_instance.current == {}
       - nm_del_v16_instance.proposed == {}
       - nm_del_v16_instance.previous != {}
-      - nm_del_v16_instance.url is match("^http.+?sedgeapi/v1/firmwared/api/applications/cisco-terraform{{':'}}0.1.16/cleanup")
-      - nm_del_v16_instance.method == "POST"
+      - nm_del_v16_instance.url is match("^http.+?nexus/infra/api/firmware/v1/services/cisco-terraform{{':'}}0.1.16")
+      - nm_del_v16_instance.method == "DELETE"
       - nm_del_v16_instance_again is not changed
       - nm_del_v16_instance_again.current == {}
       - nm_del_v16_instance_again.previous == {}
-
 
 - name: Delete an existing service instance - v01.15 - cleanup part
   cisco.nd.nd_service_instance:

@@ -134,10 +134,7 @@ def main():
         if len(nd.existing) == 1 or (nd.existing and isinstance(nd.existing, dict)):
             nd.previous = nd.existing
             if not module.check_mode:
-                # TODO: Need to change the url when the api is ready
-                if not import_id:
-                    import_id = nd.existing[0].get("metadata").get("id")
-                nd.existing = nd.request("/sedgeapi/v1/firmwared/api/imports/{0}".format(import_id.split("::")[-1]), method="DELETE")
+                nd.existing = nd.request("{0}/{1}".format(base_path, import_id), method="DELETE")
         elif len(nd.existing) > 1 and (nd.existing and isinstance(nd.existing, list)):
             nd.previous = nd.existing
             nd.fail_json(msg="More than one service package found. Provide a unique import_id to delete the service package")
