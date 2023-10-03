@@ -26,9 +26,10 @@ options:
     type: str
   instance_name:
     description:
-    - The name of the Service Instance Profile.
+    - The name of the Service Instance.
     aliases: [ service_instance_name ]
     type: str
+    default: default
   target_version:
     description:
     - The target version of the Service.
@@ -104,7 +105,7 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         name=dict(type="str", aliases=["service_name"]),
-        instance_name=dict(type="str", aliases=["service_instance_name"]),
+        instance_name=dict(type="str", default="default", aliases=["service_instance_name"]),
         target_version=dict(type="str"),
         state=dict(type="str", default="enable", choices=["enable", "query", "restart", "update", "disable", "delete"]),
     )
@@ -113,10 +114,10 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
         required_if=[
-            ["state", "enable", ["name", "instance_name", "target_version"]],
-            ["state", "update", ["name", "instance_name", "target_version"]],
-            ["state", "restart", ["name", "instance_name"]],
-            ["state", "disable", ["name", "instance_name"]],
+            ["state", "enable", ["name", "target_version"]],
+            ["state", "update", ["name", "target_version"]],
+            ["state", "restart", ["name"]],
+            ["state", "disable", ["name"]],
             ["state", "delete", ["name", "target_version"]],
         ],
     )
@@ -145,6 +146,13 @@ def main():
     else:
         # Query all objects
         nd.existing = nd.query_obj(instance_path)
+
+    if state in ("update", "restart", "disable") and not nd.existing:
+        if state == "update":
+            msg = "The service instance name: {0} and target_version: {1} does not exist to perform: {2} operation".format(name, target_version, state)
+        else:
+            msg = "The service instance name: {0} does not exist to perform: {1} operation".format(name, state)
+        nd.fail_json(msg=msg)
 
     nd.previous = nd.existing
 

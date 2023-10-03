@@ -141,3 +141,19 @@ FILTER_BY_ATTIRBUTES_KEYS = {
     "action": "action",
     "leaf": "leaf",
 }
+
+# Allowed states to append sent and proposed values in the task result
+ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED = (
+    "absent",
+    "present",
+    "upload",
+    "restore",
+    "download",
+    "move",
+    "backup",
+    "enable",
+    "disable",
+    "restart",
+    "delete",
+    "update",
+)

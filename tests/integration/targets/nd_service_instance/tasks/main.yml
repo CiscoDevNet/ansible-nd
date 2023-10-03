@@ -16,6 +16,7 @@
     name: "cisco-terraform"
     instance_name: "default"
     state: disable
+  ignore_errors: true
 
 - name: Query a service instance - setup part
   cisco.nd.nd_service_instance:
@@ -338,6 +339,39 @@
   register: nt_enable_without_version
   ignore_errors: true
 
+- name: Upgrade a service instance without target version
+  cisco.nd.nd_service_instance:
+    <<: *nd_info
+    name: "cisco-terraform"
+    state: update
+  register: nt_update_without_version
+  ignore_errors: true
+
+- name: Upgrade a invalid service instance
+  cisco.nd.nd_service_instance:
+    <<: *nd_info
+    name: "invalid_cisco-terraform"
+    target_version: "0.1.16"
+    state: update
+  register: nt_update_invalid_service_instance
+  ignore_errors: true
+
+- name: Restart a invalid service instance
+  cisco.nd.nd_service_instance:
+    <<: *nd_info
+    name: "invalid_cisco-terraform"
+    state: restart
+  register: nt_restart_invalid_service
+  ignore_errors: true
+
+- name: Disable a invalid service instance
+  cisco.nd.nd_service_instance:
+    <<: *nd_info
+    name: "invalid_cisco-terraform"
+    state: restart
+  register: nt_disable_invalid_service
+  ignore_errors: true
+
 - name: Delete a service instance without target version
   cisco.nd.nd_service_instance:
     <<: *nd_info
@@ -347,33 +381,21 @@
   register: nt_delete_without_version
   ignore_errors: true
 
-- name: Restart a service instance without instance name
-  cisco.nd.nd_service_instance:
-    <<: *nd_info
-    name: "cisco-terraform"
-    state: restart
-  register: nt_restart_without_instance_name
-  ignore_errors: true
-
-- name: Disable a service instance without instance name
-  cisco.nd.nd_service_instance:
-    <<: *nd_info
-    name: "cisco-terraform"
-    state: restart
-  register: nt_disable_without_instance_name
-  ignore_errors: true
-
 - name: Assertions check for negative tests
   assert:
     that:
       - nt_enable_without_version is not changed
       - nt_enable_without_version.msg == "state is enable but all of the following are missing{{':'}} target_version"
+      - nt_update_without_version is not changed
+      - nt_update_without_version.msg == "state is update but all of the following are missing{{':'}} target_version"
+      - nt_update_invalid_service_instance is not changed
+      - nt_update_invalid_service_instance.msg == "The service instance name{{':'}} invalid_cisco-terraform and target_version{{':'}} 0.1.16 does not exist to perform{{':'}} update operation"
+      - nt_restart_invalid_service is not changed
+      - nt_restart_invalid_service.msg == "The service instance name{{':'}} invalid_cisco-terraform does not exist to perform{{':'}} restart operation"
+      - nt_disable_invalid_service is not changed
+      - nt_disable_invalid_service.msg == "The service instance name{{':'}} invalid_cisco-terraform does not exist to perform{{':'}} restart operation"
       - nt_delete_without_version is not changed
       - nt_delete_without_version.msg == "state is delete but all of the following are missing{{':'}} target_version"
-      - nt_restart_without_instance_name is not changed
-      - nt_restart_without_instance_name.msg == "state is restart but all of the following are missing{{':'}} instance_name"
-      - nt_disable_without_instance_name is not changed
-      - nt_disable_without_instance_name.msg == "state is restart but all of the following are missing{{':'}} instance_name"
 
 # Remove all imported service packages
 - name: Query all imported service packages - cleanup
