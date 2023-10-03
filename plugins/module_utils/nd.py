@@ -22,6 +22,7 @@ from ansible.module_utils.six.moves import filterfalse
 from ansible.module_utils.six.moves.urllib.parse import urlencode
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import Connection
+from ansible_collections.cisco.nd.plugins.module_utils.constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
 
 
 def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
@@ -400,20 +401,7 @@ class NDModule(object):
     def exit_json(self, **kwargs):
         """Custom written method to exit from module."""
 
-        if self.params.get("state") in (
-            "absent",
-            "present",
-            "upload",
-            "restore",
-            "download",
-            "move",
-            "backup",
-            "enable",
-            "disable",
-            "restart",
-            "delete",
-            "update",
-        ):
+        if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
             if self.params.get("output_level") in ("debug", "info"):
                 self.result["previous"] = self.previous
             # FIXME: Modified header only works for PATCH
@@ -430,20 +418,7 @@ class NDModule(object):
             self.result["url"] = self.url
             self.result["httpapi_logs"] = self.httpapi_logs
 
-            if self.params.get("state") in (
-                "absent",
-                "present",
-                "upload",
-                "restore",
-                "download",
-                "move",
-                "backup",
-                "enable",
-                "disable",
-                "restart",
-                "delete",
-                "update",
-            ):
+            if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
                 self.result["sent"] = self.sent
                 self.result["proposed"] = self.proposed
 
@@ -461,20 +436,7 @@ class NDModule(object):
     def fail_json(self, msg, **kwargs):
         """Custom written method to return info on failure."""
 
-        if self.params.get("state") in (
-            "absent",
-            "present",
-            "upload",
-            "restore",
-            "download",
-            "move",
-            "backup",
-            "enable",
-            "disable",
-            "restart",
-            "delete",
-            "update",
-        ):
+        if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
             if self.params.get("output_level") in ("debug", "info"):
                 self.result["previous"] = self.previous
             # FIXME: Modified header only works for PATCH
@@ -492,20 +454,7 @@ class NDModule(object):
                 self.result["url"] = self.url
                 self.result["httpapi_logs"] = self.httpapi_logs
 
-            if self.params.get("state") in (
-                "absent",
-                "present",
-                "upload",
-                "restore",
-                "download",
-                "move",
-                "backup",
-                "enable",
-                "disable",
-                "restart",
-                "delete",
-                "update",
-            ):
+            if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
                 self.result["sent"] = self.sent
                 self.result["proposed"] = self.proposed
 
