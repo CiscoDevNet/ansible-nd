@@ -356,47 +356,51 @@ class NDModule(object):
             required = []
         if unwanted is None:
             unwanted = []
-        self.proposed = deepcopy(self.existing)
-        self.sent = deepcopy(self.existing)
+        if isinstance(self.existing, dict):
+            self.proposed = deepcopy(self.existing)
+            self.sent = deepcopy(self.existing)
 
-        for key in self.existing:
-            # Remove References
-            if key.endswith("Ref"):
-                del self.proposed[key]
-                del self.sent[key]
-                continue
-
-            # Removed unwanted keys
-            elif key in unwanted:
-                del self.proposed[key]
-                del self.sent[key]
-                continue
-
-        # Clean up self.sent
-        for key in updates:
-            # Always retain 'id'
-            if key in required:
-                if key in self.existing or updates.get(key) is not None:
-                    self.sent[key] = updates.get(key)
-                continue
-
-            # Remove unspecified values
-            elif not collate and updates.get(key) is None:
-                if key in self.existing:
+            for key in self.existing:
+                # Remove References
+                if key.endswith("Ref"):
+                    del self.proposed[key]
                     del self.sent[key]
-                continue
+                    continue
 
-            # Remove identical values
-            elif not collate and updates.get(key) == self.existing.get(key):
-                del self.sent[key]
-                continue
+                # Removed unwanted keys
+                elif key in unwanted:
+                    del self.proposed[key]
+                    del self.sent[key]
+                    continue
 
-            # Add everything else
-            if updates.get(key) is not None:
-                self.sent[key] = updates.get(key)
+            # Clean up self.sent
+            for key in updates:
+                # Always retain 'id'
+                if key in required:
+                    if key in self.existing or updates.get(key) is not None:
+                        self.sent[key] = updates.get(key)
+                    continue
 
-        # Update self.proposed
-        self.proposed.update(self.sent)
+                # Remove unspecified values
+                elif not collate and updates.get(key) is None:
+                    if key in self.existing:
+                        del self.sent[key]
+                    continue
+
+                # Remove identical values
+                elif not collate and updates.get(key) == self.existing.get(key):
+                    del self.sent[key]
+                    continue
+
+                # Add everything else
+                if updates.get(key) is not None:
+                    self.sent[key] = updates.get(key)
+
+            # Update self.proposed
+            self.proposed.update(self.sent)
+        else:
+            self.module.warn("Unable to sanitize the proposed and sent attributes because the current object is not a dictionary")
+            self.proposed = self.sent = deepcopy(updates)
 
     def exit_json(self, **kwargs):
         """Custom written method to exit from module."""

@@ -8,6 +8,7 @@
   set_fact:
     nd_info: &nd_info
       output_level: "info"
+      timeout: 90
 
 # Cleanup part - remove all imported service packages
 - name: Query all imported service packages to clear the environment
@@ -38,7 +39,7 @@
       - cm_imp_v16 is changed
       - cm_imp_v16.current != {}
       - cm_imp_v16.current.spec.importURL == "http{{':'}}//173.36.219.254/cisco-terraform-v0.1.16.aci"
-      - cm_imp_v16.previous == {}
+      - cm_imp_v16.previous == []
 
 - name: Import cisco-terraform v0.1.16 from the remote location with normal mode
   cisco.nd.nd_service: &nm_imp_v16
@@ -81,6 +82,25 @@
     - query_v16_with_id_again.current.status.downloadPercentage == 100
   retries: 5
   delay: 5
+
+- name: Assertions check for import cisco-terraform v0.1.16 from the remote location with normal mode
+  assert:
+    that:
+      - nm_imp_v16 is changed
+      - nm_imp_v16.current != {}
+      - nm_imp_v16.current.spec.importURL == "http{{':'}}//173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - nm_imp_v16.current.status.importStatus == "Downloading"
+      - nm_imp_v16.previous == []
+      - nm_imp_v16_again is changed
+      - nm_imp_v16_again.current != {}
+      - nm_imp_v16_again.current.spec.importURL == "http{{':'}}//173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - nm_imp_v16_again.current.status.importStatus == "Downloading"
+      - nm_imp_v16_again.previous != []
+      - nm_imp_v16_again_1 is changed
+      - nm_imp_v16_again_1.current != {}
+      - nm_imp_v16_again_1.current.spec.importURL == "http{{':'}}//173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - nm_imp_v16_again_1.current.status.importStatus == "Downloading"
+      - nm_imp_v16_again_1.previous != []
 
 - name: Import cisco-terraform v0.1.15 from the remote location with normal mode
   cisco.nd.nd_service:
@@ -212,6 +232,9 @@
     <<: *nd_info
     state: query
   register: query_all_packages_env_cleanup_again
+  until:
+    - query_all_packages_env_cleanup_again.current is defined
+    - query_all_packages_env_cleanup_again.current == []
 
 - name: Assertions check for query all imported service packages again
   assert:
