@@ -31,7 +31,7 @@ options:
     type: str
   state:
     description:
-    - Use C(present) for importing a Service Package.
+    - Use C(present) for importing a Service Package. The C(present) state is not idempotent.
     - Use C(query) for listing all Service Packages.
     - Use C(absent) for deleting a Service Package.
     type: str
@@ -45,33 +45,48 @@ EXAMPLES = r"""
   cisco.nd.nd_service:
     import_url: "https://nd_service.cisco.com/cisco-terraform-v0.1.16.aci"
     state: present
-
-- name: Query a service package with import_url
-  cisco.nd.nd_service:
-    import_url: "https://nd_service.cisco.com/cisco-terraform-v0.1.16.aci"
-    state: query
-  register: query_result
+  register: import_result
 
 - name: Query a service package with import_id
   cisco.nd.nd_service:
-    import_id: "firmware::v1::ServicePackageImport::e5c480e0-71b2-4ccb-9bb0-b9c174a5731b"
+    import_id: "{{ import_result.current.metadata.id }}"
     state: query
-  register: query_result
-
-- name: Query all service packages
-  cisco.nd.nd_service:
-    state: query
-  register: query_results
+  register: query_result_import_id
+  until:
+    - query_result_import_id.current is defined
+    - query_result_import_id.current != {}
+    - query_result_import_id.current.status.downloadPercentage == 100
+  retries: 5
+  delay: 5
 
 - name: Remove a service package with import_id
   cisco.nd.nd_service:
-    import_id: "firmware::v1::ServicePackageImport::e5c480e0-71b2-4ccb-9bb0-b9c174a5731b"
+    import_id: "{{ query_result_import_id.current.metadata.id }}"
     state: absent
 
+# When the import_url has exactly one match
 - name: Remove a service package with import_url
   cisco.nd.nd_service:
-    import_url: "https://nd_service.cisco.com/cisco-terraform-v0.1.16.aci"
+    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
     state: absent
+
+- name: Query all service packages with import_url
+  cisco.nd.nd_service:
+    import_url: "https://nd_service.cisco.com/cisco-terraform-v0.1.16.aci"
+    state: query
+  register: query_reseult_import_url
+
+# When the query_reseult_import_url has more than one match
+- name: Remove all query_reseult_import_url result service packages with import_id
+  cisco.nd.nd_service:
+    import_id: "{{ item.metadata.id }}"
+    state: absent
+  loop: "{{ query_reseult_import_url.current }}"
+
+- name: Query all imported service packages
+  cisco.nd.nd_service:
+    state: query
+  register: query_results
 """
 
 RETURN = r"""
@@ -113,30 +128,29 @@ def main():
         service_package = nd.query_obj("{0}/{1}".format(base_path, import_id), ignore_not_found_error=True)
         if service_package:
             nd.existing = service_package
-    elif state == "absent" or state == "query":
+    else:
         service_packages = nd.query_obj(base_path)
         if import_url:
-            # Query all objects with import url
+            # Filter all objects with import url
             nd.existing = [service_package for service_package in service_packages.get("items") if service_package.get("spec").get("importURL") == import_url]
         else:
-            # Query all objects
             nd.existing = service_packages.get("items")
 
+    nd.previous = nd.existing
+
+    # The state present is not idempotent
     if state == "present":
         payload = {"spec": {"importURL": import_url}}
         nd.sanitize(payload, collate=True)
-        nd.proposed = payload
         if not module.check_mode:
             nd.existing = nd.request(base_path, method="POST", data=payload)
         else:
             nd.existing = payload
     elif state == "absent":
         if len(nd.existing) == 1 or (nd.existing and isinstance(nd.existing, dict)):
-            nd.previous = nd.existing
             if not module.check_mode:
                 nd.existing = nd.request("{0}/{1}".format(base_path, import_id), method="DELETE")
         elif len(nd.existing) > 1 and (nd.existing and isinstance(nd.existing, list)):
-            nd.previous = nd.existing
             nd.fail_json(msg="More than one service package found. Provide a unique import_id to delete the service package")
 
     nd.exit_json()

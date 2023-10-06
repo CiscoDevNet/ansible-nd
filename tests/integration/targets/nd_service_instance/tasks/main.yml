@@ -8,6 +8,7 @@
   set_fact:
     nd_info: &nd_info
       output_level: "info"
+      timeout: 90
 
 # Cleanup part
 - name: Disable an active service instance - setup part
