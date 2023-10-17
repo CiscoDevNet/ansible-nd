@@ -63,6 +63,23 @@ options:
     - All Policy CAM Rules by Hit Count by Filters.
     type: bool
     default: false
+  filter_by_attributes:
+    description:
+    - Container for all filter by attributes pairs.
+    type: list
+    elements: dict
+    suboptions:
+      key:
+        description:
+        - The key of the attribute to match.
+        type: str
+        required: true
+        choices: [ providerEpgName, consumerEpgName, contractName, filterName, consumerVrfName, action, leaf ]
+      value:
+        description:
+        - The value of the attribute to match.
+        type: str
+        required: true
 extends_documentation_fragment:
 - cisco.nd.modules
 """
@@ -72,11 +89,30 @@ EXAMPLES = r"""
   cisco.nd.nd_policy_cam_statistics_hit_counts:
     insights_group: igName
     site: siteName
-    epoch_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
     epgs: true
     tenants: true
     leafs: true
-    state: query
+  register: query_results
+
+- name: Get Policy CAM Statistics Hit Counts for epgs, with a specific epoch_id
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    insights_group: igName
+    site: siteName
+    epoch_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
+    epgs: true
+  register: query_results
+
+- name: Get Policy CAM Statistics Hit Counts for contracts, filters, and a attributes filtering
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    insights_group: igName
+    site: siteName
+    contracts: true
+    filters: true
+    filter_by_attributes:
+      - key: providerEpgName
+        value: log_epg
+      - key: consumerEpgName
+        value: app_epg
   register: query_results
 """
 
@@ -99,6 +135,18 @@ def main():
         leafs=dict(type="bool", default=False),
         contracts=dict(type="bool", default=False),
         filters=dict(type="bool", default=False),
+        filter_by_attributes=dict(
+            type="list",
+            elements="dict",
+            options=dict(
+                key=dict(
+                    type="str",
+                    required=True,
+                    choices=["providerEpgName", "consumerEpgName", "contractName", "filterName", "consumerVrfName", "action", "leaf"],
+                ),
+                value=dict(type="str", required=True),
+            ),
+        ),
     )
 
     module = AnsibleModule(
@@ -117,6 +165,7 @@ def main():
     leafs = nd.params.get("leafs")
     contracts = nd.params.get("contracts")
     filters = nd.params.get("filters")
+    filter_by_attributes = nd.params.get("filter_by_attributes")
 
     if tenants and (contracts or filters):
         module.fail_json(msg="cannot specify contracts or filters with tenants")
@@ -143,8 +192,13 @@ def main():
     else:
         module.fail_json(msg="must specify at least epgs or tenants")
 
-    path = "{0}/model/aciPolicy/tcam/hitcountByRules/{1}?%24epochId={2}&%24view=histogram".format(
-        ndi.event_insight_group_path.format(insights_group, site), hit_count_pair, epoch_id
+    filter_by_attributes_result = ""
+    if filter_by_attributes:
+        filter_by_attributes_result = "&%24filter="
+        filter_by_attributes_result += "%2C".join(["{0}%3A{1}".format(x.get("key"), x.get("value")) for x in filter_by_attributes])
+
+    path = "{0}/model/aciPolicy/tcam/hitcountByRules/{1}?%24epochId={2}&%24view=histogram{3}".format(
+        ndi.event_insight_group_path.format(insights_group, site), hit_count_pair, epoch_id, filter_by_attributes_result
     )
 
     response = nd.request(path, method="GET", prefix=ndi.prefix)

@@ -109,6 +109,20 @@
     epoch_id: "{{ period_last_week.current.epochId }}"
   register: statistics_tenants_epoch
 
+- name: Query statistics for contract and filters with filter_by_attributes
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+    contracts: true
+    filters: true
+    filter_by_attributes:
+      - key: providerEpgName
+        value: log_epg
+      - key: consumerEpgName
+        value: app_epg
+  register: statistics_contract_filters_filter_by_attributes
+
+
 - name: Verify correct hitcountByRules is used
   assert:
     that:
@@ -124,6 +138,7 @@
       - '"hitcountByTenantPairLeaf?" in statistics_tenants_leafs.url'
       - '"hitcountByTenantPair?" in statistics_tenants.url'
       - '"{{ period_last_week.current.epochId }}" in statistics_tenants_epoch.url'
+      - '"filter=providerEpgName%3Alog_epg%2CconsumerEpgName%3Aapp_epg" in statistics_contract_filters_filter_by_attributes.url'
 
 # FAIL TESTS WRONG INPUT CHOICE
 
