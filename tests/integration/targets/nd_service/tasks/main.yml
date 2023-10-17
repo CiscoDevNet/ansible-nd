@@ -28,7 +28,7 @@
 - name: Import cisco-terraform v0.1.16 from the remote location with check mode
   cisco.nd.nd_service: &cm_imp_v16
     <<: *nd_info
-    import_url: "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+    import_url: "http://{{ service_package_host }}/cisco-terraform-v0.1.16.aci"
     state: present
   register: cm_imp_v16
   check_mode: true
@@ -38,7 +38,7 @@
     that:
       - cm_imp_v16 is changed
       - cm_imp_v16.current != {}
-      - cm_imp_v16.current.spec.importURL == "http{{':'}}//173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - cm_imp_v16.current.spec.importURL == "http{{':'}}//{{ service_package_host }}/cisco-terraform-v0.1.16.aci"
       - cm_imp_v16.previous == []
 
 - name: Import cisco-terraform v0.1.16 from the remote location with normal mode
@@ -88,24 +88,24 @@
     that:
       - nm_imp_v16 is changed
       - nm_imp_v16.current != {}
-      - nm_imp_v16.current.spec.importURL == "http{{':'}}//173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - nm_imp_v16.current.spec.importURL == "http{{':'}}//{{ service_package_host }}/cisco-terraform-v0.1.16.aci"
       - nm_imp_v16.current.status.importStatus == "Downloading"
       - nm_imp_v16.previous == []
       - nm_imp_v16_again is changed
       - nm_imp_v16_again.current != {}
-      - nm_imp_v16_again.current.spec.importURL == "http{{':'}}//173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - nm_imp_v16_again.current.spec.importURL == "http{{':'}}//{{ service_package_host }}/cisco-terraform-v0.1.16.aci"
       - nm_imp_v16_again.current.status.importStatus == "Downloading"
       - nm_imp_v16_again.previous != []
       - nm_imp_v16_again_1 is changed
       - nm_imp_v16_again_1.current != {}
-      - nm_imp_v16_again_1.current.spec.importURL == "http{{':'}}//173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - nm_imp_v16_again_1.current.spec.importURL == "http{{':'}}//{{ service_package_host }}/cisco-terraform-v0.1.16.aci"
       - nm_imp_v16_again_1.current.status.importStatus == "Downloading"
       - nm_imp_v16_again_1.previous != []
 
 - name: Import cisco-terraform v0.1.15 from the remote location with normal mode
   cisco.nd.nd_service:
     <<: *cm_imp_v16
-    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+    import_url: "http://{{ service_package_host }}/cisco-terraform-v0.1.15.aci"
   register: nm_imp_v15
 
 - name: Query all imported service packages
@@ -117,7 +117,7 @@
 - name: Query all imported service packages with import_url
   cisco.nd.nd_service:
     <<: *nd_info
-    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+    import_url: "http://{{ service_package_host }}/cisco-terraform-v0.1.15.aci"
     state: query
   register: query_all_packages_with_url
 
@@ -135,11 +135,11 @@
       - query_all_packages.current != []
       - query_package_with_id is not changed
       - query_package_with_id.current.status.downloadPercentage == 100
-      - query_package_with_id.current.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+      - query_package_with_id.current.spec.importURL == "http://{{ service_package_host }}/cisco-terraform-v0.1.15.aci"
       - query_all_packages_with_url is not changed
       - query_all_packages_with_url.current | length == 1
       - query_all_packages_with_url.current.0.status.downloadPercentage == 100
-      - query_all_packages_with_url.current.0.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+      - query_all_packages_with_url.current.0.spec.importURL == "http://{{ service_package_host }}/cisco-terraform-v0.1.15.aci"
 
 - name: Remove a imported service package with import_id - check mode
   cisco.nd.nd_service: &cm_rm_package_with_id
@@ -166,7 +166,7 @@
       - cm_rm_package_with_id is not changed
       - cm_rm_package_with_id.current != {}
       - cm_rm_package_with_id.previous != {}
-      - cm_rm_package_with_id.current.spec.importURL == cm_rm_package_with_id.previous.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+      - cm_rm_package_with_id.current.spec.importURL == cm_rm_package_with_id.previous.spec.importURL == "http://{{ service_package_host }}/cisco-terraform-v0.1.16.aci"
       - nm_rm_package_with_id is changed
       - nm_rm_package_with_id.current == {}
       - nm_rm_package_with_id.previous != {}
@@ -179,7 +179,7 @@
 - name: Remove a imported service package with import_url
   cisco.nd.nd_service:
     <<: *nd_info
-    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+    import_url: "http://{{ service_package_host }}/cisco-terraform-v0.1.15.aci"
     state: absent
   register: rm_package_with_url
 
@@ -189,12 +189,12 @@
       - rm_package_with_url is changed
       - rm_package_with_url.current == {}
       - rm_package_with_url.previous != []
-      - rm_package_with_url.previous.0.spec.importURL == "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+      - rm_package_with_url.previous.0.spec.importURL == "http://{{ service_package_host }}/cisco-terraform-v0.1.15.aci"
 
 - name: Remove a imported service package with import_url to catch errors
   cisco.nd.nd_service:
     <<: *nd_info
-    import_url: "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+    import_url: "http://{{ service_package_host }}/cisco-terraform-v0.1.16.aci"
     state: absent
   register: nt_rm_package_with_url
   ignore_errors: true
@@ -246,7 +246,7 @@
 - name: Invalid test - Remove a imported service package with import_url
   cisco.nd.nd_service:
     <<: *nd_info
-    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+    import_url: "http://{{ service_package_host }}/cisco-terraform-v0.1.15.aci"
     import_id: "xyz"
     state: absent
   register: nt_rm_package

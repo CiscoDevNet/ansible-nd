@@ -32,7 +32,7 @@ options:
   state:
     description:
     - Use C(present) for importing a Service Package. The C(present) state is not idempotent.
-    - Use C(query) for listing all Service Packages.
+    - Use C(query) for listing all the Service Packages.
     - Use C(absent) for deleting a Service Package.
     type: str
     choices: [ present, query, absent ]
@@ -64,10 +64,9 @@ EXAMPLES = r"""
     import_id: "{{ query_result_import_id.current.metadata.id }}"
     state: absent
 
-# When the import_url has exactly one match
-- name: Remove a service package with import_url
+- name: Remove a service package with import_url that has one match
   cisco.nd.nd_service:
-    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+    import_url: "http://nd_service.cisco.com/cisco-terraform-v0.1.15.aci"
     state: absent
 
 - name: Query all service packages with import_url
@@ -76,8 +75,7 @@ EXAMPLES = r"""
     state: query
   register: query_reseult_import_url
 
-# When the query_reseult_import_url has more than one match
-- name: Remove all query_reseult_import_url result service packages with import_id
+- name: Remove all service packages with import_id when the query_result_import_url has more than one match
   cisco.nd.nd_service:
     import_id: "{{ item.metadata.id }}"
     state: absent
