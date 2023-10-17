@@ -37,7 +37,7 @@ options:
   state:
     description:
     - Use C(enable) for enabling a Service Instance.
-    - Use C(query) for listing all Service Instance.
+    - Use C(query) for listing all Service Instances.
     - Use C(restart) for restarting a Service Instance.
     - Use C(update) for upgrading a Service Instance.
     - Use C(disable) for disabling a Service Instance.

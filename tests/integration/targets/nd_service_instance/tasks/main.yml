@@ -62,7 +62,7 @@
 - name: Install cisco-terraform v0.1.16 from the remote location
   cisco.nd.nd_service:
     <<: *nd_info
-    import_url: "http://173.36.219.254/cisco-terraform-v0.1.16.aci"
+    import_url: "http://{{ service_package_host }}/cisco-terraform-v0.1.16.aci"
     state: present
   register: install_v16
 
@@ -82,7 +82,7 @@
 - name: Install cisco-terraform v0.1.15 from the remote location
   cisco.nd.nd_service:
     <<: *nd_info
-    import_url: "http://173.36.219.254/cisco-terraform-v0.1.15.aci"
+    import_url: "http://{{ service_package_host }}/cisco-terraform-v0.1.15.aci"
     state: present
   register: install_v15
 

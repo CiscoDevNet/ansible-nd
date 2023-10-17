@@ -26,3 +26,4 @@ management_ip=<TODO>
 management_gateway=<TODO>
 data_ip=<TODO>
 data_gateway=<TODO>
+service_package_host=173.36.219.254
