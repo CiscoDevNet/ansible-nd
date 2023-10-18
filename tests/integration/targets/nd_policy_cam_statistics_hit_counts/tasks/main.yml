@@ -1,5 +1,5 @@
 # Test code for the ND modules
-# Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+# Copyright: (c) 2023, Akini Ross (@akinross) <akinross@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -122,7 +122,6 @@
         value: app_epg
   register: statistics_contract_filters_filter_by_attributes
 
-
 - name: Verify correct hitcountByRules is used
   assert:
     that:
@@ -139,6 +138,23 @@
       - '"hitcountByTenantPair?" in statistics_tenants.url'
       - '"{{ period_last_week.current.epochId }}" in statistics_tenants_epoch.url'
       - '"filter=providerEpgName%3Alog_epg%2CconsumerEpgName%3Aapp_epg" in statistics_contract_filters_filter_by_attributes.url'
+
+# OUTPUT TEST
+
+- name: Query statistics for epgs, leafs, contracts, filters, and output to csv file
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+    contracts: true
+    filters: true
+    output_csv: hits.csv
+
+- name: Query statistics for tenants, leafs, and output to csv file
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    tenants: true
+    leafs: true
+    output_csv: hits.csv
 
 # FAIL TESTS WRONG INPUT CHOICE
 

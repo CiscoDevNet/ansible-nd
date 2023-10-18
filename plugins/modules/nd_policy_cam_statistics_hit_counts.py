@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+# Copyright: (c) 2023, Akini Ross (@akinross) <akinross@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -29,7 +29,7 @@ options:
     aliases: [ fab_name, ig_name ]
   site:
     description:
-    - Name of the Assurance Entity to set as baseline.
+    - The name of the site.
     type: str
     required: true
     aliases: [ site_name ]
@@ -37,6 +37,7 @@ options:
     description:
     - The id of the epoch.
     - When epoch id is not provided it will retrieve the latest known epoch id.
+    - The M(cisco.nd.nd_epoch) can be used to retrieve a specific epoch id.
     type: str
   epgs:
     description:
@@ -80,6 +81,11 @@ options:
         - The value of the attribute to match.
         type: str
         required: true
+  output_csv:
+    description:
+    - Path to a file to save the generated csv file.
+    - When extension is not matching .csv it will be added automatically.
+    type: str
 extends_documentation_fragment:
 - cisco.nd.modules
 """
@@ -114,10 +120,23 @@ EXAMPLES = r"""
       - key: consumerEpgName
         value: app_epg
   register: query_results
+
+- name: Get Policy CAM Statistics Hit Counts for epgs, leafs, contracts, filters, and output to csv
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    insights_group: igName
+    site: siteName
+    epgs: true
+    leafs: true
+    contracts: true
+    filters: true
+    output_csv: hits.csv
+  register: query_results
 """
 
 RETURN = r"""
 """
+
+import csv
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
@@ -147,6 +166,7 @@ def main():
                 value=dict(type="str", required=True),
             ),
         ),
+        output_csv=dict(type="str"),
     )
 
     module = AnsibleModule(
@@ -166,6 +186,7 @@ def main():
     contracts = nd.params.get("contracts")
     filters = nd.params.get("filters")
     filter_by_attributes = nd.params.get("filter_by_attributes")
+    output_csv = nd.params.get("output_csv")
 
     if tenants and (contracts or filters):
         module.fail_json(msg="cannot specify contracts or filters with tenants")
@@ -205,7 +226,54 @@ def main():
 
     nd.existing = response.get("value", {})
 
+    if output_csv:
+        output_csv = output_csv if output_csv.endswith(".csv") else "{0}.csv".format(output_csv)
+        with open(output_csv, "w") as csvfile:
+            csv_writer = csv.writer(csvfile, delimiter=",")
+            csv_writer.writerow(get_header_row(epgs, tenants, leafs, contracts, filters))
+            for bucket in nd.existing.get("data", []):
+                csv_writer.writerow(get_data_row(epgs, tenants, leafs, contracts, filters, bucket))
+
     nd.exit_json()
+
+
+def get_header_row(epgs, tenants, leafs, contracts, filters):
+    header_row = []
+    if epgs:
+        header_row.extend(["Provider Epg", "Consumer Epg"])
+    if tenants:
+        header_row.extend(["Provider Tenant", "Consumer Tenant"])
+    if leafs:
+        header_row.extend(["Leaf"])
+    if contracts:
+        header_row.extend(["Contract"])
+    if filters:
+        header_row.extend(["Filter"])
+    header_row.extend(["Consumer VRF", "Action", "Cumulative", "Policy Cam Count"])
+    return header_row
+
+
+def get_data_row(epgs, tenants, leafs, contracts, filters, bucket):
+    data_row = []
+    if epgs:
+        data_row.extend([bucket.get("bucket", {}).get("providerEpg", {}).get("name"), bucket.get("bucket", {}).get("consumerEpg", {}).get("name")])
+    if tenants:
+        data_row.extend([bucket.get("bucket", {}).get("providerTenant", {}).get("name"), bucket.get("bucket", {}).get("consumerTenant", {}).get("name")])
+    if leafs:
+        data_row.extend([bucket.get("bucket", {}).get("leaf", {}).get("nodeName")])
+    if contracts:
+        data_row.extend([bucket.get("bucket", {}).get("contract", {}).get("name")])
+    if filters:
+        data_row.extend([bucket.get("bucket", {}).get("filter", {}).get("name")])
+    data_row.extend(
+        [
+            bucket.get("bucket", {}).get("consumerVrf", {}).get("name"),
+            bucket.get("bucket", {}).get("action"),
+            bucket.get("output", {}).get("cumulativeCount"),
+            bucket.get("output", {}).get("tcamEntryCount"),
+        ]
+    )
+    return data_row
 
 
 if __name__ == "__main__":
