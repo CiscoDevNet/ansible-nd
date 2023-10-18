@@ -116,9 +116,9 @@
     contracts: true
     filters: true
     filter_by_attributes:
-      - key: providerEpgName
+      - key: provider_epg
         value: log_epg
-      - key: consumerEpgName
+      - key: consumer_epg
         value: app_epg
   register: statistics_contract_filters_filter_by_attributes
 

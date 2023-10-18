@@ -75,7 +75,7 @@ options:
         - The key of the attribute to match.
         type: str
         required: true
-        choices: [ providerEpgName, consumerEpgName, contractName, filterName, consumerVrfName, action, leaf ]
+        choices: [ provider_epg, consumer_epg, provider_tenant, consumer_tenant, contract, filter, consumer_vrf, action, leaf ]
       value:
         description:
         - The value of the attribute to match.
@@ -141,6 +141,7 @@ import csv
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
+from ansible_collections.cisco.nd.plugins.module_utils.constants import FILTER_BY_ATTIRBUTES_KEYS
 
 
 def main():
@@ -161,7 +162,7 @@ def main():
                 key=dict(
                     type="str",
                     required=True,
-                    choices=["providerEpgName", "consumerEpgName", "contractName", "filterName", "consumerVrfName", "action", "leaf"],
+                    choices=list(FILTER_BY_ATTIRBUTES_KEYS.keys()),
                 ),
                 value=dict(type="str", required=True),
             ),
@@ -216,7 +217,9 @@ def main():
     filter_by_attributes_result = ""
     if filter_by_attributes:
         filter_by_attributes_result = "&%24filter="
-        filter_by_attributes_result += "%2C".join(["{0}%3A{1}".format(x.get("key"), x.get("value")) for x in filter_by_attributes])
+        filter_by_attributes_result += "%2C".join(
+            ["{0}%3A{1}".format(FILTER_BY_ATTIRBUTES_KEYS.get(x.get("key")), x.get("value")) for x in filter_by_attributes]
+        )
 
     path = "{0}/model/aciPolicy/tcam/hitcountByRules/{1}?%24epochId={2}&%24view=histogram{3}".format(
         ndi.event_insight_group_path.format(insights_group, site), hit_count_pair, epoch_id, filter_by_attributes_result

@@ -129,3 +129,15 @@ TCP_FLAGS = {"ack": "ACKNOWLEDGEMENT", "est": "ESTABLISHED", "fin": "FINISH", "r
 EPOCH_DELTA_TYPES = {"latest": 0, "last_15_min": 900, "last_hour": 3600, "last_2_hours": 7200, "last_6_hours": 21600, "last_day": 86400, "last_week": 604800}
 
 SITE_TYPE_MAP = {"aci": "ACI", "dcnm": "DCNM", "third_party": "ThirdParty", "cloud_aci": "CloudACI", "dcnm_ng": "DCNMNG", "ndfc": "NDFC"}
+
+FILTER_BY_ATTIRBUTES_KEYS = {
+    "provider_epg": "providerEpgName",
+    "consumer_epg": "consumerEpgName",
+    "provider_tenant": "providerTenantName",
+    "consumer_tenant": "consumerTenantName",
+    "contract": "contractName",
+    "filter": "filterName",
+    "consumer_vrf": "consumerVrfName",
+    "action": "action",
+    "leaf": "leaf",
+}
