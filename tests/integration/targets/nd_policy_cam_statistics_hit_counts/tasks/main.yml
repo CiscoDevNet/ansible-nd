@@ -1,0 +1,191 @@
+# Test code for the ND modules
+# Copyright: (c) 2023, Akini Ross (@akinross) <akinross@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+  fail:
+    msg: "Please define the following variables: insights_group, site_name."
+  when: insights_group is not defined or site_name is not defined
+
+- name: Set vars
+  set_fact:
+    ndi_info: &ndi_info
+      insights_group: '{{ insights_group }}'
+      site: '{{ site_name }}'
+      output_level: "debug"
+
+- name: Get Epoch with period ( last_week )
+  cisco.nd.nd_epoch:
+    <<: *ndi_info
+    period: last_week
+  register: period_last_week
+
+- name: Get Epoch with period ( latest )
+  cisco.nd.nd_epoch:
+    <<: *ndi_info
+    period: latest
+  register: period_latest
+
+# PASS TESTS
+
+- name: Query statistics for epgs, tenants and leafs
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+    tenants: true
+    leafs: true
+  register: statistics_epgs_tenants_leafs
+
+- name: Query statistics for epgs and tenants
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+    tenants: true
+  register: statistics_epgs_tenants
+
+- name: Query statistics for epgs, leafs, contracts and filters
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+    leafs: true
+    contracts: true
+    filters: true
+  register: statistics_epgs_leafs_contracts_filters
+
+- name: Query statistics for epgs, leafs, and contracts
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+    leafs: true
+    contracts: true
+  register: statistics_epgs_leafs_contracts
+
+- name: Query statistics for epgs and leafs
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+    leafs: true
+  register: statistics_epgs_leafs
+
+- name: Query statistics for epgs, contracts and filters
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+    contracts: true
+    filters: true
+  register: statistics_epgs_contracts_filters
+
+- name: Query statistics for epgs and contracts
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+    contracts: true
+  register: statistics_epgs_contracts
+
+- name: Query statistics for epgs
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+  register: statistics_epg
+
+- name: Query statistics for tenants and leafs
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    tenants: true
+    leafs: true
+  register: statistics_tenants_leafs
+
+- name: Query statistics for tenants
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    tenants: true
+  register: statistics_tenants
+
+- name: Query statistics for tenants with epoch_id
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    tenants: true
+    epoch_id: "{{ period_last_week.current.epochId }}"
+  register: statistics_tenants_epoch
+
+- name: Query statistics for contract and filters with filter_by_attributes
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+    contracts: true
+    filters: true
+    filter_by_attributes:
+      - key: provider_epg
+        value: log_epg
+      - key: consumer_epg
+        value: app_epg
+  register: statistics_contract_filters_filter_by_attributes
+
+- name: Verify correct hitcountByRules is used
+  assert:
+    that:
+      - '"hitcountByEpgPairTenantPairLeaf?" in statistics_epgs_tenants_leafs.url'
+      - '"{{ period_latest.current.epochId }}" in statistics_epgs_tenants_leafs.url'
+      - '"hitcountByEpgpairTenantPair?" in statistics_epgs_tenants.url'
+      - '"hitcountByEpgPairContractFilterLeaf?" in statistics_epgs_leafs_contracts_filters.url'
+      - '"hitcountByEpgPairContractLeaf?" in statistics_epgs_leafs_contracts.url'
+      - '"hitcountByEpgPairLeaf?" in statistics_epgs_leafs.url'
+      - '"hitcountByEpgPairContractFilter?" in statistics_epgs_contracts_filters.url'
+      - '"hitcountByEpgPairContract?" in statistics_epgs_contracts.url'
+      - '"hitcountByEpgPair?" in statistics_epg.url'
+      - '"hitcountByTenantPairLeaf?" in statistics_tenants_leafs.url'
+      - '"hitcountByTenantPair?" in statistics_tenants.url'
+      - '"{{ period_last_week.current.epochId }}" in statistics_tenants_epoch.url'
+      - '"filter=providerEpgName%3Alog_epg%2CconsumerEpgName%3Aapp_epg" in statistics_contract_filters_filter_by_attributes.url'
+
+# OUTPUT TEST
+
+- name: Query statistics for epgs, leafs, contracts, filters, and output to csv file
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    epgs: true
+    contracts: true
+    filters: true
+    output_csv: hits.csv
+
+- name: Query statistics for tenants, leafs, and output to csv file
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    tenants: true
+    leafs: true
+    output_csv: hits.csv
+
+# FAIL TESTS WRONG INPUT CHOICE
+
+- name: Query statistics for tenants and contracts (error)
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    tenants: true
+    contracts: true
+  ignore_errors: true
+  register: type_wrong_input_tenants_contracts_error
+
+- name: Query statistics for tenants and filters (error)
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    tenants: true
+    filters: true
+  ignore_errors: true
+  register: type_wrong_input_tenants_filters_error
+
+- name: Query statistics no epgs or tenants (error)
+  cisco.nd.nd_policy_cam_statistics_hit_counts:
+    <<: *ndi_info
+    filters: true
+    contracts: true
+    leafs: true
+  ignore_errors: true
+  register: type_wrong_input_no_epgs_tenant_error
+
+- name: Verify wrong choice error
+  assert:
+    that:
+      - 'type_wrong_input_tenants_contracts_error.msg == "cannot specify contracts or filters with tenants"'
+      - 'type_wrong_input_tenants_filters_error.msg == "cannot specify contracts or filters with tenants"'
+      - 'type_wrong_input_no_epgs_tenant_error.msg == "must specify at least epgs or tenants"'
