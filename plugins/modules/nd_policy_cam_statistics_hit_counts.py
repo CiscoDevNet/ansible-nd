@@ -14,7 +14,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_policy_cam_statistics_hit_counts
-version_added: "0.4.1"
+version_added: "0.5.0"
 short_description: Retrieves Policy CAM Statistics Hit Counts
 description:
 - Retrieves Policy CAM Statistics Hit Counts on Cisco Nexus Dashboard Insights (NDI).

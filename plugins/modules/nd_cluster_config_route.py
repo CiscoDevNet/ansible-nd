@@ -13,6 +13,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_cluster_config_route
+version_added: "0.5.0"
 short_description: Manages routes of the cluster config.
 description:
 - Manages the data and management routes of the cluster configuration.

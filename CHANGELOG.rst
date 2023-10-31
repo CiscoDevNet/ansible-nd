@@ -5,6 +5,32 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 .. contents:: Topics
 
 
+v0.5.0
+======
+
+Release Summary
+---------------
+
+Release v0.5.0 of the ``ansible-nd`` collection on 2023-11-03.
+This changelog describes all changes made to the modules and plugins included in this collection since v0.4.0.
+
+
+Minor Changes
+-------------
+
+- Add nd_setup, nd_cluster_config_route, nd_backup, nd_backup_restore, nd_service, nd_service_instance and nd_policy_cam_statistics_hit_counts modules
+
+New Modules
+-----------
+
+- cisco.nd.nd_backup - Manages backup on Nexus Dashboard.
+- cisco.nd.nd_backup_restore - Manages restore of backup on Nexus Dashboard.
+- cisco.nd.nd_cluster_config_route - Manages routes of the cluster config.
+- cisco.nd.nd_policy_cam_statistics_hit_counts - Retrieves Policy CAM Statistics Hit Counts
+- cisco.nd.nd_service - Manages Service Package on Nexus Dashboard.
+- cisco.nd.nd_service_instance - Manages Service Instance on Nexus Dashboard.
+- cisco.nd.nd_setup - Manages setting up the Nexus Dashboard.
+
 v0.4.0
 ======
 
@@ -19,6 +45,11 @@ Minor Changes
 -------------
 
 - Add new module nd_site (#47)
+
+New Modules
+-----------
+
+- cisco.nd.nd_site - Manage sites on Nexus Dashboard.
 
 v0.3.0
 ======
@@ -118,3 +149,16 @@ Release Summary
 ---------------
 
 Initial release of Nexus Dashboard collection
+
+New Plugins
+-----------
+
+Httpapi
+~~~~~~~
+
+- cisco.nd.nd - Nexus Dashboard Ansible HTTPAPI Plugin.
+
+New Modules
+-----------
+
+- cisco.nd.nd_version - Get version of Nexus Dashboard (ND)

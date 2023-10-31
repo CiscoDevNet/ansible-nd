@@ -13,7 +13,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_version
-version_added: "0.0.1"
+version_added: "0.1.0"
 short_description: Get version of Nexus Dashboard (ND)
 description:
 - Retrieve the code version of Cisco Nexus Dashboard (ND).
