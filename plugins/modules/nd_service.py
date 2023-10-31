@@ -13,6 +13,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_service
+version_added: "0.5.0"
 short_description: Manages Service Package on Nexus Dashboard.
 description:
 - Manages Service Package of the Nexus Dashboard.

@@ -13,6 +13,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_backup_restore
+version_added: "0.5.0"
 short_description: Manages restore of backup on Nexus Dashboard.
 description:
 - Manages importing the cluster configuration using a backup.

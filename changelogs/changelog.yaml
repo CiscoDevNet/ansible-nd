@@ -3,6 +3,15 @@ releases:
   0.1.0:
     changes:
       release_summary: Initial release of Nexus Dashboard collection
+    modules:
+      - description: Get version of Nexus Dashboard (ND)
+        name: nd_version
+        namespace: ""
+    plugins:
+      httpapi:
+        - description: Nexus Dashboard Ansible HTTPAPI Plugin.
+          name: nd
+          namespace: null
     release_date: "2021-06-02"
   0.1.1:
     changes:
@@ -106,4 +115,43 @@ releases:
         in this collection since v0.3.0.
 
         "
+    modules:
+      - description: Manage sites on Nexus Dashboard.
+        name: nd_site
+        namespace: ""
     release_date: "2023-08-04"
+  0.5.0:
+    changes:
+      minor_changes:
+        - Add nd_setup, nd_cluster_config_route, nd_backup, nd_backup_restore, nd_service,
+          nd_service_instance and nd_policy_cam_statistics_hit_counts modules
+      release_summary:
+        "Release v0.5.0 of the ``ansible-nd`` collection on 2023-11-03.
+
+        This changelog describes all changes made to the modules and plugins included
+        in this collection since v0.4.0.
+
+        "
+    modules:
+      - description: Manages backup on Nexus Dashboard.
+        name: nd_backup
+        namespace: ""
+      - description: Manages restore of backup on Nexus Dashboard.
+        name: nd_backup_restore
+        namespace: ""
+      - description: Manages routes of the cluster config.
+        name: nd_cluster_config_route
+        namespace: ""
+      - description: Retrieves Policy CAM Statistics Hit Counts
+        name: nd_policy_cam_statistics_hit_counts
+        namespace: ""
+      - description: Manages Service Package on Nexus Dashboard.
+        name: nd_service
+        namespace: ""
+      - description: Manages Service Instance on Nexus Dashboard.
+        name: nd_service_instance
+        namespace: ""
+      - description: Manages setting up the Nexus Dashboard.
+        name: nd_setup
+        namespace: ""
+    release_date: "2023-11-03"

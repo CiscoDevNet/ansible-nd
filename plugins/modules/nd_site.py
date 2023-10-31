@@ -13,6 +13,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_site
+version_added: "0.4.0"
 short_description: Manage sites on Nexus Dashboard.
 description:
 - Manage sites on Nexus Dashboard which are then used by Nexus Dashboard Orchestrator (NDO) >= 2.2(2d).

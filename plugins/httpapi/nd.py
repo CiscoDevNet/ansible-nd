@@ -17,7 +17,7 @@ short_description: Nexus Dashboard Ansible HTTPAPI Plugin.
 description:
 - This ND plugin provides the HTTPAPI transport methods needed to initiate
   a connection to ND, send API requests and process the response.
-version_added: "0.0.1"
+version_added: "0.1.0"
 options:
   login_domain:
     description:
