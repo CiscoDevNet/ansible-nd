@@ -5,6 +5,16 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 .. contents:: Topics
 
 
+v1.0.0
+======
+
+Release Summary
+---------------
+
+Release v1.0.0 of the ``ansible-nd`` collection on 2023-11-03.
+This release only includes changes needed to release v1.0.0 on RedHat Ansible Automation Hub. As required by RedHat, this release bump the minimum release supported of Ansible to v2.13.1+
+
+
 v0.5.0
 ======
 
