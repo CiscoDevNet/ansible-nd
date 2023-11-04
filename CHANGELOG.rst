@@ -5,6 +5,16 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 .. contents:: Topics
 
 
+v0.5.1
+======
+
+Release Summary
+---------------
+
+Release v0.5.1 of the ``ansible-nd`` collection on 2023-11-04.
+This changelog describes all changes made to the modules and plugins included in this collection since v0.5.0.
+
+
 v0.5.0
 ======
 
