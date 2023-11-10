@@ -15,6 +15,16 @@ Release v1.0.0 of the ``ansible-nd`` collection on 2023-11-03.
 This release only includes changes needed to release v1.0.0 on RedHat Ansible Automation Hub. As required by RedHat, this release bump the minimum release supported of Ansible to v2.13.1+
 
 
+v0.5.1
+======
+
+Release Summary
+---------------
+
+Release v0.5.1 of the ``ansible-nd`` collection on 2023-11-10.
+This changelog describes all changes made to the modules and plugins included in this collection since v0.5.0.
+
+
 v0.5.0
 ======
 
