@@ -65,7 +65,7 @@ def issubset(subset, superset):
         return True
 
     # Both objects have a different type
-    if type(subset) != type(superset):
+    if isinstance(subset) is not isinstance(superset):
         return False
 
     for key, value in subset.items():
@@ -78,7 +78,7 @@ def issubset(subset, superset):
             return False
 
         # Item has different types in subset and superset
-        if type(superset.get(key)) != type(value):
+        if isinstance(superset.get(key)) is not isinstance(value):
             return False
 
         # Compare if item values are subset
