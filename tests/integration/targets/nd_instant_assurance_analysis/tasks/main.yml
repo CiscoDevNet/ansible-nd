@@ -4,12 +4,12 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
-  fail:
+  ansible.builtin.fail:
     msg: "Please define the following variables: insights_group, site_name."
   when: insights_group is not defined or site_name is not defined
 
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
     ndi_site: &ndi_site
@@ -36,7 +36,7 @@
   delay: 6
 
 - name: Verify instant_analysis_info
-  assert:
+  ansible.builtin.assert:
     that:
       - instant_analysis_info.current.operSt == "COMPLETE"
       - instant_analysis_info.current.epochInfo is defined
@@ -59,7 +59,7 @@
   register: instant_analysis_history_aliases
 
 - name: Verify instant_analysis_info
-  assert:
+  ansible.builtin.assert:
     that:
       - instant_analysis_history.current[0].operSt == "COMPLETE"
       - instant_analysis_history_aliases.current[0].operSt == "COMPLETE"
@@ -90,7 +90,7 @@
   register: missing_site_name
 
 - name: Verify instant_analysis_info
-  assert:
+  ansible.builtin.assert:
     that:
       - invalid_state.msg == "value of state must be one of{{':'}} query, present, got{{':'}} absent"
       - missing_insights_group.msg == "missing required arguments{{':'}} insights_group"
@@ -106,6 +106,6 @@
   register: instant_analysis_info
 
 - name: Verify instant_analysis_info
-  assert:
+  ansible.builtin.assert:
     that:
       - instant_analysis_info.msg == "remote module (cisco.nd.nd_instant_assurance_analysis) does not support check mode"

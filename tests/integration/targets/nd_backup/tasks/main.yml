@@ -38,13 +38,13 @@
   register: add_nexus2
 
 - name: Find backup nexus to ensure that it was created
-  find:
+  ansible.builtin.find:
     paths: "{{ role_path }}/backups"
     patterns: "nexus_{{ ansible_host }}.tgz"
   register: find_nexus
 
 - name: Find backup nexus2 to ensure that it was created
-  find:
+  ansible.builtin.find:
     paths: "{{ role_path }}/backups"
     patterns: "nexus2_{{ ansible_host }}.tgz"
   register: find_nexus2
@@ -139,7 +139,7 @@
   register: delete_wrong_key_nexus
 
 - name: Verify all assertions
-  assert:
+  ansible.builtin.assert:
     that:
     - cm_add_nexus.changed is true
     - cm_add_nexus.current.spec.description == "nexus"

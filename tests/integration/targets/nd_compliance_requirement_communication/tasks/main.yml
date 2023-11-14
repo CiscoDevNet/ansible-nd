@@ -4,12 +4,12 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
-  fail:
+  ansible.builtin.fail:
     msg: "Please define the following variables: insights_group, site_name."
   when: insights_group is not defined or site_name is not defined
 
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
     ndi_base: &ndi_base
@@ -93,7 +93,7 @@
   register: query_existing
 
 - name: Verify no compliance requirements are present
-  assert:
+  ansible.builtin.assert:
     that:
     - query_existing.current == []
 
@@ -127,7 +127,7 @@
   register: remove_requirement_may_traffic_restriction
 
 - name: Verify create compliance requirement ( type may / TRAFFIC_RESTRICTION )
-  assert:
+  ansible.builtin.assert:
     that:
       - cm_create_requirement_may_traffic_restriction.current.communicationType == "MAY"
       - cm_create_requirement_may_traffic_restriction.current.requirementType == "TRAFFIC_RESTRICTION"
@@ -251,7 +251,7 @@
   register: remove_requirement_must_not_traffic_restriction
 
 - name: Verify create compliance requirement ( type must_not / TRAFFIC_RESTRICTION )
-  assert:
+  ansible.builtin.assert:
     that:
       - create_requirement_must_not_traffic_restriction.current.communicationType == "MUST_NOT"
       - create_requirement_must_not_traffic_restriction.current.requirementType == "TRAFFIC_RESTRICTION"
@@ -272,7 +272,7 @@
   register: remove_requirement_must_not_segmentation
 
 - name: Verify create compliance requirement ( type must_not / SEGMENTATION )
-  assert:
+  ansible.builtin.assert:
     that:
       - create_requirement_must_not_segmentation.current.communicationType == "MUST_NOT"
       - create_requirement_must_not_segmentation.current.requirementType == "SEGMENTATION"
@@ -294,7 +294,7 @@
   register: remove_requirement_must_sla
 
 - name: Verify create compliance requirement ( type must / SLA )
-  assert:
+  ansible.builtin.assert:
     that:
       - create_requirement_must_sla.current.communicationType == "MUST"
       - create_requirement_must_sla.current.requirementType == "SLA"
@@ -345,7 +345,7 @@
   register: remove_requirement_description
 
 - name: Verify create compliance requirement ( with description )
-  assert:
+  ansible.builtin.assert:
     that:
       - create_requirement_description_none.current.description is not defined
       - create_requirement_description.current.description == "ansible-test-description"
@@ -416,7 +416,7 @@
   register: query_pattern_none_again
 
 - name: Verify create compliance requirement ( pattern == None )
-  assert:
+  ansible.builtin.assert:
     that:
       - query_pattern_none.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.pattern == ""
       - query_pattern_value.current.objectSelectorA.includes.0.matches.0.vrfMatch.vrf.pattern == "value"
@@ -429,7 +429,7 @@
   register: remove_pattern_none
 
 - name: Verify delete non existing compliance requirement
-  assert:
+  ansible.builtin.assert:
     that:
       - remove_pattern_none.current == {}
 
@@ -512,7 +512,7 @@
   register: flags_not_set_to_ack
 
 - name: Verify create compliance with flags
-  assert:
+  ansible.builtin.assert:
     that:
       - reverse_port_true.current.complianceTrafficSelector.includes.selectors.0.selectors.0.reversePort == true
       - reverse_port_true.current.complianceTrafficSelector.includes.selectors.0.selectors.0.portSelectorAtoB.tcpFlagsNotSet == []
@@ -564,7 +564,7 @@
   register: query_existing
 
 - name: Verify 2 compliance requirements are present
-  assert:
+  ansible.builtin.assert:
     that:
     - query_existing.current | length == 2
 
@@ -582,7 +582,7 @@
   register: query_existing
 
 - name: Verify no compliance requirements are present
-  assert:
+  ansible.builtin.assert:
     that:
     - query_existing.current == []
 
@@ -593,7 +593,7 @@
   register: query_non_existing
 
 - name: Verify no compliance requirements are present
-  assert:
+  ansible.builtin.assert:
     that:
     - query_non_existing.current == {}
 
@@ -629,7 +629,7 @@
   register: requirement_change_end
 
 - name: Verify no compliance requirements are present
-  assert:
+  ansible.builtin.assert:
     that:
     - cm_requirement_change_start is changed
     - nm_requirement_change_start is changed
@@ -652,7 +652,7 @@
   register: nm_remove_requirement_change
 
 - name: Verify no compliance requirement is removed
-  assert:
+  ansible.builtin.assert:
     that:
       - cm_remove_requirement_change.current == {}
       - nm_remove_requirement_change.current == {}
@@ -787,7 +787,7 @@
   register: flags_not_set_wrong_choice_error
 
 - name: Verify wrong choice error
-  assert:
+  ansible.builtin.assert:
     that:
       - 'type_wrong_choice_error.msg == "value of type must be one of: must, must_not, may, got: wrong_choice"'
       - 'object_type_wrong_choice_error.msg == "value of type must be one of: tenant, vrf, bd, epg, ap, l3out, l3instp, l2out, l2instp, filter, subject, contract, got: wrong_choice found in from_object -> includes"'

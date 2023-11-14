@@ -4,12 +4,12 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
-  fail:
+  ansible.builtin.fail:
     msg: "Please define the following variables: insights_group, site_name."
   when: insights_group is not defined or site_name is not defined
 
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
     ndi_site: &ndi_site
@@ -36,7 +36,7 @@
   register: delta_analysis_w_uuid
 
 - name: Verify delta_analysis_w_uuid
-  assert:
+  ansible.builtin.assert:
     that:
       - delta_analysis_w_uuid is changed
       - delta_analysis_w_uuid.current.jobName == "testDeltaAnalysis-uuid"
@@ -54,7 +54,7 @@
   register: delta_analysis_w_uuid
 
 - name: Verify idempotency
-  assert:
+  ansible.builtin.assert:
     that:
       - delta_analysis_w_uuid is not changed
 
@@ -71,7 +71,7 @@
   delay: 6
 
 - name: Verify delta analysis is completed
-  assert:
+  ansible.builtin.assert:
     that:
       - delta_analysis_info.current.operSt == "COMPLETE"
 
@@ -87,7 +87,7 @@
   register: delta_analysis_w_time
 
 - name: Verify delta_analysis_w_time
-  assert:
+  ansible.builtin.assert:
     that:
       - delta_analysis_w_time is changed
       - delta_analysis_w_time.current.jobName == "testDeltaAnalysis-time"
@@ -103,7 +103,7 @@
   ignore_errors: true
 
 - name: Verify delta_analysis_results
-  assert:
+  ansible.builtin.assert:
     that:
       - delta_analysis_results.current.anomalies is defined
       - delta_analysis_results.current.anomaly_count is defined
@@ -118,7 +118,7 @@
   register: delta_analysis_history
 
 - name: Verify delta analysis history not empty
-  assert:
+  ansible.builtin.assert:
     that:
       - delta_analysis_history.current | length > 0
 
@@ -267,7 +267,7 @@
   register: delta_analysis_w_uuid
 
 - name: Verify delta_analysis_w_uuid
-  assert:
+  ansible.builtin.assert:
     that:
       - delta_analysis_w_uuid is changed
       - delta_analysis_w_uuid.current == {}
@@ -281,7 +281,7 @@
   register: delta_analysis_w_time
 
 - name: Verify delta_analysis_w_time
-  assert:
+  ansible.builtin.assert:
     that:
       - delta_analysis_w_time is changed
       - delta_analysis_w_time.current == {}

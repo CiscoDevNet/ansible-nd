@@ -4,13 +4,13 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
-  fail:
+  ansible.builtin.fail:
     msg: "Please define the following variables: insights_group, site_name."
   when: insights_group is not defined or site_name is not defined
 
 # CLEAN ENVIRONMENT
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
     ndi_site: &ndi_site
@@ -18,14 +18,14 @@
 
 # QUERY pre-change validation delta analysis results
 - name: Query a pre_change validation compliance result
-  nd_pcv_compliance: &nd_query
+  cisco.nd.nd_pcv_compliance: &nd_query
     <<: *ndi_info
     <<: *ndi_site
     name: manual
   register: query_manual_pcv
 
 - name: Verify query_manual_pcv
-  assert:
+  ansible.builtin.assert:
     that:
     - query_manual_pcv is not changed
     - query_manual_pcv.current.compliance_score is defined
@@ -36,7 +36,7 @@
     - query_manual_pcv.current.unhealthy_resources is defined
 
 - name: Query another pre_change validation compliance result
-  nd_pcv_compliance:
+  cisco.nd.nd_pcv_compliance:
     <<: *nd_query
     <<: *ndi_info
     <<: *ndi_site
@@ -44,7 +44,7 @@
   register: query_pcv_by_file
 
 - name: Verify query_pcv_by_file
-  assert:
+  ansible.builtin.assert:
     that:
     - query_pcv_by_file is not changed
     - query_pcv_by_file.current.compliance_score is defined
@@ -55,7 +55,7 @@
     - query_pcv_by_file.current.unhealthy_resources is defined
 
 - name: Query non_existing pre_change validation compliance result
-  nd_pcv_compliance:
+  cisco.nd.nd_pcv_compliance:
     <<: *nd_query
     <<: *ndi_info
     <<: *ndi_site
@@ -64,7 +64,7 @@
   register: query_non_existing
 
 - name: Verify query_non_existing
-  assert:
+  ansible.builtin.assert:
     that:
     - query_non_existing is not changed
     - query_non_existing.msg == "Pre-change validation non_existing is not completed"

@@ -4,12 +4,12 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
-  fail:
+  ansible.builtin.fail:
     msg: "Please define the following variables: insights_group, site_name."
   when: insights_group is not defined or site_name is not defined
 
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
     ndi_site: &ndi_site
@@ -92,7 +92,7 @@
   register: date_range_from_date_to_date_max_epochs
 
 - name: Verify Epochs
-  assert:
+  ansible.builtin.assert:
     that:
       - period_latest.current | type_debug == "dict"
       - period_last_week.current | type_debug == "dict"
@@ -131,7 +131,7 @@
   register: period_invalid
 
 - name: Verify invalid isoformat input and invalid period error
-  assert:
+  ansible.builtin.assert:
     that:
       - date_from_date_invalid.msg.startswith("Query epoch data failed due to: Invalid isoformat string")
       - date_to_date_invalid.msg.startswith("Query epoch data failed due to: Invalid isoformat string")

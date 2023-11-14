@@ -5,7 +5,7 @@
 
 # Note: idempotent test not supported for enabled and restart states
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: "info"
       timeout: 90
@@ -110,7 +110,7 @@
   check_mode: true
 
 - name: Assertions check for enable an existing service instance - version 0.1.15 with check mode
-  assert:
+  ansible.builtin.assert:
     that:
       - cm_enable_service_instance_v15 is changed
       - cm_enable_service_instance_v15.current != {}
@@ -137,7 +137,7 @@
   register: enable_service_instance_v15
 
 - name: Assertions check for enable an existing service instance - version 0.1.15 with normal mode
-  assert:
+  ansible.builtin.assert:
     that:
       - enable_service_instance_v15 is changed
       - enable_service_instance_v15.current is defined
@@ -168,7 +168,7 @@
   check_mode: true
 
 - name: Assertions check for restart an existing service instance - version 0.1.15 with check mode
-  assert:
+  ansible.builtin.assert:
     that:
       - cm_restart_service_instance_v15 is changed
       - cm_restart_service_instance_v15.method == "GET"
@@ -185,7 +185,7 @@
   register: restart_service_instance_v15
 
 - name: Assertions check for restart an existing service instance - version 0.1.15 with normal mode
-  assert:
+  ansible.builtin.assert:
     that:
       - restart_service_instance_v15 is changed
       - restart_service_instance_v15.current is defined
@@ -213,7 +213,7 @@
   register: upgrade_service_instance_v16
 
 - name: Assertions check for upgrade an existing service instance - version 0.1.16
-  assert:
+  ansible.builtin.assert:
     that:
       - upgrade_service_instance_v16 is changed
       - upgrade_service_instance_v16.current is defined
@@ -251,7 +251,7 @@
   register: query_all_service_instance
 
 - name: Assertions check for query all service instances
-  assert:
+  ansible.builtin.assert:
     that:
       - query_all_service_instance is not changed
       - query_all_service_instance.current != {}
@@ -265,7 +265,7 @@
   register: disable_service_instance_v16
 
 - name: Assertions check for disable an active (0.1.16) service instance
-  assert:
+  ansible.builtin.assert:
     that:
       - disable_service_instance_v16 is changed
       - disable_service_instance_v16.current == {}
@@ -300,7 +300,7 @@
   register: nm_del_v16_instance_again
 
 - name: Assertions check for delete an existing service instance - v01.16
-  assert:
+  ansible.builtin.assert:
     that:
       - cm_del_v16_instance is not changed
       - cm_del_v16_instance.current != {}
@@ -323,7 +323,7 @@
   register: del_v15_instance_cleanup
 
 - name: Assertions check for delete an existing service instance - v01.15 - cleanup part
-  assert:
+  ansible.builtin.assert:
     that:
       - del_v15_instance_cleanup is changed
       - del_v15_instance_cleanup.current == {}
@@ -383,7 +383,7 @@
   ignore_errors: true
 
 - name: Assertions check for negative tests
-  assert:
+  ansible.builtin.assert:
     that:
       - nt_enable_without_version is not changed
       - nt_enable_without_version.msg == "state is enable but all of the following are missing{{':'}} target_version"

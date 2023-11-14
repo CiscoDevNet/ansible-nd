@@ -4,7 +4,7 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
       output_level: '{{ site_output_level | default("info") }}'
@@ -32,7 +32,7 @@
   register: present_pcv_manual
 
 - name: Checking pre-change analysis from manual changes ( Contract ) is added
-  assert:
+  ansible.builtin.assert:
     that:
     - present_pcv_manual is changed
     - present_pcv_manual.previous == {}
@@ -58,7 +58,7 @@
   until: nm_query_pcv.current.analysisStatus == "COMPLETED"
 
 - name: Checking nm_query_pcv
-  assert:
+  ansible.builtin.assert:
     that:
     - nm_query_pcv is not changed
     - nm_query_pcv.current.name == "manual"
@@ -70,7 +70,7 @@
     - nm_query_pcv.current.analysisScheduleId is defined
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
-  pause:
+  ansible.builtin.pause:
       minutes: 1
 
 - name: Present Pre-Change analysis for adding contract
@@ -101,7 +101,7 @@
   register: present_contract
 
 - name: Checking present_contract
-  assert:
+  ansible.builtin.assert:
     that:
     - present_contract is changed
     - present_contract.previous == {}
@@ -123,7 +123,7 @@
   register: nm_query_add_contract
 
 - name: Verify nm_query_add_contract
-  assert:
+  ansible.builtin.assert:
     that:
     - nm_query_add_contract is not changed
     - nm_query_add_contract.current.name == "add_contract"
@@ -135,7 +135,7 @@
     - nm_query_add_contract.current.jobId is defined
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
-  pause:
+  ansible.builtin.pause:
       minutes: 1
 
 - name: Present Pre-Change analysis for updating epg
@@ -179,7 +179,7 @@
   register: present_epg
 
 - name: Checking present_epg
-  assert:
+  ansible.builtin.assert:
     that:
     - present_epg is changed
     - present_epg.previous == {}
@@ -204,7 +204,7 @@
   until: nm_present_epg.current.analysisStatus == "COMPLETED"
 
 - name: Checking nm_present_epg
-  assert:
+  ansible.builtin.assert:
     that:
     - nm_present_epg is not changed
     - nm_present_epg.current.name == "update_epg"
@@ -216,7 +216,7 @@
     - nm_present_epg.current.analysisScheduleId is defined
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
-  pause:
+  ansible.builtin.pause:
       minutes: 1
 
 - name: Query Pre-Change analysis results
@@ -226,7 +226,7 @@
   register: nm_query_pcvs
 
 - name: Checking and nm_query_pcvs
-  assert:
+  ansible.builtin.assert:
     that:
     - nm_query_pcvs is not changed
     - nm_query_pcvs.current | length >= 8

@@ -5,7 +5,7 @@
 
 # Note: idempotent test not supported for present state
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: "info"
       timeout: 90
@@ -34,7 +34,7 @@
   check_mode: true
 
 - name: Assertions check for import cisco-terraform v0.1.16 from the remote location with check mode
-  assert:
+  ansible.builtin.assert:
     that:
       - cm_imp_v16 is changed
       - cm_imp_v16.current != {}
@@ -84,7 +84,7 @@
   delay: 5
 
 - name: Assertions check for import cisco-terraform v0.1.16 from the remote location with normal mode
-  assert:
+  ansible.builtin.assert:
     that:
       - nm_imp_v16 is changed
       - nm_imp_v16.current != {}
@@ -129,7 +129,7 @@
   register: query_package_with_id
 
 - name: Assertions check for query a imported service package with import_id and import_url
-  assert:
+  ansible.builtin.assert:
     that:
       - query_all_packages is not changed
       - query_all_packages.current != []
@@ -161,7 +161,7 @@
   register: nm_rm_package_with_id_again
 
 - name: Assertions check for remove a imported service package with import_id
-  assert:
+  ansible.builtin.assert:
     that:
       - cm_rm_package_with_id is not changed
       - cm_rm_package_with_id.current != {}
@@ -184,7 +184,7 @@
   register: rm_package_with_url
 
 - name: Assertions check for remove a imported service package with import_url
-  assert:
+  ansible.builtin.assert:
     that:
       - rm_package_with_url is changed
       - rm_package_with_url.current == {}
@@ -200,7 +200,7 @@
   ignore_errors: true
 
 - name: Assertions check for remove a imported service package with import_url to catch errors
-  assert:
+  ansible.builtin.assert:
     that:
       - nt_rm_package_with_url is not changed
       - nt_rm_package_with_url.current != []
@@ -215,7 +215,7 @@
   register: query_all_packages_env_cleanup
 
 - name: Assertions check for query all imported service packages
-  assert:
+  ansible.builtin.assert:
     that:
       - query_all_packages_env_cleanup is not changed
       - query_all_packages_env_cleanup.current != []
@@ -237,7 +237,7 @@
     - query_all_packages_env_cleanup_again.current == []
 
 - name: Assertions check for query all imported service packages again
-  assert:
+  ansible.builtin.assert:
     that:
       - query_all_packages_env_cleanup_again is not changed
       - query_all_packages_env_cleanup_again.current == []
@@ -282,7 +282,7 @@
   ignore_errors: true
 
 - name: Assertions check for negative tests
-  assert:
+  ansible.builtin.assert:
     that:
       - nt_rm_package is not changed
       - nt_rm_package.msg == "parameters are mutually exclusive{{':'}} import_url|import_id"

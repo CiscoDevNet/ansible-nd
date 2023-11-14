@@ -135,7 +135,7 @@
   register: delete_mgmt_route
 
 - name: Verify all assertions
-  assert:
+  ansible.builtin.assert:
     that:
       - add_data_route_cm.changed is true
       - add_data_route.changed is true
