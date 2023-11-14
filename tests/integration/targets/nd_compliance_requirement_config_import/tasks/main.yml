@@ -4,12 +4,12 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
-  fail:
+  ansible.builtin.fail:
     msg: "Please define the following variables: insights_group, site_name."
   when: insights_group is not defined or site_name is not defined
 
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
     ndi_base: &ndi_base
@@ -41,7 +41,7 @@
   register: query_existing
 
 - name: Verify no compliance requirements are present
-  assert:
+  ansible.builtin.assert:
     that:
     - query_existing.current == []
 
@@ -88,7 +88,7 @@
   register: nm_remove_requirement
 
 - name: Verify create compliance requirement
-  assert:
+  ansible.builtin.assert:
     that:
       - cm_create_requirement.current.associatedSites | length == 1
       - cm_create_requirement.current.configurationType == "JSON_XML_BASED_CONFIGURATION_COMPLIANCE"
@@ -155,7 +155,7 @@
   register: remove_requirement_description
 
 - name: Verify create compliance requirement ( with description )
-  assert:
+  ansible.builtin.assert:
     that:
       - create_requirement_description_none.current.description is not defined
       - create_requirement_description.current.description == "ansible-test-description"
@@ -191,7 +191,7 @@
     state: absent
 
 - name: Verify incorrect file name and invalid file content error
-  assert:
+  ansible.builtin.assert:
     that:
       - err_change_requirement_file.msg == "The provided filename 'ansible-test-fail.json' is not matching the filename 'ansible-test.json' uploaded to the existing import configuration type compliance requirement"
       - 'err_create_requirement_incorrect_file.payload.messages.0.message == "The configuration file has invalid content. Found unexpected MO structure: {}"'

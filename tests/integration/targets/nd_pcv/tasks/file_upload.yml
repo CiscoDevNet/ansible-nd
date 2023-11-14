@@ -4,7 +4,7 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
       output_level: '{{ site_output_level | default("info") }}'
@@ -21,7 +21,7 @@
   register: pcv_no_json
 
 - name: Verify pcv ansible_no_json
-  assert:
+  ansible.builtin.assert:
     that:
     - pcv_no_json is changed
     - pcv_no_json.previous == {}
@@ -50,7 +50,7 @@
   delay: 10
 
 - name: Verify nm_query_ansible_no_json
-  assert:
+  ansible.builtin.assert:
     that:
     - nm_query_ansible_no_json is not changed
     - nm_query_ansible_no_json.current.name == "ansible_no_json"
@@ -62,7 +62,7 @@
     - nm_query_ansible_no_json.current.jobId is defined
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
-  pause:
+  ansible.builtin.pause:
       minutes: 1
 
 - name: Add pre-change analysis from file upload (JSON format)
@@ -75,7 +75,7 @@
   register: pcv_json
 
 - name: Verify pcv_json
-  assert:
+  ansible.builtin.assert:
     that:
     - pcv_json is changed
     - pcv_json.previous == {}
@@ -109,7 +109,7 @@
   register: pcv_absent_while_running
 
 - name: Verify pcv_absent_while_running
-  assert:
+  ansible.builtin.assert:
     that:
     - pcv_absent_while_running is not changed
     - pcv_absent_while_running.msg == "ND Error 4015 (ERROR){{':'}} The analysis is in progress. The Pre-Change Job cannot be deleted."
@@ -126,7 +126,7 @@
   until: nm_query_ansible_json.current.analysisStatus == "COMPLETED"
 
 - name: Verify nm_query_ansible_json
-  assert:
+  ansible.builtin.assert:
     that:
     - nm_query_ansible_json is not changed
     - nm_query_ansible_json.current.name == "ansible_json"
@@ -138,7 +138,7 @@
     - nm_query_ansible_json.current.jobId is defined
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
-  pause:
+  ansible.builtin.pause:
       minutes: 1
 
 - name: Add pre-change analysis from file upload with same file but different file name (JSON format)
@@ -152,7 +152,7 @@
   ignore_errors: true
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
-  pause:
+  ansible.builtin.pause:
       minutes: 1
 
 - name: Add pre-change analysis from file upload with same filename but different name (JSON format)
@@ -165,7 +165,7 @@
   register: pcv_json_diff_name
 
 - name: Verify pcv_json_diff_name
-  assert:
+  ansible.builtin.assert:
     that:
     - pcv_json_diff_name is changed
     - pcv_json_diff_name.previous == {}
@@ -188,7 +188,7 @@
   register: pcv_json_again
 
 - name: Verify pcv_json_again
-  assert:
+  ansible.builtin.assert:
     that:
     - pcv_json_again is not changed
     - pcv_json_again.previous is defined
@@ -213,7 +213,7 @@
   until: nm_query_ansible_json_diff_name.current.analysisStatus == "COMPLETED"
 
 - name: Verify nm_query_ansible_json_diff_name
-  assert:
+  ansible.builtin.assert:
     that:
     - nm_query_ansible_json_diff_name is not changed
     - nm_query_ansible_json_diff_name.current.name == "ansible_json_diff_name"
@@ -225,7 +225,7 @@
     - nm_query_ansible_json_diff_name.current.jobId is defined
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
-  pause:
+  ansible.builtin.pause:
       minutes: 1
 
 - name: Add another pre-change analysis from file upload (non JSON format)
@@ -238,7 +238,7 @@
   register: pcv_tenant_delete
 
 - name: Verify pcv_tenant_delete
-  assert:
+  ansible.builtin.assert:
     that:
     - pcv_tenant_delete is changed
     - pcv_tenant_delete.previous == {}
@@ -263,7 +263,7 @@
   until: nm_query_pcv_tenant_delete.current.analysisStatus == "COMPLETED"
 
 - name: Verify nm_query_pcv_tenant_delete
-  assert:
+  ansible.builtin.assert:
     that:
     - nm_query_pcv_tenant_delete is not changed
     - nm_query_pcv_tenant_delete.current.name == "ansible_tenant_delete"
@@ -275,7 +275,7 @@
     - nm_query_pcv_tenant_delete.current.jobId is defined
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
-  pause:
+  ansible.builtin.pause:
       minutes: 1
 
 - name: Create a new Pre-Change analysis from file
@@ -288,7 +288,7 @@
   register: present_pcv
 
 - name: Verify present_pcv
-  assert:
+  ansible.builtin.assert:
     that:
     - present_pcv is changed
     - present_pcv.previous == {}
@@ -313,7 +313,7 @@
   until: nm_query_present_pcv.current.analysisStatus == "COMPLETED"
 
 - name: Verify nm_query_pcv_file
-  assert:
+  ansible.builtin.assert:
     that:
     - nm_query_present_pcv.current.name == "pcv_by_file"
     - nm_query_present_pcv.current.assuranceEntityName == "{{ ndi_site.site }}"
@@ -325,7 +325,7 @@
     - nm_query_present_pcv.current.fabricUuid is defined
 
 - name: Pause for 1 minutes to complete pre-change analysis in the previous step
-  pause:
+  ansible.builtin.pause:
       minutes: 1
 
 - name: Create a new Pre-Change analysis from non-existing file
@@ -347,7 +347,7 @@
   register: nm_query_pcv_file
 
 - name: Verify nm_query_pcv_file
-  assert:
+  ansible.builtin.assert:
     that:
     - nm_query_pcv_file.current.name == "pcv_by_file"
     - nm_query_pcv_file.current.assuranceEntityName == "{{ ndi_site.site }}"
@@ -365,7 +365,7 @@
   register: nm_query_pcvs_file
 
 - name: Verify nm_query_pcvs_file
-  assert:
+  ansible.builtin.assert:
     that:
     - nm_query_pcvs_file.current | length >= 5
 
@@ -395,7 +395,7 @@
   register: pcv_absent_again
 
 - name: Verify nm_query_pcv_file
-  assert:
+  ansible.builtin.assert:
     that:
     - cm_pcv_absent is changed
     - nm_pcv_absent is changed
@@ -417,7 +417,7 @@
   register: pcv_without_file_or_manual
 
 - name: Verify pcv_without_file_or_manual
-  assert:
+  ansible.builtin.assert:
     that:
     - pcv_without_file_or_manual is not changed
     - pcv_without_file_or_manual.msg == "Either file or manual is required to create a PCV job"

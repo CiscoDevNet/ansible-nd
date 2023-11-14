@@ -4,12 +4,12 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
-  fail:
+  ansible.builtin.fail:
     msg: "Please define the following variables: insights_group, site_name."
   when: insights_group is not defined or site_name is not defined
 
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
     ndi_site: &ndi_site
@@ -43,7 +43,7 @@
   register: query_existing
 
 - name: Verify no compliance requirements are present
-  assert:
+  ansible.builtin.assert:
     that:
     - query_existing.current == []
 
@@ -90,7 +90,7 @@
   register: nm_remove_requirement
 
 - name: Verify create compliance requirement
-  assert:
+  ansible.builtin.assert:
     that:
       - cm_create_requirement.current.associatedSites | length == 1
       - cm_create_requirement.current.baseEpochId is defined
@@ -132,7 +132,7 @@
   register: nm_remove_requirement_epoch_id
 
 - name: Verify create compliance requirement
-  assert:
+  ansible.builtin.assert:
     that:
       - nm_remove_requirement_epoch_id.current == {}
       - nm_create_requirement_epoch_id.current.baseEpochId == "{{ period_latest.current.epochId }}"
@@ -179,7 +179,7 @@
   register: remove_requirement_description
 
 - name: Verify create compliance requirement ( descriptions )
-  assert:
+  ansible.builtin.assert:
     that:
       - create_requirement_description_none.current.description is not defined
       - create_requirement_description.current.description == "ansible-test-description"
@@ -197,6 +197,6 @@
   register: err_create_requirement_epoch_id_invalid
 
 - name: Verify invalid epoch id
-  assert:
+  ansible.builtin.assert:
     that:
       - err_create_requirement_epoch_id_invalid.payload.messages.0.message == "The epoch with id invalid is not valid."

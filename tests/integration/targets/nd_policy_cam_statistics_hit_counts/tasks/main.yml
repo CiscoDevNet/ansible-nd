@@ -4,12 +4,12 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
-  fail:
+  ansible.builtin.fail:
     msg: "Please define the following variables: insights_group, site_name."
   when: insights_group is not defined or site_name is not defined
 
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
       site: '{{ site_name }}'
@@ -123,7 +123,7 @@
   register: statistics_contract_filters_filter_by_attributes
 
 - name: Verify correct hitcountByRules is used
-  assert:
+  ansible.builtin.assert:
     that:
       - '"hitcountByEpgPairTenantPairLeaf?" in statistics_epgs_tenants_leafs.url'
       - '"{{ period_latest.current.epochId }}" in statistics_epgs_tenants_leafs.url'
@@ -184,7 +184,7 @@
   register: type_wrong_input_no_epgs_tenant_error
 
 - name: Verify wrong choice error
-  assert:
+  ansible.builtin.assert:
     that:
       - 'type_wrong_input_tenants_contracts_error.msg == "cannot specify contracts or filters with tenants"'
       - 'type_wrong_input_tenants_filters_error.msg == "cannot specify contracts or filters with tenants"'

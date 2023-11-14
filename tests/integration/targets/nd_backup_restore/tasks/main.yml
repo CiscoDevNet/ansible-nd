@@ -195,7 +195,7 @@
     query_all_routes_restored3: "{{ query_all_routes_after_third_import.current | map(attribute='spec') | list | sort(attribute='destination') }}"
 
 - name: Verify all assertions
-  assert:
+  ansible.builtin.assert:
     that:
     - restore_nexus_cm.changed is true
     - restore_nexus.changed is true

@@ -4,13 +4,13 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
-  fail:
+  ansible.builtin.fail:
     msg: "Please define the following variables: insights_group, site_name."
   when: insights_group is not defined or site_name is not defined
 
 # CLEAN ENVIRONMENT
 - name: Set vars
-  set_fact:
+  ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
     ndi_site: &ndi_site
@@ -18,14 +18,14 @@
 
 # QUERY pre-change validation delta analysis results
 - name: Query a pre_change analysis
-  nd_pcv_delta_analysis: &nd_query
+  cisco.nd.nd_pcv_delta_analysis: &nd_query
     <<: *ndi_info
     <<: *ndi_site
     name: manual
   register: query_pcv_delta_analysis_manual
 
 - name: Verify query_pcv_delta_analysis_manual
-  assert:
+  ansible.builtin.assert:
     that:
     - query_pcv_delta_analysis_manual is not changed
     - query_pcv_delta_analysis_manual.current.anomalies is defined
@@ -34,13 +34,13 @@
     - query_pcv_delta_analysis_manual.current.unhealthy_resources is defined
 
 - name: Query another pre_change analysis
-  nd_pcv_delta_analysis:
+  cisco.nd.nd_pcv_delta_analysis:
     <<: *nd_query
     name: pcv_by_file
   register: query_pcv_by_file_delta_analysis
 
 - name: Verify query_pcv_by_file_delta_analysis
-  assert:
+  ansible.builtin.assert:
     that:
     - query_pcv_by_file_delta_analysis is not changed
     - query_pcv_by_file_delta_analysis.current.anomalies is defined
@@ -49,7 +49,7 @@
     - query_pcv_by_file_delta_analysis.current.unhealthy_resources is defined
 
 - name: Validate a pre_change analysis
-  nd_pcv_delta_analysis:
+  cisco.nd.nd_pcv_delta_analysis:
     <<: *nd_query
     name: pcv_by_file
     state: validate
@@ -57,12 +57,12 @@
   register: validate_pcv_by_file_delta_analysis
 
 - name: Verify validate_pcv_by_file_delta_analysis
-  assert:
+  ansible.builtin.assert:
     that:
     - validate_pcv_by_file_delta_analysis.msg.startswith("Pre-change analysis failed.")
 
 - name: Validate another pre_change analysis
-  nd_pcv_delta_analysis:
+  cisco.nd.nd_pcv_delta_analysis:
     <<: *nd_query
     name: add_contract
     state: validate
@@ -70,19 +70,19 @@
   register: validate_pcv_add_contract_delta_analysis
 
 - name: Verify validate_pcv_add_contract_delta_analysis
-  assert:
+  ansible.builtin.assert:
     that:
     - validate_pcv_add_contract_delta_analysis.msg.startswith("Pre-change analysis failed.")
 
 - name: Query non_existing pre_change validation delta analysis result
-  nd_pcv_delta_analysis:
+  cisco.nd.nd_pcv_delta_analysis:
     <<: *nd_query
     name: non_existing
   ignore_errors: true
   register: query_non_existing
 
 - name: Verify query_non_existing
-  assert:
+  ansible.builtin.assert:
     that:
     - query_non_existing is not changed
     - query_non_existing.msg == "Pre-change validation non_existing not found"
@@ -102,14 +102,14 @@
     state: present
 
 - name: Query a pre_change analysis
-  nd_pcv_delta_analysis:
+  cisco.nd.nd_pcv_delta_analysis:
     <<: *nd_query
     name: vrf_with_overlapping_subnets
   ignore_errors: true
   register: query_pcv_update_epg_while_running
 
 - name: Validate a pre_change analysis while running
-  nd_pcv_delta_analysis:
+  cisco.nd.nd_pcv_delta_analysis:
     <<: *nd_query
     name: vrf_with_overlapping_subnets
     state: validate
@@ -117,7 +117,7 @@
   register: validate_pcv_update_epg_while_running
 
 - name: Verify query_pcv_update_epg_while_running and validate_pcv_update_epg_while_running
-  assert:
+  ansible.builtin.assert:
     that:
     - query_pcv_update_epg_while_running.msg == "Pre-change validation vrf_with_overlapping_subnets is not completed"
     - validate_pcv_update_epg_while_running.msg.startswith("Pre-change analysis failed.")

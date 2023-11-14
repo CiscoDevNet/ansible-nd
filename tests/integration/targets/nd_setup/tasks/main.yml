@@ -154,7 +154,7 @@
   delay: 18
 
 - name: Verify all assertions
-  assert:
+  ansible.builtin.assert:
     that:
       - cluster_name_length_error.msg == "A length of 1 to 63 characters is allowed."
       - cluster_name_invalid_chars.msg == "Valid characters include letters, digits and hyphen."
