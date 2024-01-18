@@ -9,7 +9,7 @@ Modules supporting new features introduced in ND API in specific ND versions mig
 *Note: This collection is not compatible with versions of Ansible before v2.8.*
 
 ## Requirements
-- Ansible v2.13 or newer
+- Ansible v2.14 or newer
 
 ## Install
 Ansible must be installed

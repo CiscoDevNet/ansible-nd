@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ansible: [v2.13.13, v2.14.11, v2.15.5, stable-2.16]
+        ansible: [v2.14.13, v2.15.8, v2.16.2, stable-2.16]
     steps:
     - name: Check out code
       uses: actions/checkout@v3
@@ -65,8 +65,8 @@ jobs:
       with:
         python-version: ${{ env.python_version }}
 
-    - name: Install ansible-base (v2.15.5)
-      run: pip install https://github.com/ansible/ansible/archive/v2.15.5.tar.gz --disable-pip-version-check
+    - name: Install ansible-base (v2.15.8)
+      run: pip install https://github.com/ansible/ansible/archive/v2.15.8.tar.gz --disable-pip-version-check
 
     - name: Download migrated collection artifacts
       uses: actions/download-artifact@v3
@@ -107,7 +107,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ansible: [v2.13.13, v2.14.11, v2.15.5, stable-2.16]
+        ansible: [v2.14.13, v2.15.8, v2.16.2, stable-2.16]
     steps:
     - name: Set up Python ${{ env.python_version }}
       uses: actions/setup-python@v4
@@ -149,7 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ansible: [v2.13.13, v2.14.11, v2.15.5, stable-2.16]
+        ansible: [v2.14.13, v2.15.8, v2.16.2, stable-2.16]
         python-version: ['3.10']
     steps:
     - name: Set up Python ${{ matrix.python-version }}
@@ -195,8 +195,8 @@ jobs:
       with:
         python-version: ${{ env.python_version }}
 
-    - name: Install ansible-base (v2.15.5)
-      run: pip install https://github.com/ansible/ansible/archive/v2.15.5.tar.gz --disable-pip-version-check
+    - name: Install ansible-base (v2.15.8)
+      run: pip install https://github.com/ansible/ansible/archive/v2.15.8.tar.gz --disable-pip-version-check
 
     - name: Install coverage (v4.5.4)
       run: pip install coverage==4.5.4
