@@ -53,6 +53,8 @@ class NDI:
         self.run_epoch_delta_ig_path = "{0}/fabric/{1}/runEpochDelta"
         self.jobs_ig_path = "jobs/summary.json"
         self.requirements_path = "config/insightsGroup/{0}/requirements"
+        self.flow_rules_path = "{0}/fabric/{1}/flowRules"
+        self.interface_flow_rules_path = "{0}/fabric/{1}/interfaceFlowRules"
 
     def get_site_id(self, ig_name, site_name, **kwargs):
         obj = self.nd.query_obj(self.config_ig_path, **kwargs)
