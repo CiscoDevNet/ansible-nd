@@ -40,10 +40,10 @@ def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remo
         elif isinstance(v, dict) and recursive:
             result[k] = sanitize_dict(v, keys, values)
         # List of dicts enhancement might be needed in future scenarios
-        # elif isinstance(v, list) and recursive:
-        #     for index, item in enumerate(v):
-        #         if isinstance(item, dict):
-        #             result[k][index] = sanitize_dict(item, keys, values)
+        elif isinstance(v, list) and recursive:
+            for index, item in enumerate(v):
+                if isinstance(item, dict):
+                    result[k][index] = sanitize_dict(item, keys, values)
     return result
 
 

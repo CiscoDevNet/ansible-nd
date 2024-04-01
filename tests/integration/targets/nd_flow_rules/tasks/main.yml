@@ -1,0 +1,99 @@
+# Test code for the ND modules
+# Copyright: (c) 2024, Gaspard Micol (@gmicol) <gmicolg@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+  ansible.builtin.fail:
+    msg: "Please define the following variables: insights_group, site_name."
+  when: insights_group is not defined or site_name is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    ndi_info: &ndi_info
+      insights_group: '{{ insights_group }}'
+    ndi_site: &ndi_site
+      site: '{{ site_name }}'
+
+- name: Create VRF Flow Rule
+  cisco.nd.nd_flow_rules: &ndi_flow_rule_vrf_present
+    <<: *ndi_info
+    <<: *ndi_site
+    name: ansible_test
+    state: present
+    tenant: test
+    vrf: test
+    subnets:
+      - 10.10.0.0/24
+      - 10.10.1.0/24
+  register: nm_add_flow_rule_vrf
+
+- name: Create VRF Flow Rule - again
+  cisco.nd.nd_flow_rules:
+    <<: *ndi_flow_rule_vrf_present
+  register: nm_add_again_flow_rule_vrf
+
+- name: Create a second VRF Flow Rule
+  cisco.nd.nd_flow_rules: &ndi_flow_rule_vrf_2_present
+    <<: *ndi_info
+    <<: *ndi_site
+    name: ansible_test_2
+    state: present
+    tenant: ansible_tenant_test
+    vrf: ansible_vrf_test
+  register: nm_add_flow_rule_vrf_2
+
+- name: Update current subnets for VRF Flow Rule
+  cisco.nd.nd_flow_rules: &ndi_flow_rule_vrf_update
+    <<: *ndi_flow_rule_vrf_present
+    subnets:
+      - 10.10.1.0/24
+      - 10.10.2.0/24
+  register: nm_update_subnets_flow_rule_vrf
+
+- name: Update current subnets for VRF Flow Rule - again
+  cisco.nd.nd_flow_rules:
+    <<: *ndi_flow_rule_vrf_update
+  register: nm_update_again_subnets_flow_rule_vrf
+
+- name: Delete all existing subnets for VRF Flow Rule
+  cisco.nd.nd_flow_rules:
+    <<: *ndi_flow_rule_vrf_update
+    subnets: []
+  register: nm_delete_subnets_flow_rule_vrf
+
+- name: Query current VRF Flow Rule
+  cisco.nd.nd_flow_rules:
+    <<: *ndi_flow_rule_vrf_present
+    state: query
+  register: query_flow_rule_vrf
+
+- name: Query all VRF Flow Rules
+  cisco.nd.nd_flow_rules:
+    <<: *ndi_info
+    <<: *ndi_site
+    state: query
+  register: query_all_flow_rule_vrf
+
+- name: Delete VRF Flow Rule
+  cisco.nd.nd_flow_rules: &ndi_flow_rule_vrf_absent
+    <<: *ndi_flow_rule_vrf_present
+    state: absent
+  register: nm_delete_flow_rule_vrf
+
+- name: Delete VRF Flow Rule - again
+  cisco.nd.nd_flow_rules:
+    <<: *ndi_flow_rule_vrf_absent
+  register: nm_delete_again_flow_rule_vrf
+
+- name: Delete Second VRF Flow Rule
+  cisco.nd.nd_flow_rules:
+    <<: *ndi_flow_rule_vrf_2_present
+    state: absent
+
+# - name: Verify instant_analysis_info
+#   ansible.builtin.assert:
+#     that:
+#       - instant_analysis_info.current.operSt == "COMPLETE"
+#       - instant_analysis_info.current.epochInfo is defined
+#       - instant_analysis_info.current.epochInfo.epochId is defined
