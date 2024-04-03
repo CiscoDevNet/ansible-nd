@@ -16,13 +16,13 @@ module: nd_flow_rules
 version_added: "0.2.0"
 short_description: Manage Flow Rules
 description:
-- Manage Flow Rules on Cisco Nexus Dashboard Insights (NDI).
+- Manage VRF Flow Rules on Cisco Nexus Dashboard Insights (NDI).
 author:
 - Gaspard Micol (@gmicol)
 options:
   insights_group:
     description:
-    - The name of the insights group.
+    - The name of the Insights Group.
     type: str
     required: true
     aliases: [ fab_name, ig_name ]
@@ -51,34 +51,79 @@ options:
     aliases: [ vrf_name ]
   subnets:
     description:
-    - The list of the subnets to be added/deleted to a new or existing Flow Rule.
+    - The list of subnets to be added or kept in a new or existing Flow Rule.
+    - To completely delete all subnets, pass an empty list.
     type: list
-    elements: dict
-    suboptions:
-      subnet:
-        description:
-        - The IP address of the subnet.
-        type: str
-      operation:
-        description:
-        - The type of operation to apply on the subnet.
-        - If the I(flow_rule) already exists, C(delete) or C(add) can be used.
-        - If not, I(operation) can be left empty if a subnet needs to be added.
-        type: str
-        choices: [ delete, add ]
-        default: add
+    elements: str
   state:
     description:
     - Use C(present) to create or update a Flow Rule.
     - Use C(absent) to delete an existing Flow Rule.
-    - Use C(query) for listing the existing Flow Rules or a specific Flow rule if I(flow_rule) is specified.
+    - Use C(query) for listing the existing Flow Rules or a specific Flow Rule if I(flow_rule) is specified.
     type: str
     choices: [ present, absent, query ]
-    default: query
+    default: present
 extends_documentation_fragment: cisco.nd.modules
 """
 
 EXAMPLES = r"""
+- name: Create a VRF Flow Rule with subnet
+  cisco.nd.nd_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    tenant: my_tenant
+    vrf: my_vrf
+    subnets:
+      - 10.10.0.0/24
+    state: present
+
+- name: Update a VRF Flow Rule by adding subnet 10.10.1.0/24
+  cisco.nd.nd_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    subnets:
+      - 10.10.0.0/24
+      - 10.10.1.0/24
+    state: present
+
+- name: Update a VRF Flow Rule by deleting subnet 10.10.0.0/24
+  cisco.nd.nd_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    subnets:
+      - 10.10.1.0/24
+    state: present
+
+- name: Update a VRF Flow Rule by deleting all subnets
+  cisco.nd.nd_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    subnets: []
+    state: present
+
+- name: Query a specific VRF Flow Rule
+  cisco.nd.nd_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    state: query
+
+- name: Query all VRF Flow Rules
+  cisco.nd.nd_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    state: query
+
+- name: Delete a VRF Flow Rule
+  cisco.nd.nd_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    state: absent
 """
 
 RETURN = r"""
@@ -87,25 +132,6 @@ RETURN = r"""
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, sanitize_dict
 from ansible.module_utils.basic import AnsibleModule
-
-
-# Can be moved to ndi.py
-def create_flow_rules_subnet_lists(subnets=None, existing_subnets=None):
-    subnets_to_add = []
-    subnets_to_update = []
-    if isinstance(subnets, list):
-        existing_subnet_set = {item["subnet"] for item in existing_subnets}
-        all_subnet_set = existing_subnet_set.union(subnets)
-        for subnet in all_subnet_set:
-            if subnet in subnets and subnet not in existing_subnet_set:
-                subnets_to_add.append({"subnet": subnet})
-                subnets_to_update.append({"subnet": subnet, "operation": "ADD"})
-            elif subnet not in subnets and subnet in existing_subnet_set:
-                subnet_id = next((existing_subnet["flowRuleAttributeUuid"] for existing_subnet in existing_subnets if existing_subnet["subnet"] == subnet))
-                subnets_to_update.append({"subnet": subnet, "operation": "DELETE", "flowRuleAttributeUuid": subnet_id})
-            else:
-                subnets_to_add.append({"subnet": subnet})
-    return subnets_to_add, subnets_to_update
 
 
 def main():
@@ -157,13 +183,12 @@ def main():
         if flow_rules_config.get("name") == flow_rule:
             nd.existing = sanitize_dict(flow_rules_config, delete_keys)
             uuid = flow_rules_config.get("uuid")
-            if len(flow_rules_config.get("flowRuleAttributeList", [])) >= 1:
-                existing_subnets.extend(flow_rules_config["flowRuleAttributeList"])
+            existing_subnets.extend(flow_rules_config.get("flowRuleAttributeList", []))
 
     if state == "present":
         nd.previous = nd.existing
         flow_rule_config = {"name": flow_rule, "tenant": tenant, "vrf": vrf}
-        subnets_to_add, subnets_to_update = create_flow_rules_subnet_lists(subnets, existing_subnets)
+        subnets_to_add, subnets_to_update = ndi.create_flow_rules_subnet_payload(subnets, existing_subnets)
         flow_rule_config.update(flowRuleAttributeList=subnets_to_add)
         if flow_rule_config != nd.previous:
             method = "POST"
