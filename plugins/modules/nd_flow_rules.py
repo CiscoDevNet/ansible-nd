@@ -24,13 +24,11 @@ options:
     description:
     - The name of the Insights Group.
     type: str
-    required: true
     aliases: [ fab_name, ig_name ]
   site_name:
     description:
     - The name of the ACI Fabric.
     type: str
-    required: true
     aliases: [ site ]
   flow_rule:
     description:
@@ -47,7 +45,7 @@ options:
     description:
     - The name of an existing VRF under the existing I(tenant).
     - Once the Flow Rule is created, This cannot be modified.
-    type; str
+    type: str
     aliases: [ vrf_name ]
   subnets:
     description:

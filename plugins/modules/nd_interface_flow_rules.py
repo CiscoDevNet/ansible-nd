@@ -24,13 +24,11 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: true
     aliases: [ fab_name, ig_name ]
   site_name:
     description:
     - The name of the ACI Fabric.
     type: str
-    required: true
     aliases: [ site ]
   flow_rule:
     description:
@@ -43,7 +41,7 @@ options:
     - It defines what could be configured in I(nodes).
     type: str
     choices: [ port_channel, physical, l3out_sub_interface, l3out_svi ]
-    aliases: [ type ]  
+    aliases: [ type ]
   flow_rule_status:
     description:
     - The state of the Interface Flow Rule.
@@ -65,7 +63,7 @@ options:
             type: str
         node_name:
             description:
-            - The name of the node. 
+            - The name of the node.
             type: str
         tenant:
             description:
@@ -99,12 +97,12 @@ options:
     description:
     - Use C(present) to create or update an Interface Flow Rule.
     - Use C(absent) to delete an existing Interface Flow Rule.
-    - Use C(query) for listing all the existing Interface Flow Rules, 
+    - Use C(query) for listing all the existing Interface Flow Rules,
       all the existing Interface Flow Rules of a specific type if I(flow_rule_type) is specified
       or a specific Interface Flow Rule if I(flow_rule) is specified.
     type: str
     choices: [ present, absent, query ]
-    default: query
+    default: present
 extends_documentation_fragment: cisco.nd.modules
 """
 
@@ -314,15 +312,26 @@ def create_flow_rules_node_port(nodes=None, existing_nodes=None, flow_rule_type=
                     for port in all_port_set:
                         if port in ports_input and port not in existing_port_set:
                             nodes_to_update.append({"flowNodeUuid": node_uuid, "operation": "MODIFY", "portsList": [{"port": port, "operation": "ADD"}]})
-                            nodes_to_add.append(dict(sanitize_dict(existing_node,["flowNodeUuid", "portsList"]), **{"portsList": [{"port": port}]}))
+                            nodes_to_add.append(dict(sanitize_dict(existing_node, ["flowNodeUuid", "portsList"]), **{"portsList": [{"port": port}]}))
                         elif port not in ports_input and port in existing_port_set:
                             port_uuid = next((existing_port["flowPortUuid"] for existing_port in existing_ports if existing_port["port"] == port))
-                            nodes_to_update.append({"flowNodeUuid": node_uuid, "operation": "MODIFY", "portsList": [{"flowPortUuid": port_uuid, "operation": "DELETE"}]})
+                            nodes_to_update.append(
+                                {
+                                    "flowNodeUuid": node_uuid,
+                                    "operation": "MODIFY",
+                                    "portsList": [{"flowPortUuid": port_uuid, "operation": "DELETE"}],
+                                }
+                            )
                         else:
-                            nodes_to_add.append(sanitize_dict(existing_node,["flowNodeUuid", "flowPortUuid"]))
+                            nodes_to_add.append(sanitize_dict(existing_node, ["flowNodeUuid", "flowPortUuid"]))
 
             else:
-                nodes_to_add.append(sanitize_dict(next((existing_node for existing_node in existing_nodes if existing_node["nodeId"] == node_id)),["flowNodeUuid", "flowPortUuid"]))
+                nodes_to_add.append(
+                    sanitize_dict(
+                        next((existing_node for existing_node in existing_nodes if existing_node["nodeId"] == node_id)),
+                        ["flowNodeUuid", "flowPortUuid"],
+                    )
+                )
     return nodes_to_add, nodes_to_update
 
 
@@ -414,7 +423,9 @@ def main():
         if not flow_rule and not flow_rule_type:
             nd.existing = [sanitize_dict(flow_rules_config, delete_keys) for flow_rules_config in flow_rules_history]
         elif flow_rule_type and not flow_rule:
-            nd.existing = [sanitize_dict(flow_rules_config, delete_keys) for flow_rules_config in flow_rules_history if flow_rules_config.get("type", "") == flow_rule_type]
+            nd.existing = [
+                sanitize_dict(flow_rules_config, delete_keys) for flow_rules_config in flow_rules_history if flow_rules_config.get("type", "") == flow_rule_type
+            ]
 
     elif state == "absent":
         nd.previous = nd.existing
