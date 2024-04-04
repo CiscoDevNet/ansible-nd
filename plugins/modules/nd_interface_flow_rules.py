@@ -14,7 +14,7 @@ DOCUMENTATION = r"""
 ---
 module: nd_interface_flow_rules
 version_added: "0.2.0"
-short_description: Manage Flow Rules
+short_description: Manage Interface Flow Rules
 description:
 - Manage Interface Flow Rules on Cisco Nexus Dashboard Insights (NDI).
 author:
@@ -55,6 +55,7 @@ options:
   nodes:
     description:
     - The list of configured nodes on which to apply the Interface Flow Rule.
+    - To completely delete all nodes, pass an empty list.
     type: list
     elements: dict
     suboptions:
@@ -64,31 +65,43 @@ options:
             type: str
         node_name:
             description:
-            - The node's name. 
+            - The name of the node. 
             type: str
+        tenant:
+            description:
+            - The name of the tenant.
+            - can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
+            type: str
+        l3out:
+            description:
+            - The name of the L3Out.
+            - can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
+            type: str
+        encap:
+            description:
+            - The name of the encap under the L3Out.
+            - can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
+            type: str
+        ports:
+            description:
+            - The list of ports.
+            - cannot be used if I(flow_rule_type) is C(l3out_svi)
+            - To completely delete all ports, pass an empty list.
+            type: list
+            elements: str
   subnets:
     description:
-    - The list of the subnets to be added/deleted to a new or existing Flow Rule.
+    - The list of subnets to be added or kept in a new or existing Flow Rule.
+    - To completely delete all subnets, pass an empty list.
     type: list
-    elements: dict
-    suboptions:
-      subnet:
-        description:
-        - The IP address of the subnet.
-        type: str
-      operation:
-        description:
-        - The type of operation to apply on the subnet.
-        - If the I(flow_rule) already exists, C(delete) or C(add) can be used.
-        - If not, I(operation) can be left empty if a subnet needs to be added.
-        type: str
-        choices: [ delete, add ]
-        default: add
+    elements: str
   state:
     description:
-    - Use C(present) to create or update a Flow Rule.
-    - Use C(absent) to delete an existing Flow Rule.
-    - Use C(query) for listing the existing Flow Rules or a specific Flow rule if I(flow_rule) is specified.
+    - Use C(present) to create or update an Interface Flow Rule.
+    - Use C(absent) to delete an existing Interface Flow Rule.
+    - Use C(query) for listing all the existing Interface Flow Rules, 
+      all the existing Interface Flow Rules of a specific type if I(flow_rule_type) is specified
+      or a specific Interface Flow Rule if I(flow_rule) is specified.
     type: str
     choices: [ present, absent, query ]
     default: query
@@ -96,6 +109,158 @@ extends_documentation_fragment: cisco.nd.modules
 """
 
 EXAMPLES = r"""
+- name: Create a Physical Interface Flow Rule with subnet
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    flow_rule_type: physical
+    flow_rule_status: enabled
+    nodes:
+        - node_id: 1
+          node_name: my_node_1
+          ports:
+            - eth1/1
+            - eth1/2
+        - node_id: 2
+          node_name: my_node_2
+          ports:
+            - eth1/10
+    subnets:
+      - 10.10.0.0/24
+    state: present
+
+- name: update a Physical Interface Flow Rule by adding the node my_node_3
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    nodes:
+        - node_id: 1
+          node_name: my_node_1
+          ports:
+            - eth1/1
+            - eth1/2
+        - node_id: 2
+          node_name: my_node_2
+          ports:
+            - eth1/1
+        - node_id: 3
+          node_name: my_node_3
+          ports:
+            - eth1/1
+    state: present
+
+- name: update a Physical Interface Flow Rule by removing the node my_node_2
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    nodes:
+        - node_id: 1
+          node_name: my_node_1
+          ports:
+            - eth1/1
+            - eth1/2
+        - node_id: 3
+          node_name: my_node_3
+          ports:
+            - eth1/1
+    state: present
+
+- name: update a Physical Interface Flow Rule by adding port eth1/2 to my_node_3 and removing port eth1/1 from my_node_1
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    nodes:
+        - node_id: 1
+          node_name: my_node_1
+          ports:
+            - eth1/2
+        - node_id: 3
+          node_name: my_node_3
+          ports:
+            - eth1/1
+            - eth1/2
+    state: present
+
+- name: update a Physical Interface Flow Rule by removing all ports from my_node_3
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    nodes:
+        - node_id: 1
+          node_name: my_node_1
+          ports:
+            - eth1/2
+        - node_id: 3
+          node_name: my_node_3
+          ports: []
+    state: present
+
+- name: update a Physical Interface Flow Rule by removing all nodes
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    nodes: []
+    state: present
+
+- name: Update a Physical Interface Flow Rule by adding subnet 10.10.1.0/24
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    subnets:
+      - 10.10.0.0/24
+      - 10.10.1.0/24
+    state: present
+
+- name: Update a Physical Interface Flow Rule by deleting subnet 10.10.0.0/24
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    subnets:
+      - 10.10.1.0/24
+    state: present
+
+- name: Update a Physical Interface Flow Rule by deleting all subnets
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    subnets: []
+    state: present
+
+- name: Query a specific Physical Interface Flow Rule
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    state: query
+
+- name: Query all Physical Interface Flow Rules
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule_type: physical
+    state: query
+
+- name: Query all Interface Flow Rules
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    state: query
+
+- name: Delete a Physical Interface Flow Rule
+  cisco.nd.nd_interface_flow_rules:
+    insights_group: my_ig
+    site_name: my_site
+    flow_rule: my_FlowRule
+    state: absent
 """
 
 RETURN = r"""
