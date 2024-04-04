@@ -59,7 +59,7 @@ options:
     description:
     - Use C(present) to create or update a Flow Rule.
     - Use C(absent) to delete an existing Flow Rule.
-    - Use C(query) for listing the existing Flow Rules or a specific Flow Rule if I(flow_rule) is specified.
+    - Use C(query) for listing all the existing Flow Rules or a specific Flow Rule if I(flow_rule) is specified.
     type: str
     choices: [ present, absent, query ]
     default: present
