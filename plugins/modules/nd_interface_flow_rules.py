@@ -28,15 +28,44 @@ options:
     aliases: [ fab_name, ig_name ]
   site_name:
     description:
-    - The name of the Assurance Entity.
+    - The name of the ACI Fabric.
     type: str
     required: true
     aliases: [ site ]
   flow_rule:
     description:
-    - The name of the Flow Rule.
+    - The name of the Interface Flow Rule.
     type: str
-    aliases: [ flow_rule_name, name ]
+    aliases: [ interface_flow_rule, flow_rule_name, name ]
+  flow_rule_type:
+    description:
+    - The type of Interface Flow Rule.
+    - It defines what could be configured in I(nodes).
+    type: str
+    choices: [ port_channel, physical, l3out_sub_interface, l3out_svi ]
+    aliases: [ type ]  
+  flow_rule_status:
+    description:
+    - The state of the Interface Flow Rule.
+    - It can be C(enabled) or C(disabled) but while being C(disabled), The Interface Flow Rule cannot be modified.
+    type: str
+    default: enabled
+    choices: [ enabled, disabled ]
+    aliases: [ status ]
+  nodes:
+    description:
+    - The list of configured nodes on which to apply the Interface Flow Rule.
+    type: list
+    elements: dict
+    suboptions:
+        node_id:
+            description:
+            - The node's ID.
+            type: str
+        node_name:
+            description:
+            - The node's name. 
+            type: str
   subnets:
     description:
     - The list of the subnets to be added/deleted to a new or existing Flow Rule.
@@ -79,13 +108,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.constants import INTERFAC
 import copy
 
 
-# Can be moved to ndi.py
 def create_flow_rules_node_port(nodes=None, existing_nodes=None, flow_rule_type=None):
     nodes_to_add = []
     nodes_to_update = []
     if isinstance(nodes, list):
         existing_nodes_set = {item["nodeId"] for item in existing_nodes}
-        all_nodes_set = existing_nodes_set.union({item["node_id"] for item in nodes})
+        all_nodes_set = sorted(existing_nodes_set.union({item["node_id"] for item in nodes}))
         for node_id in all_nodes_set:
             check_node_input_id = any(node_input["node_id"] == node_id for node_input in nodes)
 
@@ -117,7 +145,7 @@ def create_flow_rules_node_port(nodes=None, existing_nodes=None, flow_rule_type=
                     existing_node = next((existing_node for existing_node in existing_nodes if existing_node["nodeId"] == node_id))
                     existing_ports, node_uuid = existing_node.get("portsList"), existing_node.get("flowNodeUuid")
                     existing_port_set = {item["port"] for item in existing_ports}
-                    all_port_set = existing_port_set.union(ports_input)
+                    all_port_set = sorted(existing_port_set.union(ports_input))
                     for port in all_port_set:
                         if port in ports_input and port not in existing_port_set:
                             nodes_to_update.append({"flowNodeUuid": node_uuid, "operation": "MODIFY", "portsList": [{"port": port, "operation": "ADD"}]})
@@ -139,7 +167,7 @@ def main():
         insights_group=dict(type="str", aliases=["fab_name", "ig_name"]),
         site_name=dict(type="str", aliases=["site"]),
         flow_rule=dict(type="str", aliases=["interface_flow_rule", "flow_rule_name", "name"]),  # Not required to query all objects
-        flow_rule_status=dict(type="str",choices=["enabled", "disabled"], aliases=["status"]),
+        flow_rule_status=dict(type="str", default="enabled", choices=["enabled", "disabled"], aliases=["status"]),
         flow_rule_type=dict(type="str", choices=["port_channel", "physical", "l3out_sub_interface", "l3out_svi"], aliases=["type"]),
         nodes=dict(
             type="list",
@@ -218,8 +246,10 @@ def main():
             nd.existing = sanitize_dict(resp.get("value", {}).get("data", [])[0], delete_keys)
 
     elif state == "query":
-        if not flow_rule:
+        if not flow_rule and not flow_rule_type:
             nd.existing = [sanitize_dict(flow_rules_config, delete_keys) for flow_rules_config in flow_rules_history]
+        elif flow_rule_type and not flow_rule:
+            nd.existing = [sanitize_dict(flow_rules_config, delete_keys) for flow_rules_config in flow_rules_history if flow_rules_config.get("type", "") == flow_rule_type]
 
     elif state == "absent":
         nd.previous = nd.existing
