@@ -28,7 +28,7 @@ options:
     aliases: [ fab_name, ig_name ]
   site_name:
     description:
-    - The name of the Assurance Entity.
+    - The name of the ACI Fabric.
     type: str
     required: true
     aliases: [ site ]

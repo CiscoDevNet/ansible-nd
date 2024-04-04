@@ -15,13 +15,18 @@
     ndi_site: &ndi_site
       site: '{{ site_name }}'
 
-- name: Remove existing Physical Interface Flow Rule
+- name: Remove existing Interface Flow Rules - cleanup before tests
   cisco.nd.nd_interface_flow_rules:
     <<: *ndi_info
     <<: *ndi_site
-    name: ansible_phy
+    name: "{{ item }}"
     state: absent
+  loop:
+    - ansible_phy
+    - ansible_l3SubIf
+    - ansible_svi
 
+# CREATION TASKS
 - name: Create Physical Interface Flow Rule
   cisco.nd.nd_interface_flow_rules: &ndi_flow_rule_physical_present
     <<: *ndi_info
@@ -38,11 +43,10 @@
           - eth1/2
       - node_id: 1102
         node_name: S1-LEAF1102
+        ports:
+          - eth1/10
       - node_id: 1103
         node_name: S1-LEAF1103
-    subnets:
-      - 10.10.0.0/24
-      - 10.10.1.0/24
   register: nm_add_flow_rule_physical
 
 - name: Create Physical Interface Flow Rule - again
@@ -50,7 +54,96 @@
     <<: *ndi_flow_rule_physical_present
   register: nm_add_again_flow_rule_physical
 
-- name: Update current subnets and nodes for Physical Interface Flow Rule
+- name: Create L3Out Sub-Interface Interface Flow Rule
+  cisco.nd.nd_interface_flow_rules:
+    <<: *ndi_info
+    <<: *ndi_site
+    name: ansible_l3SubIf
+    state: present
+    type: l3out_sub_interface
+    status: enabled
+    nodes:
+      - node_id: 1101
+        node_name: S1-LEAF1101
+        tenant: ndi-demo
+        l3out: core_l3out
+        encap: vlan-31
+        ports:
+          - eth1/25
+  register: nm_add_flow_rule_l3SubIf
+
+- name: Create L3Out SVI Interface Flow Rule
+  cisco.nd.nd_interface_flow_rules: &ndi_flow_rule_svi_present
+    <<: *ndi_info
+    <<: *ndi_site
+    name: ansible_svi
+    state: present
+    type: l3out_svi
+    status: enabled
+    nodes:
+      - node_id: 1102
+        node_name: S1-LEAF1102
+        tenant: ansible_tenant
+        l3out: ansible_l3out
+        encap: ansible_vlan
+    subnets:
+      - 10.10.0.0/24
+      - 10.10.1.0/24
+  register: nm_add_flow_rule_svi
+
+- name: Asserts for Interface Flow Rules creation tasks
+  ansible.builtin.assert:
+    that:
+      - nm_add_flow_rule_physical is changed
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.name == "ansible_phy"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.type == "PHYSICAL"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.state == "ENABLED"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.flowRuleAttributeList == []
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.nodesList|length == 3
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.nodesList.0.nodeId == "1101"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.nodesList.0.nodeName == "S1-LEAF1101"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.nodesList.0.portsList.0.port == "eth1/1"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.nodesList.0.portsList.1.port == "eth1/2"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.nodesList.1.nodeId == "1102"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.nodesList.1.nodeName == "S1-LEAF1102"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.nodesList.1.portsList.0.port == "eth1/10"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.nodesList.2.nodeId == "1103"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.nodesList.2.nodeName == "S1-LEAF1103"
+      - nm_add_flow_rule_physical.data.interfaceFlowRulesList.0.nodesList.2.portsList == []
+      - nm_add_flow_rule_physical.current == nm_add_flow_rule_physical.data.interfaceFlowRulesList.0
+      - nm_add_again_flow_rule_physical is not changed
+      - nm_add_again_flow_rule_physical.current == nm_add_flow_rule_physical.current
+      - nm_add_flow_rule_l3SubIf is changed
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.name == "ansible_l3SubIf"
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.type == "L3_SUBIF"
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.state == "ENABLED"
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.flowRuleAttributeList == []
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.nodesList|length == 1
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.nodesList.0.nodeId == "1101"
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.nodesList.0.nodeName == "S1-LEAF1101"
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.nodesList.0.tenant == "ndi-demo"
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.nodesList.0.l3outName == "core_l3out"
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.nodesList.0.encap == "vlan-31"
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.nodesList|length == 1
+      - nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0.nodesList.0.portsList.0.port == "eth1/25"
+      - nm_add_flow_rule_l3SubIf.current == nm_add_flow_rule_l3SubIf.data.interfaceFlowRulesList.0
+      - nm_add_flow_rule_svi is changed
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.name == "ansible_svi"
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.type == "SVI"
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.state == "ENABLED"
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.flowRuleAttributeList|length == 2
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.flowRuleAttributeList.0.subnet == "10.10.0.0/24"
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.flowRuleAttributeList.1.subnet == "10.10.1.0/24"
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.nodesList|length == 1
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.nodesList.0.nodeId == "1102"
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.nodesList.0.nodeName == "S1-LEAF1102"
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.nodesList.0.tenant == "ansible_tenant"
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.nodesList.0.l3outName == "ansible_l3out"
+      - nm_add_flow_rule_svi.data.interfaceFlowRulesList.0.nodesList.0.encap == "ansible_vlan"
+      - nm_add_flow_rule_svi.current == nm_add_flow_rule_svi.data.interfaceFlowRulesList.0
+
+# UPDATE TASKS
+- name: Update current nodes for Physical Interface Flow Rule
   cisco.nd.nd_interface_flow_rules: &ndi_flow_rule_physical_update
     <<: *ndi_flow_rule_physical_present
     nodes:
@@ -62,65 +155,149 @@
       - node_id: 1103
         node_name: S1-LEAF1103
         ports:
-          - eth1/1
-    subnets:
-      - 10.10.1.0/24
-      - 10.10.2.0/24
+          - eth1/20
   register: nm_update_flow_rule_physical
 
-- name: Update current subnets and nodes for Physical Interface Flow Rule - again
+- name: Update current nodes for Physical Interface Flow Rule - again
   cisco.nd.nd_interface_flow_rules:
     <<: *ndi_flow_rule_physical_update
   register: nm_update_again_flow_rule_physcial
 
-# - name: Delete Physical Interface Flow Rule
-#   cisco.nd.nd_interface_flow_rules: &ndi_flow_rule_physical_absent
-#     <<: *ndi_flow_rule_physical_update
-#     state: absent
-#   register: nm_delete_flow_rule_physical
+- name: Update current subnets for L3Out SVI Interface Flow Rule
+  cisco.nd.nd_interface_flow_rules: &ndi_flow_rule_svi_update
+    <<: *ndi_flow_rule_svi_present
+    subnets:
+      - 10.10.1.0/24
+      - 10.10.2.0/24
+  register: nm_update_flow_rule_svi
 
-# - name: Delete Physical Interface Flow Rule - again
-#   cisco.nd.nd_interface_flow_rules:
-#     <<: *ndi_flow_rule_physical_absent
-#   register: nm_delete_again_flow_rule_physical
+- name: Update current subnets for L3Out SVI Interface Flow Rule - again
+  cisco.nd.nd_interface_flow_rules:
+    <<: *ndi_flow_rule_svi_update
+  register: nm_update_again_flow_rule_svi
 
-# - name: Create a second VRF Flow Rule
-#   cisco.nd.nd_interface_flow_rules: &ndi_flow_rule_vrf_2_present
-#     <<: *ndi_info
-#     <<: *ndi_site
-#     name: ansible_test_2
-#     state: present
-#     tenant: ansible_tenant_test
-#     vrf: ansible_vrf_test
-#   register: nm_add_flow_rule_vrf_2
+- name: Asserts for Interface Flow Rules update tasks
+  ansible.builtin.assert:
+    that:
+      - nm_update_flow_rule_physical is changed
+      - nm_update_flow_rule_physical.data.flowRuleAttributeList == []
+      - nm_update_flow_rule_physical.data.nodesList.0.operation == "MODIFY"
+      - nm_update_flow_rule_physical.data.nodesList.0.portsList.0.operation == "DELETE"
+      - nm_update_flow_rule_physical.data.nodesList.1.operation == "MODIFY"
+      - nm_update_flow_rule_physical.data.nodesList.1.portsList.0.operation == "ADD"
+      - nm_update_flow_rule_physical.data.nodesList.1.portsList.0.port == "eth1/3"
+      - nm_update_flow_rule_physical.data.nodesList.2.operation == "DELETE"
+      - nm_update_flow_rule_physical.data.nodesList.2.nodeId == "1102"
+      - nm_update_flow_rule_physical.data.nodesList.2.nodeName == "S1-LEAF1102"
+      - nm_update_flow_rule_physical.data.nodesList.3.operation == "MODIFY"
+      - nm_update_flow_rule_physical.data.nodesList.3.portsList.0.operation == "ADD"
+      - nm_update_flow_rule_physical.data.nodesList.3.portsList.0.port == "eth1/20"
+      - nm_update_flow_rule_physical.current.name == "ansible_phy"
+      - nm_update_flow_rule_physical.current.type == "PHYSICAL"
+      - nm_update_flow_rule_physical.current.state == "ENABLED"
+      - nm_update_flow_rule_physical.current.flowRuleAttributeList == []
+      - nm_update_flow_rule_physical.current.nodesList|length == 2
+      - nm_update_flow_rule_physical.current.nodesList.0.nodeId == "1101"
+      - nm_update_flow_rule_physical.current.nodesList.0.nodeName == "S1-LEAF1101"
+      - nm_update_flow_rule_physical.current.nodesList.0.portsList.0.port == "eth1/2"
+      - nm_update_flow_rule_physical.current.nodesList.0.portsList.1.port == "eth1/3"
+      - nm_update_flow_rule_physical.current.nodesList.1.nodeId == "1103"
+      - nm_update_flow_rule_physical.current.nodesList.1.nodeName == "S1-LEAF1103"
+      - nm_update_flow_rule_physical.current.nodesList.1.portsList.0.port == "eth1/20"
+      - nm_update_again_flow_rule_physcial is not changed
+      - nm_update_again_flow_rule_physcial.current == nm_update_flow_rule_physical.current
+      - nm_update_flow_rule_svi is changed
+      - nm_update_flow_rule_svi.data.flowRuleAttributeList.0.subnet == "10.10.0.0/24"
+      - nm_update_flow_rule_svi.data.flowRuleAttributeList.0.operation == "DELETE"
+      - nm_update_flow_rule_svi.data.flowRuleAttributeList.1.subnet == "10.10.2.0/24"
+      - nm_update_flow_rule_svi.data.flowRuleAttributeList.1.operation == "ADD"
+      - nm_update_flow_rule_svi.current.name == "ansible_svi"
+      - nm_update_flow_rule_svi.current.type == "SVI"
+      - nm_update_flow_rule_svi.current.state == "ENABLED"
+      - nm_update_flow_rule_svi.current.flowRuleAttributeList|length == 2
+      - nm_update_flow_rule_svi.current.flowRuleAttributeList.0.subnet == "10.10.1.0/24"
+      - nm_update_flow_rule_svi.current.flowRuleAttributeList.1.subnet == "10.10.2.0/24"
+      - nm_update_flow_rule_svi.current.nodesList|length == 1
+      - nm_update_flow_rule_svi.current.nodesList.0.nodeId == "1102"
+      - nm_update_flow_rule_svi.current.nodesList.0.nodeName == "S1-LEAF1102"
+      - nm_update_flow_rule_svi.current.nodesList.0.tenant == "ansible_tenant"
+      - nm_update_flow_rule_svi.current.nodesList.0.l3outName == "ansible_l3out"
+      - nm_update_flow_rule_svi.current.nodesList.0.encap == "ansible_vlan"
+      - nm_update_again_flow_rule_svi is not changed
+      - nm_update_again_flow_rule_svi.current == nm_update_flow_rule_svi.current
 
-# - name: Delete all existing subnets for VRF Flow Rule
-#   cisco.nd.nd_interface_flow_rules:
-#     <<: *ndi_flow_rule_vrf_update
-#     subnets: []
-#   register: nm_delete_subnets_flow_rule_vrf
+# QUERY TASKS
+- name: Query all Interface Flow Rules
+  cisco.nd.nd_interface_flow_rules:
+    <<: *ndi_info
+    <<: *ndi_site
+    state: query
+  register: query_all_interface_flow_rules
 
-# - name: Query current VRF Flow Rule
-#   cisco.nd.nd_interface_flow_rules:
-#     <<: *ndi_flow_rule_vrf_present
-#     state: query
-#   register: query_flow_rule_vrf
+- name: Query all Physical Interface Flow Rules
+  cisco.nd.nd_interface_flow_rules:
+    <<: *ndi_info
+    <<: *ndi_site
+    type: physical
+    state: query
+  register: query_all_physical_flow_rules
 
-# - name: Query all VRF Flow Rules
-#   cisco.nd.nd_interface_flow_rules:
-#     <<: *ndi_info
-#     <<: *ndi_site
-#     state: query
-#   register: query_all_flow_rule_vrf
+- name: Query ansible_phy Physical Interface Flow Rule
+  cisco.nd.nd_interface_flow_rules:
+    <<: *ndi_info
+    <<: *ndi_site
+    name: ansible_phy
+    state: query
+  register: query_specific_physical_flow_rules
 
-# - name: Delete Second VRF Flow Rule
-#   cisco.nd.nd_interface_flow_rules:
-#     <<: *ndi_flow_rule_vrf_2_present
-#     state: absent
+- name: Asserts for Interface Flow Rules query tasks
+  ansible.builtin.assert:
+    that:
+      - query_all_interface_flow_rules is not changed
+      - query_all_interface_flow_rules.current|length == 3
+      - query_all_physical_flow_rules is not changed
+      - query_all_physical_flow_rules.current|length == 1
+      - query_all_physical_flow_rules.current.0.type == "PHYSICAL"
+      - query_specific_physical_flow_rules is not changed
+      - query_specific_physical_flow_rules.current.name == "ansible_phy"
+      - query_specific_physical_flow_rules.current.type == "PHYSICAL"
+      - query_specific_physical_flow_rules.current.state == "ENABLED"
+      - query_specific_physical_flow_rules.current.flowRuleAttributeList == []
+      - query_specific_physical_flow_rules.current.nodesList|length == 2
+      - query_specific_physical_flow_rules.current.nodesList.0.nodeId == "1101"
+      - query_specific_physical_flow_rules.current.nodesList.0.nodeName == "S1-LEAF1101"
+      - query_specific_physical_flow_rules.current.nodesList.0.portsList.0.port == "eth1/2"
+      - query_specific_physical_flow_rules.current.nodesList.0.portsList.1.port == "eth1/3"
+      - query_specific_physical_flow_rules.current.nodesList.1.nodeId == "1103"
+      - query_specific_physical_flow_rules.current.nodesList.1.nodeName == "S1-LEAF1103"
+      - query_specific_physical_flow_rules.current.nodesList.1.portsList.0.port == "eth1/20"
 
-# - name: Verify instant_analysis_info
-#   ansible.builtin.assert:
-#     that:
-#       - instant_analysis_info.current.operSt == "COMPLETE"
-#       - instant_analysis_info.current.epochInfo is defined
-#       - instant_analysis_info.current.epochInfo.epochId is defined
+# DELETION TASKS
+- name: Delete Physical Interface Flow Rule
+  cisco.nd.nd_interface_flow_rules: &ndi_flow_rule_physical_absent
+    <<: *ndi_flow_rule_physical_update
+    state: absent
+  register: nm_delete_flow_rule_physical
+
+- name: Delete Physical Interface Flow Rule - again
+  cisco.nd.nd_interface_flow_rules:
+    <<: *ndi_flow_rule_physical_absent
+  register: nm_delete_again_flow_rule_physical
+
+- name: Asserts for Interface Flow Rules deletion tasks
+  ansible.builtin.assert:
+    that:
+      - nm_delete_flow_rule_physical is changed
+      - nm_delete_flow_rule_physical.current == {}
+      - nm_delete_again_flow_rule_physical is not changed
+      - nm_delete_again_flow_rule_physical.current == {}
+
+- name: Remove existing Interface Flow Rules - cleanup before ending tests
+  cisco.nd.nd_interface_flow_rules:
+    <<: *ndi_info
+    <<: *ndi_site
+    name: "{{ item }}"
+    state: absent
+  loop:
+    - ansible_l3SubIf
+    - ansible_svi
