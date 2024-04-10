@@ -38,12 +38,12 @@ options:
   tenant:
     description:
     - The name of an existing Tenant.
-    - Once the Flow Rule is created, This cannot be modified.
+    - Once the Flow Rule is created, this cannot be modified.
     type: str
     aliases: [ tenant_name ]
   vrf:
     description:
-    - The name of an existing VRF under the existing I(tenant).
+    - The name of an existing VRF under an existing I(tenant).
     - Once the Flow Rule is created, This cannot be modified.
     type: str
     aliases: [ vrf_name ]
