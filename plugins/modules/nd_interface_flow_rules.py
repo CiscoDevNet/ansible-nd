@@ -68,22 +68,22 @@ options:
         tenant:
             description:
             - The name of the tenant.
-            - can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
+            - It can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
             type: str
         l3out:
             description:
             - The name of the L3Out.
-            - can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
+            - It can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
             type: str
         encap:
             description:
             - The name of the encap under the L3Out.
-            - can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
+            -  It can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
             type: str
         ports:
             description:
             - The list of ports.
-            - cannot be used if I(flow_rule_type) is C(l3out_svi)
+            - It cannot be used if I(flow_rule_type) is C(l3out_svi)
             - To completely delete all ports, pass an empty list.
             type: list
             elements: str
@@ -128,7 +128,7 @@ EXAMPLES = r"""
       - 10.10.0.0/24
     state: present
 
-- name: update a Physical Interface Flow Rule by adding the node my_node_3
+- name: Update a Physical Interface Flow Rule by adding the node my_node_3
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
     site_name: my_site
@@ -149,7 +149,7 @@ EXAMPLES = r"""
             - eth1/1
     state: present
 
-- name: update a Physical Interface Flow Rule by removing the node my_node_2
+- name: Update a Physical Interface Flow Rule by removing the node my_node_2
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
     site_name: my_site
@@ -166,7 +166,7 @@ EXAMPLES = r"""
             - eth1/1
     state: present
 
-- name: update a Physical Interface Flow Rule by adding port eth1/2 to my_node_3 and removing port eth1/1 from my_node_1
+- name: Update a Physical Interface Flow Rule by adding port eth1/2 to my_node_3 and removing port eth1/1 from my_node_1
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
     site_name: my_site
@@ -183,7 +183,7 @@ EXAMPLES = r"""
             - eth1/2
     state: present
 
-- name: update a Physical Interface Flow Rule by removing all ports from my_node_3
+- name: Update a Physical Interface Flow Rule by removing all ports from my_node_3
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
     site_name: my_site
@@ -198,7 +198,7 @@ EXAMPLES = r"""
           ports: []
     state: present
 
-- name: update a Physical Interface Flow Rule by removing all nodes
+- name: Update a Physical Interface Flow Rule by removing all nodes
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
     site_name: my_site

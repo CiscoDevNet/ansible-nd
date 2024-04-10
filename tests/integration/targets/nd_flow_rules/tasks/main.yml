@@ -12,6 +12,7 @@
   ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
+      output_level: 'info'
     ndi_site: &ndi_site
       site: '{{ site_name }}'
 
@@ -75,6 +76,32 @@
       - nm_add_flow_rule_vrf_2.current.vrf == "ansible_vrf_test"
       - nm_add_flow_rule_vrf_2.current.flowRuleAttributeList == []
 
+# QUEY TASKS
+- name: Query current VRF Flow Rule
+  cisco.nd.nd_flow_rules:
+    <<: *ndi_flow_rule_vrf_present
+    state: query
+  register: query_flow_rule_vrf
+
+- name: Query all VRF Flow Rules
+  cisco.nd.nd_flow_rules:
+    <<: *ndi_info
+    <<: *ndi_site
+    state: query
+  register: query_all_flow_rule_vrf
+
+- name: Asserts for VRF Flow Rules query tasks
+  ansible.builtin.assert:
+    that:
+      - query_flow_rule_vrf is not changed
+      - query_flow_rule_vrf.current.name == "ansible_test"
+      - query_flow_rule_vrf.current.tenant == "test"
+      - query_flow_rule_vrf.current.vrf == "test"
+      - query_flow_rule_vrf.current.flowRuleAttributeList.0.subnet == "10.10.0.0/24"
+      - query_flow_rule_vrf.current.flowRuleAttributeList.1.subnet == "10.10.1.0/24"
+      - query_all_flow_rule_vrf is not changed
+      - query_all_flow_rule_vrf.current|length >= 2
+
 # UPDATE TASKS
 - name: Update current subnets for VRF Flow Rule
   cisco.nd.nd_flow_rules: &ndi_flow_rule_vrf_update
@@ -123,31 +150,6 @@
       - nm_delete_subnets_flow_rule_vrf.current.tenant == "test"
       - nm_delete_subnets_flow_rule_vrf.current.vrf == "test"
       - nm_delete_subnets_flow_rule_vrf.current.flowRuleAttributeList == []
-
-# QUEY TASKS
-- name: Query current VRF Flow Rule
-  cisco.nd.nd_flow_rules:
-    <<: *ndi_flow_rule_vrf_present
-    state: query
-  register: query_flow_rule_vrf
-
-- name: Query all VRF Flow Rules
-  cisco.nd.nd_flow_rules:
-    <<: *ndi_info
-    <<: *ndi_site
-    state: query
-  register: query_all_flow_rule_vrf
-
-- name: Asserts for VRF Flow Rules query tasks
-  ansible.builtin.assert:
-    that:
-      - query_flow_rule_vrf is not changed
-      - query_flow_rule_vrf.current.name == "ansible_test"
-      - query_flow_rule_vrf.current.tenant == "test"
-      - query_flow_rule_vrf.current.vrf == "test"
-      - query_flow_rule_vrf.current.flowRuleAttributeList == []
-      - query_all_flow_rule_vrf is not changed
-      - query_all_flow_rule_vrf.current|length >= 2
 
 # DELETION TASKS
 - name: Delete VRF Flow Rule

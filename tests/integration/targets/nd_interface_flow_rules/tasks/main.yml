@@ -12,6 +12,7 @@
   ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
+      output_level: 'info'
     ndi_site: &ndi_site
       site: '{{ site_name }}'
 
