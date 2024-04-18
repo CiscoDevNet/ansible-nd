@@ -46,6 +46,16 @@ def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remo
     return result
 
 
+def sanitize_list(list_to_sanitize, keys=None, values=None, list_recursive=True, dict_recursive=True, remove_none_values=True):
+    result = deepcopy(list_to_sanitize)
+    for index, item in enumerate(list_to_sanitize):
+        if isinstance(item, dict):
+            result[index] = sanitize_dict(item, keys, values, dict_recursive, remove_none_values)
+        elif isinstance(item, list) and list_recursive:
+            result[index] = sanitize_list(item, keys, values, list_recursive, dict_recursive, remove_none_values)
+    return result
+
+
 if PY3:
 
     def cmp(a, b):

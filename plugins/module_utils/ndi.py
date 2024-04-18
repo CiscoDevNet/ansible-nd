@@ -568,18 +568,13 @@ class NDI:
         f.close()
 
     def create_flow_rules_subnet_payload(self, subnets, existing_subnets):
-        subnets_to_add = []
         subnets_to_update = []
-        if isinstance(subnets, list):
-            existing_subnet_set = {item["subnet"] for item in existing_subnets}
-            all_subnet_set = sorted(existing_subnet_set.union(subnets))
-            for subnet in all_subnet_set:
-                if subnet in subnets and subnet not in existing_subnet_set:
-                    subnets_to_add.append({"subnet": subnet})
-                    subnets_to_update.append({"subnet": subnet, "operation": "ADD"})
-                elif subnet not in subnets and subnet in existing_subnet_set:
-                    subnet_id = next((existing_subnet["flowRuleAttributeUuid"] for existing_subnet in existing_subnets if existing_subnet["subnet"] == subnet))
-                    subnets_to_update.append({"subnet": subnet, "operation": "DELETE", "flowRuleAttributeUuid": subnet_id})
-                else:
-                    subnets_to_add.append({"subnet": subnet})
-        return subnets_to_add, subnets_to_update
+        existing_subnet_set = {item["subnet"] for item in existing_subnets}
+        all_subnet_set = sorted(existing_subnet_set.union(subnets))
+        for subnet in all_subnet_set:
+            if subnet in subnets and subnet not in existing_subnet_set:
+                subnets_to_update.append({"subnet": subnet, "operation": "ADD"})
+            elif subnet not in subnets and subnet in existing_subnet_set:
+                subnet_id = next((existing_subnet["flowRuleAttributeUuid"] for existing_subnet in existing_subnets if existing_subnet["subnet"] == subnet))
+                subnets_to_update.append({"subnet": subnet, "operation": "DELETE", "flowRuleAttributeUuid": subnet_id})
+        return subnets_to_update
