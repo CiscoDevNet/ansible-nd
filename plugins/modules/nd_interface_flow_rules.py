@@ -25,11 +25,11 @@ options:
     - The name of the insights group.
     type: str
     aliases: [ fab_name, ig_name ]
-  site_name:
+  site:
     description:
-    - The name of the ACI Fabric.
+    - The name of the Assurance Entity.
     type: str
-    aliases: [ site ]
+    aliases: [ site_name ]
   flow_rule:
     description:
     - The name of the Interface Flow Rule.
@@ -44,8 +44,9 @@ options:
     aliases: [ type ]
   flow_rule_status:
     description:
-    - The state of the Interface Flow Rule.
-    - It can be C(enabled) or C(disabled) but while being C(disabled), The Interface Flow Rule cannot be modified.
+    - The status of the Interface Flow Rule.
+    - It can be C(enabled) or C(disabled).
+    - If C(disabled), The Interface Flow Rule cannot be modified or updated.
     type: str
     default: enabled
     choices: [ enabled, disabled ]
@@ -61,10 +62,12 @@ options:
             description:
             - The node's ID.
             type: str
+            aliases: [ id ]
         node_name:
             description:
             - The name of the node.
             type: str
+            aliases: [ name ]
         tenant:
             description:
             - The name of the tenant.
@@ -265,54 +268,61 @@ RETURN = r"""
 """
 
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, sanitize_dict
+from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, sanitize_dict, sanitize_list
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.constants import INTERFACE_FLOW_RULES_TYPES_MAPPING, INTERFACE_FLOW_RULES_STATUS_MAPPING
-import copy
 
 
-def create_flow_rules_node_port(nodes=None, existing_nodes=None, flow_rule_type=None):
-    nodes_to_add = []
+def reformat_nodes_input(nodes=None, flow_rule_type=None):
+    nodes_formated = []
+    for node in nodes:
+        node_formated = {"nodeId": node.get("node_id"), "nodeName": node.get("node_name")}
+        if flow_rule_type in ["L3_SUBIF", "SVI"]:
+            node_formated.update({"tenant": node.get("tenant"), "l3outName": node.get("l3out"), "encap": node.get("encap")})
+        if flow_rule_type in ["PHYSICAL", "PORTCHANNEL", "L3_SUBIF"]:
+            ports_formated = [{"port": port} for port in node.get("ports", [])]
+            node_formated.update({"portsList": ports_formated})
+        nodes_formated.append(node_formated)
+    return nodes_formated
+
+
+def create_all_nodes_list(nodes_formated=None, existing_nodes=None):
+    nodes_formated_sanitized = sanitize_list(nodes_formated, ["portsList"])
+    existing_nodes_sanitized = sanitize_list(existing_nodes, ["portsList", "flowNodeUuid"])
+    set_nodes_formated = {tuple(sorted(node.items())) for node in nodes_formated_sanitized}
+    set_existing_nodes = {tuple(sorted(node.items())) for node in existing_nodes_sanitized}
+    all_nodes_set = sorted(set_existing_nodes.union(set_nodes_formated))
+    all_nodes_list = [ dict(node) for node in all_nodes_set]
+    return nodes_formated_sanitized, existing_nodes_sanitized, all_nodes_list
+
+
+def update_flow_rules_nodes_payload(nodes=None, existing_nodes=None, flow_rule_type=None):
     nodes_to_update = []
     if isinstance(nodes, list):
-        existing_nodes_set = {item["nodeId"] for item in existing_nodes}
-        all_nodes_set = sorted(existing_nodes_set.union({item["node_id"] for item in nodes}))
-        for node_id in all_nodes_set:
-            check_node_input_id = any(node_input["node_id"] == node_id for node_input in nodes)
+        nodes_formated = reformat_nodes_input(nodes, flow_rule_type)
+        nodes_formated_sanitized, existing_nodes_sanitized, all_nodes_list = create_all_nodes_list(nodes_formated, existing_nodes)
+        for node in all_nodes_list:
+            if node in nodes_formated_sanitized and node not in existing_nodes_sanitized:
+                node_to_add = next(item for item in nodes_formated if sanitize_dict(item, ["portsList"]) == node)
+                node_to_add.update({"operation": "ADD"})
+                nodes_to_update.append(node_to_add)
 
-            if check_node_input_id and node_id not in existing_nodes_set:
-                node_input = next((node for node in nodes if node["node_id"] == node_id))
-                node_input_formated = {"nodeId": node_input.get("node_id"), "nodeName": node_input.get("node_name")}
-                ports_input_formated = [{"port": port} for port in node_input.get("ports")] if node_input.get("ports") is not None else []
-                if flow_rule_type in ["PHYSICAL", "PORTCHANNEL"]:
-                    node_input_formated.update({"portsList": ports_input_formated})
-                    nodes_to_add.append(copy.deepcopy(node_input_formated))
-                    node_input_formated.update({"operation": "ADD"})
-                    nodes_to_update.append(node_input_formated)
-                else:
-                    node_input_formated.update({"tenant": node_input.get("tenant"), "l3outName": node_input.get("l3out"), "encap": node_input.get("encap")})
-                    if flow_rule_type == "L3_SUBIF":
-                        node_input_formated.update({"portsList": ports_input_formated})
-                    nodes_to_add.append(copy.deepcopy(node_input_formated))
-                    node_input_formated.update({"operation": "ADD"})
-                    nodes_to_update.append(node_input_formated)
+            elif node not in nodes_formated_sanitized and node in existing_nodes_sanitized:
+                node_to_remove = next(item for item in existing_nodes if sanitize_dict(item, ["portsList", "flowNodeUuid"]) == node)
+                node_to_remove.update({"operation": "DELETE"})
+                nodes_to_update.append(node_to_remove)
 
-            elif not check_node_input_id and node_id in existing_nodes_set:
-                node_to_delete = next((existing_node for existing_node in existing_nodes if existing_node["nodeId"] == node_id))
-                node_to_delete.update({"operation": "DELETE"})
-                nodes_to_update.append(node_to_delete)
-
-            elif check_node_input_id and node_id in existing_nodes_set and flow_rule_type != "SVI":
-                ports_input = next((node.get("ports") for node in nodes if node["node_id"] == node_id))
-                if isinstance(ports_input, list):
-                    existing_node = next((existing_node for existing_node in existing_nodes if existing_node["nodeId"] == node_id))
-                    existing_ports, node_uuid = existing_node.get("portsList"), existing_node.get("flowNodeUuid")
-                    existing_port_set = {item["port"] for item in existing_ports}
+            elif node in nodes_formated_sanitized and node in existing_nodes_sanitized and flow_rule_type !="SVI":
+                ports_input = next(item.get("portsList") for item in nodes_formated if sanitize_dict(item, ["portsList"]) == node)
+                ports_input = {item["port"] for item in ports_input}
+                existing_node = next(item for item in existing_nodes if sanitize_dict(item, ["portsList", "flowNodeUuid"]) == node)
+                existing_ports, node_uuid = existing_node.get("portsList"), existing_node.get("flowNodeUuid")
+                existing_port_set = {item["port"] for item in existing_ports}
+                if ports_input != existing_port_set:
                     all_port_set = sorted(existing_port_set.union(ports_input))
                     for port in all_port_set:
                         if port in ports_input and port not in existing_port_set:
                             nodes_to_update.append({"flowNodeUuid": node_uuid, "operation": "MODIFY", "portsList": [{"port": port, "operation": "ADD"}]})
-                            nodes_to_add.append(dict(sanitize_dict(existing_node, ["flowNodeUuid", "portsList"]), **{"portsList": [{"port": port}]}))
                         elif port not in ports_input and port in existing_port_set:
                             port_uuid = next((existing_port["flowPortUuid"] for existing_port in existing_ports if existing_port["port"] == port))
                             nodes_to_update.append(
@@ -322,24 +332,14 @@ def create_flow_rules_node_port(nodes=None, existing_nodes=None, flow_rule_type=
                                     "portsList": [{"flowPortUuid": port_uuid, "operation": "DELETE"}],
                                 }
                             )
-                        else:
-                            nodes_to_add.append(sanitize_dict(existing_node, ["flowNodeUuid", "flowPortUuid"]))
-
-            else:
-                nodes_to_add.append(
-                    sanitize_dict(
-                        next((existing_node for existing_node in existing_nodes if existing_node["nodeId"] == node_id)),
-                        ["flowNodeUuid", "flowPortUuid"],
-                    )
-                )
-    return nodes_to_add, nodes_to_update
+    return nodes_to_update
 
 
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type="str", aliases=["fab_name", "ig_name"]),
-        site_name=dict(type="str", aliases=["site"]),
+        insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
+        site=dict(type="str",required=True, aliases=["site_name"]),
         flow_rule=dict(type="str", aliases=["interface_flow_rule", "flow_rule_name", "name"]),  # Not required to query all objects
         flow_rule_status=dict(type="str", default="enabled", choices=["enabled", "disabled"], aliases=["status"]),
         flow_rule_type=dict(type="str", choices=["port_channel", "physical", "l3out_sub_interface", "l3out_svi"], aliases=["type"]),
@@ -347,12 +347,12 @@ def main():
             type="list",
             elements="dict",
             options=dict(
-                node_id=dict(type="str"),
-                node_name=dict(type="str"),
+                node_id=dict(type="str", required=True, aliases=["id"]),
+                node_name=dict(type="str", required=True, aliases=["name"]),
                 tenant=dict(type="str"),
                 l3out=dict(type="str"),
                 encap=dict(type="str"),
-                ports=dict(type="list", elements="str"),
+                ports=dict(type="list", default=[], elements="str"),
             ),
         ),
         subnets=dict(type="list", elements="str"),
@@ -363,9 +363,8 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=False,
         required_if=[
-            ["state", "present", ["insights_group", "site_name", "flow_rule"]],
-            ["state", "absent", ["insights_group", "site_name", "flow_rule"]],
-            ["state", "query", ["insights_group", "site_name"]],
+            ["state", "present", ["flow_rule"]],
+            ["state", "absent", ["flow_rule"]],
         ],
     )
 
@@ -374,7 +373,7 @@ def main():
 
     state = nd.params.get("state")
     insights_group = nd.params.get("insights_group")
-    site_name = nd.params.get("site_name")
+    site = nd.params.get("site")
     flow_rule = nd.params.get("flow_rule")
     flow_rule_status = INTERFACE_FLOW_RULES_STATUS_MAPPING.get(nd.params.get("flow_rule_status"))
     flow_rule_type = INTERFACE_FLOW_RULES_TYPES_MAPPING.get(nd.params.get("flow_rule_type"))
@@ -390,9 +389,8 @@ def main():
         "flowPortUuid",
     ]
 
-    trigger_path = ndi.config_ig_path + "/" + ndi.interface_flow_rules_path.format(insights_group, site_name)
-    flow_rules_history = ndi.query_data(trigger_path)
-    nd.existing = {}
+    path = "{0}/{1}".format(ndi.config_ig_path, ndi.interface_flow_rules_path.format(insights_group, site))
+    flow_rules_history = ndi.query_data(path)
     uuid = None
     existing_subnets = []
     existing_nodes = []
@@ -405,18 +403,33 @@ def main():
 
     if state == "present":
         nd.previous = nd.existing
-        flow_rule_config = {"name": flow_rule, "state": flow_rule_status, "type": flow_rule_type}
-        subnets_to_add, subnets_to_update = ndi.create_flow_rules_subnet_payload(subnets, existing_subnets)
-        nodes_to_add, nodes_to_update = create_flow_rules_node_port(nodes, existing_nodes, flow_rule_type)
-        flow_rule_config.update(flowRuleAttributeList=subnets_to_add, nodesList=nodes_to_add)
-        if flow_rule_config != nd.previous:
-            method = "POST"
-            payload = {"interfaceFlowRulesList": [flow_rule_config]}
-            if uuid:
-                method = "PUT"
-                trigger_path = "{0}/{1}".format(trigger_path, uuid)
-                payload = {"state": flow_rule_status, "nodesList": nodes_to_update, "flowRuleAttributeList": subnets_to_update}
-            resp = nd.request(trigger_path, method=method, prefix=ndi.prefix, data=payload)
+        if uuid:
+            payload = {}
+            nodes_to_update = update_flow_rules_nodes_payload(nodes, existing_nodes, flow_rule_type)
+            payload.update({"nodesList": nodes_to_update})
+            if isinstance(subnets, list) and [item["subnet"] for item in existing_subnets] != subnets:
+                payload.update({"flowRuleAttributeList": ndi.create_flow_rules_subnet_payload(subnets, existing_subnets)})
+            else:
+                payload.update({"flowRuleAttributeList": []})
+            if nd.previous.get("state") != flow_rule_status:
+                payload.update({"state": flow_rule_status})
+            if  any(payload.get(k) for k in payload.keys()):
+                resp = nd.request("{0}/{1}".format(path, uuid), method="PUT", prefix=ndi.prefix, data=payload)
+                nd.existing = sanitize_dict(resp.get("value", {}).get("data", [])[0], delete_keys)
+        else:
+            nodes_to_add = []
+            if isinstance(nodes, list):
+                for node in nodes:
+                    node_to_add = {"nodeId": node.get("node_id"), "nodeName": node.get("node_name")}
+                    if flow_rule_type in ["PHYSICAL", "PORTCHANNEL", "L3_SUBIF"]:
+                        ports_to_add = [{"port": port} for port in node.get("ports", [])]
+                        node_to_add.update({"portsList": ports_to_add})
+                    if flow_rule_type in ["SVI", "L3_SUBIF"]:
+                        node_to_add.update({"tenant": node.get("tenant"), "l3outName": node.get("l3out"), "encap": node.get("encap")})
+                    nodes_to_add.append(node_to_add)
+            subnets_to_add = [{"subnet": subnet} for subnet in subnets] if isinstance(subnets, list) else []
+            payload = {"interfaceFlowRulesList": [{"name": flow_rule, "state": flow_rule_status, "type": flow_rule_type, "nodesList": nodes_to_add, "flowRuleAttributeList": subnets_to_add}]}
+            resp = nd.request(path, method="POST", prefix=ndi.prefix, data=payload)
             nd.existing = sanitize_dict(resp.get("value", {}).get("data", [])[0], delete_keys)
 
     elif state == "query":
@@ -429,8 +442,8 @@ def main():
 
     elif state == "absent":
         nd.previous = nd.existing
-        trigger_path = "{0}/{1}".format(trigger_path, uuid)
-        resp = nd.request(trigger_path, method="DELETE", prefix=ndi.prefix)
+        path = "{0}/{1}".format(path, uuid)
+        resp = nd.request(path, method="DELETE", prefix=ndi.prefix)
         nd.existing = {}
 
     nd.exit_json()

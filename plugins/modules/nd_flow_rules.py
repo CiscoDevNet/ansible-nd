@@ -27,7 +27,7 @@ options:
     aliases: [ fab_name, ig_name ]
   site_name:
     description:
-    - The name of the ACI Fabric.
+    - The name of the Assurance Entity.
     type: str
     aliases: [ site ]
   flow_rule:
@@ -38,13 +38,13 @@ options:
   tenant:
     description:
     - The name of an existing Tenant.
-    - Once the Flow Rule is created, this cannot be modified.
+    - The Flow Rule Tenant cannot be modified.
     type: str
     aliases: [ tenant_name ]
   vrf:
     description:
     - The name of an existing VRF under an existing I(tenant).
-    - Once the Flow Rule is created, This cannot be modified.
+    - The Flow Rule VRF cannot be modified.
     type: str
     aliases: [ vrf_name ]
   subnets:
@@ -135,8 +135,8 @@ from ansible.module_utils.basic import AnsibleModule
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type="str", aliases=["fab_name", "ig_name"]),
-        site_name=dict(type="str", aliases=["site"]),
+        insights_group=dict(type="str",required=True, aliases=["fab_name", "ig_name"]),
+        site=dict(type="str",required=True, aliases=["site_name"]),
         flow_rule=dict(type="str", aliases=["flow_rule_name", "name"]),  # Not required to query all objects
         tenant=dict(type="str", aliases=["tenant_name"]),
         vrf=dict(type="str", aliases=["vrf_name"]),
@@ -148,9 +148,8 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=False,
         required_if=[
-            ["state", "present", ["insights_group", "site_name", "flow_rule"]],
-            ["state", "absent", ["insights_group", "site_name", "flow_rule"]],
-            ["state", "query", ["insights_group", "site_name"]],
+            ["state", "present", ["flow_rule"]],
+            ["state", "absent", ["flow_rule"]],
         ],
     )
 
@@ -159,7 +158,7 @@ def main():
 
     state = nd.params.get("state")
     insights_group = nd.params.get("insights_group")
-    site_name = nd.params.get("site_name")
+    site = nd.params.get("site")
     flow_rule = nd.params.get("flow_rule")
     tenant = nd.params.get("tenant")
     vrf = nd.params.get("vrf")
@@ -172,9 +171,8 @@ def main():
         "fabricName",
     ]
 
-    trigger_path = ndi.config_ig_path + "/" + ndi.flow_rules_path.format(insights_group, site_name)
-    flow_rules_history = ndi.query_data(trigger_path)
-    nd.existing = {}
+    path = "{0}/{1}".format(ndi.config_ig_path, ndi.flow_rules_path.format(insights_group, site))
+    flow_rules_history = ndi.query_data(path)
     uuid = None
     existing_subnets = []
     for flow_rules_config in flow_rules_history:
@@ -183,19 +181,18 @@ def main():
             uuid = flow_rules_config.get("uuid")
             existing_subnets.extend(flow_rules_config.get("flowRuleAttributeList", []))
 
+
     if state == "present":
         nd.previous = nd.existing
-        flow_rule_config = {"name": flow_rule, "tenant": tenant, "vrf": vrf}
-        subnets_to_add, subnets_to_update = ndi.create_flow_rules_subnet_payload(subnets, existing_subnets)
-        flow_rule_config.update(flowRuleAttributeList=subnets_to_add)
-        if flow_rule_config != nd.previous:
-            method = "POST"
-            payload = {"flowRulesList": [flow_rule_config]}
-            if uuid:
-                method = "PUT"
-                trigger_path = "{0}/{1}".format(trigger_path, uuid)
-                payload = {"flowRuleAttributeList": subnets_to_update}
-            resp = nd.request(trigger_path, method=method, prefix=ndi.prefix, data=payload)
+        if uuid:
+            if isinstance(subnets, list) and [item["subnet"] for item in existing_subnets] != subnets:
+                payload = {"flowRuleAttributeList": ndi.create_flow_rules_subnet_payload(subnets, existing_subnets)}
+                resp = nd.request("{0}/{1}".format(path, uuid), method="PUT", prefix=ndi.prefix, data=payload)
+                nd.existing = sanitize_dict(resp.get("value", {}).get("data", [])[0], delete_keys)
+        else:
+            subnets_to_add = [{"subnet": subnet} for subnet in subnets] if isinstance(subnets, list) else []
+            payload = {"flowRulesList": [{"name": flow_rule, "tenant": tenant, "vrf": vrf, "flowRuleAttributeList": subnets_to_add}]}
+            resp = nd.request(path, method="POST", prefix=ndi.prefix, data=payload)
             nd.existing = sanitize_dict(resp.get("value", {}).get("data", [])[0], delete_keys)
 
     elif state == "query":
@@ -204,8 +201,8 @@ def main():
 
     elif state == "absent":
         nd.previous = nd.existing
-        trigger_path = "{0}/{1}".format(trigger_path, uuid)
-        resp = nd.request(trigger_path, method="DELETE", prefix=ndi.prefix)
+        path = "{0}/{1}".format(path, uuid)
+        resp = nd.request(path, method="DELETE", prefix=ndi.prefix)
         nd.existing = {}
 
     nd.exit_json()
