@@ -12,14 +12,12 @@
   ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
-      output_level: 'info'
-    ndi_site: &ndi_site
       site: '{{ site_name }}'
+      output_level: 'info'
 
 - name: Remove existing Interface Flow Rules - cleanup before tests
   cisco.nd.nd_interface_flow_rules:
     <<: *ndi_info
-    <<: *ndi_site
     name: "{{ item }}"
     state: absent
   loop:
@@ -31,7 +29,6 @@
 - name: Create Physical Interface Flow Rule
   cisco.nd.nd_interface_flow_rules: &ndi_flow_rule_physical_present
     <<: *ndi_info
-    <<: *ndi_site
     name: ansible_phy
     state: present
     type: physical
@@ -54,7 +51,6 @@
 - name: Create L3Out Sub-Interface Interface Flow Rule
   cisco.nd.nd_interface_flow_rules: &ndi_flow_rule_subif_present
     <<: *ndi_info
-    <<: *ndi_site
     name: ansible_l3SubIf
     state: present
     type: l3out_sub_interface
@@ -72,7 +68,6 @@
 - name: Create L3Out SVI Interface Flow Rule
   cisco.nd.nd_interface_flow_rules: &ndi_flow_rule_svi_present
     <<: *ndi_info
-    <<: *ndi_site
     name: ansible_svi
     state: present
     type: l3out_svi
@@ -268,14 +263,12 @@
 - name: Query all Interface Flow Rules
   cisco.nd.nd_interface_flow_rules:
     <<: *ndi_info
-    <<: *ndi_site
     state: query
   register: query_all_interface_flow_rules
 
 - name: Query all Physical Interface Flow Rules
   cisco.nd.nd_interface_flow_rules:
     <<: *ndi_info
-    <<: *ndi_site
     type: physical
     state: query
   register: query_all_physical_flow_rules
@@ -283,7 +276,6 @@
 - name: Query ansible_phy Physical Interface Flow Rule
   cisco.nd.nd_interface_flow_rules:
     <<: *ndi_info
-    <<: *ndi_site
     name: ansible_phy
     state: query
   register: query_specific_physical_flow_rules
@@ -333,7 +325,6 @@
 - name: Remove existing Interface Flow Rules - cleanup before ending tests
   cisco.nd.nd_interface_flow_rules:
     <<: *ndi_info
-    <<: *ndi_site
     name: "{{ item }}"
     state: absent
   loop:
