@@ -12,14 +12,12 @@
   ansible.builtin.set_fact:
     ndi_info: &ndi_info
       insights_group: '{{ insights_group }}'
-      output_level: 'info'
-    ndi_site: &ndi_site
       site: '{{ site_name }}'
+      output_level: 'info'
 
 - name: Delete VRF Flow Rule - cleanup before testing
   cisco.nd.nd_flow_rules:
     <<: *ndi_info
-    <<: *ndi_site
     name: "{{ item }}"
     state: absent
   loop:
@@ -30,7 +28,6 @@
 - name: Create VRF Flow Rule
   cisco.nd.nd_flow_rules: &ndi_flow_rule_vrf_present
     <<: *ndi_info
-    <<: *ndi_site
     name: ansible_test
     state: present
     tenant: test
@@ -48,7 +45,6 @@
 - name: Create a second VRF Flow Rule
   cisco.nd.nd_flow_rules: &ndi_flow_rule_vrf_2_present
     <<: *ndi_info
-    <<: *ndi_site
     name: ansible_test_2
     state: present
     tenant: ansible_tenant_test
@@ -86,7 +82,6 @@
 - name: Query all VRF Flow Rules
   cisco.nd.nd_flow_rules:
     <<: *ndi_info
-    <<: *ndi_site
     state: query
   register: query_all_flow_rule_vrf
 

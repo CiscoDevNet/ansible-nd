@@ -24,11 +24,13 @@ options:
     description:
     - The name of the Insights Group.
     type: str
+    required: true
     aliases: [ fab_name, ig_name ]
   site_name:
     description:
     - The name of the Assurance Entity.
     type: str
+    required: true
     aliases: [ site ]
   flow_rule:
     description:
@@ -135,8 +137,8 @@ from ansible.module_utils.basic import AnsibleModule
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type="str",required=True, aliases=["fab_name", "ig_name"]),
-        site=dict(type="str",required=True, aliases=["site_name"]),
+        insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
+        site=dict(type="str", required=True, aliases=["site_name"]),
         flow_rule=dict(type="str", aliases=["flow_rule_name", "name"]),  # Not required to query all objects
         tenant=dict(type="str", aliases=["tenant_name"]),
         vrf=dict(type="str", aliases=["vrf_name"]),
@@ -180,7 +182,6 @@ def main():
             nd.existing = sanitize_dict(flow_rules_config, delete_keys)
             uuid = flow_rules_config.get("uuid")
             existing_subnets.extend(flow_rules_config.get("flowRuleAttributeList", []))
-
 
     if state == "present":
         nd.previous = nd.existing

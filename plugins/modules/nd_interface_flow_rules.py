@@ -24,11 +24,13 @@ options:
     description:
     - The name of the insights group.
     type: str
+    required: true
     aliases: [ fab_name, ig_name ]
   site:
     description:
     - The name of the Assurance Entity.
     type: str
+    required: true
     aliases: [ site_name ]
   flow_rule:
     description:
@@ -46,7 +48,7 @@ options:
     description:
     - The status of the Interface Flow Rule.
     - It can be C(enabled) or C(disabled).
-    - If C(disabled), The Interface Flow Rule cannot be modified or updated.
+    - If C(disabled), the Interface Flow Rule cannot be modified or updated.
     type: str
     default: enabled
     choices: [ enabled, disabled ]
@@ -58,38 +60,40 @@ options:
     type: list
     elements: dict
     suboptions:
-        node_id:
-            description:
-            - The node's ID.
-            type: str
-            aliases: [ id ]
-        node_name:
-            description:
-            - The name of the node.
-            type: str
-            aliases: [ name ]
-        tenant:
-            description:
-            - The name of the tenant.
-            - It can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
-            type: str
-        l3out:
-            description:
-            - The name of the L3Out.
-            - It can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
-            type: str
-        encap:
-            description:
-            - The name of the encap under the L3Out.
-            -  It can only be used if I(flow_rule_type) is C(l3out_sub_interface) and C(l3out_svi).
-            type: str
-        ports:
-            description:
-            - The list of ports.
-            - It cannot be used if I(flow_rule_type) is C(l3out_svi)
-            - To completely delete all ports, pass an empty list.
-            type: list
-            elements: str
+      node_id:
+        description:
+        - The node's ID.
+        type: str
+        required: true
+        aliases: [ id ]
+      node_name:
+        description:
+        - The name of the node.
+        type: str
+        required: true
+        aliases: [ name ]
+      tenant:
+        description:
+        - The name of the tenant.
+        - It can only be used if O(flow_rule_type=l3out_sub_interface) or O(flow_rule_type=l3out_svi).
+        type: str
+      l3out:
+        description:
+        - The name of the L3Out under the tenant.
+        - It can only be used if O(flow_rule_type=l3out_sub_interface) or O(flow_rule_type=l3out_svi).
+        type: str
+      encap:
+        description:
+        - The name of the encap under the L3Out.
+        -  It can only be used ifO(flow_rule_type=l3out_sub_interface) or O(flow_rule_type=l3out_svi).
+        type: str
+      ports:
+        description:
+        - The list of ports to be added or kept in a new or existing Flow Rule.
+        - It cannot be used if O(flow_rule_type=l3out_svi).
+        - To completely delete all ports, pass an empty list.
+        type: list
+        elements: str
   subnets:
     description:
     - The list of subnets to be added or kept in a new or existing Flow Rule.
@@ -137,19 +141,19 @@ EXAMPLES = r"""
     site_name: my_site
     flow_rule: my_FlowRule
     nodes:
-        - node_id: 1
-          node_name: my_node_1
-          ports:
-            - eth1/1
-            - eth1/2
-        - node_id: 2
-          node_name: my_node_2
-          ports:
-            - eth1/1
-        - node_id: 3
-          node_name: my_node_3
-          ports:
-            - eth1/1
+      - node_id: 1
+        node_name: my_node_1
+        ports:
+          - eth1/1
+          - eth1/2
+      - node_id: 2
+        node_name: my_node_2
+        ports:
+          - eth1/1
+      - node_id: 3
+        node_name: my_node_3
+        ports:
+          - eth1/1
     state: present
 
 - name: Update a Physical Interface Flow Rule by removing the node my_node_2
@@ -158,15 +162,15 @@ EXAMPLES = r"""
     site_name: my_site
     flow_rule: my_FlowRule
     nodes:
-        - node_id: 1
-          node_name: my_node_1
-          ports:
-            - eth1/1
-            - eth1/2
-        - node_id: 3
-          node_name: my_node_3
-          ports:
-            - eth1/1
+      - node_id: 1
+        node_name: my_node_1
+        ports:
+          - eth1/1
+          - eth1/2
+      - node_id: 3
+        node_name: my_node_3
+        ports:
+          - eth1/1
     state: present
 
 - name: Update a Physical Interface Flow Rule by adding port eth1/2 to my_node_3 and removing port eth1/1 from my_node_1
@@ -175,15 +179,15 @@ EXAMPLES = r"""
     site_name: my_site
     flow_rule: my_FlowRule
     nodes:
-        - node_id: 1
-          node_name: my_node_1
-          ports:
-            - eth1/2
-        - node_id: 3
-          node_name: my_node_3
-          ports:
-            - eth1/1
-            - eth1/2
+      - node_id: 1
+        node_name: my_node_1
+        ports:
+          - eth1/2
+      - node_id: 3
+        node_name: my_node_3
+        ports:
+          - eth1/1
+          - eth1/2
     state: present
 
 - name: Update a Physical Interface Flow Rule by removing all ports from my_node_3
@@ -192,13 +196,13 @@ EXAMPLES = r"""
     site_name: my_site
     flow_rule: my_FlowRule
     nodes:
-        - node_id: 1
-          node_name: my_node_1
-          ports:
-            - eth1/2
-        - node_id: 3
-          node_name: my_node_3
-          ports: []
+      - node_id: 1
+        node_name: my_node_1
+        ports:
+          - eth1/2
+      - node_id: 3
+        node_name: my_node_3
+        ports: []
     state: present
 
 - name: Update a Physical Interface Flow Rule by removing all nodes
@@ -280,7 +284,7 @@ def reformat_nodes_input(nodes=None, flow_rule_type=None):
         if flow_rule_type in ["L3_SUBIF", "SVI"]:
             node_formated.update({"tenant": node.get("tenant"), "l3outName": node.get("l3out"), "encap": node.get("encap")})
         if flow_rule_type in ["PHYSICAL", "PORTCHANNEL", "L3_SUBIF"]:
-            ports_formated = [{"port": port} for port in node.get("ports", [])]
+            ports_formated = [{"port": port} for port in node.get("ports")] if node.get("ports") else []
             node_formated.update({"portsList": ports_formated})
         nodes_formated.append(node_formated)
     return nodes_formated
@@ -292,7 +296,7 @@ def create_all_nodes_list(nodes_formated=None, existing_nodes=None):
     set_nodes_formated = {tuple(sorted(node.items())) for node in nodes_formated_sanitized}
     set_existing_nodes = {tuple(sorted(node.items())) for node in existing_nodes_sanitized}
     all_nodes_set = sorted(set_existing_nodes.union(set_nodes_formated))
-    all_nodes_list = [ dict(node) for node in all_nodes_set]
+    all_nodes_list = [dict(node) for node in all_nodes_set]
     return nodes_formated_sanitized, existing_nodes_sanitized, all_nodes_list
 
 
@@ -312,7 +316,7 @@ def update_flow_rules_nodes_payload(nodes=None, existing_nodes=None, flow_rule_t
                 node_to_remove.update({"operation": "DELETE"})
                 nodes_to_update.append(node_to_remove)
 
-            elif node in nodes_formated_sanitized and node in existing_nodes_sanitized and flow_rule_type !="SVI":
+            elif node in nodes_formated_sanitized and node in existing_nodes_sanitized and flow_rule_type != "SVI":
                 ports_input = next(item.get("portsList") for item in nodes_formated if sanitize_dict(item, ["portsList"]) == node)
                 ports_input = {item["port"] for item in ports_input}
                 existing_node = next(item for item in existing_nodes if sanitize_dict(item, ["portsList", "flowNodeUuid"]) == node)
@@ -339,7 +343,7 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
-        site=dict(type="str",required=True, aliases=["site_name"]),
+        site=dict(type="str", required=True, aliases=["site_name"]),
         flow_rule=dict(type="str", aliases=["interface_flow_rule", "flow_rule_name", "name"]),  # Not required to query all objects
         flow_rule_status=dict(type="str", default="enabled", choices=["enabled", "disabled"], aliases=["status"]),
         flow_rule_type=dict(type="str", choices=["port_channel", "physical", "l3out_sub_interface", "l3out_svi"], aliases=["type"]),
@@ -352,7 +356,7 @@ def main():
                 tenant=dict(type="str"),
                 l3out=dict(type="str"),
                 encap=dict(type="str"),
-                ports=dict(type="list", default=[], elements="str"),
+                ports=dict(type="list", elements="str"),
             ),
         ),
         subnets=dict(type="list", elements="str"),
@@ -413,7 +417,7 @@ def main():
                 payload.update({"flowRuleAttributeList": []})
             if nd.previous.get("state") != flow_rule_status:
                 payload.update({"state": flow_rule_status})
-            if  any(payload.get(k) for k in payload.keys()):
+            if any(payload.get(k) for k in payload.keys()):
                 resp = nd.request("{0}/{1}".format(path, uuid), method="PUT", prefix=ndi.prefix, data=payload)
                 nd.existing = sanitize_dict(resp.get("value", {}).get("data", [])[0], delete_keys)
         else:
@@ -422,13 +426,23 @@ def main():
                 for node in nodes:
                     node_to_add = {"nodeId": node.get("node_id"), "nodeName": node.get("node_name")}
                     if flow_rule_type in ["PHYSICAL", "PORTCHANNEL", "L3_SUBIF"]:
-                        ports_to_add = [{"port": port} for port in node.get("ports", [])]
+                        ports_to_add = [{"port": port} for port in node.get("ports")] if node.get("ports") else []
                         node_to_add.update({"portsList": ports_to_add})
                     if flow_rule_type in ["SVI", "L3_SUBIF"]:
                         node_to_add.update({"tenant": node.get("tenant"), "l3outName": node.get("l3out"), "encap": node.get("encap")})
                     nodes_to_add.append(node_to_add)
             subnets_to_add = [{"subnet": subnet} for subnet in subnets] if isinstance(subnets, list) else []
-            payload = {"interfaceFlowRulesList": [{"name": flow_rule, "state": flow_rule_status, "type": flow_rule_type, "nodesList": nodes_to_add, "flowRuleAttributeList": subnets_to_add}]}
+            payload = {
+                "interfaceFlowRulesList": [
+                    {
+                        "name": flow_rule,
+                        "state": flow_rule_status,
+                        "type": flow_rule_type,
+                        "nodesList": nodes_to_add,
+                        "flowRuleAttributeList": subnets_to_add,
+                    },
+                ],
+            }
             resp = nd.request(path, method="POST", prefix=ndi.prefix, data=payload)
             nd.existing = sanitize_dict(resp.get("value", {}).get("data", [])[0], delete_keys)
 
