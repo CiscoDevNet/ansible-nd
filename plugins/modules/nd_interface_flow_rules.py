@@ -451,10 +451,9 @@ def main():
             nd.existing = [sanitize_dict(flow_rules_config, delete_keys) for flow_rules_config in flow_rules_history]
         elif flow_rule_type and not flow_rule:
             nd.existing = [
-                sanitize_dict(
-                    flow_rules_config, delete_keys)
-                    for flow_rules_config in flow_rules_history
-                    if flow_rules_config.get("type", "") == flow_rule_type
+                sanitize_dict(flow_rules_config, delete_keys)
+                for flow_rules_config in flow_rules_history
+                if flow_rules_config.get("type", "") == flow_rule_type
             ]
 
     elif state == "absent":
