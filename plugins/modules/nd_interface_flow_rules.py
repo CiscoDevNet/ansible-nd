@@ -122,15 +122,15 @@ EXAMPLES = r"""
     flow_rule_type: physical
     flow_rule_status: enabled
     nodes:
-        - node_id: 1
-          node_name: my_node_1
-          ports:
-            - eth1/1
-            - eth1/2
-        - node_id: 2
-          node_name: my_node_2
-          ports:
-            - eth1/10
+      - node_id: 1
+        node_name: my_node_1
+        ports:
+          - eth1/1
+          - eth1/2
+      - node_id: 2
+        node_name: my_node_2
+        ports:
+          - eth1/10
     subnets:
       - 10.10.0.0/24
     state: present
@@ -451,7 +451,10 @@ def main():
             nd.existing = [sanitize_dict(flow_rules_config, delete_keys) for flow_rules_config in flow_rules_history]
         elif flow_rule_type and not flow_rule:
             nd.existing = [
-                sanitize_dict(flow_rules_config, delete_keys) for flow_rules_config in flow_rules_history if flow_rules_config.get("type", "") == flow_rule_type
+                sanitize_dict(
+                    flow_rules_config, delete_keys)
+                    for flow_rules_config in flow_rules_history
+                    if flow_rules_config.get("type", "") == flow_rule_type
             ]
 
     elif state == "absent":
