@@ -85,7 +85,7 @@ options:
       encap:
         description:
         - The name of the encap under the L3Out.
-        -  It can only be used ifO(flow_rule_type=l3out_sub_interface) or O(flow_rule_type=l3out_svi).
+        -  It can only be used if O(flow_rule_type=l3out_sub_interface) or O(flow_rule_type=l3out_svi).
         type: str
       ports:
         description:
