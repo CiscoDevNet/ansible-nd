@@ -170,8 +170,8 @@ EXAMPLES = r"""
     insights_group: igName
     name: complianceRequirementName
     sites:
-    - siteName1
-    - siteName2
+      - siteName1
+      - siteName2
     enabled: false
     object:
       type: epg
@@ -198,9 +198,9 @@ EXAMPLES = r"""
               operator: contains
               value: foobar
     config_rules:
-    - attribute: name
-      operator: CONTAINS
-      value: foo
+      - attribute: name
+        operator: CONTAINS
+        value: foo
     state: present
 
 - name: Delete manual configuration type compliance requirement
