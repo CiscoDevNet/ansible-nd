@@ -196,7 +196,7 @@ jobs:
   integration:
     name: Integration in ubuntu-latest
     needs:
-      - units
+      # - units
       - sanity
     runs-on: ubuntu-latest
     strategy:

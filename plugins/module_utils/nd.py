@@ -485,7 +485,7 @@ class NDModule(object):
         sent = self.sent
 
         for key in unwanted:
-            if type(key) is str:
+            if isinstance(key, str):
                 if key in existing:
                     try:
                         del existing[key]
@@ -495,7 +495,7 @@ class NDModule(object):
                         del sent[key]
                     except KeyError:
                         pass
-            elif type(key) is list:
+            elif isinstance(key, list):
                 key_path, last = key[:-1], key[-1]
                 try:
                     existing_parent = reduce(dict.get, key_path, existing)
