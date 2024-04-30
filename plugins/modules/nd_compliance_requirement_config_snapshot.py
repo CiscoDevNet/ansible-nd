@@ -60,8 +60,8 @@ EXAMPLES = r"""
     insights_group: igName
     name: complianceRequirementName
     sites:
-    - siteName1
-    - siteName2
+      - siteName1
+      - siteName2
     enabled: false
     epoch_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
     state: present

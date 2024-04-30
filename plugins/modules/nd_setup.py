@@ -276,7 +276,7 @@ EXAMPLES = r"""
           authentication_type: "AES128CMAC"
           trusted: true
     dns_server:
-      -  210.69.111.224
+      - 210.69.111.224
     dns_search_domain:
       - cisco.com
     app_network: 192.18.0.1/16

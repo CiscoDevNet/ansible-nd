@@ -323,8 +323,8 @@ EXAMPLES = r"""
     insights_group: igName
     name: complianceRequirementName
     sites:
-    - siteName1
-    - siteName2
+      - siteName1
+      - siteName2
     enabled: false
     type: may
     from_object:
@@ -366,15 +366,15 @@ EXAMPLES = r"""
               operator: contains
               value: bar
     traffic_selector_rules:
-    - ether_type: ip
-      protocol: all
-    - ether_type: arp
-    - ether_type: ip
-      protocol: tcp
-      from_object:
-        source: "1"
-        destination: "2"
-        tcp_flags: ["ack", "fin", "res", "syn" ]
+      - ether_type: ip
+        protocol: all
+      - ether_type: arp
+      - ether_type: ip
+        protocol: tcp
+        from_object:
+          source: "1"
+          destination: "2"
+          tcp_flags: ["ack", "fin", "res", "syn"]
     state: present
 
 - name: Delete communication type compliance requirement

@@ -74,7 +74,7 @@ EXAMPLES = r"""
     site_name: exampleSite
     name: exampleName
     state: validate
-    exclude_ack_anomalies: yes
+    exclude_ack_anomalies: 'yes'
     epoch_choice: epoch2
   register: pcv_result
 - name: Custom validation of Pre-Change Analysis results

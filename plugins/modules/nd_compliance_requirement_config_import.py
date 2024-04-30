@@ -54,8 +54,8 @@ EXAMPLES = r"""
     insights_group: igName
     name: complianceRequirementName
     sites:
-    - siteName1
-    - siteName2
+      - siteName1
+      - siteName2
     enabled: false
     file: fileName.json
     state: present
