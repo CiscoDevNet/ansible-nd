@@ -1,0 +1,42 @@
+# Test code for the ND modules
+# Copyright: (c) 2024, Anvitha Jain (@anvitha-jain) <anvjain@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
+#   fail:
+#     msg: "Please define the following variables: insights_group, site_name."
+#   when: insights_group is not defined or site_name is not defined
+
+# SET VARS
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ site_output_level | default("debug") }}'
+
+
+# CLEAN ENVIRONMENT
+
+
+# ADD SITE
+- name: Add ND multicluster setup (check mode)
+  cisco.nd.nd_federation_member: &attach_cluster
+    <<: *nd_info
+    cluster: '173.36.219.33'
+    cluster_username: 'admin'
+    cluster_password: 'ins3965!'
+    state: present
+  check_mode: True
+  register: cm_add_cluster
+
+- name: Add ND multicluster setup (normal mode)
+  cisco.nd.nd_federation_member:
+    <<: *attach_cluster
+    state: present
+  register: nm_add_cluster
+
+- name: Assertion check for attaching ND multicluster setup 
+  ansible.builtin.assert:
+    that:
+      - cm_add_cluster is changed
+      - nm_add_cluster is changed
