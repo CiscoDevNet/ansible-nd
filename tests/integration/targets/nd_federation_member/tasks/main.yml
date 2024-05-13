@@ -16,27 +16,118 @@
 
 
 # CLEAN ENVIRONMENT
+- name: Delete federation
+  cisco.nd.nd_federation:
+    <<: *nd_info
+    name: 'lh-dmz1-pod1-ndo-v402'
+    state: absent
 
+# ADD Federation
+- name: Add ND federation (check mode)
+  cisco.nd.nd_federation: &add_federation
+    <<: *nd_info
+    name: 'lh-dmz1-pod1-ndo-v402'
+    state: present
+  register: add_federation
 
-# ADD SITE
-- name: Add ND multicluster setup (check mode)
-  cisco.nd.nd_federation_member: &attach_cluster
+- name: Assertion check for adding ND federation 
+  ansible.builtin.assert:
+    that:
+      - add_federation is changed
+      - add_federation.previous is none
+      - add_federation.current.spec.name == 'lh-dmz1-pod1-ndo-v402'
+
+# ADD Federation member (multicluster setup)
+- name: Add ND federation member (check mode)
+  cisco.nd.nd_federation_member: &attach_federation_member
     <<: *nd_info
     cluster: '173.36.219.33'
     cluster_username: 'admin'
     cluster_password: 'ins3965!'
     state: present
   check_mode: True
-  register: cm_add_cluster
+  register: cm_add_federation_member
 
-- name: Add ND multicluster setup (normal mode)
+- name: Add ND federation member (normal mode)
   cisco.nd.nd_federation_member:
-    <<: *attach_cluster
+    <<: *attach_federation_member
     state: present
-  register: nm_add_cluster
+  register: nm_add_federation_member
 
-- name: Assertion check for attaching ND multicluster setup 
+- name: Add ND federation member again
+  cisco.nd.nd_federation_member:
+    <<: *attach_federation_member
+    state: present
+  register: add_federation_member_again
+
+- name: Assertion check for attaching ND federation member 
   ansible.builtin.assert:
     that:
-      - cm_add_cluster is changed
-      - nm_add_cluster is changed
+      - cm_add_federation_member is changed
+      - nm_add_federation_member is changed
+      # - add_federation_member_again is not changed
+      - cm_add_federation_member.previous == nm_add_federation_member.previous == {}
+      - nm_add_federation_member.current.spec.host == '173.36.219.33'
+      - nm_add_federation_member.current.spec.loginDomain == 'DefaultAuth'
+      - nm_add_federation_member.current.spec.userName == 'admin'
+
+# Query Federation members (multicluster setup)
+- name: Query all federation members
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    state: query
+  register: query_all_federation_members
+
+- name: Query a federation member
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    cluster: '173.36.219.33'
+    state: query
+  register: query_federation_member
+
+- name: Assertion check for querying ND federation members
+  ansible.builtin.assert:
+    that:
+    - query_all_federation_members is not changed
+    - query_federation_member is not changed
+    - query_federation_member.current.spec.host == '173.36.219.33'
+
+
+# Remove local federation member
+- name: Remove a federation member
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    cluster: 'lh-dmz1-pod1-ndo-v402'
+    state: absent
+  ignore_errors: true
+  register: rm_local_federation_member
+
+- name: Assertion check for removing ND federation members
+  ansible.builtin.assert:
+    that:
+    - rm_local_federation_member is not changed
+    # - rm_local_federation_member.msg == "Remove all non local federation members to remove this member"
+
+# Remove Federation members (multicluster setup)
+- name: Remove a federation member
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    cluster: '173.36.219.33'
+    state: absent
+  register: rm_federation_member
+
+- name: Remove a federation member again
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    cluster: '173.36.219.33'
+    state: absent
+  register: rm_federation_member_again
+
+- name: Assertion check for removing ND federation members
+  ansible.builtin.assert:
+    that:
+    - rm_federation_member is changed
+    - rm_federation_member_again is not changed
+    - rm_federation_member.previous.spec.host == '173.36.219.33'
+    - rm_federation_member_again.previous == {}
+    - rm_federation_member.current == rm_federation_member_again.current == {}
