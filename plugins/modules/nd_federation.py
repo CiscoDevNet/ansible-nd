@@ -65,7 +65,6 @@ def main():
     )
 
     nd = NDModule(module)
-    nd.stdout =str("  nd : ")
     name = nd.params.get("name")
     state = nd.params.get("state")
 
@@ -81,7 +80,6 @@ def main():
         nd.existing = federation_obj
 
     nd.previous = nd.existing
-    nd.stdout += str("  existing    ") + str(nd.existing)
 
     if state == "query":
         nd.exit_json()

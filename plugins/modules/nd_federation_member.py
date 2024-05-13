@@ -29,7 +29,7 @@ options:
       - The IP address of the cluster.
     type: str
     required: true
-    aliases: [ cluster_ip, hostname, ip_address ]
+    aliases: [ cluster_ip, hostname, ip_address, federation_member ]
   cluster_username:
     description:
       - The username for the cluster.
@@ -78,7 +78,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_ar
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        cluster=dict(type='str', aliases=["cluster_ip", "hostname", "ip_address"]),
+        cluster=dict(type='str', aliases=["cluster_ip", "hostname", "ip_address", "federation_member"]),
         cluster_username=dict(type='str'),
         cluster_password=dict(type='str', no_log=True),
         cluster_login_domain=dict(type='str', default="DefaultAuth"),
@@ -95,7 +95,6 @@ def main():
     )
 
     nd = NDModule(module)
-    nd.stdout = str("  HI ND  ") 
 
     cluster = nd.params.get("cluster")
     cluster_username = nd.params.get("cluster_username")
@@ -109,15 +108,12 @@ def main():
     path = "/nexus/api/federation/v4/members"
     cluster_path = path
 
-    cluster_obj = nd.query_obj(path).get("items")
-    nd.stdout += str("  cluster_obj") + str(cluster_obj)
+    cluster_obj = nd.query_obj(path, ignore_not_found_error=True).get("items")
 
     if cluster_obj:
         cluster_info = next((cluster_dict for cluster_dict in cluster_obj if cluster_dict.get("spec").get("host") == cluster), None)
-        nd.stdout += str("  cluster_info") + str(cluster_info)
         if cluster_info:
             cluster_path = "{0}/{1}".format(path, cluster_info.get("status").get("memberID"))
-            nd.stdout += str("  cluster_path : ") + str(cluster_path)
             nd.existing = cluster_info
     else:
         nd.existing = cluster_obj
@@ -140,12 +136,11 @@ def main():
                 "loginDomain": cluster_login_domain,
             },
         }
-        nd.stdout += str("  payload : ") + str(payload)
 
         nd.sanitize(payload, collate=True)
 
         if not module.check_mode:
-            nd.request(cluster_path, method="POST", data=payload)
+            nd.request(path, method="POST", data=payload)
     
     nd.existing = nd.proposed
 
