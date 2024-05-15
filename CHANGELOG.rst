@@ -4,7 +4,6 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 
 .. contents:: Topics
 
-
 v1.0.0
 ======
 
@@ -14,6 +13,19 @@ Release Summary
 Release v1.0.0 of the ``ansible-nd`` collection on 2023-11-03.
 This release only includes changes needed to release v1.0.0 on RedHat Ansible Automation Hub. As required by RedHat, this release bump the minimum release supported of Ansible to v2.13.1+
 
+v0.6.0
+======
+
+Release Summary
+---------------
+
+Release v0.6.0 of the ``ansible-nd`` collection on 2024-05-15.
+This changelog describes all changes made to the modules and plugins included in this collection since v0.5.0.
+
+Minor Changes
+-------------
+
+- Add nd_flow_rules and nd_interface_flow_rules as new modules.
 
 v0.5.0
 ======
@@ -23,7 +35,6 @@ Release Summary
 
 Release v0.5.0 of the ``ansible-nd`` collection on 2023-11-03.
 This changelog describes all changes made to the modules and plugins included in this collection since v0.4.0.
-
 
 Minor Changes
 -------------
@@ -50,7 +61,6 @@ Release Summary
 Release v0.4.0 of the ``ansible-nd`` collection on 2023-08-04.
 This changelog describes all changes made to the modules and plugins included in this collection since v0.3.0.
 
-
 Minor Changes
 -------------
 
@@ -69,7 +79,6 @@ Release Summary
 
 Release v0.3.0 of the ``ansible-nd`` collection on 2023-04-05.
 This changelog describes all changes made to the modules and plugins included in this collection since v0.2.0.
-
 
 Minor Changes
 -------------
@@ -100,7 +109,6 @@ Release Summary
 
 Release v0.2.0 of the ``ansible-nd`` collection on 2023-02-04.
 This changelog describes all changes made to the modules and plugins included in this collection since v0.1.2.
-
 
 Minor Changes
 -------------
