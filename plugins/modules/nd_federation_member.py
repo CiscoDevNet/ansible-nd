@@ -78,10 +78,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_ar
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        cluster=dict(type='str', aliases=["cluster_ip", "hostname", "ip_address", "federation_member"]),
-        cluster_username=dict(type='str'),
-        cluster_password=dict(type='str', no_log=True),
-        cluster_login_domain=dict(type='str', default="DefaultAuth"),
+        cluster=dict(type="str", aliases=["cluster_ip", "hostname", "ip_address", "federation_member"]),
+        cluster_username=dict(type="str"),
+        cluster_password=dict(type="str", no_log=True),
+        cluster_login_domain=dict(type="str", default="DefaultAuth"),
         state=dict(type="str", default="present", choices=["absent", "present", "query"]),
     )
 
@@ -141,10 +141,11 @@ def main():
 
         if not module.check_mode:
             nd.request(path, method="POST", data=payload)
-    
-    nd.existing = nd.proposed
+
+        nd.existing = nd.proposed
 
     nd.exit_json()
+
 
 if __name__ == "__main__":
     main()

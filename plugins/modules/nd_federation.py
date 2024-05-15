@@ -55,7 +55,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_ar
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        name=dict(type='str', aliases=["federation", "federation_name", "local_cluster_name"]),
+        name=dict(type="str", aliases=["federation", "federation_name", "local_cluster_name"]),
         state=dict(type="str", default="present", choices=["absent", "present", "query"]),
     )
 
@@ -101,9 +101,10 @@ def main():
             nd.request(path, method="POST", data=payload)
             time.sleep(10)
 
-    nd.existing = nd.proposed
+        nd.existing = nd.proposed
 
     nd.exit_json()
+
 
 if __name__ == "__main__":
     main()
