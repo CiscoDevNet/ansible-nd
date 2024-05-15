@@ -23,7 +23,7 @@
     state: absent
 
 # ADD Federation
-- name: Add ND federation (check mode)
+- name: Add ND federation
   cisco.nd.nd_federation: &add_federation
     <<: *nd_info
     name: 'lh-dmz1-pod1-ndo-v402'
@@ -65,11 +65,11 @@
     that:
       - cm_add_federation_member is changed
       - nm_add_federation_member is changed
-      # - add_federation_member_again is not changed
+      - add_federation_member_again.current.spec.host == '173.36.219.33'
       - cm_add_federation_member.previous == nm_add_federation_member.previous == {}
-      - nm_add_federation_member.current.spec.host == '173.36.219.33'
-      - nm_add_federation_member.current.spec.loginDomain == 'DefaultAuth'
-      - nm_add_federation_member.current.spec.userName == 'admin'
+      - cm_add_federation_member.current.spec.host == nm_add_federation_member.current.spec.host == '173.36.219.33'
+      - cm_add_federation_member.current.spec.loginDomain == nm_add_federation_member.current.spec.loginDomain == 'DefaultAuth'
+      - cm_add_federation_member.current.spec.userName == nm_add_federation_member.current.spec.userName == 'admin'
 
 # Query Federation members (multicluster setup)
 - name: Query all federation members
