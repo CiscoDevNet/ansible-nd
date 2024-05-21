@@ -28,18 +28,15 @@ options:
     description:
       - The IP address of the cluster.
     type: str
-    required: true
     aliases: [ cluster_ip, hostname, ip_address, federation_member ]
   cluster_username:
     description:
       - The username for the cluster.
     type: str
-    required: true
   cluster_password:
     description:
       - The password for the cluster.
     type: str
-    required: true
     no_log: true
   cluster_login_domain:
     description:
@@ -62,11 +59,41 @@ notes:
 EXAMPLES = r"""
 - name: Setup multi-cluster configuration
   cisco.nd.nd_federation_member:
-    cluster: "172.37.20.15"
-    username: "admin"
-    password: "password"
-    login_domain: "default"
+    host: nd
+    username: admin
+    password: SomeSecretPassword
+    cluster: 172.37.20.15
+    cluster_username: admin
+    cluster_password: password
+    cluster_login_domain: default
     state: present
+  delegate_to: localhost
+
+- name: Query all federation members
+  cisco.nd.nd_federation_member:
+    host: nd
+    username: admin
+    password: SomeSecretPassword
+    state: query
+  delegate_to: localhost
+
+- name: Query a federation member
+  cisco.nd.nd_federation_member:
+    host: nd
+    username: admin
+    password: SomeSecretPassword
+    cluster: 172.37.20.15
+    state: query
+  delegate_to: localhost
+
+- name: Remove a federation member
+  cisco.nd.nd_federation_member:
+    host: nd
+    username: admin
+    password: SomeSecretPassword
+    cluster: 172.37.20.15
+    state: absent
+  delegate_to: localhost
 """
 RETURN = r"""
 """
@@ -106,15 +133,15 @@ def main():
     state = nd.params.get("state")
 
     path = "/nexus/api/federation/v4/members"
-    cluster_path = path
 
     cluster_obj = nd.query_obj(path, ignore_not_found_error=True).get("items")
 
-    if cluster_obj:
-        cluster_info = next((cluster_dict for cluster_dict in cluster_obj if cluster_dict.get("spec").get("host") == cluster), None)
-        if cluster_info:
-            cluster_path = "{0}/{1}".format(path, cluster_info.get("status").get("memberID"))
-            nd.existing = cluster_info
+    if cluster:
+        if cluster_obj:
+            cluster_info = next((cluster_dict for cluster_dict in cluster_obj if cluster_dict.get("spec").get("host") == cluster), None)
+            if cluster_info:
+                cluster_path = "{0}/{1}".format(path, cluster_info.get("status").get("memberID"))
+                nd.existing = cluster_info
     else:
         nd.existing = cluster_obj
 

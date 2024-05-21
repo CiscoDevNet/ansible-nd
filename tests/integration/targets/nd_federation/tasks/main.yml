@@ -48,10 +48,10 @@
     that:
       - cm_add_federation is changed
       - nm_add_federation is changed
-      - cm_add_federation.previous is none 
-      - nm_add_federation.previous is none
+      - add_federation_again is not changed
+      - cm_add_federation.previous == nm_add_federation.previous == {}
       - cm_add_federation.current.spec.name == nm_add_federation.current.spec.name == 'lh-dmz1-pod1-ndo-v402'
-      - add_federation_again.current.spec.name == 'lh-dmz1-pod1-ndo-v402'
+      - add_federation_again.previous.spec.name == add_federation_again.current.spec.name == 'lh-dmz1-pod1-ndo-v402'
 
 # Query federation
 - name: Get all federations
@@ -72,6 +72,7 @@
     that:
       - query_all_federations is not changed
       - query_federation is not changed
+      - query_all_federations.current | length == 1
       - query_federation.current.spec.name == 'lh-dmz1-pod1-ndo-v402'
 
 # Remove Federation
@@ -102,4 +103,4 @@
       - cm_remove_federation is changed
       - nm_remove_federation is changed
       - cm_remove_federation.previous.spec.name == nm_remove_federation.previous.spec.name == 'lh-dmz1-pod1-ndo-v402'
-      - remove_federation_again.previous is none
+      - remove_federation_again.previous == {}

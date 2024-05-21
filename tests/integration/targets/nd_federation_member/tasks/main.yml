@@ -34,7 +34,7 @@
   ansible.builtin.assert:
     that:
       - add_federation is changed
-      - add_federation.previous is none
+      - add_federation.previous == {}
       - add_federation.current.spec.name == 'lh-dmz1-pod1-ndo-v402'
 
 # ADD Federation member (multicluster setup)
@@ -90,6 +90,11 @@
     that:
     - query_all_federation_members is not changed
     - query_federation_member is not changed
+    - query_all_federation_members.current | length == 2
+    - query_all_federation_members.current[0].status.manager == true
+    - query_all_federation_members.current[0].spec.host == 'lh-dmz1-pod1-ndo-v402'
+    - query_all_federation_members.current[1].status.manager == false
+    - query_all_federation_members.current[1].spec.host == '173.36.219.33'
     - query_federation_member.current.spec.host == '173.36.219.33'
 
 

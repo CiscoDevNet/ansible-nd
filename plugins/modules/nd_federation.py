@@ -29,7 +29,6 @@ options:
     description:
       - The name of the federation.
     type: str
-    required: true
     aliases: [ federation, federation_name, local_cluster_name ]
   state:
     description:
@@ -43,8 +42,38 @@ extends_documentation_fragment: cisco.nd.modules
 EXAMPLES = r"""
 - name: Setup multi-federation configuration
   cisco.nd.nd_federation:
-    name: local_cluster_name
+    host: nd
+    username: admin
+    password: SomeSecretPassword
+    name: lh-dmz1-pod1-ndo-v402
     state: present
+    delegate_to: localhost
+
+- name: Get all federations
+  cisco.nd.nd_federation:
+    host: nd
+    username: admin
+    password: SomeSecretPassword
+    state: query
+    delegate_to: localhost
+
+- name: Get a single federation
+  cisco.nd.nd_federation:
+    host: nd
+    username: admin
+    password: SomeSecretPassword
+    name: lh-dmz1-pod1-ndo-v402
+    state: query
+    delegate_to: localhost
+
+- name: Remove a federation
+  cisco.nd.nd_federation:
+    host: nd
+    username: admin
+    password: SomeSecretPassword
+    name: lh-dmz1-pod1-ndo-v402
+    state: absent
+    delegate_to: localhost
 """
 RETURN = r"""
 """
@@ -62,6 +91,10 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ["state", "absent", ["name"]],
+            ["state", "present", ["name"]],
+        ],
     )
 
     nd = NDModule(module)
@@ -71,11 +104,12 @@ def main():
     path = "/nexus/api/federation/v4/federations"
     federation_obj = nd.query_obj(path, ignore_not_found_error=True).get("items")
 
-    if federation_obj:
-        federation_info = next((federation_dict for federation_dict in federation_obj if federation_dict.get("spec").get("name") == name), None)
-        if federation_info:
-            federation_path = "{0}/{1}".format(path, federation_info.get("status").get("federationID"))
-            nd.existing = federation_info
+    if name:
+        if federation_obj:
+            federation_info = next((federation_dict for federation_dict in federation_obj if federation_dict.get("spec").get("name") == name), None)
+            if federation_info:
+                federation_path = "{0}/{1}".format(path, federation_info.get("status").get("federationID"))
+                nd.existing = federation_info
     else:
         nd.existing = federation_obj
 
@@ -99,7 +133,8 @@ def main():
 
         if not module.check_mode:
             nd.request(path, method="POST", data=payload)
-            time.sleep(10)
+            while nd.query_obj(path, ignore_not_found_error=True).get("items") is None:
+                time.sleep(2)
 
         nd.existing = nd.proposed
 
