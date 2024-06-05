@@ -24,7 +24,7 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: true
+    default: default
     aliases: [ fab_name, ig_name ]
   site_name:
     description:
@@ -133,7 +133,7 @@ epoch_map = {
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
+        insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
         site_name=dict(type="str", required=True, aliases=["site"]),
         name=dict(type="str", aliases=["job_name", "delta_name"]),
         earlier_epoch_id=dict(type="str", aliases=["earlier_epoch_uuid", "earlier_epoch"]),

@@ -15,8 +15,8 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: true
     aliases: [ fab_name, ig_name ]
+    default: default
   name:
     description:
     - The name of the compliance requirement.

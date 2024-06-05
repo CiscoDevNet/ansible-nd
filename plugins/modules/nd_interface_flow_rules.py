@@ -24,7 +24,7 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: true
+    default: default
     aliases: [ fab_name, ig_name ]
   site:
     description:
@@ -342,7 +342,7 @@ def update_flow_rules_nodes_payload(nodes=None, existing_nodes=None, flow_rule_t
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
+        insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
         site=dict(type="str", required=True, aliases=["site_name"]),
         flow_rule=dict(type="str", aliases=["interface_flow_rule", "flow_rule_name", "name"]),  # Not required to query all objects
         flow_rule_status=dict(type="str", default="enabled", choices=["enabled", "disabled"], aliases=["status"]),

@@ -25,7 +25,7 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: true
+    default: default
     aliases: [ fab_name, ig_name ]
   site:
     description:
@@ -66,7 +66,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
+        insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
         site=dict(type="str", required=True),
         epoch_id=dict(type="str"),
     )

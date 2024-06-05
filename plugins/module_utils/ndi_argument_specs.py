@@ -13,7 +13,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.constants import MATCH_TY
 
 def compliance_base_spec():
     return dict(
-        insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
+        insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
         name=dict(type="str"),
         description=dict(type="str", aliases=["descr"]),
         enabled=dict(type="bool"),
