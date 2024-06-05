@@ -14,6 +14,7 @@ options:
   insights_group:
     description:
     - The name of the insights group.
+    - This attribute should only be set for NDI versions prior to 6.3. Later versions require this attribute to be set to default.
     type: str
     aliases: [ fab_name, ig_name ]
     default: default
