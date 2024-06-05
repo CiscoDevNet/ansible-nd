@@ -24,7 +24,7 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: true
+    default: default
     aliases: [ fab_name, ig_name ]
   site_name:
     description:
@@ -74,7 +74,7 @@ from ansible.module_utils.basic import AnsibleModule
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
+        insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
         site_name=dict(type="str", required=True, aliases=["site"]),
         id=dict(type="str", aliases=["job_id"]),
         state=dict(type="str", default="query", choices=["query", "present"]),

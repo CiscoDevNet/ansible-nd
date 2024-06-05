@@ -24,7 +24,7 @@ options:
     description:
     - The name of the Insights Group.
     type: str
-    required: true
+    default: default
     aliases: [ fab_name, ig_name ]
   site_name:
     description:
@@ -137,7 +137,7 @@ from ansible.module_utils.basic import AnsibleModule
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
+        insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
         site=dict(type="str", required=True, aliases=["site_name"]),
         flow_rule=dict(type="str", aliases=["flow_rule_name", "name"]),  # Not required to query all objects
         tenant=dict(type="str", aliases=["tenant_name"]),

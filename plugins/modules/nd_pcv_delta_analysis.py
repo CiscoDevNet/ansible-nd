@@ -24,7 +24,7 @@ options:
     description:
     - The name of the insights group.
     type: str
-    required: true
+    default: default
     aliases: [ fab_name, ig_name ]
   name:
     description:
@@ -106,7 +106,7 @@ epoch_map = {
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        insights_group=dict(type="str", required=True, aliases=["fab_name", "ig_name"]),
+        insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
         name=dict(type="str", required=True),
         site_name=dict(type="str", required=True, aliases=["site"]),
         state=dict(type="str", default="query", choices=["query", "validate"]),
