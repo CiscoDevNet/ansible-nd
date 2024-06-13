@@ -166,3 +166,16 @@ releases:
 
         "
     release_date: "2023-11-03"
+  1.1.0:
+    changes:
+      minor_changes:
+        - Add nd_flow_rules and nd_interface_flow_rules as new modules.
+        - Default insights_group to default when not provided as argument
+      release_summary:
+        "Release v1.1.0 of the ``ansible-nd`` collection on 2024-07-01.
+
+        This changelog describes all changes made to the modules and plugins included
+        in this collection since v1.0.0.
+
+        "
+    release_date: "2024-07-01"
