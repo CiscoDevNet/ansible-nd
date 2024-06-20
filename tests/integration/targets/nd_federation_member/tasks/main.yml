@@ -18,9 +18,6 @@
 - name: Remove ND federation members
   cisco.nd.nd_federation_member:
     <<: *nd_info
-    clusters:
-      - cluster_hostname: '173.36.219.33'
-      - cluster_hostname: '173.36.219.32'
     state: absent
 
 # ADD Federation members (multicluster setup)
@@ -56,9 +53,9 @@
       - cm_add_federation_member is changed
       - nm_add_federation_member is changed
       - cm_add_federation_member.previous == nm_add_federation_member.previous == []
-      # - add_federation_member_again is not changed
-      - add_federation_member_again.current == {}
-      - add_federation_member_again.previous | length == 3
+      - nm_add_federation_member.current | length == 3
+      - add_federation_member_again is not changed
+      - add_federation_member_again.current | length == add_federation_member_again.previous | length == 3
 
 # Query Federation members (multicluster setup)
 - name: Query all federation members
@@ -88,8 +85,6 @@
 - name: Remove a federation member (check mode)
   cisco.nd.nd_federation_member: &delete_federation_member
     <<: *nd_info
-    clusters:
-      - cluster_hostname: '173.36.219.33'
     state: absent
   check_mode: True
   register: cm_rm_federation_member
@@ -112,9 +107,10 @@
     - cm_rm_federation_member is changed
     - nm_rm_federation_member is changed
     - cm_rm_federation_member.previous | length == nm_rm_federation_member.previous | length == 3
-    - nm_rm_federation_member.current == rm_federation_member_again.current == {}
-    # - rm_federation_member_again is not changed
-    - rm_federation_member_again.previous | length == 2
+    - nm_rm_federation_member.current == {}
+    - rm_federation_member_again.current == []
+    - rm_federation_member_again is not changed
+    - rm_federation_member_again.previous == []
 
 
 # ERRORS
@@ -128,17 +124,6 @@
     state: present
   ignore_errors: true
   register: add_member_missing_parm
-
-- name: Remove ND federation member missing parameters
-  cisco.nd.nd_federation_member:
-    <<: *nd_info
-    clusters:
-      - cluster_hostname: '173.36.219.32'
-      - cluster_username: 'usn'
-        cluster_password: 'pswd'
-    state: absent
-  ignore_errors: true
-  register: rm_member_missing_parm
 
 - name: Query specific ND federation member missing parameters
   cisco.nd.nd_federation_member:
@@ -154,8 +139,6 @@
   ansible.builtin.assert:
     that:
     - add_member_missing_parm is not changed
-    - rm_member_missing_parm is not changed
     - query_member_missing_parm is not changed
     - add_member_missing_parm.msg == "'cluster_hostname', 'cluster_username' and 'cluster_password' are required when state is present."
-    - rm_member_missing_parm.msg == "'cluster_hostname' is required when state is absent."
-    - query_member_missing_parm.msg == "'cluster_hostname' is required when state is query."
+    - query_member_missing_parm.msg == "'cluster_hostname' is required when quering a specific federation member."
