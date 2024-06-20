@@ -20,34 +20,35 @@ version_added: "0.3.0"
 short_description:
     - Setup multi-cluster configuration on Cisco Nexus Dashboard (ND).
 description:
-    - Connects to another Nexus Dashboard (ND) cluster for a single pane of glass view into all clusters’ sites and services.
+    - Connects multiple clusters together for a single pane of glass view and administration of the clusters and their sites, services, and configurations.
     - M(cisco.nd.nd_federation_member) can only be used with python 3.7 and higher.
+    - Can only be used with Nexus Dashboard versions >= 2.3(2d).
+    - The ND version of the local cluster must be greater than or equal to the ND versions of the clusters being added.
 author:
     - Anvitha Jain (@anvjain)
 options:
-  cluster:
+  clusters:
     description:
       - The IP address of the cluster.
-    required: true
     elements: dict
     suboptions:
       cluster_hostname:
         description:
-          - The IP address of the cluster.
+          - The IP address of the federation member/cluster.
         type: str
         aliases: [ cluster_ip, hostname, ip_address, federation_member ]
       cluster_username:
         description:
-          - The username for the cluster.
+          - The username for the federation member/cluster.
         type: str
       cluster_password:
         description:
-          - The password for the cluster.
+          - The password for the federation member/cluster.
         type: str
         no_log: true
       cluster_login_domain:
         description:
-          - The login domain ame to use for the cluster.
+          - The login domain ame to use for the federation member/cluster.
           - Default value is set to DefaultAuth.
         type: str
         default: "DefaultAuth"
@@ -59,8 +60,7 @@ options:
     choices: [ absent, present, query ]
 extends_documentation_fragment: cisco.nd.modules
 notes:
-- The C(federation) must exist before using this module in your playbook.
-  The M(cisco.aci.nd_federation) module can be used for this.
+- The M(cisco.aci.nd_federation) module can be used for this.
 """
 
 EXAMPLES = r"""
@@ -69,10 +69,11 @@ EXAMPLES = r"""
     host: nd
     username: admin
     password: SomeSecretPassword
-    cluster: 172.37.20.15
-    cluster_username: admin
-    cluster_password: password
-    cluster_login_domain: default
+    clusters:
+      - cluster_hostname: 172.37.20.15
+        cluster_username: admin
+        cluster_password: password
+        cluster_login_domain: default
     state: present
   delegate_to: localhost
 
@@ -89,7 +90,8 @@ EXAMPLES = r"""
     host: nd
     username: admin
     password: SomeSecretPassword
-    cluster: 172.37.20.15
+    clusters:
+      - cluster_hostname: 172.37.20.15
     state: query
   delegate_to: localhost
 
@@ -140,13 +142,13 @@ def main():
 
     # validate parameters
     if clusters:
-      for cluster in clusters:
-          if state == "query":
-                  if not cluster.get("cluster_hostname"):
-                      nd.fail_json(msg="'cluster_hostname' is required when quering a specific federation member.")
-          elif state == "present":
-              if not (cluster.get("cluster_hostname") and cluster.get("cluster_username") and cluster.get("cluster_password")):
-                  nd.fail_json(msg="'cluster_hostname', 'cluster_username' and 'cluster_password' are required when state is present.")
+        for cluster in clusters:
+            if state == "query":
+                if not cluster.get("cluster_hostname"):
+                    nd.fail_json(msg="'cluster_hostname' is required when quering a specific federation member.")
+            elif state == "present":
+                if not (cluster.get("cluster_hostname") and cluster.get("cluster_username") and cluster.get("cluster_password")):
+                    nd.fail_json(msg="'cluster_hostname', 'cluster_username' and 'cluster_password' are required when state is present.")
 
     federation_path = "/nexus/api/federation/v4/federations"
     member_path = "/nexus/api/federation/v4/members"
@@ -170,9 +172,11 @@ def main():
     if clusters and state == "query":
         if federation_member_obj:
             for cluster in clusters:
-              cluster_info = next((cluster_dict for cluster_dict in federation_member_obj if cluster_dict.get("spec").get("host") == cluster.get("cluster_hostname")), None)
-              if cluster_info:
-                  nd.existing = cluster_info
+                cluster_info = next(
+                    (cluster_dict for cluster_dict in federation_member_obj if cluster_dict.get("spec").get("host") == cluster.get("cluster_hostname")), None
+                )
+                if cluster_info:
+                    nd.existing = cluster_info
     else:
         nd.existing = federation_member_obj
 
@@ -190,7 +194,9 @@ def main():
 
                 # Remove the federation if there are no more members.
                 if len(nd.query_obj(member_path, ignore_not_found_error=True).get("items")) == 1:
-                    federation_info = next((federation_dict for federation_dict in federation_obj if federation_dict.get("spec").get("name") == local_cluster_name), None)
+                    federation_info = next(
+                        (federation_dict for federation_dict in federation_obj if federation_dict.get("spec").get("name") == local_cluster_name), None
+                    )
                     if federation_info:
                         nd.request("{0}/{1}".format(federation_path, federation_info.get("status").get("federationID")), method="DELETE")
             nd.existing = {}
@@ -229,11 +235,10 @@ def main():
                     cluster_member_path = "{0}/{1}".format(member_path, member.get("status").get("memberID"))
                     nd.request(cluster_member_path, method="DELETE")
 
-                    try: 
+                    try:
                         payload_dict["DELETE"].append(cluster_member_path)
                     except:
                         payload_dict["DELETE"] = [cluster_member_path]
-
 
             if add_member_list:
                 for member in add_member_list:
@@ -247,7 +252,8 @@ def main():
                     )
 
                     payload = cluster_payload
-                    try: 
+
+                    try:
                         payload_dict["POST"].append(payload)
                     except:
                         payload_dict["POST"] = [payload]
