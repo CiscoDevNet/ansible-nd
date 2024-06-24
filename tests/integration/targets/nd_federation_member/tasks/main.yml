@@ -12,7 +12,7 @@
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
-      output_level: '{{ site_output_level | default("debug") }}'
+      output_level: '{{ site_output_level | default("info") }}'
 
 # CLEAN ENVIRONMENT
 - name: Remove ND federation members
@@ -114,13 +114,21 @@
 
 
 # ERRORS
+- name: Add ND federation member missing cluster_hostname
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    clusters:
+      - cluster_username: 'usn'
+        cluster_password: 'pswd'
+    state: present
+  ignore_errors: true
+  register: add_member_missing_cluster_hostname
+
 - name: Add ND federation member missing parameters
   cisco.nd.nd_federation_member:
     <<: *nd_info
     clusters:
       - cluster_hostname: '173.36.219.32'
-      - cluster_username: 'usn'
-        cluster_password: 'pswd'
     state: present
   ignore_errors: true
   register: add_member_missing_parm
@@ -138,7 +146,9 @@
 - name: Assertion check for missing parameters
   ansible.builtin.assert:
     that:
+    - add_member_missing_cluster_hostname is not changed
     - add_member_missing_parm is not changed
     - query_member_missing_parm is not changed
-    - add_member_missing_parm.msg == "'cluster_hostname', 'cluster_username' and 'cluster_password' are required when state is present."
-    - query_member_missing_parm.msg == "'cluster_hostname' is required when quering a specific federation member."
+    - add_member_missing_cluster_hostname.msg == "missing required arguments{{':'}} cluster_hostname found in clusters"
+    - add_member_missing_parm.msg == "'cluster_username' and 'cluster_password' are required when state is present."
+    - query_member_missing_parm.msg == "missing required arguments{{':'}} cluster_hostname found in clusters"

@@ -118,7 +118,7 @@ def main():
             type="list",
             elements="dict",
             options=dict(
-                cluster_hostname=dict(type="str", aliases=["cluster_ip", "hostname", "ip_address", "federation_member"]),
+                cluster_hostname=dict(type="str", required=True, aliases=["cluster_ip", "hostname", "ip_address", "federation_member"]),
                 cluster_username=dict(type="str"),
                 cluster_password=dict(type="str", no_log=True),
                 cluster_login_domain=dict(type="str", default="DefaultAuth"),
@@ -143,18 +143,18 @@ def main():
     # validate parameters
     if clusters:
         for cluster in clusters:
-            if state == "query":
-                if not cluster.get("cluster_hostname"):
-                    nd.fail_json(msg="'cluster_hostname' is required when quering a specific federation member.")
-            elif state == "present":
-                if not (cluster.get("cluster_hostname") and cluster.get("cluster_username") and cluster.get("cluster_password")):
-                    nd.fail_json(msg="'cluster_hostname', 'cluster_username' and 'cluster_password' are required when state is present.")
+            if state == "present":
+                if not (cluster.get("cluster_username") and cluster.get("cluster_password")):
+                    nd.fail_json(msg="'cluster_username' and 'cluster_password' are required when state is present.")
 
     federation_path = "/nexus/api/federation/v4/federations"
     member_path = "/nexus/api/federation/v4/members"
 
     # GET local cluster name
-    local_cluster_name = nd.query_obj("/nexus/infra/api/platform/v1/clusters").get("items")[0].get("spec").get("name")
+    local_cluster_name = ""
+    local_cluster_obj = nd.query_obj("/nexus/infra/api/platform/v1/clusters")
+    if len(local_cluster_obj.get("items", [])) == 1:
+        local_cluster_name = local_cluster_obj.get("items")[0].get("spec", {}).get("name")
 
     # GET federation
     federation_obj = nd.query_obj(federation_path, ignore_not_found_error=True).get("items")
@@ -169,14 +169,13 @@ def main():
     federation_member_obj = nd.query_obj(member_path, ignore_not_found_error=True).get("items")
 
     # Query specific member
-    if clusters and state == "query":
-        if federation_member_obj:
-            for cluster in clusters:
-                cluster_info = next(
-                    (cluster_dict for cluster_dict in federation_member_obj if cluster_dict.get("spec").get("host") == cluster.get("cluster_hostname")), None
-                )
-                if cluster_info:
-                    nd.existing = cluster_info
+    if clusters and state == "query" and federation_member_obj:
+        for cluster in clusters:
+            cluster_info = next(
+                (cluster_dict for cluster_dict in federation_member_obj if cluster_dict.get("spec").get("host") == cluster.get("cluster_hostname")), None
+            )
+            if cluster_info:
+                nd.existing = cluster_info
     else:
         nd.existing = federation_member_obj
 
@@ -194,38 +193,33 @@ def main():
 
                 # Remove the federation if there are no more members.
                 if len(nd.query_obj(member_path, ignore_not_found_error=True).get("items")) == 1:
-                    federation_info = next(
-                        (federation_dict for federation_dict in federation_obj if federation_dict.get("spec").get("name") == local_cluster_name), None
-                    )
                     if federation_info:
                         nd.request("{0}/{1}".format(federation_path, federation_info.get("status").get("federationID")), method="DELETE")
             nd.existing = {}
+
     elif state == "present":
         remove_member_list = []
         add_member_list = []
-        payload_dict = {}
+        payload_dict = {"DELETE": [], "POST": []}
         if len(federation_member_obj) <= 1:
             # if there are no members or just a local member, add all members from users.
             add_member_list = clusters
         else:
-            # Remove exisiting members not specified by the users.
-            member_exists = False
+
+            # Remove existing members not specified by the users.
             for existing_member_hosts in federation_member_obj:
-                if not existing_member_hosts.get("spec").get("host") == local_cluster_name:
-                    for user_member_host in clusters:
-                        if existing_member_hosts.get("spec").get("host") == user_member_host.get("cluster_hostname"):
-                            member_exists = True
-                            break
+                member_host = existing_member_hosts.get("spec").get("host")
+                if member_host != local_cluster_name:
+                    # Use next() to check if the member exists in user-specified clusters
+                    member_exists = next((True for user_member_host in clusters if user_member_host.get("cluster_hostname") == member_host), False)
                     if not member_exists:
                         remove_member_list.append(existing_member_hosts)
 
             # Add members specified by the users.
             for user_member_host in clusters:
-                found = False
-                for existing_member_hosts in federation_member_obj:
-                    if existing_member_hosts.get("spec").get("host") == user_member_host.get("cluster_hostname"):
-                        found = True
-                        break
+                user_host = user_member_host.get("cluster_hostname")
+                # Use next() to check if the user-specified member exists in existing members
+                found = next((True for existing_member_hosts in federation_member_obj if existing_member_hosts.get("spec").get("host") == user_host), False)
                 if not found:
                     add_member_list.append(user_member_host)
 
@@ -235,10 +229,7 @@ def main():
                     cluster_member_path = "{0}/{1}".format(member_path, member.get("status").get("memberID"))
                     nd.request(cluster_member_path, method="DELETE")
 
-                    try:
-                        payload_dict["DELETE"].append(cluster_member_path)
-                    except:
-                        payload_dict["DELETE"] = [cluster_member_path]
+                    payload_dict["DELETE"].append(cluster_member_path)
 
             if add_member_list:
                 for member in add_member_list:
@@ -253,10 +244,7 @@ def main():
 
                     payload = cluster_payload
 
-                    try:
-                        payload_dict["POST"].append(payload)
-                    except:
-                        payload_dict["POST"] = [payload]
+                    payload_dict["POST"].append(payload)
 
                     nd.sanitize(payload, collate=True)
 
