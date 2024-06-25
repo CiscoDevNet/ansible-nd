@@ -6,8 +6,6 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
-import base64
-import time
 
 __metaclass__ = type
 
@@ -17,25 +15,26 @@ DOCUMENTATION = r"""
 ---
 module: nd_federation_member
 version_added: "0.3.0"
-short_description:
-    - Setup multi-cluster configuration on Cisco Nexus Dashboard (ND).
+short_description: Setup multi-cluster configuration on Cisco Nexus Dashboard (ND).
 description:
-    - Connects multiple clusters together for a single pane of glass view and administration of the clusters and their sites, services, and configurations.
-    - M(cisco.nd.nd_federation_member) can only be used with python 3.7 and higher.
-    - Can only be used with Nexus Dashboard versions >= 2.3(2d).
-    - The ND version of the local cluster must be greater than or equal to the ND versions of the clusters being added.
+  - Connects multiple clusters together for a single pane of glass view and administration of the clusters and their sites, services, and configurations.
+  - M(cisco.nd.nd_federation_member) can only be used with python 3.7 and higher.
+  - Can only be used with Nexus Dashboard versions >= 2.3(2d).
+  - The ND version of the local cluster must be greater than or equal to the ND versions of the clusters being added.
 author:
-    - Anvitha Jain (@anvjain)
+  - Anvitha Jain (@anvjain)
 options:
   clusters:
     description:
       - The IP address of the cluster.
+    type: list
     elements: dict
     suboptions:
       cluster_hostname:
         description:
           - The IP address of the federation member/cluster.
         type: str
+        required: true
         aliases: [ cluster_ip, hostname, ip_address, federation_member ]
       cluster_username:
         description:
@@ -45,7 +44,6 @@ options:
         description:
           - The password for the federation member/cluster.
         type: str
-        no_log: true
       cluster_login_domain:
         description:
           - The login domain ame to use for the federation member/cluster.
@@ -100,15 +98,16 @@ EXAMPLES = r"""
     host: nd
     username: admin
     password: SomeSecretPassword
-    cluster: 172.37.20.15
     state: absent
   delegate_to: localhost
 """
+
 RETURN = r"""
 """
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
+import base64
 
 
 def main():
@@ -205,7 +204,6 @@ def main():
             # if there are no members or just a local member, add all members from users.
             add_member_list = clusters
         else:
-
             # Remove existing members not specified by the users.
             for existing_member_hosts in federation_member_obj:
                 member_host = existing_member_hosts.get("spec").get("host")
@@ -217,9 +215,15 @@ def main():
 
             # Add members specified by the users.
             for user_member_host in clusters:
-                user_host = user_member_host.get("cluster_hostname")
                 # Use next() to check if the user-specified member exists in existing members
-                found = next((True for existing_member_hosts in federation_member_obj if existing_member_hosts.get("spec").get("host") == user_host), False)
+                found = found = next(
+                    (
+                        True
+                        for existing_member_hosts in federation_member_obj
+                        if existing_member_hosts.get("spec").get("host") == user_member_host.get("cluster_hostname")
+                    ),
+                    False,
+                )
                 if not found:
                     add_member_list.append(user_member_host)
 
@@ -228,7 +232,6 @@ def main():
                 for member in remove_member_list:
                     cluster_member_path = "{0}/{1}".format(member_path, member.get("status").get("memberID"))
                     nd.request(cluster_member_path, method="DELETE")
-
                     payload_dict["DELETE"].append(cluster_member_path)
 
             if add_member_list:
