@@ -3,16 +3,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# - name: Test that we have an Nexus Dashboard Insights Group and Site Name defined
-#   fail:
-#     msg: "Please define the following variables: insights_group, site_name."
-#   when: insights_group is not defined or site_name is not defined
-
 # SET VARS
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
-      output_level: '{{ site_output_level | default("info") }}'
+      output_level: '{{ site_output_level | default("debug") }}'
 
 # CLEAN ENVIRONMENT
 - name: Remove ND federation members
@@ -25,12 +20,12 @@
   cisco.nd.nd_federation_member: &add_federation_member
     <<: *nd_info
     clusters:
-      - cluster_hostname: '173.36.219.33'
-        cluster_username: 'usn'
-        cluster_password: 'pswd'
-      - cluster_hostname: '173.36.219.32'
-        cluster_username: 'usn'
-        cluster_password: 'pswd'
+      - hostname: '173.36.219.33'
+        username: 'usn'
+        password: 'pswd'
+      - hostname: '173.36.219.32'
+        username: 'usn'
+        password: 'pswd'
     state: present
   check_mode: True
   register: cm_add_federation_member
@@ -47,7 +42,7 @@
     state: present
   register: add_federation_member_again
 
-- name: Assertion check for attaching ND federation member 
+- name: Assertion check for adding ND federation member 
   ansible.builtin.assert:
     that:
       - cm_add_federation_member is changed
@@ -68,7 +63,7 @@
   cisco.nd.nd_federation_member:
     <<: *nd_info
     clusters:
-      - cluster_hostname: '173.36.219.33'
+      - hostname: '173.36.219.33'
     state: query
   register: query_federation_member
 
@@ -112,23 +107,22 @@
     - rm_federation_member_again is not changed
     - rm_federation_member_again.previous == []
 
-
 # ERRORS
-- name: Add ND federation member missing cluster_hostname
+- name: Add ND federation member missing hostname
   cisco.nd.nd_federation_member:
     <<: *nd_info
     clusters:
-      - cluster_username: 'usn'
-        cluster_password: 'pswd'
+      - username: 'usn'
+        password: 'pswd'
     state: present
   ignore_errors: true
-  register: add_member_missing_cluster_hostname
+  register: add_member_missing_hostname
 
 - name: Add ND federation member missing parameters
   cisco.nd.nd_federation_member:
     <<: *nd_info
     clusters:
-      - cluster_hostname: '173.36.219.32'
+      - hostname: '173.36.219.32'
     state: present
   ignore_errors: true
   register: add_member_missing_parm
@@ -137,8 +131,8 @@
   cisco.nd.nd_federation_member:
     <<: *nd_info
     clusters:
-      - cluster_username: 'usn'
-        cluster_password: 'pswd'
+      - username: 'usn'
+        password: 'pswd'
     state: query
   ignore_errors: true
   register: query_member_missing_parm
@@ -146,9 +140,9 @@
 - name: Assertion check for missing parameters
   ansible.builtin.assert:
     that:
-    - add_member_missing_cluster_hostname is not changed
+    - add_member_missing_hostname is not changed
     - add_member_missing_parm is not changed
     - query_member_missing_parm is not changed
-    - add_member_missing_cluster_hostname.msg == "missing required arguments{{':'}} cluster_hostname found in clusters"
-    - add_member_missing_parm.msg == "'cluster_username' and 'cluster_password' are required when state is present."
-    - query_member_missing_parm.msg == "missing required arguments{{':'}} cluster_hostname found in clusters"
+    - add_member_missing_hostname.msg == "missing required arguments{{':'}} hostname found in clusters"
+    - add_member_missing_parm.msg == "'username' and 'password' are required when state is present."
+    - query_member_missing_parm.msg == "missing required arguments{{':'}} hostname found in clusters"
