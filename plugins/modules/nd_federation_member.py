@@ -30,21 +30,21 @@ options:
     type: list
     elements: dict
     suboptions:
-      cluster_hostname:
+      hostname:
         description:
           - The IP address of the federation member/cluster.
         type: str
         required: true
-        aliases: [ cluster_ip, hostname, ip_address, federation_member ]
-      cluster_username:
+        aliases: [ cluster_ip, ip_address, federation_member ]
+      username:
         description:
           - The username for the federation member/cluster.
         type: str
-      cluster_password:
+      password:
         description:
           - The password for the federation member/cluster.
         type: str
-      cluster_login_domain:
+      login_domain:
         description:
           - The login domain ame to use for the federation member/cluster.
           - Default value is set to DefaultAuth.
@@ -68,10 +68,10 @@ EXAMPLES = r"""
     username: admin
     password: SomeSecretPassword
     clusters:
-      - cluster_hostname: 172.37.20.15
-        cluster_username: admin
-        cluster_password: password
-        cluster_login_domain: default
+      - hostname: 172.37.20.15
+        username: admin
+        password: password
+        login_domain: default
     state: present
   delegate_to: localhost
 
@@ -89,7 +89,7 @@ EXAMPLES = r"""
     username: admin
     password: SomeSecretPassword
     clusters:
-      - cluster_hostname: 172.37.20.15
+      - hostname: 172.37.20.15
     state: query
   delegate_to: localhost
 
@@ -117,10 +117,10 @@ def main():
             type="list",
             elements="dict",
             options=dict(
-                cluster_hostname=dict(type="str", required=True, aliases=["cluster_ip", "hostname", "ip_address", "federation_member"]),
-                cluster_username=dict(type="str"),
-                cluster_password=dict(type="str", no_log=True),
-                cluster_login_domain=dict(type="str", default="DefaultAuth"),
+                hostname=dict(type="str", required=True, aliases=["cluster_ip", "ip_address", "federation_member"]),
+                username=dict(type="str"),
+                password=dict(type="str", no_log=True),
+                login_domain=dict(type="str", default="DefaultAuth"),
             ),
         ),
         state=dict(type="str", default="present", choices=["absent", "present", "query"]),
@@ -143,8 +143,8 @@ def main():
     if clusters:
         for cluster in clusters:
             if state == "present":
-                if not (cluster.get("cluster_username") and cluster.get("cluster_password")):
-                    nd.fail_json(msg="'cluster_username' and 'cluster_password' are required when state is present.")
+                if not (cluster.get("username") and cluster.get("password")):
+                    nd.fail_json(msg="'username' and 'password' are required when state is present.")
 
     federation_path = "/nexus/api/federation/v4/federations"
     member_path = "/nexus/api/federation/v4/members"
@@ -171,7 +171,7 @@ def main():
     if clusters and state == "query" and federation_member_obj:
         for cluster in clusters:
             cluster_info = next(
-                (cluster_dict for cluster_dict in federation_member_obj if cluster_dict.get("spec").get("host") == cluster.get("cluster_hostname")), None
+                (cluster_dict for cluster_dict in federation_member_obj if cluster_dict.get("spec").get("host") == cluster.get("hostname")), None
             )
             if cluster_info:
                 nd.existing = cluster_info
@@ -209,7 +209,7 @@ def main():
                 member_host = existing_member_hosts.get("spec").get("host")
                 if member_host != local_cluster_name:
                     # Use next() to check if the member exists in user-specified clusters
-                    member_exists = next((True for user_member_host in clusters if user_member_host.get("cluster_hostname") == member_host), False)
+                    member_exists = next((True for user_member_host in clusters if user_member_host.get("hostname") == member_host), False)
                     if not member_exists:
                         remove_member_list.append(existing_member_hosts)
 
@@ -220,7 +220,7 @@ def main():
                     (
                         True
                         for existing_member_hosts in federation_member_obj
-                        if existing_member_hosts.get("spec").get("host") == user_member_host.get("cluster_hostname")
+                        if existing_member_hosts.get("spec").get("host") == user_member_host.get("hostname")
                     ),
                     False,
                 )
@@ -238,10 +238,10 @@ def main():
                 for member in add_member_list:
                     cluster_payload = dict(
                         spec=dict(
-                            host=member.get("cluster_hostname"),
-                            userName=member.get("cluster_username"),
-                            password=(base64.b64encode(str.encode(member.get("cluster_password")))).decode("utf-8"),
-                            loginDomain=member.get("cluster_login_domain"),
+                            host=member.get("hostname"),
+                            userName=member.get("username"),
+                            password=(base64.b64encode(str.encode(member.get("password")))).decode("utf-8"),
+                            loginDomain=member.get("login_domain"),
                         ),
                     )
 
