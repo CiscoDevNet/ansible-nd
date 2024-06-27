@@ -1,0 +1,148 @@
+# Test code for the ND modules
+# Copyright: (c) 2024, Anvitha Jain (@anvitha-jain) <anvjain@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# SET VARS
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ site_output_level | default("debug") }}'
+
+# CLEAN ENVIRONMENT
+- name: Remove ND federation members
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    state: absent
+
+# ADD Federation members (multicluster setup)
+- name: Add ND federation member (check mode)
+  cisco.nd.nd_federation_member: &add_federation_member
+    <<: *nd_info
+    clusters:
+      - hostname: '173.36.219.33'
+        username: 'usn'
+        password: 'pswd'
+      - hostname: '173.36.219.32'
+        username: 'usn'
+        password: 'pswd'
+    state: present
+  check_mode: True
+  register: cm_add_federation_member
+
+- name: Add ND federation members (normal mode)
+  cisco.nd.nd_federation_member:
+    <<: *add_federation_member
+    state: present
+  register: nm_add_federation_member
+
+- name: Add ND federation members again
+  cisco.nd.nd_federation_member:
+    <<: *add_federation_member
+    state: present
+  register: add_federation_member_again
+
+- name: Assertion check for adding ND federation member 
+  ansible.builtin.assert:
+    that:
+      - cm_add_federation_member is changed
+      - nm_add_federation_member is changed
+      - cm_add_federation_member.previous == nm_add_federation_member.previous == []
+      - nm_add_federation_member.current | length == 3
+      - add_federation_member_again is not changed
+      - add_federation_member_again.current | length == add_federation_member_again.previous | length == 3
+
+# Query Federation members (multicluster setup)
+- name: Query all federation members
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    state: query
+  register: query_all_federation_members
+
+- name: Query a federation member
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    clusters:
+      - hostname: '173.36.219.33'
+    state: query
+  register: query_federation_member
+
+- name: Assertion check for querying ND federation members
+  ansible.builtin.assert:
+    that:
+    - query_all_federation_members is not changed
+    - query_federation_member is not changed
+    - query_all_federation_members.current | length == 3
+    - query_federation_member.current.spec.host == '173.36.219.33'
+
+
+# Remove Federation members (multicluster setup)
+- name: Remove a federation member (check mode)
+  cisco.nd.nd_federation_member: &delete_federation_member
+    <<: *nd_info
+    state: absent
+  check_mode: True
+  register: cm_rm_federation_member
+
+- name: Remove a federation member (normal mode)
+  cisco.nd.nd_federation_member:
+    <<: *delete_federation_member
+    state: absent
+  register: nm_rm_federation_member
+
+- name: Remove a federation member again
+  cisco.nd.nd_federation_member:
+    <<: *delete_federation_member
+    state: absent
+  register: rm_federation_member_again
+
+- name: Assertion check for removing ND federation members
+  ansible.builtin.assert:
+    that:
+    - cm_rm_federation_member is changed
+    - nm_rm_federation_member is changed
+    - cm_rm_federation_member.previous | length == nm_rm_federation_member.previous | length == 3
+    - nm_rm_federation_member.current == {}
+    - rm_federation_member_again.current == []
+    - rm_federation_member_again is not changed
+    - rm_federation_member_again.previous == []
+
+# ERRORS
+- name: Add ND federation member missing hostname
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    clusters:
+      - username: 'usn'
+        password: 'pswd'
+    state: present
+  ignore_errors: true
+  register: add_member_missing_hostname
+
+- name: Add ND federation member missing parameters
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    clusters:
+      - hostname: '173.36.219.32'
+    state: present
+  ignore_errors: true
+  register: add_member_missing_parm
+
+- name: Query specific ND federation member missing parameters
+  cisco.nd.nd_federation_member:
+    <<: *nd_info
+    clusters:
+      - username: 'usn'
+        password: 'pswd'
+    state: query
+  ignore_errors: true
+  register: query_member_missing_parm
+
+- name: Assertion check for missing parameters
+  ansible.builtin.assert:
+    that:
+    - add_member_missing_hostname is not changed
+    - add_member_missing_parm is not changed
+    - query_member_missing_parm is not changed
+    - add_member_missing_hostname.msg == "missing required arguments{{':'}} hostname found in clusters"
+    - add_member_missing_parm.msg == "'username' and 'password' are required when state is present."
+    - query_member_missing_parm.msg == "missing required arguments{{':'}} hostname found in clusters"
