@@ -136,15 +136,12 @@ def main():
 
     nd = NDModule(module)
 
-    clusters = nd.params.get("clusters")
+    clusters = nd.params.get("clusters") if nd.params.get("clusters") is not None else []
     state = nd.params.get("state")
 
-    # validate parameters
-    if clusters:
-        for cluster in clusters:
-            if state == "present":
-                if not (cluster.get("username") and cluster.get("password")):
-                    nd.fail_json(msg="'username' and 'password' are required when state is present.")
+    for cluster in clusters:
+        if state == "present" and not (cluster.get("username") and cluster.get("password")):
+            nd.fail_json(msg="'username' and 'password' are required when state is present.")
 
     federation_path = "/nexus/api/federation/v4/federations"
     member_path = "/nexus/api/federation/v4/members"
@@ -197,72 +194,58 @@ def main():
             nd.existing = {}
 
     elif state == "present":
-        remove_member_list = []
-        add_member_list = []
         payload_dict = {"DELETE": [], "POST": []}
-        if len(federation_member_obj) <= 1:
-            # if there are no members or just a local member, add all members from users.
-            add_member_list = clusters
-        else:
-            # Remove existing members not specified by the users.
-            for existing_member_hosts in federation_member_obj:
-                member_host = existing_member_hosts.get("spec").get("host")
-                if member_host != local_cluster_name:
-                    # Use next() to check if the member exists in user-specified clusters
-                    member_exists = next((True for user_member_host in clusters if user_member_host.get("hostname") == member_host), False)
-                    if not member_exists:
-                        remove_member_list.append(existing_member_hosts)
 
-            # Add members specified by the users.
-            for user_member_host in clusters:
-                # Use next() to check if the user-specified member exists in existing members
-                found = found = next(
-                    (
-                        True
-                        for existing_member_hosts in federation_member_obj
-                        if existing_member_hosts.get("spec").get("host") == user_member_host.get("hostname")
-                    ),
-                    False,
-                )
-                if not found:
-                    add_member_list.append(user_member_host)
-
-        if add_member_list or remove_member_list:
-            if remove_member_list:
-                for member in remove_member_list:
-                    cluster_member_path = "{0}/{1}".format(member_path, member.get("status").get("memberID"))
+        # Remove existing members not specified by the users.
+        for existing_member_hosts in federation_member_obj:
+            member_host = existing_member_hosts.get("spec").get("host")
+            if member_host != local_cluster_name:
+                # Use next() to check if the member exists in user-specified clusters
+                member_exists = next((True for user_member_host in clusters if user_member_host.get("hostname") == member_host), False)
+                if not member_exists:
+                    cluster_member_path = "{0}/{1}".format(member_path, existing_member_hosts.get("status").get("memberID"))
                     nd.request(cluster_member_path, method="DELETE")
                     payload_dict["DELETE"].append(cluster_member_path)
 
-            if add_member_list:
-                for member in add_member_list:
-                    cluster_payload = dict(
-                        spec=dict(
-                            host=member.get("hostname"),
-                            userName=member.get("username"),
-                            password=(base64.b64encode(str.encode(member.get("password")))).decode("utf-8"),
-                            loginDomain=member.get("login_domain"),
-                        ),
-                    )
+        # Add members specified by the users.
+        for user_member_host in clusters:
+            # Use next() to check if the user-specified member exists in existing members
+            found = next(
+                (True for existing_member_hosts in federation_member_obj if existing_member_hosts.get("spec").get("host") == user_member_host.get("hostname")),
+                False,
+            )
+            if not found:
+                cluster_payload = dict(
+                    spec=dict(
+                        host=user_member_host.get("hostname"),
+                        userName=user_member_host.get("username"),
+                        password=(base64.b64encode(str.encode(user_member_host.get("password")))).decode("utf-8"),
+                        loginDomain=user_member_host.get("login_domain"),
+                    ),
+                )
 
-                    payload = cluster_payload
+                payload = cluster_payload
 
-                    payload_dict["POST"].append(payload)
+                payload_dict["POST"].append(payload)
 
-                    nd.sanitize(payload, collate=True)
+                nd.sanitize(payload, collate=True)
 
-                    if not module.check_mode:
-                        # If federation does not exist, create a new federation
-                        if not federation_obj:
-                            nd.request(federation_path, method="POST", data={"spec": {"name": local_cluster_name}})
-                        nd.request(member_path, method="POST", data=payload)
+                if not module.check_mode:
+                    # If federation does not exist, create a new federation
+                    if not federation_obj:
+                        nd.request(federation_path, method="POST", data={"spec": {"name": local_cluster_name}})
+                    nd.request(member_path, method="POST", data=payload)
 
-            if not module.check_mode:
-                nd.existing = nd.query_obj(member_path, ignore_not_found_error=True).get("items")
-                nd.proposed = payload_dict
+        if not module.check_mode:
+            nd.existing = nd.query_obj(member_path, ignore_not_found_error=True).get("items")
+            nd.proposed = payload_dict
 
-            else:
-                nd.existing = nd.proposed = payload_dict
+        else:
+            nd.existing = nd.proposed = payload_dict
+
+        # Verifies that the payload is not modified but the order of elements in current and previous lists are interchanged.
+        if payload_dict["DELETE"] == [] and payload_dict["POST"] == []:
+            nd.has_modified = True
 
     nd.exit_json()
 
