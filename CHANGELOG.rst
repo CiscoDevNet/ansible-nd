@@ -4,6 +4,24 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 
 .. contents:: Topics
 
+v1.2.0
+======
+
+Release Summary
+---------------
+
+Release v1.2.0 of the ``ansible-nd`` collection on 2024-07-12.
+This changelog describes all changes made to the modules and plugins included in this collection since v1.1.0.
+
+Minor Changes
+-------------
+
+- Added module and tests for ND federation members.
+- Adding new modules for multi-cluster configuration.
+- Changed clusters parameter from dictionary to list and adding supporting changes
+- Fixed documentation and addeda check to validate query all parameters.
+- Fixed documentation and removed nd_federation module.
+
 v1.1.0
 ======
 
