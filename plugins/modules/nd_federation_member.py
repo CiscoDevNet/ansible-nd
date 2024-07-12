@@ -26,7 +26,7 @@ author:
 options:
   clusters:
     description:
-      - The IP address of the cluster.
+      - List of Nexus Dashboard Clusters.
     type: list
     elements: dict
     suboptions:
