@@ -49,7 +49,9 @@ options:
     type: str
     choices: [ restore, query, absent ]
     default: restore
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 """
 
 EXAMPLES = r"""

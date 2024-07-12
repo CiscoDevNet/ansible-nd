@@ -60,7 +60,9 @@ options:
     - Option to exclude anomalies which is acknowledged
     type: bool
     default: false
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 """
 
 EXAMPLES = r"""

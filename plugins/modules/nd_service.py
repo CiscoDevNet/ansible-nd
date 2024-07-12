@@ -38,7 +38,9 @@ options:
     type: str
     choices: [ present, query, absent ]
     default: present
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 """
 
 EXAMPLES = r"""

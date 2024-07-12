@@ -148,6 +148,7 @@ regex, exact, at_least, at_most, all, none, at_least_one]
         required: true
 extends_documentation_fragment:
 - cisco.nd.modules
+- cisco.nd.check_mode
 - cisco.nd.ndi_compliance_base
 """
 

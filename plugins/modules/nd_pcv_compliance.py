@@ -39,7 +39,9 @@ options:
     type: str
     required: true
     aliases: [ site ]
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 """
 
 EXAMPLES = r"""

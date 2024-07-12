@@ -46,7 +46,9 @@ options:
     type: str
     choices: [ enable, query, restart, update, disable, delete]
     default: enable
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 """
 
 EXAMPLES = r"""

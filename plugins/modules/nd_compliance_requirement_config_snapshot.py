@@ -38,6 +38,7 @@ options:
     default: false
 extends_documentation_fragment:
 - cisco.nd.modules
+- cisco.nd.check_mode
 - cisco.nd.ndi_compliance_base
 """
 

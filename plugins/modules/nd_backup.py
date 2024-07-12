@@ -47,7 +47,9 @@ options:
     type: str
     choices: [ backup, query, absent ]
     default: backup
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 """
 
 EXAMPLES = r"""
