@@ -56,7 +56,9 @@ options:
     type: str
     default: present
     choices: [ absent, present, query ]
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 notes:
 - The M(cisco.aci.nd_federation) module can be used for this.
 """

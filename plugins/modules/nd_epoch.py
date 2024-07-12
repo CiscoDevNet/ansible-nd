@@ -58,7 +58,9 @@ options:
     description:
     - When range is selected, max amount epoch IDs to be returned.
     type: int
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 """
 
 EXAMPLES = r"""

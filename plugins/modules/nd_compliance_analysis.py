@@ -38,7 +38,9 @@ options:
     - The id of the epoch.
     - When epoch id is not provided it will retrieve the latest known epoch id.
     type: str
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 """
 
 EXAMPLES = r"""

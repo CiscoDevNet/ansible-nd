@@ -255,8 +255,9 @@ options:
     type: str
     default: present
     choices: [ present, query ]
-extends_documentation_fragment: cisco.nd.modules
-
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 notes:
 - This module only supports setting up the Nexus Dashboard having version 2.3.2d or higher.
 """

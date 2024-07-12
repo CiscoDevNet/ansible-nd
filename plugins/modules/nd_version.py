@@ -26,7 +26,9 @@ options:
     type: str
     choices: [ query ]
     default: query
-extends_documentation_fragment: cisco.nd.modules
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 """
 
 EXAMPLES = r"""
