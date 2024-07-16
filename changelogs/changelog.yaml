@@ -174,3 +174,19 @@ releases:
 
         '
     release_date: '2024-07-01'
+  1.2.0:
+    changes:
+      minor_changes:
+        - Added module and tests for ND federation members.
+        - Adding new modules for multi-cluster configuration.
+        - Changed clusters parameter from dictionary to list and adding supporting
+          changes
+        - Fixed documentation and addeda check to validate query all parameters.
+        - Fixed documentation and removed nd_federation module.
+      release_summary: 'Release v1.2.0 of the ``ansible-nd`` collection on 2024-07-16.
+
+        This changelog describes all changes made to the modules and plugins included
+        in this collection since v1.1.0.
+
+        '
+    release_date: '2024-07-16'
