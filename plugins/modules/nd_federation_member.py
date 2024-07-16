@@ -14,7 +14,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_federation_member
-version_added: "0.3.0"
+version_added: "1.2.0"
 short_description: Setup multi-cluster configuration on Cisco Nexus Dashboard (ND).
 description:
   - Connects multiple clusters together for a single pane of glass view and administration of the clusters and their sites, services, and configurations.
