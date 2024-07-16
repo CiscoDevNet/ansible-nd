@@ -301,6 +301,7 @@ options:
             choices: [ ack, est, fin, res, syn ]
 extends_documentation_fragment:
 - cisco.nd.modules
+- cisco.nd.check_mode
 - cisco.nd.ndi_compliance_base
 """
 
