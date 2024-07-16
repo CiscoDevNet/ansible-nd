@@ -13,6 +13,7 @@ action_groups:
     - nd_compliance_requirement_config_template
     - nd_delta_analysis
     - nd_epoch
+    - nd_federation_member
     - nd_flow_rules
     - nd_instant_assurance_analysis
     - nd_interface_flow_rules
