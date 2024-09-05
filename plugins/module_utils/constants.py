@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+# Copyright: (c) 2024, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -161,3 +162,5 @@ ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED = (
 INTERFACE_FLOW_RULES_TYPES_MAPPING = {"port_channel": "PORTCHANNEL", "physical": "PHYSICAL", "l3out_sub_interface": "L3_SUBIF", "l3out_svi": "SVI"}
 
 INTERFACE_FLOW_RULES_STATUS_MAPPING = {"enabled": "ENABLED", "disabled": "DISABLED"}
+
+ND_SETUP_NODE_ROLE_MAPPING = {"primary": "Master", "secondary": "Worker", "standby": "Standby"}

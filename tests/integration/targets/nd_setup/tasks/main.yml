@@ -1,199 +1,340 @@
 # Test code for the ND modules
 # Copyright: (c) 2023, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# Copyright: (c) 2024, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-- name: Install ND in check mode
-  cisco.nd.nd_setup:
-    output_level: debug
-    cluster_name: cluster-one
-    dns_server: "{{ dns_server }}"
-    dns_search_domain: cisco.com
-    app_network: "{{ app_network }}"
-    service_network: "{{ service_network }}"
-    ntp_config:
-      servers:
-        - ntp_host: "{{ ntp_server }}"
-          ntp_key_id: 1
-          preferred: true
-      keys:
-        - ntp_key_id: 1
-          ntp_key: "ntp_secure_key"
-          authentication_type: "AES128CMAC"
-          trusted: true
-    nodes:
-      - hostname: Test
-        serial_number: "{{ serial_number }}"
-        management_ip_address: "{{ management_ip_address }}"
-        username: "{{ deployment_username | default('rescue-user') }}"
-        password: "{{ deployment_password }}"
-        management_network: 
-          ipv4_address: "{{ management_ip }}"
-          ipv4_gateway: "{{ management_gateway }}"
-        data_network:
-          ipv4_address: "{{ data_ip }}"
-          ipv4_gateway: "{{ data_gateway }}"
-  check_mode: true
-  register: cluster_cm
+- name: Query ND version
+  cisco.nd.nd_version:
+    state: query
+  register: nd_version
 
-- name: Install ND with an in-valid length of cluster name
-  cisco.nd.nd_setup:
-    output_level: debug
-    cluster_name: clusteroneclusteroneclusteroneclusteroneclusteroneclusteroneclusterone
-    ntp_server: "{{ ntp_server }}"
-    dns_server: "{{ dns_server }}"
-    dns_search_domain: cisco.com
-    app_network: "{{ app_network }}"
-    service_network: "{{ service_network }}"
-    nodes:
-      - hostname: Test
-        serial_number: "{{ serial_number }}"
-        management_ip_address: "{{ management_ip_address }}"
-        username: "{{ deployment_username | default('rescue-user') }}"
-        password: "{{ deployment_password }}"
-        management_network: 
-          ipv4_address: "{{ management_ip }}"
-          ipv4_gateway: "{{ management_gateway }}"
-        data_network:
-          ipv4_address: "{{ data_ip }}"
-          ipv4_gateway: "{{ data_gateway }}"
-  ignore_errors: true
-  register: cluster_name_length_error
-
-- name: Install ND with in-valid characters in cluster name
-  cisco.nd.nd_setup:
-    output_level: debug
-    cluster_name: cluster_one
-    ntp_server: "{{ ntp_server }}"
-    dns_server: "{{ dns_server }}"
-    dns_search_domain: cisco.com
-    app_network: "{{ app_network }}"
-    service_network: "{{ service_network }}"
-    nodes:
-      - hostname: Test
-        serial_number: "{{ serial_number }}"
-        management_ip_address: "{{ management_ip_address }}"
-        username: "{{ deployment_username | default('rescue-user') }}"
-        password: "{{ deployment_password }}"
-        management_network: 
-          ipv4_address: "{{ management_ip }}"
-          ipv4_gateway: "{{ management_gateway }}"
-        data_network:
-          ipv4_address: "{{ data_ip }}"
-          ipv4_gateway: "{{ data_gateway }}"
-  ignore_errors: true
-  register: cluster_name_invalid_chars
-
-- name: Install ND with a hyphen in the beginning/end of the cluster name
-  cisco.nd.nd_setup:
-    output_level: debug
-    cluster_name: clusterone-
-    ntp_server: "{{ ntp_server }}"
-    dns_server: "{{ dns_server }}"
-    dns_search_domain: cisco.com
-    app_network: "{{ app_network }}"
-    service_network: "{{ service_network }}"
-    nodes:
-      - hostname: Test
-        serial_number: "{{ serial_number }}"
-        management_ip_address: "{{ management_ip_address }}"
-        username: "{{ deployment_username | default('rescue-user') }}"
-        password: "{{ deployment_password }}"
-        management_network: 
-          ipv4_address: "{{ management_ip }}"
-          ipv4_gateway: "{{ management_gateway }}"
-        data_network:
-          ipv4_address: "{{ data_ip }}"
-          ipv4_gateway: "{{ data_gateway }}"
-  ignore_errors: true
-  register: cluster_name_invalid_hyphen
-
-- name: Install ND in normal mode
-  cisco.nd.nd_setup:
-    output_level: debug
-    cluster_name: cluster-one
-    dns_server: "{{ dns_server }}"
-    dns_search_domain: cisco.com
-    app_network: "{{ app_network }}"
-    service_network: "{{ service_network }}"
-    ntp_config:
-      servers:
-        - ntp_host: "{{ ntp_server }}"
-          ntp_key_id: 1
-          preferred: true
-      keys:
+- name: Execute tasks only for ND version 3.0.1 and prior
+  when: nd_version.current.major < 3 or (nd_version.current.major == 3 and nd_version.current.minor == 0)
+  block:  # block specifies execution of tasks within, based on conditions
+  - name: Install ND in check mode
+    cisco.nd.nd_setup:
+      output_level: debug
+      cluster_name: cluster-one
+      dns_server: "{{ dns_server }}"
+      dns_search_domain: cisco.com
+      app_network: "{{ app_network }}"
+      service_network: "{{ service_network }}"
+      ntp_config:
+        servers:
+          - ntp_host: "{{ ntp_server }}"
+            ntp_key_id: 1
+            preferred: true
+        keys:
           - ntp_key_id: 1
             ntp_key: "ntp_secure_key"
             authentication_type: "AES128CMAC"
             trusted: true
-    nodes:
-      - hostname: Test
-        serial_number: "{{ serial_number }}"
-        management_ip_address: "{{ management_ip_address }}"
-        username: "{{ deployment_username | default('rescue-user') }}"
-        password: "{{ deployment_password }}"
-        management_network: 
-          ipv4_address: "{{ management_ip }}"
-          ipv4_gateway: "{{ management_gateway }}"
-        data_network:
-          ipv4_address: "{{ data_ip }}"
-          ipv4_gateway: "{{ data_gateway }}"
-          vlan: 1
-  register: cluster_nm
+      nodes:
+        - hostname: Test
+          serial_number: "{{ serial_number }}"
+          management_ip_address: "{{ management_ip_address }}"
+          username: "{{ deployment_username | default('rescue-user') }}"
+          password: "{{ deployment_password }}"
+          management_network: 
+            ipv4_address: "{{ management_ip }}"
+            ipv4_gateway: "{{ management_gateway }}"
+          data_network:
+            ipv4_address: "{{ data_ip }}"
+            ipv4_gateway: "{{ data_gateway }}"
+    check_mode: true
+    register: cluster_cm
 
-- name: Wait for 30 seconds to establish connection
-  ansible.builtin.pause:
-    seconds: 30
+  - name: Install ND with an in-valid length of cluster name
+    cisco.nd.nd_setup:
+      output_level: debug
+      cluster_name: clusteroneclusteroneclusteroneclusteroneclusteroneclusteroneclusterone
+      ntp_server: "{{ ntp_server }}"
+      dns_server: "{{ dns_server }}"
+      dns_search_domain: cisco.com
+      app_network: "{{ app_network }}"
+      service_network: "{{ service_network }}"
+      nodes:
+        - hostname: Test
+          serial_number: "{{ serial_number }}"
+          management_ip_address: "{{ management_ip_address }}"
+          username: "{{ deployment_username | default('rescue-user') }}"
+          password: "{{ deployment_password }}"
+          management_network: 
+            ipv4_address: "{{ management_ip }}"
+            ipv4_gateway: "{{ management_gateway }}"
+          data_network:
+            ipv4_address: "{{ data_ip }}"
+            ipv4_gateway: "{{ data_gateway }}"
+    ignore_errors: true
+    register: cluster_name_length_error
 
-- name: Check installation status of ND
-  cisco.nd.nd_setup:
-    state: query
-  register: installation_status
-  until: (installation_status.current.state is defined) and (installation_status.current.state == "Completed")
-  retries: 100
-  delay: 18
+  - name: Install ND with in-valid characters in cluster name
+    cisco.nd.nd_setup:
+      output_level: debug
+      cluster_name: cluster_one
+      ntp_server: "{{ ntp_server }}"
+      dns_server: "{{ dns_server }}"
+      dns_search_domain: cisco.com
+      app_network: "{{ app_network }}"
+      service_network: "{{ service_network }}"
+      nodes:
+        - hostname: Test
+          serial_number: "{{ serial_number }}"
+          management_ip_address: "{{ management_ip_address }}"
+          username: "{{ deployment_username | default('rescue-user') }}"
+          password: "{{ deployment_password }}"
+          management_network: 
+            ipv4_address: "{{ management_ip }}"
+            ipv4_gateway: "{{ management_gateway }}"
+          data_network:
+            ipv4_address: "{{ data_ip }}"
+            ipv4_gateway: "{{ data_gateway }}"
+    ignore_errors: true
+    register: cluster_name_invalid_chars
 
-- name: Verify all assertions
-  ansible.builtin.assert:
-    that:
-      - cluster_name_length_error.msg == "A length of 1 to 63 characters is allowed."
-      - cluster_name_invalid_chars.msg == "Valid characters include letters, digits and hyphen."
-      - cluster_name_invalid_hyphen.msg == "The name cannot start or end with a hyphen."
-      - cluster_cm.current.clusterConfig.appNetwork == "{{ app_network }}"
-      - cluster_cm.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
-      - cluster_cm.current.clusterConfig.ntpConfig.servers.0.host == "{{ ntp_server }}"
-      - cluster_cm.current.clusterConfig.ntpConfig.servers.0.keyID == 1
-      - cluster_cm.current.clusterConfig.ntpConfig.servers.0.prefer == true
-      - cluster_cm.current.clusterConfig.searchDomains.0 == "cisco.com"
-      - cluster_cm.current.clusterConfig.serviceNetwork == "{{ service_network }}"
-      - cluster_cm.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
-      - cluster_cm.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
-      - cluster_cm.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
-      - cluster_cm.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
-      - cluster_cm.current.nodes.0.serialNumber == "{{ serial_number }}"
-      - cluster_cm.current.nodes.0.hostName == "Test"
-      - cluster_nm.current.clusterConfig.appNetwork == "{{ app_network }}"
-      - cluster_nm.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
-      - cluster_nm.current.clusterConfig.ntpConfig.servers.0.host == "{{ ntp_server }}"
-      - cluster_nm.current.clusterConfig.ntpConfig.servers.0.keyID == 1
-      - cluster_nm.current.clusterConfig.ntpConfig.servers.0.prefer == true
-      - cluster_nm.current.clusterConfig.searchDomains.0 == "cisco.com"
-      - cluster_nm.current.clusterConfig.serviceNetwork == "{{ service_network }}"
-      - cluster_nm.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
-      - cluster_nm.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
-      - cluster_nm.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
-      - cluster_nm.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
-      - cluster_nm.current.nodes.0.serialNumber == "{{ serial_number }}"
-      - cluster_nm.current.nodes.0.hostName == "Test"
-      - installation_status.current.clusterConfig.appNetwork == "{{ app_network }}"
-      - installation_status.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
-      - installation_status.current.clusterConfig.ntpServers.0 == "{{ ntp_server }}"
-      - installation_status.current.clusterConfig.searchDomains.0 == "cisco.com"
-      - installation_status.current.clusterConfig.serviceNetwork == "{{ service_network }}"
-      - installation_status.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
-      - installation_status.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
-      - installation_status.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
-      - installation_status.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
-      - installation_status.current.nodes.0.serialNumber == "{{ serial_number }}"
-      - installation_status.current.nodes.0.hostName == "Test"
-      - installation_status.current.state == "Completed"
+  - name: Install ND with a hyphen in the beginning/end of the cluster name
+    cisco.nd.nd_setup:
+      output_level: debug
+      cluster_name: clusterone-
+      ntp_server: "{{ ntp_server }}"
+      dns_server: "{{ dns_server }}"
+      dns_search_domain: cisco.com
+      app_network: "{{ app_network }}"
+      service_network: "{{ service_network }}"
+      nodes:
+        - hostname: Test
+          serial_number: "{{ serial_number }}"
+          management_ip_address: "{{ management_ip_address }}"
+          username: "{{ deployment_username | default('rescue-user') }}"
+          password: "{{ deployment_password }}"
+          management_network: 
+            ipv4_address: "{{ management_ip }}"
+            ipv4_gateway: "{{ management_gateway }}"
+          data_network:
+            ipv4_address: "{{ data_ip }}"
+            ipv4_gateway: "{{ data_gateway }}"
+    ignore_errors: true
+    register: cluster_name_invalid_hyphen
+
+  - name: Install ND in normal mode
+    cisco.nd.nd_setup:
+      output_level: debug
+      cluster_name: cluster-one
+      dns_server: "{{ dns_server }}"
+      dns_search_domain: cisco.com
+      app_network: "{{ app_network }}"
+      service_network: "{{ service_network }}"
+      ntp_config:
+        servers:
+          - ntp_host: "{{ ntp_server }}"
+            ntp_key_id: 1
+            preferred: true
+        keys:
+            - ntp_key_id: 1
+              ntp_key: "ntp_secure_key"
+              authentication_type: "AES128CMAC"
+              trusted: true
+      nodes:
+        - hostname: Test
+          serial_number: "{{ serial_number }}"
+          management_ip_address: "{{ management_ip_address }}"
+          username: "{{ deployment_username | default('rescue-user') }}"
+          password: "{{ deployment_password }}"
+          management_network: 
+            ipv4_address: "{{ management_ip }}"
+            ipv4_gateway: "{{ management_gateway }}"
+          data_network:
+            ipv4_address: "{{ data_ip }}"
+            ipv4_gateway: "{{ data_gateway }}"
+            vlan: 1
+    register: cluster_nm
+
+  - name: Wait for 30 seconds to establish connection
+    ansible.builtin.pause:
+      seconds: 30
+
+  - name: Check installation status of ND
+    cisco.nd.nd_setup:
+      state: query
+    register: installation_status
+    until: (installation_status.current.state is defined) and (installation_status.current.state == "Completed")
+    retries: 100
+    delay: 18
+
+  - name: Verify all assertions
+    ansible.builtin.assert:
+      that:
+        - cluster_name_length_error.msg == "A length of 1 to 63 characters is allowed."
+        - cluster_name_invalid_chars.msg == "Valid characters include letters, digits and hyphen."
+        - cluster_name_invalid_hyphen.msg == "The name cannot start or end with a hyphen."
+        - cluster_cm.current.clusterConfig.appNetwork == "{{ app_network }}"
+        - cluster_cm.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
+        - cluster_cm.current.clusterConfig.ntpConfig.servers.0.host == "{{ ntp_server }}"
+        - cluster_cm.current.clusterConfig.ntpConfig.servers.0.keyID == 1
+        - cluster_cm.current.clusterConfig.ntpConfig.servers.0.prefer == true
+        - cluster_cm.current.clusterConfig.searchDomains.0 == "cisco.com"
+        - cluster_cm.current.clusterConfig.serviceNetwork == "{{ service_network }}"
+        - cluster_cm.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
+        - cluster_cm.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
+        - cluster_cm.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
+        - cluster_cm.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
+        - cluster_cm.current.nodes.0.serialNumber == "{{ serial_number }}"
+        - cluster_cm.current.nodes.0.hostName == "Test"
+        - cluster_nm.current.clusterConfig.appNetwork == "{{ app_network }}"
+        - cluster_nm.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
+        - cluster_nm.current.clusterConfig.ntpConfig.servers.0.host == "{{ ntp_server }}"
+        - cluster_nm.current.clusterConfig.ntpConfig.servers.0.keyID == 1
+        - cluster_nm.current.clusterConfig.ntpConfig.servers.0.prefer == true
+        - cluster_nm.current.clusterConfig.searchDomains.0 == "cisco.com"
+        - cluster_nm.current.clusterConfig.serviceNetwork == "{{ service_network }}"
+        - cluster_nm.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
+        - cluster_nm.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
+        - cluster_nm.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
+        - cluster_nm.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
+        - cluster_nm.current.nodes.0.serialNumber == "{{ serial_number }}"
+        - cluster_nm.current.nodes.0.hostName == "Test"
+        - installation_status.current.clusterConfig.appNetwork == "{{ app_network }}"
+        - installation_status.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
+        - installation_status.current.clusterConfig.ntpServers.0 == "{{ ntp_server }}"
+        - installation_status.current.clusterConfig.searchDomains.0 == "cisco.com"
+        - installation_status.current.clusterConfig.serviceNetwork == "{{ service_network }}"
+        - installation_status.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
+        - installation_status.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
+        - installation_status.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
+        - installation_status.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
+        - installation_status.current.nodes.0.serialNumber == "{{ serial_number }}"
+        - installation_status.current.nodes.0.hostName == "Test"
+        - installation_status.current.state == "Completed"
+
+- name: Execute tasks only for ND version 3.1.1 and later
+  when: nd_version.current.major > 3 or (nd_version.current.major == 3 and nd_version.current.minor >= 1)
+  block:  # block specifies execution of tasks within, based on conditions
+  - name: Install ND in check mode
+    cisco.nd.nd_setup: &nd_setup_test_config
+      output_level: debug
+      cluster_name: cluster-one
+      dns_server: "{{ dns_server }}"
+      dns_search_domain: cisco.com
+      app_network: "{{ app_network }}"
+      service_network: "{{ service_network }}"
+      ntp_config:
+        servers:
+          - ntp_host: "{{ ntp_server }}"
+            preferred: true
+      nodes:
+        - hostname: Test
+          serial_number: "{{ serial_number }}"
+          role: primary
+          management_ip_address: "{{ management_ip_address }}"
+          username: "{{ deployment_username | default('rescue-user') }}"
+          password: "{{ deployment_password }}"
+          management_network: 
+            ipv4_address: "{{ management_ip }}"
+            ipv4_gateway: "{{ management_gateway }}"
+          data_network:
+            ipv4_address: "{{ data_ip }}"
+            ipv4_gateway: "{{ data_gateway }}"
+      deployment_mode: [ndfc]
+      external_services:
+        management_service_ips: ["{{ external_management_service_ip }}"]
+        data_service_ips: ["{{ external_data_service_ip }}"]
+    check_mode: true
+    register: cluster_cm
+
+  - name: Install ND with an in-valid length of cluster name
+    cisco.nd.nd_setup:
+      <<: *nd_setup_test_config
+      cluster_name: clusteroneclusteroneclusteroneclusteroneclusteroneclusteroneclusterone
+    ignore_errors: true
+    register: cluster_name_length_error
+
+  - name: Install ND with in-valid characters in cluster name
+    cisco.nd.nd_setup:
+      <<: *nd_setup_test_config
+      cluster_name: cluster_one
+    ignore_errors: true
+    register: cluster_name_invalid_chars
+
+  - name: Install ND with a hyphen in the beginning/end of the cluster name
+    cisco.nd.nd_setup:
+      <<: *nd_setup_test_config
+      cluster_name: clusterone-
+    ignore_errors: true
+    register: cluster_name_invalid_hyphen
+  
+  - name: Install ND in normal mode
+    cisco.nd.nd_setup:
+      <<: *nd_setup_test_config
+    register: cluster_nm
+
+  - name: Wait for 30 seconds to establish connection
+    ansible.builtin.pause:
+      seconds: 30
+
+  - name: Check installation status of ND
+    cisco.nd.nd_setup:
+      output_level: debug
+      state: query
+    register: installation_status
+    until: (installation_status.current.state is defined) and (installation_status.current.state == "Completed")
+    retries: 100
+    delay: 18
+  
+  - name: Verify all assertions
+    ansible.builtin.assert:
+      that:
+        - cluster_name_length_error.msg == "A length of 1 to 63 characters is allowed."
+        - cluster_name_invalid_chars.msg == "Valid characters include letters, digits and hyphen."
+        - cluster_name_invalid_hyphen.msg == "The name cannot start or end with a hyphen."
+        - cluster_cm.current.clusterConfig.appNetwork == "{{ app_network }}"
+        - cluster_cm.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
+        - cluster_cm.current.clusterConfig.ntpConfig.servers.0.host == "{{ ntp_server }}"
+        - cluster_cm.current.clusterConfig.ntpConfig.servers.0.prefer == true
+        - cluster_cm.current.clusterConfig.searchDomains.0 == "cisco.com"
+        - cluster_cm.current.clusterConfig.serviceNetwork == "{{ service_network }}"
+        - cluster_cm.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
+        - cluster_cm.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
+        - cluster_cm.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
+        - cluster_cm.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
+        - cluster_cm.current.nodes.0.serialNumber == "{{ serial_number }}"
+        - cluster_cm.current.nodes.0.hostName == "Test"
+        - cluster_cm.current.clusterConfig.deploymentMode == "ndfc"
+        - cluster_cm.current.clusterConfig.externalServices.0.target == "Management"
+        - cluster_cm.current.clusterConfig.externalServices.0.pool.0 == "{{ external_management_service_ip }}"
+        - cluster_cm.current.clusterConfig.externalServices.1.target == "Data"
+        - cluster_cm.current.clusterConfig.externalServices.1.pool.0 == "{{ external_data_service_ip }}"
+        - cluster_nm.current.clusterConfig.appNetwork == "{{ app_network }}"
+        - cluster_nm.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
+        - cluster_nm.current.clusterConfig.ntpConfig.servers.0.host == "{{ ntp_server }}"
+        - cluster_nm.current.clusterConfig.ntpConfig.servers.0.prefer == true
+        - cluster_nm.current.clusterConfig.searchDomains.0 == "cisco.com"
+        - cluster_nm.current.clusterConfig.serviceNetwork == "{{ service_network }}"
+        - cluster_nm.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
+        - cluster_nm.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
+        - cluster_nm.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
+        - cluster_nm.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
+        - cluster_nm.current.nodes.0.serialNumber == "{{ serial_number }}"
+        - cluster_nm.current.nodes.0.hostName == "Test"
+        - cluster_nm.current.clusterConfig.deploymentMode == "ndfc"
+        - cluster_nm.current.clusterConfig.externalServices.0.target == "Management"
+        - cluster_nm.current.clusterConfig.externalServices.0.pool.0 == "{{ external_management_service_ip }}"
+        - cluster_nm.current.clusterConfig.externalServices.1.target == "Data"
+        - cluster_nm.current.clusterConfig.externalServices.1.pool.0 == "{{ external_data_service_ip }}"
+        - installation_status.current.clusterConfig.appNetwork == "{{ app_network }}"
+        - installation_status.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
+        - installation_status.current.clusterConfig.ntpServers.0 == "{{ ntp_server }}"
+        - installation_status.current.clusterConfig.searchDomains.0 == "cisco.com"
+        - installation_status.current.clusterConfig.serviceNetwork == "{{ service_network }}"
+        - installation_status.current.nodes.0.dataNetwork.gateway == "{{ data_gateway }}"
+        - installation_status.current.nodes.0.dataNetwork.ipSubnet == "{{ data_ip }}"
+        - installation_status.current.nodes.0.managementNetwork.gateway == "{{ management_gateway }}"
+        - installation_status.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
+        - installation_status.current.nodes.0.serialNumber == "{{ serial_number }}"
+        - installation_status.current.nodes.0.hostName == "Test"
+        - installation_status.current.clusterConfig.deploymentMode == "ndfc"
+        - installation_status.current.clusterConfig.externalServices.0.target == "Management"
+        - installation_status.current.clusterConfig.externalServices.0.pool.0 == "{{ external_management_service_ip }}"
+        - installation_status.current.clusterConfig.externalServices.1.target == "Data"
+        - installation_status.current.clusterConfig.externalServices.1.pool.0 == "{{ external_data_service_ip }}"
+        - installation_status.current.state == "Completed"

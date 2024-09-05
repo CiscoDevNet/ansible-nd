@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2023, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# Copyright: (c) 2024, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
@@ -19,6 +20,7 @@ description:
 - Manages setting up the Nexus Dashboard (ND).
 author:
 - Shreyas Srish (@shrsr)
+- Gaspard Micol (@gmicol)
 options:
   cluster_name:
     description:
@@ -150,6 +152,11 @@ options:
         - The serial number of the node.
         type: str
         required: true
+      role:
+        description:
+        - The role of the node.
+        type: str
+        choices: [ primary, secondary, standby ]
       management_ip_address:
         description:
         - The management IP address of the node.
@@ -248,6 +255,31 @@ options:
                 - The ASN of the BGP peer.
                 type: int
                 required: true
+  deployment_mode:
+    description:
+    - This is used for enabling the available services between
+      Orchestrator, Fabric Controller and Insights during the intial installation.
+    - This option is only applicable for ND version 3.1.1 and later.
+    type: list
+    elements: str
+    choices: [ ndo, ndfc, ndi ]
+  external_services:
+    description:
+    - The persistent Service IPs/Pools to provide
+      if I(deployment_mode) includes C(ndfc) or C(ndi).
+    - This option is only applicable for ND version 3.1.1 and later.
+    type: dict
+    suboptions:
+      management_service_ips:
+        description:
+        - The management service IPs/Pools.
+        type: list
+        elements: str
+      data_service_ips:
+        description:
+        - The data service IPs/Pools.
+        type: list
+        elements: str
   state:
     description:
     - Use C(present) for setting up Nexus Dashboard.
@@ -285,6 +317,7 @@ EXAMPLES = r"""
     nodes:
       - hostname: Test
         serial_number: 3C0A86H4D02E
+        role: primary
         management_ip_address: 13.34.56.23
         username: rescue-user
         password: test
@@ -312,12 +345,21 @@ import re
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import network_spec, bgp_spec, ntp_server_spec, ntp_keys_spec
+from ansible_collections.cisco.nd.plugins.module_utils.constants import ND_SETUP_NODE_ROLE_MAPPING
 
 
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         cluster_name=dict(type="str"),
+        deployment_mode=dict(type="list", elements="str", choices=["ndo", "ndfc", "ndi"]),
+        external_services=dict(
+            type="dict",
+            options=dict(
+                management_service_ips=dict(type="list", elements="str"),
+                data_service_ips=dict(type="list", elements="str"),
+            ),
+        ),
         ntp_server=dict(type="list", aliases=["ntp_servers"], elements="str"),
         dns_server=dict(type="list", aliases=["dns_servers"], elements="str"),
         proxy_server=dict(type="str"),
@@ -342,6 +384,7 @@ def main():
             options=dict(
                 hostname=dict(type="str", required=True),
                 serial_number=dict(type="str", required=True),
+                role=dict(type="str", choices=["primary", "secondary", "standby"]),
                 management_ip_address=dict(type="str", required=True),
                 username=dict(type="str", required=True),
                 password=dict(type="str", required=True, no_log=True),
@@ -370,6 +413,8 @@ def main():
     nd = NDModule(module)
 
     cluster_name = nd.params.get("cluster_name")
+    deployment_mode = nd.params.get("deployment_mode")
+    external_services = nd.params.get("external_services")
     ntp_server = nd.params.get("ntp_server")
     dns_server = nd.params.get("dns_server")
     proxy_server = nd.params.get("proxy_server")
@@ -388,6 +433,8 @@ def main():
     if state == "query":
         nd.existing = nd.request("/clusterstatus/install", method="GET")
     else:
+        nd_version = nd.query_obj("/version.json")
+
         if len(cluster_name) > 63:
             nd.fail_json("A length of 1 to 63 characters is allowed.")
         elif len(re.findall(r"[^a-zA-Z0-9-]", cluster_name)) > 0:
@@ -407,7 +454,7 @@ def main():
                             "keyID": server.get("ntp_key_id"),
                             "prefer": server.get("preferred"),
                         }
-                        for server in ([] if ntp_config is None else ntp_config.get("servers"))
+                        for server in (ntp_config.get("servers") if ntp_config is not None and ntp_config.get("servers") is not None else [])
                     ],
                     "keys": [
                         {
@@ -416,7 +463,7 @@ def main():
                             "authType": key.get("authentication_type"),
                             "trusted": key.get("trusted"),
                         }
-                        for key in ([] if ntp_config is None else ntp_config.get("keys", []))
+                        for key in (ntp_config.get("keys") if ntp_config is not None and ntp_config.get("keys") is not None else [])
                     ],
                 },
                 "searchDomains": dns_search_domain,
@@ -437,6 +484,7 @@ def main():
                 {
                     "hostName": node.get("hostname"),
                     "serialNumber": node.get("serial_number"),
+                    "role": ND_SETUP_NODE_ROLE_MAPPING.get(node.get("role")),
                     "dataNetwork": {
                         "ipSubnet": node["data_network"].get("ipv4_address"),
                         "gateway": node["data_network"].get("ipv4_gateway"),
@@ -464,10 +512,34 @@ def main():
             ],
         }
 
+        path = "/bootstrap/cluster"
+
+        # Deployment mode options for ND version 3.1.1 and later
+        if nd_version["major"] > 3 or (nd_version["major"] == 3 and nd_version["minor"] >= 1):
+            if isinstance(deployment_mode, list):
+                payload["clusterConfig"]["deploymentMode"] = deployment_mode if len(deployment_mode) > 1 else deployment_mode[0]
+                if external_services is not None and any(service in {"ndi", "ndfc"} for service in deployment_mode):
+                    payload["clusterConfig"]["externalServices"] = []
+                    if external_services.get("management_service_ips") is not None:
+                        payload["clusterConfig"]["externalServices"].append(
+                            {
+                                "target": "Management",
+                                "pool": list(external_services.get("management_service_ips")),
+                            }
+                        )
+                    if external_services.get("data_service_ips") is not None:
+                        payload["clusterConfig"]["externalServices"].append(
+                            {
+                                "target": "Data",
+                                "pool": list(external_services.get("data_service_ips")),
+                            }
+                        )
+            path = "{0}{1}".format("/v2", path)
+
         nd.sanitize(payload, collate=True)
 
         if not module.check_mode:
-            nd.request("/bootstrap/cluster", method="POST", data=payload)
+            nd.request(path, method="POST", data=payload)
         nd.existing = nd.proposed
 
     nd.exit_json()
