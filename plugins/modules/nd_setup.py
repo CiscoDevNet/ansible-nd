@@ -257,16 +257,16 @@ options:
                 required: true
   deployment_mode:
     description:
-    - This is used for enabling the available services between
-      Orchestrator, Fabric Controller and Insights during the intial installation.
+    - This is used for enabling the services between Orchestrator,
+      Fabric Controller and Insights during the initial installation.
     - This option is only applicable for ND version 3.1.1 and later.
     type: list
     elements: str
     choices: [ ndo, ndfc, ndi ]
   external_services:
     description:
-    - The persistent Service IPs/Pools to provide
-      if I(deployment_mode) includes C(ndfc) or C(ndi).
+    - The persistent Service IPs/Pools to be provided.
+    - This can be used when I(deployment_mode) includes C(ndfc) or C(ndi) otherwise it will be ignored.
     - This option is only applicable for ND version 3.1.1 and later.
     type: dict
     suboptions:
@@ -454,7 +454,7 @@ def main():
                             "keyID": server.get("ntp_key_id"),
                             "prefer": server.get("preferred"),
                         }
-                        for server in (ntp_config.get("servers") if ntp_config is not None and ntp_config.get("servers") is not None else [])
+                        for server in ([] if ntp_config is None else ntp_config.get("servers"))
                     ],
                     "keys": [
                         {
