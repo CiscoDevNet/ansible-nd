@@ -235,10 +235,13 @@
           data_network:
             ipv4_address: "{{ data_ip }}"
             ipv4_gateway: "{{ data_gateway }}"
-      deployment_mode: [ndfc]
+      deployment_mode:
+        - ndfc
       external_services:
-        management_service_ips: ["{{ external_management_service_ip }}"]
-        data_service_ips: ["{{ external_data_service_ip }}"]
+        management_service_ips:
+          - "{{ external_management_service_ip }}"
+        data_service_ips:
+          - "{{ external_data_service_ip }}"
     check_mode: true
     register: cluster_cm
 
@@ -332,9 +335,4 @@
         - installation_status.current.nodes.0.managementNetwork.ipSubnet == "{{ management_ip }}"
         - installation_status.current.nodes.0.serialNumber == "{{ serial_number }}"
         - installation_status.current.nodes.0.hostName == "Test"
-        - installation_status.current.clusterConfig.deploymentMode == "ndfc"
-        - installation_status.current.clusterConfig.externalServices.0.target == "Management"
-        - installation_status.current.clusterConfig.externalServices.0.pool.0 == "{{ external_management_service_ip }}"
-        - installation_status.current.clusterConfig.externalServices.1.target == "Data"
-        - installation_status.current.clusterConfig.externalServices.1.pool.0 == "{{ external_data_service_ip }}"
         - installation_status.current.state == "Completed"

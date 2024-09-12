@@ -433,8 +433,6 @@ def main():
     if state == "query":
         nd.existing = nd.request("/clusterstatus/install", method="GET")
     else:
-        nd_version = nd.query_obj("/version.json")
-
         if len(cluster_name) > 63:
             nd.fail_json("A length of 1 to 63 characters is allowed.")
         elif len(re.findall(r"[^a-zA-Z0-9-]", cluster_name)) > 0:
@@ -512,34 +510,30 @@ def main():
             ],
         }
 
-        path = "/bootstrap/cluster"
-
-        # Deployment mode options for ND version 3.1.1 and later
-        if nd_version["major"] > 3 or (nd_version["major"] == 3 and nd_version["minor"] >= 1):
-            if isinstance(deployment_mode, list):
-                payload["clusterConfig"]["deploymentMode"] = deployment_mode if len(deployment_mode) > 1 else deployment_mode[0]
-                if external_services is not None and any(service in {"ndi", "ndfc"} for service in deployment_mode):
-                    payload["clusterConfig"]["externalServices"] = []
-                    if external_services.get("management_service_ips") is not None:
-                        payload["clusterConfig"]["externalServices"].append(
-                            {
-                                "target": "Management",
-                                "pool": list(external_services.get("management_service_ips")),
-                            }
-                        )
-                    if external_services.get("data_service_ips") is not None:
-                        payload["clusterConfig"]["externalServices"].append(
-                            {
-                                "target": "Data",
-                                "pool": list(external_services.get("data_service_ips")),
-                            }
-                        )
-            path = "{0}{1}".format("/v2", path)
+        # Deployment mode options introduced in ND version 3.1.1
+        if isinstance(deployment_mode, list):
+            payload["clusterConfig"]["deploymentMode"] = deployment_mode if len(deployment_mode) > 1 else deployment_mode[0]
+            if external_services is not None and any(service in {"ndi", "ndfc"} for service in deployment_mode):
+                payload["clusterConfig"]["externalServices"] = []
+                if external_services.get("management_service_ips") is not None:
+                    payload["clusterConfig"]["externalServices"].append(
+                        {
+                            "target": "Management",
+                            "pool": list(external_services.get("management_service_ips")),
+                        }
+                    )
+                if external_services.get("data_service_ips") is not None:
+                    payload["clusterConfig"]["externalServices"].append(
+                        {
+                            "target": "Data",
+                            "pool": list(external_services.get("data_service_ips")),
+                        }
+                    )
 
         nd.sanitize(payload, collate=True)
 
         if not module.check_mode:
-            nd.request(path, method="POST", data=payload)
+            nd.request("/bootstrap/cluster", method="POST", data=payload)
         nd.existing = nd.proposed
 
     nd.exit_json()
