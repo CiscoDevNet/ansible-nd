@@ -259,6 +259,11 @@ options:
     description:
     - This is used for enabling the services between Orchestrator,
       Fabric Controller and Insights during the initial installation.
+    - Depending on the number of nodes in the cluster, some services or cohosting scenarios may not be supported.
+      If you are unable to choose the desired number of services, check your playbook and ensure that you have provided enough primary/secondary nodes.
+      The deployment mode cannot be changed after the cluster is deployed.
+      Therefore, you must ensure that you have completed all service-specific prerequisites described in the early chapters of this guide
+      U(https://www.cisco.com/c/en/us/td/docs/dcn/nd/3x/deployment/cisco-nexus-dashboard-and-services-deployment-guide-311.html)
     - This option is only applicable for ND version 3.1.1 and later.
     type: list
     elements: str
@@ -266,7 +271,7 @@ options:
   external_services:
     description:
     - The persistent Service IPs/Pools to be provided.
-    - This can be used when I(deployment_mode) includes C(ndfc) or C(ndi) otherwise it will be ignored.
+    - This can be used when O(deployment_mode) includes V(ndi) or V(ndo) otherwise it will be ignored.
     - This option is only applicable for ND version 3.1.1 and later.
     type: dict
     suboptions:
