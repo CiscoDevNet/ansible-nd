@@ -154,9 +154,12 @@ options:
         required: true
       role:
         description:
-        - The role of the node.
+        - The role or type of the node.
+        - This option is only applicable and required for ND version 3.1.1 and later.
         type: str
+        default: primary
         choices: [ primary, secondary, standby ]
+        aliases: [ type ]
       management_ip_address:
         description:
         - The management IP address of the node.
@@ -268,6 +271,7 @@ options:
     type: list
     elements: str
     choices: [ ndo, ndfc, ndi ]
+    aliases: [ mode ]
   external_services:
     description:
     - The persistent Service IPs/Pools to be provided.
@@ -357,7 +361,7 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         cluster_name=dict(type="str"),
-        deployment_mode=dict(type="list", elements="str", choices=["ndo", "ndfc", "ndi"]),
+        deployment_mode=dict(type="list", elements="str", choices=["ndo", "ndfc", "ndi"], aliases=["mode"]),
         external_services=dict(
             type="dict",
             options=dict(
@@ -389,7 +393,7 @@ def main():
             options=dict(
                 hostname=dict(type="str", required=True),
                 serial_number=dict(type="str", required=True),
-                role=dict(type="str", choices=["primary", "secondary", "standby"]),
+                role=dict(type="str", default="primary", choices=["primary", "secondary", "standby"], aliases=["type"]),
                 management_ip_address=dict(type="str", required=True),
                 username=dict(type="str", required=True),
                 password=dict(type="str", required=True, no_log=True),
