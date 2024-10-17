@@ -223,11 +223,12 @@ class HttpApi(HttpApiBase):
             raise ConnectionError(json.dumps(self._verify_response(None, method, full_path, None)))
         return self._verify_response(response, method, full_path, rdata)
 
-    def send_file_request(self, method, path, file=None, data=None, remote_path=None, file_key="file"):
+    def send_file_request(self, method, path, file=None, data=None, remote_path=None, file_key="file", file_ext=None):
         """This method handles file download and upload operations
         :arg method (str): Method can be GET or POST
         :arg path (str): Path should be the resource path
         :arg file (str): The absolute file path of the target file
+        :arg file_ext (str): The file extension, with leading dot, to be used for the file. If file has already an extension, it will be replaced
         :arg data (dict): Data should be the dictionary object
         :arg remote_path (str): Remote directory path to download/upload the file object
 
@@ -254,6 +255,12 @@ class HttpApi(HttpApiBase):
         self.method = "GET"
         if method is not None:
             self.method = method
+        
+        # If file_ext is provided, replace the file extension (if present) or add it
+        if file_ext is not None:
+            filename = os.path.splitext(os.path.basename(file))[0] + file_ext
+        else:
+            filename = os.path.basename(file)
 
         try:
             # create data field
@@ -267,11 +274,11 @@ class HttpApi(HttpApiBase):
         try:
             # create fields for MultipartEncoder
             if remote_path:
-                fields = dict(rdir=remote_path, name=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
+                fields = dict(rdir=remote_path, name=(filename, open(file, "rb"), mimetypes.guess_type(filename)))
             elif file_key == "importfile":
-                fields = dict(spec=(json.dumps(data)), importfile=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
+                fields = dict(spec=(json.dumps(data)), importfile=(filename, open(file, "rb"), mimetypes.guess_type(filename)))
             else:
-                fields = dict(data=("data.json", data_str, "application/json"), file=(os.path.basename(file), open(file, "rb"), mimetypes.guess_type(file)))
+                fields = dict(data=("data.json", data_str, "application/json"), file=(filename, open(file, "rb"), mimetypes.guess_type(filename)))
 
             if not HAS_MULTIPART_ENCODER:
                 if sys.version_info.major == 2:
