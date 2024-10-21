@@ -65,6 +65,60 @@
   ansible.builtin.pause:
     minutes: 1
 
+# XML file format with no extension
+- name: Add pre-change analysis from file upload with no extension (XML format)
+  cisco.nd.nd_pcv:
+    <<: *ndi_info
+    <<: *ndi_site
+    file: targets/nd_pcv/tasks/pcv_test_config
+    name: ansible_xml_no_ext
+    state: present
+  register: pcv_xml_no_ext
+
+- name: Verify pcv ansible_xml_no_ext
+  ansible.builtin.assert:
+    that:
+      - pcv_xml_no_ext is changed
+      - pcv_xml_no_ext.previous == {}
+      - pcv_xml_no_ext.current.name == "ansible_xml_no_ext"
+      - pcv_xml_no_ext.current.assuranceEntityName == "{{ ndi_site.site }}"
+      - pcv_xml_no_ext.current.analysisStatus is defined
+      - pcv_xml_no_ext.current.analysisScheduleId is defined
+      - pcv_xml_no_ext.current.baseEpochId is defined
+      - pcv_xml_no_ext.current.fabricUuid is defined
+      - pcv_xml_no_ext.current.jobId is defined
+      - pcv_xml_no_ext.current.submitterName is defined
+
+- name: Query Pre-Change analysis job pcv ansible_xml_no_ext
+  cisco.nd.nd_pcv:
+    <<: *ndi_info
+    <<: *ndi_site
+    name: ansible_xml_no_ext
+    state: query
+  register: nm_query_ansible_xml_no_ext
+  until:
+    - nm_query_ansible_xml_no_ext.current is defined
+    - nm_query_ansible_xml_no_ext.current.analysisStatus is defined
+    - nm_query_ansible_xml_no_ext.current.analysisStatus == "COMPLETED"
+  retries: 180
+  delay: 10
+
+- name: Verify nm_query_ansible_xml_no_ext
+  ansible.builtin.assert:
+    that:
+      - nm_query_ansible_xml_no_ext is not changed
+      - nm_query_ansible_xml_no_ext.current.name == "ansible_xml_no_ext"
+      - nm_query_ansible_xml_no_ext.current.assuranceEntityName == "{{ ndi_site.site }}"
+      - nm_query_ansible_xml_no_ext.current.analysisStatus == "COMPLETED"
+      - nm_query_ansible_xml_no_ext.current.analysisScheduleId is defined
+      - nm_query_ansible_xml_no_ext.current.baseEpochId is defined
+      - nm_query_ansible_xml_no_ext.current.fabricUuid is defined
+      - nm_query_ansible_xml_no_ext.current.jobId is defined
+
+- name: Pause for 1 minutes to complete pre-change analysis in the previous step
+  ansible.builtin.pause:
+    minutes: 1
+
 # Non-JSON format file upload - Output from ansible playbook with --check and output_path
 - name: Add pre-change analysis from file upload (non JSON format)
   cisco.nd.nd_pcv:
@@ -476,3 +530,20 @@
     that:
       - pcv_without_file_or_manual is not changed
       - pcv_without_file_or_manual.msg == "Either file or manual is required to create a PCV job"
+
+# Invalid file upload
+- name: Add pre-change analysis from file upload (invalid file)
+  cisco.nd.nd_pcv:
+    <<: *ndi_info
+    <<: *ndi_site
+    file: targets/nd_pcv/tasks/pcv_invalid_file
+    name: ansible_invalid_file
+    state: present
+  ignore_errors: true
+  register: pcv_error
+
+- name: Verify pcv ansible_invalid_file
+  ansible.builtin.assert:
+    that:
+      - pcv_error is not changed
+      - pcv_error.msg == "Error processing the file. Check if file content is valid."

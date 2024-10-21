@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<imdata totalCount="1">
+	<fvTenant annotation="" descr="" dn="uni/tn-nd_pcv_test" name="nd_pcv_test" nameAlias="" ownerKey="" ownerTag="" userdom=":all:common:">
+		<vnsSvcCont annotation="" userdom="all"/>
+		<fvRsTenantMonPol annotation="" tnMonEPGPolName="" userdom="all"/>
+		<fvEpTags annotation="" userdom="all"/>
+		<fvCtx annotation="" bdEnforcedEnable="no" descr="" ipDataPlaneLearning="enabled" knwMcastAct="permit" name="nd_pcv_test" nameAlias="" ownerKey="" ownerTag="" pcEnfDir="ingress" pcEnfPref="enforced" userdom=":all:common:" vrfIndex="0">
+			<fvRsVrfValidationPol annotation="" tnL3extVrfValidationPolName="" userdom="all"/>
+			<vzAny annotation="" descr="" matchT="AtleastOne" name="" nameAlias="" prefGrMemb="disabled" userdom="all"/>
+			<fvRsOspfCtxPol annotation="" tnOspfCtxPolName="" userdom="all"/>
+			<fvRsCtxToEpRet annotation="" tnFvEpRetPolName="" userdom="all"/>
+			<fvRsCtxToExtRouteTagPol annotation="" tnL3extRouteTagPolName="" userdom="all"/>
+			<fvRsBgpCtxPol annotation="" tnBgpCtxPolName="" userdom="all"/>
+		</fvCtx>
+		<fvBD OptimizeWanBandwidth="no" annotation="" arpFlood="yes" descr="" enableRogueExceptMac="no" epClear="no" epMoveDetectMode="" hostBasedRouting="no" intersiteBumTrafficAllow="no" intersiteL2Stretch="no" ipLearning="yes" ipv6McastAllow="no" limitIpLearnToSubnets="yes" llAddr="::" mac="00:22:BD:F8:19:FF" mcastARPDrop="yes" mcastAllow="no" multiDstPktAct="bd-flood" name="nd_pcv_test_bd" nameAlias="" ownerKey="" ownerTag="" type="regular" unicastRoute="yes" unkMacUcastAct="proxy" unkMcastAct="flood" userdom=":all:common:" v6unkMcastAct="flood" vmac="not-applicable">
+			<fvRsMldsn annotation="" tnMldSnoopPolName="" userdom="all"/>
+			<fvRsIgmpsn annotation="" tnIgmpSnoopPolName="" userdom="all"/>
+			<fvRsCtx annotation="" tnFvCtxName="" userdom="all"/>
+			<fvRsBdToEpRet annotation="" resolveAct="resolve" tnFvEpRetPolName="" userdom="all"/>
+			<fvRsBDToNdP annotation="" tnNdIfPolName="" userdom="all"/>
+		</fvBD>
+	</fvTenant>
+</imdata>
