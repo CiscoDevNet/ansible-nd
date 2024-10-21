@@ -218,7 +218,9 @@ class NDModule(object):
             self.module.warn("Enable debug output because ANSIBLE_DEBUG was set.")
             self.params["output_level"] = "debug"
 
-    def request(self, path, method=None, data=None, file=None, qs=None, prefix="", file_key="file", output_format="json", ignore_not_found_error=False, file_ext=None):
+    def request(
+        self, path, method=None, data=None, file=None, qs=None, prefix="", file_key="file", output_format="json", ignore_not_found_error=False, file_ext=None
+    ):
         """Generic HTTP method for ND requests."""
         self.path = path
 
