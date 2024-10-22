@@ -1,30 +1,106 @@
 # ansible-nd
 
+## Description
+
 The `ansible-nd` project provides an Ansible collection for managing and automating your Cisco Nexus Dashboard.
 It consists of a set of plugins, modules and roles for performing tasks related to Cisco Nexus Dashboard.
 
-This collection has been tested and supports Nexus Dahsboard (ND) 2.0+.
-Modules supporting new features introduced in ND API in specific ND versions might not be supported in earlier ND releases.
-
-*Note: This collection is not compatible with versions of Ansible before v2.8.*
+See the [cisco.nd collection index](https://galaxy.ansible.com/ui/repo/published/cisco/nd/content/) for a full list of modules and plugins.
 
 ## Requirements
-- Ansible (ansible-core) v2.15 or newer
-- Python 3.9 or newer
 
-## Install
-Ansible must be installed
-```
-sudo pip install ansible
-```
+- Ansible v2.15 or newer
+- Python v3.10 or newer
 
-Install the collection
-```
+Follow the [Installing Ansible](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html) guide for detailed instructions.
+
+## Installation
+
+Before using this collection, you need to install it with the Ansible Galaxy command-line tool:
+
+```sh
 ansible-galaxy collection install cisco.nd
 ```
 
-## Use
+You can also include this collection in a `requirements.yml` file and install it with:
+
+```sh
+ansible-galaxy collection install -r requirements.yml
+```
+
+Using the following `requirements.yml` format:
+
+```yaml
+collections:
+  - name: cisco.nd
+```
+
+Note that if you install any collections from Ansible Galaxy, they will not be upgraded automatically when you upgrade the Ansible package.
+To upgrade the collection to the latest available version, run the following command:
+
+```sh
+ansible-galaxy collection install cisco.nd --upgrade
+```
+
+You can also install a specific version of the collection. For example, to install version 1.0.0, use the following syntax:
+
+```sh
+ansible-galaxy collection install cisco.nd:==1.0.0
+```
+
+See [using Ansible collections](https://docs.ansible.com/ansible/devel/user_guide/collections_using.html) for more details.
+
+### Latest Build
+
+Follow these instructions to get the latest collection.
+
+#### First Approach - Build From Source Code
+
+Clone the ansible-nd repository.
+
+```sh
+git clone https://github.com/CiscoDevNet/ansible-nd.git
+```
+
+Go to the ansible-nd directory
+
+```sh
+cd ansible-nd
+```
+
+Pull the latest master on your nd
+
+```sh
+git pull origin master
+```
+
+Build and Install a collection from source
+
+```sh
+ansible-galaxy collection build --force
+ansible-galaxy collection install cisco-nd-* --force
+```
+
+#### Second Approach - Download From Latest CI Build
+
+Go to [ansible-nd Actions](https://github.com/CiscoDevNet/ansible-nd/actions/workflows/ansible-test.yml?query=branch%3Amaster) and select the latest CI build.
+
+Under Artifacts download collection suffixed with the latest version of Ansible (eg. `collection-stable-2.17`) and unzip it using Terminal or Console.
+
+*Note: The collection file is a zip file containing a tar.gz file. We recommend using CLI because some GUI-based unarchiver might unarchive both nested archives in one go.*
+
+Install the unarchived tar.gz file
+
+```sh
+ansible-galaxy collection install cisco-nd-1.0.0.tar.gz —-force
+```
+
+## Use Cases
+
 Once the collection is installed, you can use it in a playbook by specifying the full namespace path to the module, plugin and/or role.
+
+### Get the ND version
+
 ```yaml
 - hosts: nd
   gather_facts: no
@@ -34,7 +110,9 @@ Once the collection is installed, you can use it in a playbook by specifying the
     cisco.nd.nd_version:
       state: query
 ```
+
 With the following inventory file:
+
 ```yaml
 [nd]
 nd1 ansible_host=10.0.0.1 ansible_user=admin ansible_ssh_pass="MySuperPassword"
@@ -48,6 +126,7 @@ ansible_httpapi_use_proxy=True
 ```
 
 You can also use the ND HTTPAPI connection plugin with your cisco.mso Ansible collection for MSO running on ND (MSO version >= 3.2) using the inventory file above.
+
 ```yaml
 - hosts: nd
   gather_facts: no
@@ -58,51 +137,37 @@ You can also use the ND HTTPAPI connection plugin with your cisco.mso Ansible co
       state: query
 ```
 
-## Update
-Getting the latest/nightly collection build
+## Testing
 
-### First Approach
-Clone the ansible-nd repository.
-```
-git clone https://github.com/CiscoDevNet/ansible-nd.git
-```
-
-Go to the ansible-nd directory
-```
-cd ansible-nd
-```
-
-Pull the latest master on your local repo
-```
-git pull origin master
-```
-
-Build and Install a collection from source
-```
-ansible-galaxy collection build --force
-ansible-galaxy collection install cisco-nd-* --force
-```
-
-### Second Approach
-Go to: https://github.com/CiscoDevNet/ansible-nd/actions
-
-Select the latest CI build
-
-Under Artifacts download collection and unzip it using Terminal or Console.
-
-*Note: The collection file is a zip file containing a tar.gz file. We recommend using CLI because some GUI-based unarchiver might unarchive both nested archives in one go.*
-
-Install the unarchived tar.gz file
-```
-ansible-galaxy collection install cisco-nd-*.tar.gz —-force
-```
-
-### See Also:
-
-* [Ansible Using collections](https://docs.ansible.com/ansible/latest/user_guide/collections_using.html) for more details.
+Testing is currently done manually during the development of each module.
+Automated integration testing for this collection will be added in the future.
 
 ## Contributing to this collection
 
 Ongoing development efforts and contributions to this collection are tracked as issues in this repository.
 
 We welcome community contributions to this collection. If you find problems, need an enhancement or need a new module, please open an issue or create a PR against the [Cisco Nexus Dashboard collection repository](https://github.com/CiscoDevNet/ansible-nd/issues).
+
+## Support
+
+This collection supports any ND version within the Last Day of Support (LDOS) date.
+
+Certain modules and options in the collection are only available from specific versions of ND. The versions that a module or option supports are documented in the individual module documentation.
+
+To find EOL announcements for ND versions, refer to the [End-of-Life and End-of-Sale Notices](https://www.cisco.com/c/en/us/products/data-center-analytics/nexus-dashboard/eos-eol-notice-listing.html) page.
+
+## Release Notes
+
+See the [Changelog](CHANGELOG.rst) for full release notes.
+
+## Related Information
+
+For further information, refer to the following:
+
+- [Nexus Dashboard Overview](https://www.cisco.com/site/us/en/products/networking/cloud-networking/nexus-platform/index.html)
+- [Nexus Dashboard Support Documentation](https://www.cisco.com/c/en/us/support/data-center-analytics/nexus-dashboard/series.html)
+- [Nexus Dashboard API Documentation](https://developer.cisco.com/docs/nexus-dashboard/latest/introduction/#introduction)
+
+## License Information
+
+This collection is licensed under the [GNU General Public License v3.0](LICENSE)
