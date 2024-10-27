@@ -258,6 +258,8 @@ class HttpApi(HttpApiBase):
         
         # If file_ext is provided, replace the file extension (if present) or add it
         if file_ext is not None:
+            if not file_ext.startswith(".") or file_ext not in set(mimetypes.types_map.keys()):
+                raise ValueError("Invalid file extension provided. Please provide a valid file extension, with leading dot")
             filename = os.path.splitext(os.path.basename(file))[0] + file_ext
         else:
             filename = os.path.basename(file)
