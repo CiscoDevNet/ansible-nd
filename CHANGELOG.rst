@@ -4,6 +4,25 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 
 .. contents:: Topics
 
+v1.3.0
+======
+
+Release Summary
+---------------
+
+Release v1.3.0 of the ``ansible-nd`` collection on 2024-10-28.
+This changelog describes all changes made to the modules and plugins included in this collection since v1.2.0.
+
+Minor Changes
+-------------
+
+- Add nd_setup support for ND version 3.1.1 and later. Add deployment mode to nd_setup.
+
+Bugfixes
+--------
+
+- Updated README to match RedHat s ansible collection template.
+
 v1.2.0
 ======
 
