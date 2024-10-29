@@ -8,6 +8,7 @@
 
 from __future__ import absolute_import, division, print_function
 import json
+from lxml import etree
 
 try:
     from jsonpath_ng import parse
@@ -304,6 +305,13 @@ class NDI:
         try:
             json.loads(myjson)
         except ValueError:
+            return False
+        return True
+
+    def is_xml(self, myxml):
+        try:
+            etree.parse(myxml)
+        except etree.XMLSyntaxError:
             return False
         return True
 
