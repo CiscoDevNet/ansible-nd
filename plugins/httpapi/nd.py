@@ -255,7 +255,7 @@ class HttpApi(HttpApiBase):
         self.method = "GET"
         if method is not None:
             self.method = method
-        
+
         # If file_ext is provided, replace the file extension (if present) or add it
         if file_ext is not None:
             if not file_ext.startswith(".") or file_ext not in set(mimetypes.types_map.keys()):

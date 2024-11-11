@@ -227,7 +227,7 @@ def main():
                     try:
                         file_ext = ".json"
                         extract_data = ndi.load(open(file))
-                    except:
+                    except BaseException:
                         nd.fail_json(msg="Error processing the file. Check if file content is valid.")
 
                 if isinstance(extract_data, list):
