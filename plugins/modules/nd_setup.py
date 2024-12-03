@@ -164,7 +164,6 @@ options:
         description:
         - The management IP address of the node.
         type: str
-        required: true
       username:
         description:
         - The username of the node.
@@ -400,7 +399,7 @@ def main():
                 hostname=dict(type="str", required=True),
                 serial_number=dict(type="str", required=True),
                 role=dict(type="str", default="primary", choices=["primary", "secondary", "standby"], aliases=["type"]),
-                management_ip_address=dict(type="str", required=True),
+                management_ip_address=dict(type="str"),
                 username=dict(type="str", required=True),
                 password=dict(type="str", required=True, no_log=True),
                 management_network=dict(type="dict", required=True, options=network_spec()),
@@ -415,7 +414,7 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
         required_if=[
-            ["state", "present", ["cluster_name", "dns_server", "app_network", "service_network", "nodes"]],
+            ["state", "present", ["cluster_name", "dns_server", "nodes"]],
         ],
         required_together=[
             ["proxy_username", "proxy_password"],
@@ -450,6 +449,12 @@ def main():
     else:
         nd_version = nd.query_obj("/version.json")
         nd_version = ".".join(str(nd_version[key]) for key in ["major", "minor", "maintenance"])
+        if nd_version >= "3.0.1":
+            if not all((app_network, service_network)) and not all((app_network_ipv6, service_network_ipv6)):
+                nd.fail_json(msg="Application and service network addresses, IPv4 or IPv6, are required during ND setup.")
+        else:
+            if not all((app_network, service_network)):
+                nd.fail_json(msg="Application and service network IPv4 addresses are required during ND setup.")
         if len(cluster_name) > 63:
             nd.fail_json("A length of 1 to 63 characters is allowed.")
         elif len(re.findall(r"[^a-zA-Z0-9-]", cluster_name)) > 0:
