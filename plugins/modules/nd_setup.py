@@ -185,13 +185,11 @@ options:
             description:
             - The IPv4 address of the management network.
             type: str
-            required: true
             aliases: [ ip ]
           ipv4_gateway:
             description:
             - The IPv4 gateway of the management network.
             type: str
-            required: true
             aliases: [ gateway ]
           ipv6_address:
             description:
@@ -211,13 +209,11 @@ options:
             description:
             - The IPv4 address of the data network.
             type: str
-            required: true
             aliases: [ ip ]
           ipv4_gateway:
             description:
             - The IPv4 gateway of the data network.
             type: str
-            required: true
             aliases: [ gateway ]
           ipv6_address:
             description:
@@ -270,7 +266,7 @@ options:
     - This option is only applicable for ND version 3.1.1 and later.
     type: list
     elements: str
-    choices: [ ndo, ndfc, ndi ]
+    choices: [ ndo, ndfc, ndi-virtual, ndi-physical ]
     aliases: [ mode ]
   external_services:
     description:
@@ -357,11 +353,21 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import 
 from ansible_collections.cisco.nd.plugins.module_utils.constants import ND_SETUP_NODE_ROLE_MAPPING
 
 
+def check_network_requirements(nd, version, type, network):
+    if version >= "3.0.1":
+        if not all(network.get(ip) for ip in ["ipv6Subnet", "gatewayv6"]) and not all(network.get(ip) for ip in ["ipSubnet", "gateway"]):
+            nd.fail_json(msg="Missing IPv4 subnet/gateway or IPv6 subnet/gateway in node {0} configuration.".format(type))
+    else:
+        if not all(network.get(ip) for ip in ["ipSubnet", "gateway"]):
+            nd.fail_json(msg="Missing IPv4 subnet/gateway in node {0} configuration.".format(type))
+    return network
+
+
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         cluster_name=dict(type="str"),
-        deployment_mode=dict(type="list", elements="str", choices=["ndo", "ndfc", "ndi"], aliases=["mode"]),
+        deployment_mode=dict(type="list", elements="str", choices=["ndo", "ndfc", "ndi-virtual", "ndi-physical"], aliases=["mode"]),
         external_services=dict(
             type="dict",
             options=dict(
@@ -442,6 +448,8 @@ def main():
     if state == "query":
         nd.existing = nd.request("/clusterstatus/install", method="GET")
     else:
+        nd_version = nd.query_obj("/version.json")
+        nd_version = ".".join(str(nd_version[key]) for key in ["major", "minor", "maintenance"])
         if len(cluster_name) > 63:
             nd.fail_json("A length of 1 to 63 characters is allowed.")
         elif len(re.findall(r"[^a-zA-Z0-9-]", cluster_name)) > 0:
@@ -492,19 +500,29 @@ def main():
                     "hostName": node.get("hostname"),
                     "serialNumber": node.get("serial_number"),
                     "role": ND_SETUP_NODE_ROLE_MAPPING.get(node.get("role")),
-                    "dataNetwork": {
-                        "ipSubnet": node["data_network"].get("ipv4_address"),
-                        "gateway": node["data_network"].get("ipv4_gateway"),
-                        "ipv6Subnet": node["data_network"].get("ipv6_address"),
-                        "gatewayv6": node["data_network"].get("ipv6_gateway"),
-                        "vlan": node["data_network"].get("vlan"),
-                    },
-                    "managementNetwork": {
-                        "ipSubnet": node["management_network"].get("ipv4_address"),
-                        "gateway": node["management_network"].get("ipv4_gateway"),
-                        "ipv6Subnet": node["management_network"].get("ipv6_address"),
-                        "gatewayv6": node["management_network"].get("ipv6_gateway"),
-                    },
+                    "dataNetwork": check_network_requirements(
+                        nd,
+                        nd_version,
+                        "data network",
+                        {
+                            "ipSubnet": node["data_network"].get("ipv4_address"),
+                            "gateway": node["data_network"].get("ipv4_gateway"),
+                            "ipv6Subnet": node["data_network"].get("ipv6_address"),
+                            "gatewayv6": node["data_network"].get("ipv6_gateway"),
+                            "vlan": node["data_network"].get("vlan"),
+                        },
+                    ),
+                    "managementNetwork": check_network_requirements(
+                        nd,
+                        nd_version,
+                        "management network",
+                        {
+                            "ipSubnet": node["management_network"].get("ipv4_address"),
+                            "gateway": node["management_network"].get("ipv4_gateway"),
+                            "ipv6Subnet": node["management_network"].get("ipv6_address"),
+                            "gatewayv6": node["management_network"].get("ipv6_gateway"),
+                        },
+                    ),
                     "bgpConfig": {
                         "as": node.get("bgp").get("asn") if node.get("bgp") is not None else None,
                         "peers": node.get("bgp").get("peers") if node.get("bgp") is not None else None,
@@ -520,9 +538,9 @@ def main():
         }
 
         # Deployment mode options introduced in ND version 3.1.1
-        if isinstance(deployment_mode, list):
+        if isinstance(deployment_mode, list) and nd_version >= "3.1.1":
             payload["clusterConfig"]["deploymentMode"] = deployment_mode if len(deployment_mode) > 1 else deployment_mode[0]
-            if external_services is not None and any(service in {"ndi", "ndfc"} for service in deployment_mode):
+            if external_services is not None and any(service in {"ndi-virtual", "ndi-physical", "ndfc"} for service in deployment_mode):
                 payload["clusterConfig"]["externalServices"] = []
                 if external_services.get("management_service_ips") is not None:
                     payload["clusterConfig"]["externalServices"].append(

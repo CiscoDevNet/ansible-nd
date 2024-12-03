@@ -28,8 +28,8 @@ def ntp_keys_spec():
 
 def network_spec(vlan=False):
     spec = dict(
-        ipv4_address=dict(type="str", aliases=["ip"], required=True),
-        ipv4_gateway=dict(type="str", aliases=["gateway"], required=True),
+        ipv4_address=dict(type="str", aliases=["ip"]),
+        ipv4_gateway=dict(type="str", aliases=["gateway"]),
         ipv6_address=dict(type="str"),
         ipv6_gateway=dict(type="str"),
     )
