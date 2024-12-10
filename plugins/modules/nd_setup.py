@@ -352,14 +352,49 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import 
 from ansible_collections.cisco.nd.plugins.module_utils.constants import ND_SETUP_NODE_ROLE_MAPPING
 
 
-def check_network_requirements(nd, version, type, network):
+def check_network_requirements(nd, version, nodes, internal_network_ipv4, internal_network_ipv6):
     if version >= "3.0.1":
-        if not all(network.get(ip) for ip in ["ipv6Subnet", "gatewayv6"]) and not all(network.get(ip) for ip in ["ipSubnet", "gateway"]):
-            nd.fail_json(msg="Missing IPv4 subnet/gateway or IPv6 subnet/gateway in node {0} configuration.".format(type))
+        # checking minimum requirements for internal network
+        if not all(internal_network_ipv4) and not all(internal_network_ipv6):
+            nd.fail_json(msg="Application and service network addresses, IPv4 or IPv6, are required during ND setup.")
+        # Conditions fo Dual Stack configuration for internal network
+        elif all(internal_network_ipv4) and any(internal_network_ipv6) and not all(internal_network_ipv6):
+            nd.fail_json(
+                msg="For a dual stack configuration, application and service network IPv6 addresses are required. Otherwise, the extra one must be removed."
+            )
+        elif all(internal_network_ipv6) and any(internal_network_ipv4) and not all(internal_network_ipv4):
+            nd.fail_json(
+                msg="For a dual stack configuration, application and service network IPv4 addresses are required. Otherwise, the extra one must be removed."
+            )
+        for node in nodes:
+            for network in ["data_network", "management_network"]:
+                network_ipv4_config = [node[network].get(ip) for ip in ["ipv4_address", "ipv4_gateway"]]
+                network_ipv6_config = [node[network].get(ip) for ip in ["ipv6_address", "ipv6_gateway"]]
+                # checking minimum requirements for external network
+                if not all(network_ipv4_config) and not all(network_ipv6_config):
+                    nd.fail_json(msg="A complete IPv4 subnet/gateway or IPv6 subnet/gateway configuration is required in node's {0}.".format(network))
+                # Conditions fo Dual Stack configuration for external network
+                elif all(network_ipv4_config) and any(network_ipv6_config) and not all(network_ipv6_config):
+                    nd.fail_json(
+                        msg="For a dual stack configuration,"
+                        / " a complete IPv6 subnet/gateway configuration in node's {0} must be provided.".format(network)
+                        / " Otherwise, the extra one must be removed"
+                    )
+                elif all(network_ipv6_config) and any(network_ipv4_config) and not all(network_ipv4_config):
+                    nd.fail_json(
+                        msg="For a dual stack configuration,"
+                        / " a complete IPv4 subnet/gateway configuration in node's {0} must be provided.".format(network)
+                        / " Otherwise, the extra one must be removed"
+                    )
     else:
-        if not all(network.get(ip) for ip in ["ipSubnet", "gateway"]):
-            nd.fail_json(msg="Missing IPv4 subnet/gateway in node {0} configuration.".format(type))
-    return network
+        # checking minimum requirements for internal network
+        if not all(internal_network_ipv4):
+            nd.fail_json(msg="Application and service network IPv4 addresses are required during ND setup.")
+        # checking minimum requirements for external network
+        for node in nodes:
+            for network in ["data_network", "management_network"]:
+                if not all(node[network].get(ip) for ip in ["ipv4_address", "ipv4_gateway"]):
+                    nd.fail_json(msg="A complete IPv4 subnet/gateway configuration is required in node's {0}.".format(network))
 
 
 def main():
@@ -449,12 +484,10 @@ def main():
     else:
         nd_version = nd.query_obj("/version.json")
         nd_version = ".".join(str(nd_version[key]) for key in ["major", "minor", "maintenance"])
-        if nd_version >= "3.0.1":
-            if not all((app_network, service_network)) and not all((app_network_ipv6, service_network_ipv6)):
-                nd.fail_json(msg="Application and service network addresses, IPv4 or IPv6, are required during ND setup.")
-        else:
-            if not all((app_network, service_network)):
-                nd.fail_json(msg="Application and service network IPv4 addresses are required during ND setup.")
+        # Checking internal and external network requirements
+        check_network_requirements(nd, nd_version, nodes, (app_network, service_network), (app_network_ipv6, service_network_ipv6))
+
+        # Checking cluster name validation
         if len(cluster_name) > 63:
             nd.fail_json("A length of 1 to 63 characters is allowed.")
         elif len(re.findall(r"[^a-zA-Z0-9-]", cluster_name)) > 0:
@@ -505,29 +538,19 @@ def main():
                     "hostName": node.get("hostname"),
                     "serialNumber": node.get("serial_number"),
                     "role": ND_SETUP_NODE_ROLE_MAPPING.get(node.get("role")),
-                    "dataNetwork": check_network_requirements(
-                        nd,
-                        nd_version,
-                        "data network",
-                        {
-                            "ipSubnet": node["data_network"].get("ipv4_address"),
-                            "gateway": node["data_network"].get("ipv4_gateway"),
-                            "ipv6Subnet": node["data_network"].get("ipv6_address"),
-                            "gatewayv6": node["data_network"].get("ipv6_gateway"),
-                            "vlan": node["data_network"].get("vlan"),
-                        },
-                    ),
-                    "managementNetwork": check_network_requirements(
-                        nd,
-                        nd_version,
-                        "management network",
-                        {
-                            "ipSubnet": node["management_network"].get("ipv4_address"),
-                            "gateway": node["management_network"].get("ipv4_gateway"),
-                            "ipv6Subnet": node["management_network"].get("ipv6_address"),
-                            "gatewayv6": node["management_network"].get("ipv6_gateway"),
-                        },
-                    ),
+                    "dataNetwork": {
+                        "ipSubnet": node["data_network"].get("ipv4_address"),
+                        "gateway": node["data_network"].get("ipv4_gateway"),
+                        "ipv6Subnet": node["data_network"].get("ipv6_address"),
+                        "gatewayv6": node["data_network"].get("ipv6_gateway"),
+                        "vlan": node["data_network"].get("vlan"),
+                    },
+                    "managementNetwork": {
+                        "ipSubnet": node["management_network"].get("ipv4_address"),
+                        "gateway": node["management_network"].get("ipv4_gateway"),
+                        "ipv6Subnet": node["management_network"].get("ipv6_address"),
+                        "gatewayv6": node["management_network"].get("ipv6_gateway"),
+                    },
                     "bgpConfig": {
                         "as": node.get("bgp").get("asn") if node.get("bgp") is not None else None,
                         "peers": node.get("bgp").get("peers") if node.get("bgp") is not None else None,
