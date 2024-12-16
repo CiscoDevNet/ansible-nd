@@ -43,7 +43,8 @@ options:
     aliases: [ site ]
   file:
     description:
-    - Optional parameter if creating new pre-change analysis from file. XML and JSON files are supported. If no file extension is provided, the file is assumed to be JSON.
+    - Optional parameter if creating new pre-change analysis from file.
+    - XML and JSON files are supported. If no file extension is provided, the file is assumed to be JSON.
     type: str
   manual:
     description:
