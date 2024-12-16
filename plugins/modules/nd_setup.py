@@ -357,14 +357,14 @@ def check_network_requirements(nd, version, nodes, internal_network_ipv4, intern
         # checking minimum requirements for internal network
         if not all(internal_network_ipv4) and not all(internal_network_ipv6):
             nd.fail_json(msg="Application and service network addresses, IPv4 or IPv6, are required during ND setup.")
-        # Conditions fo Dual Stack configuration for internal network
+        # Conditions for Dual Stack configuration for internal network
         elif all(internal_network_ipv4) and any(internal_network_ipv6) and not all(internal_network_ipv6):
             nd.fail_json(
-                msg="For a dual stack configuration, application and service network IPv6 addresses are required. Otherwise, the extra one must be removed."
+                msg="For a dual stack configuration, application and service network IPv6 addresses are required. Otherwise, the extra address must be removed."
             )
         elif all(internal_network_ipv6) and any(internal_network_ipv4) and not all(internal_network_ipv4):
             nd.fail_json(
-                msg="For a dual stack configuration, application and service network IPv4 addresses are required. Otherwise, the extra one must be removed."
+                msg="For a dual stack configuration, application and service network IPv4 addresses are required. Otherwise, the extra address must be removed."
             )
         for node in nodes:
             for network in ["data_network", "management_network"]:
@@ -373,18 +373,18 @@ def check_network_requirements(nd, version, nodes, internal_network_ipv4, intern
                 # checking minimum requirements for external network
                 if not all(network_ipv4_config) and not all(network_ipv6_config):
                     nd.fail_json(msg="A complete IPv4 subnet/gateway or IPv6 subnet/gateway configuration is required in node's {0}.".format(network))
-                # Conditions fo Dual Stack configuration for external network
+                # Conditions for Dual Stack configuration for external network
                 elif all(network_ipv4_config) and any(network_ipv6_config) and not all(network_ipv6_config):
                     nd.fail_json(
                         msg="For a dual stack configuration,"
                         / " a complete IPv6 subnet/gateway configuration in node's {0} must be provided.".format(network)
-                        / " Otherwise, the extra one must be removed"
+                        / " Otherwise, the extra address must be removed."
                     )
                 elif all(network_ipv6_config) and any(network_ipv4_config) and not all(network_ipv4_config):
                     nd.fail_json(
                         msg="For a dual stack configuration,"
                         / " a complete IPv4 subnet/gateway configuration in node's {0} must be provided.".format(network)
-                        / " Otherwise, the extra one must be removed"
+                        / " Otherwise, the extra address must be removed."
                     )
     else:
         # checking minimum requirements for internal network
