@@ -117,6 +117,70 @@
     ignore_errors: true
     register: cluster_name_invalid_hyphen
 
+  - name: Install ND without complete node's management network
+    cisco.nd.nd_setup:
+      output_level: debug
+      cluster_name: cluster-one
+      dns_server: "{{ dns_server }}"
+      dns_search_domain: cisco.com
+      app_network: "{{ app_network }}"
+      service_network: "{{ service_network }}"
+      ntp_config:
+        servers:
+          - ntp_host: "{{ ntp_server }}"
+            ntp_key_id: 1
+            preferred: true
+        keys:
+          - ntp_key_id: 1
+            ntp_key: "ntp_secure_key"
+            authentication_type: "AES128CMAC"
+            trusted: true
+      nodes:
+        - hostname: Test
+          serial_number: "{{ serial_number }}"
+          management_ip_address: "{{ management_ip_address }}"
+          username: "{{ deployment_username | default('rescue-user') }}"
+          password: "{{ deployment_password }}"
+          management_network: 
+            ipv4_address: "{{ management_ip }}"
+          data_network:
+            ipv4_address: "{{ data_ip }}"
+            ipv4_gateway: "{{ data_gateway }}"
+    ignore_errors: true
+    register: cluster_invalid_node_management_network
+
+  - name: Install ND without application network
+    cisco.nd.nd_setup:
+      output_level: debug
+      cluster_name: cluster-one
+      dns_server: "{{ dns_server }}"
+      dns_search_domain: cisco.com
+      service_network: "{{ service_network }}"
+      ntp_config:
+        servers:
+          - ntp_host: "{{ ntp_server }}"
+            ntp_key_id: 1
+            preferred: true
+        keys:
+          - ntp_key_id: 1
+            ntp_key: "ntp_secure_key"
+            authentication_type: "AES128CMAC"
+            trusted: true
+      nodes:
+        - hostname: Test
+          serial_number: "{{ serial_number }}"
+          management_ip_address: "{{ management_ip_address }}"
+          username: "{{ deployment_username | default('rescue-user') }}"
+          password: "{{ deployment_password }}"
+          management_network: 
+            ipv4_address: "{{ management_ip }}"
+            ipv4_gateway: "{{ management_gateway }}"
+          data_network:
+            ipv4_address: "{{ data_ip }}"
+            ipv4_gateway: "{{ data_gateway }}"
+    ignore_errors: true
+    register: cluster_invalid_application_network
+
   - name: Install ND in normal mode
     cisco.nd.nd_setup:
       output_level: debug
@@ -168,6 +232,8 @@
         - cluster_name_length_error.msg == "A length of 1 to 63 characters is allowed."
         - cluster_name_invalid_chars.msg == "Valid characters include letters, digits and hyphen."
         - cluster_name_invalid_hyphen.msg == "The name cannot start or end with a hyphen."
+        - cluster_invalid_node_management_network.msg == "A complete IPv4 subnet/gateway configuration is required in node's management_network."
+        - cluster_invalid_application_network.msg == "Application and service network IPv4 addresses are required during ND setup."
         - cluster_cm.current.clusterConfig.appNetwork == "{{ app_network }}"
         - cluster_cm.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
         - cluster_cm.current.clusterConfig.ntpConfig.servers.0.host == "{{ ntp_server }}"
@@ -266,7 +332,7 @@
     ignore_errors: true
     register: cluster_name_invalid_hyphen
 
-  - name: Install ND without management network ipv4 address
+  - name: Install ND without complete node's management network
     cisco.nd.nd_setup:
       <<: *nd_setup_test_config
       nodes:
@@ -277,12 +343,81 @@
           username: "{{ deployment_username | default('rescue-user') }}"
           password: "{{ deployment_password }}"
           management_network:
-            ipv4_gateway: "{{ management_gateway }}"
+            ipv4_address: "{{ management_ip }}"
           data_network:
             ipv4_address: "{{ data_ip }}"
             ipv4_gateway: "{{ data_gateway }}"
     ignore_errors: true
     register: cluster_invalid_node_management_network
+
+  - name: Install ND without complete dual stack ipv6 configurations in node management network
+    cisco.nd.nd_setup:
+      <<: *nd_setup_test_config
+      nodes:
+        - hostname: Test
+          serial_number: "{{ serial_number }}"
+          role: primary
+          management_ip_address: "{{ management_ip_address }}"
+          username: "{{ deployment_username | default('rescue-user') }}"
+          password: "{{ deployment_password }}"
+          management_network:
+            ipv4_address: "{{ management_ip }}"
+            ipv4_gateway: "{{ management_gateway }}"
+            ipv6_address: "{{ management_ipv6 }}"
+          data_network:
+            ipv4_address: "{{ data_ip }}"
+            ipv4_gateway: "{{ data_gateway }}"
+            ipv6_address: "{{ data_ipv6 }}"
+            ipv6_gateway: "{{ data_gateway_ipv6 }}"
+    ignore_errors: true
+    register: cluster_invalid_dual_stack_node_management_network_v6
+
+  - name: Install ND without complete dual stack ipv4 configurations in node management network
+    cisco.nd.nd_setup:
+      <<: *nd_setup_test_config
+      nodes:
+        - hostname: Test
+          serial_number: "{{ serial_number }}"
+          role: primary
+          management_ip_address: "{{ management_ip_address }}"
+          username: "{{ deployment_username | default('rescue-user') }}"
+          password: "{{ deployment_password }}"
+          management_network:
+            ipv4_address: "{{ management_ip }}"
+            ipv6_address: "{{ management_ipv6 }}"
+            ipv6_gateway: "{{ management_gateway_ipv6 }}"
+          data_network:
+            ipv4_address: "{{ data_ip }}"
+            ipv4_gateway: "{{ data_gateway }}"
+            ipv6_address: "{{ data_ipv6 }}"
+            ipv6_gateway: "{{ data_gateway_ipv6 }}"
+    ignore_errors: true
+    register: cluster_invalid_dual_stack_node_management_network_v4
+
+  - name: Install ND without any application network addresses
+    cisco.nd.nd_setup:
+      <<: *nd_setup_test_config
+      app_network: null
+    ignore_errors: true
+    register: cluster_invalid_application_network
+
+  - name: Install ND without complete dual stack ipv6 configurations in internal network
+    cisco.nd.nd_setup:
+      <<: *nd_setup_test_config
+      app_network: "{{ app_network }}"
+      service_network: "{{ service_network }}"
+      service_network_ipv6: "{{ service_network_ipv6 }}"
+    ignore_errors: true
+    register: cluster_invalid_dual_stack_application_network_v6
+
+  - name: Install ND without complete dual stack ipv4 configurations in internal network
+    cisco.nd.nd_setup:
+      <<: *nd_setup_test_config
+      service_network: "{{ service_network }}"
+      app_network_ipv6: "{{ app_network_ipv6 }}"
+      service_network_ipv6: "{{ service_network_ipv6 }}"
+    ignore_errors: true
+    register: cluster_invalid_dual_stack_application_network_v4
   
   - name: Install ND in normal mode
     cisco.nd.nd_setup:
@@ -308,7 +443,12 @@
         - cluster_name_length_error.msg == "A length of 1 to 63 characters is allowed."
         - cluster_name_invalid_chars.msg == "Valid characters include letters, digits and hyphen."
         - cluster_name_invalid_hyphen.msg == "The name cannot start or end with a hyphen."
-        - cluster_invalid_node_management_network.msg == "Missing IPv4 subnet/gateway or IPv6 subnet/gateway in node management network configuration."
+        - cluster_invalid_node_management_network.msg == "A complete IPv4 subnet/gateway or IPv6 subnet/gateway configuration is required in node's management_network."
+        - cluster_invalid_dual_stack_node_management_network_v6 == "For a dual stack configuration, a complete IPv6 subnet/gateway configuration in node's management_network must be provided. Otherwise, the extra address must be removed."
+        - cluster_invalid_dual_stack_node_management_network_v4 == "For a dual stack configuration, a complete IPv4 subnet/gateway configuration in node's management_network must be provided. Otherwise, the extra address must be removed."
+        - cluster_invalid_application_network.msg == "Application and service network addresses, IPv4 or IPv6, are required during ND setup."
+        - cluster_invalid_dual_stack_application_network_v6.msg == "For a dual stack configuration, application and service network IPv6 addresses are required. Otherwise, the extra address must be removed."
+        - cluster_invalid_dual_stack_application_network_v4.msg == "For a dual stack configuration, application and service network IPv4 addresses are required. Otherwise, the extra address must be removed."
         - cluster_cm.current.clusterConfig.appNetwork == "{{ app_network }}"
         - cluster_cm.current.clusterConfig.nameServers.0 == "{{ dns_server }}"
         - cluster_cm.current.clusterConfig.ntpConfig.servers.0.host == "{{ ntp_server }}"
