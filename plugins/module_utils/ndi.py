@@ -310,6 +310,7 @@ class NDI:
     def is_xml(self, myxml):
         try:
             from lxml import etree
+
             etree.parse(myxml)
         except ImportError:
             self.nd.fail_json(msg="Cannot use lxml etree because lxml module is not available")
