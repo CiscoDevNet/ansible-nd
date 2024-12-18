@@ -218,7 +218,9 @@ class NDModule(object):
             self.module.warn("Enable debug output because ANSIBLE_DEBUG was set.")
             self.params["output_level"] = "debug"
 
-    def request(self, path, method=None, data=None, file=None, qs=None, prefix="", file_key="file", output_format="json", ignore_not_found_error=False):
+    def request(
+        self, path, method=None, data=None, file=None, qs=None, prefix="", file_key="file", output_format="json", ignore_not_found_error=False, file_ext=None
+    ):
         """Generic HTTP method for ND requests."""
         self.path = path
 
@@ -238,7 +240,7 @@ class NDModule(object):
             uri = uri + update_qs(qs)
         try:
             if file is not None:
-                info = conn.send_file_request(method, uri, file, data, None, file_key)
+                info = conn.send_file_request(method, uri, file, data, None, file_key, file_ext)
             else:
                 if data:
                     info = conn.send_request(method, uri, json.dumps(data))

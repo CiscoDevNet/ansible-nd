@@ -44,6 +44,7 @@ options:
   file:
     description:
     - Optional parameter if creating new pre-change analysis from file.
+    - XML and JSON files are supported. If no file extension is provided, the file is assumed to be JSON.
     type: str
   manual:
     description:
@@ -216,17 +217,28 @@ def main():
         if file:
             if not os.path.exists(file):
                 nd.fail_json(msg="File not found : {0}".format(file))
-            # check whether file content is a valid json
-            if ndi.is_json(open(file, "rb").read()) is False:
-                extract_data = ndi.load(open(file))
+            # Check whether the file is a valid XML file. If it's not, check if it's a valid JSON or else process it as a file from cisco.aci modules.
+            if ndi.is_xml(open(file, "rb")):
+                file_ext = ".xml"
             else:
-                extract_data = json.loads(open(file, "rb").read())
-            if isinstance(extract_data, list):
-                ndi.cmap = {}
-                tree = ndi.construct_tree(extract_data)
-                ndi.create_structured_data(tree, file)
+                if ndi.is_json(open(file, "rb").read()):
+                    file_ext = ".json"
+                    extract_data = json.loads(open(file, "rb").read())
+                else:
+                    try:
+                        file_ext = ".json"
+                        extract_data = ndi.load(open(file))
+                    except BaseException:
+                        nd.fail_json(msg="Error processing the file. Check if file content is valid.")
+
+                if isinstance(extract_data, list):
+                    ndi.cmap = {}
+                    tree = ndi.construct_tree(extract_data)
+                    ndi.create_structured_data(tree, file)
+
+            # Send REST API request to create a new PCV job
             create_pcv_path = "{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges".format(path, insights_group, site_name)
-            file_resp = nd.request(create_pcv_path, method="POST", file=os.path.abspath(file), data=data, prefix=ndi.prefix)
+            file_resp = nd.request(create_pcv_path, method="POST", file=os.path.abspath(file), file_ext=file_ext, data=data, prefix=ndi.prefix)
             if file_resp.get("success") is True:
                 nd.existing = file_resp.get("value")["data"]
         elif manual:
