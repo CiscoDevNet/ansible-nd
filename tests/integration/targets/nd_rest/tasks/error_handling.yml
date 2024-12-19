@@ -1,0 +1,112 @@
+# Test code for the ND modules
+# Copyright: (c) 2024, Gaspard Micol (@gmciol) <gmicol@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      host: '{{ ansible_host }}'
+      username: '{{ ansible_user }}'
+      password: '{{ ansible_password }}'
+      validate_certs: '{{ ansible_httpapi_validate_certs | default(false) }}'
+      use_ssl: '{{ ansible_httpapi_use_ssl | default(true) }}'
+      use_proxy: '{{ ansible_httpapi_use_proxy | default(true) }}'
+      output_level: '{{ mso_output_level | default("info") }}'
+      timeout: 90
+
+- name: Error when required parameter is missing
+  cisco.nd.nd_rest: 
+    <<: *nd_info
+    method: post
+    content:
+      {
+        "spec": {
+          "name": "ansible_security_domain_test"
+        }
+      }
+  ignore_errors: true
+  register: error_missing_path
+
+- name: Assert missing required parameter error
+  ansible.builtin.assert:
+    that:
+    - error_missing_path is failed
+    - error_missing_path.msg == "missing required arguments: path"
+
+- name: Error when required attribute is missing
+  cisco.nd.nd_rest: 
+    <<: *nd_info
+    path: /api/config/v2/addsite/
+    method: post
+    content:
+      {
+        "name": "ansible_error_site", 
+        "siteType": "ACI",
+        "verifySecure": false,
+        "useProxy": false,
+        "aci": {
+          "userName": '{{ site_username }}',
+          "password": '{{ site_password }}',
+        },
+      }
+  ignore_errors: true
+  register: error_missing_site_address
+
+- name: Assert missing required attribute error
+  ansible.builtin.assert:
+    that:
+    - error_missing_site_address is failed
+    - error_missing_site_address.info.body.error == "controller URL/IP required"
+    - error_missing_site_address.payload.error == "controller URL/IP required"
+    - error_missing_site_address.status == 400
+
+- name: Error when input does not validate
+  cisco.nd.nd_rest: 
+    <<: *nd_info
+    path: /nexus/infra/api/aaa/v4/securitydomains
+    method: post
+    content:
+      {
+        "spec": {
+          "name": "[invalid] name"
+        }
+      }
+  ignore_errors: true
+  register: error_invalid_name
+
+- name: Assert invalid input error
+  ansible.builtin.assert:
+    that:
+    - error_invalid_name is failed
+    - error_invalid_name.info.body.errors == ["Invalid domain name"]
+    - error_invalid_name.payload.errors == ["Invalid domain name"]
+    - error_invalid_name.status == 500
+
+- name: Error on name resolution
+  cisco.nd.nd_rest: 
+    <<: *nd_info
+    host: foo.bar.cisco.com
+    path: /nexus/infra/api/aaa/v4/securitydomains
+    method: post
+    content:
+      {
+        "spec": {
+          "description": "Security Domain Test for nd_rest module.",
+          "name": "ansible_security_domain_test"
+        }
+      }
+  ignore_errors: true
+  register: error_name_resolution
+
+- name: Assert name resolution error
+  ansible.builtin.assert:
+    that:
+    - error_name_resolution is failed
+    - '"Could not connect to https://foo.bar.cisco.com:443/nexus/infra/api/aaa/v4/securitydomains" in error_name_resolution.msg'
+    - '"Name or service not known" in error_name_resolution.msg'
