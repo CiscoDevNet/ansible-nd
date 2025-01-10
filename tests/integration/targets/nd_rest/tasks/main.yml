@@ -20,5 +20,8 @@
 - ansible.builtin.include_tasks: yaml_string.yml
   tags: yaml_string
 
+- ansible.builtin.include_tasks: json_file.yml
+  tags: json_file
+
 - ansible.builtin.include_tasks: error_handling.yml
   tags: error_handling
