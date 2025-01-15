@@ -13,7 +13,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_rest
-short_description: Direct access to the Cisco Nexus Dashboard REST API
+short_description: Allows direct access to the Cisco Nexus Dashboard REST API
 description:
 - Enables the management of Cisco Nexus Dashboard (ND) through direct access to the Cisco ND REST API.
 author:
@@ -21,19 +21,19 @@ author:
 options:
   method:
     description:
-    - The HTTP method of the request.
-    - Using C(delete) is used for deleting objects.
-    - Using C(get) is used for querying objects.
-    - Using C(post) is used for modifying objects.
-    - Using C(put) is used for modifying existing objects.
-    - Using C(patch) is also used for modifying existing objects.
+    - The HTTP method specifying the type of action to be performed in the request.
+    - Use C(delete) for removing objects.
+    - Use C(get) to retrieve or query objects.
+    - Use C(post) to create new objects.
+    - Use C(put) to update or replace existing objects entirely.
+    - Use C(patch) to apply partial modifications to existing objects.
     type: str
-    choices: [ delete, get, post, put, patch ]
+    choices: [ delete, get, post, put, patch, DELETE, GET, POST, PUT, PATCH ]
     default: get
     aliases: [ action ]
   path:
     description:
-    - URI being used to execute API calls.
+    - The URI being used to execute API calls.
     type: str
     required: true
     aliases: [ uri ]
@@ -44,15 +44,15 @@ options:
     aliases: [ payload ]
   file_path:
     description:
-    - Name of the absolute path of the filename that includes the body
-      of the HTTP request.
-    - If templated payload is required, use the C(content) parameter
-      together with the C(template) lookup plugin, or use C(template).
+    - The file path containing the body of the HTTP request.
     type: path
     aliases: [ config_file ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
+notes:
+- All payloads to the REST interface must be in YAML (if PyYAML package is installed) or JSON format using this module.
+- For Cisco Nexus Dashboard REST API references, visit U(https://developer.cisco.com/docs/nexus-dashboard/latest/api-reference/)
 """
 
 EXAMPLES = r"""
@@ -172,7 +172,12 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         path=dict(type="str", required=True, aliases=["uri"]),
-        method=dict(type="str", default="get", choices=["delete", "get", "post", "put", "patch"], aliases=["action"]),
+        method=dict(
+            type="str",
+            default="get",
+            choices=["delete", "get", "post", "put", "patch", "DELETE", "GET", "POST", "PUT", "PATCH"],
+            aliases=["action"],
+        ),
         content=dict(type="raw", aliases=["payload"]),
         file_path=dict(type="path", aliases=["config_file"]),
     )
@@ -192,24 +197,21 @@ def main():
     if file_path and not os.path.isfile(file_path):
         module.fail_json(msg="Cannot find/access file '{0}'".format(file_path))
 
-    # Validate payload/content with PyYAML package
-    if content and isinstance(content, str) and HAS_YAML:
+    if content and isinstance(content, str):
         try:
-            # Validate YAML/JSON string
-            content = yaml.safe_load(content)
+            if HAS_YAML:
+                # Validate YAML/JSON string with PyYAML package
+                content = yaml.safe_load(content)
+            else:
+                # Validate JSON string only with json Python package
+                content = json.loads(content)
         except Exception as e:
-            module.fail_json(msg="Failed to parse provided YAML/JSON payload: %s" % to_text(e), exception=to_text(e), payload=content)
-    # Validate payload/content only with json Python package
-    elif content and isinstance(content, str):
-        try:
-            # Validate JSON object/string
-            content = json.loads(content)
-        except Exception as e:
-            module.fail_json(
-                msg="Missing PyYAML package to parse YML payload or failed to parse provided JSON payload: %s" % to_text(e),
-                exception=to_text(e),
-                payload=content,
+            error_msg = (
+                "Failed to parse provided YAML/JSON payload: {}".format(to_text(e))
+                if HAS_YAML
+                else "Missing PyYAML package or failed to parse provided JSON payload: {}".format(to_text(e))
             )
+            module.fail_json(msg=error_msg, payload=content)
 
     method = nd.params.get("method").upper()
     keys_to_sanitize = ["metadata"]
@@ -217,8 +219,7 @@ def main():
     # Append previous state of the object
     if method in ("PUT", "DELETE", "PATCH"):
         nd.existing = nd.previous = sanitize(nd.query_obj(path, ignore_not_found_error=True), keys_to_sanitize)
-    if method != "GET":
-        nd.result["previous"] = nd.previous
+    nd.result["previous"] = nd.previous
 
     # Perform request
     if module.check_mode:
