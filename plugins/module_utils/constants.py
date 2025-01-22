@@ -164,3 +164,5 @@ INTERFACE_FLOW_RULES_TYPES_MAPPING = {"port_channel": "PORTCHANNEL", "physical":
 INTERFACE_FLOW_RULES_STATUS_MAPPING = {"enabled": "ENABLED", "disabled": "DISABLED"}
 
 ND_SETUP_NODE_ROLE_MAPPING = {"primary": "Master", "secondary": "Worker", "standby": "Standby"}
+
+ND_REST_KEYS_TO_SANITIZE = ["metadata"]

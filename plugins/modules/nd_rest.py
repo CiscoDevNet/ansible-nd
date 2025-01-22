@@ -165,6 +165,7 @@ except Exception:
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, sanitize
+from ansible_collections.cisco.nd.plugins.module_utils.constants import ND_REST_KEYS_TO_SANITIZE
 from ansible.module_utils._text import to_text
 
 
@@ -214,11 +215,10 @@ def main():
             module.fail_json(msg=error_msg, payload=content)
 
     method = nd.params.get("method").upper()
-    keys_to_sanitize = ["metadata"]
 
     # Append previous state of the object
     if method in ("PUT", "DELETE", "PATCH"):
-        nd.existing = nd.previous = sanitize(nd.query_obj(path, ignore_not_found_error=True), keys_to_sanitize)
+        nd.existing = nd.previous = sanitize(nd.query_obj(path, ignore_not_found_error=True), ND_REST_KEYS_TO_SANITIZE)
     nd.result["previous"] = nd.previous
 
     # Perform request
@@ -226,11 +226,11 @@ def main():
         nd.result["jsondata"] = content
     else:
         nd.result["jsondata"] = nd.request(path, method=method, data=content, file=file_path)
-        nd.existing = sanitize(nd.result["jsondata"], keys_to_sanitize)
+        nd.existing = sanitize(nd.result["jsondata"], ND_REST_KEYS_TO_SANITIZE)
 
     # Report changes for idempotency depending on methods
     nd.result["status"] = nd.status
-    if sanitize(nd.result["jsondata"], keys_to_sanitize) != nd.previous and method != "GET":
+    if sanitize(nd.result["jsondata"], ND_REST_KEYS_TO_SANITIZE) != nd.previous and method != "GET":
         nd.result["changed"] = True
 
     # Report success
