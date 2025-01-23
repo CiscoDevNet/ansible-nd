@@ -208,9 +208,11 @@ def main():
                 content = json.loads(content)
         except Exception as e:
             error_msg = (
-                "Failed to parse provided YAML/JSON payload: {}".format(to_text(e))
+                "Failed to parse provided YAML/JSON payload: {0}".format(to_text(e))
                 if HAS_YAML
-                else "Missing PyYAML package or failed to parse provided JSON payload: {}".format(to_text(e))
+                else "Failed to parse provided JSON payload: {0}. If a YAML file was provided, the PyYAML package is required to be installed.".format(
+                    to_text(e)
+                )
             )
             module.fail_json(msg=error_msg, payload=content)
 
