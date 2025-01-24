@@ -58,29 +58,12 @@ def sanitize_list(list_to_sanitize, keys=None, values=None, list_recursive=True,
 
 def sanitize(obj_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
     """Clean up a Python object of type list or dict from specific keys, values and None values if specified"""
-    if keys is None:
-        keys = []
-    if values is None:
-        values = []
-    result = deepcopy(obj_to_sanitize)
     if isinstance(obj_to_sanitize, dict):
-        for k, v in obj_to_sanitize.items():
-            if k in keys:
-                del result[k]
-            elif v in values or (v is None and remove_none_values):
-                del result[k]
-            elif isinstance(v, dict) and recursive:
-                result[k] = sanitize(v, keys, values)
-            elif isinstance(v, list) and recursive:
-                for index, item in enumerate(v):
-                    if isinstance(item, dict):
-                        result[k][index] = sanitize(item, keys, values)
+        return sanitize_dict(obj_to_sanitize, keys, values, recursive, remove_none_values)
     elif isinstance(obj_to_sanitize, list):
-        for index, item in enumerate(obj_to_sanitize):
-            result[index] = sanitize(item, keys, values, recursive, remove_none_values)
+        return sanitize_list(obj_to_sanitize, keys, values, recursive, recursive, remove_none_values)
     else:
         raise TypeError("object to sanitize can only be of type list or dict. Got {}".format(type(obj_to_sanitize)))
-    return result
 
 
 if PY3:
