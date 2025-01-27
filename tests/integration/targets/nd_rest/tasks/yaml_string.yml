@@ -1,0 +1,198 @@
+# Test code for the ND modules
+# Copyright: (c) 2024, Gaspard Micol (@gmciol) <gmicol@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      host: '{{ ansible_host }}'
+      username: '{{ ansible_user }}'
+      password: '{{ ansible_password }}'
+      validate_certs: '{{ ansible_httpapi_validate_certs | default(false) }}'
+      use_ssl: '{{ ansible_httpapi_use_ssl | default(true) }}'
+      use_proxy: '{{ ansible_httpapi_use_proxy | default(true) }}'
+      output_level: '{{ mso_output_level | default("info") }}'
+      timeout: 90
+
+- name: Ensure Security Domain does not exist using DELETE method
+  cisco.nd.nd_rest: &delete_security_domain
+    <<: *nd_info
+    path: /nexus/infra/api/aaa/v4/securitydomains/ansible_security_domain_test
+    method: delete
+
+# POST tasks
+
+- name: Create Security Domain with POST method (check_mode)
+  cisco.nd.nd_rest: &create_security_domain
+    <<: *nd_info
+    path: /nexus/infra/api/aaa/v4/securitydomains
+    method: post
+    content: |
+      spec:
+        description: "Security Domain Test for nd_rest module."
+        name: "ansible_security_domain_test"
+  check_mode: true
+  register: cm_create_security_domain
+
+- name: Create Security Domain with POST method
+  cisco.nd.nd_rest:
+    <<: *create_security_domain
+  register: nm_create_security_domain
+
+- name: Assert creation tasks with POST method for nd_rest module
+  ansible.builtin.assert:
+    that:
+    - cm_create_security_domain is changed
+    - cm_create_security_domain.previous == {}
+    - cm_create_security_domain.current == {}
+    - cm_create_security_domain.jsondata.spec.name == "ansible_security_domain_test"
+    - cm_create_security_domain.jsondata.spec.description == "Security Domain Test for nd_rest module." 
+    - nm_create_security_domain is changed
+    - nm_create_security_domain.previous == {}
+    - nm_create_security_domain.current.spec.name == "ansible_security_domain_test"
+    - nm_create_security_domain.current.spec.description == "Security Domain Test for nd_rest module."
+    - nm_create_security_domain.data.spec.name == "ansible_security_domain_test"
+    - nm_create_security_domain.data.spec.description == "Security Domain Test for nd_rest module."
+    - nm_create_security_domain.jsondata.spec.name == "ansible_security_domain_test"
+    - nm_create_security_domain.jsondata.spec.description == "Security Domain Test for nd_rest module."
+
+# PUT tasks
+
+- name: Update Security Domain with PUT method
+  cisco.nd.nd_rest: &update_security_domain
+    <<: *nd_info
+    path: /nexus/infra/api/aaa/v4/securitydomains/ansible_security_domain_test
+    method: put
+    content: |
+      spec:
+        description: "Updated Security Domain Test for nd_rest module."
+  register: nm_update_security_domain
+
+- name: Update Security Domain with PUT method again
+  cisco.nd.nd_rest:
+    <<: *update_security_domain
+  register: nm_update_security_domain_again
+
+- name: Assert udpate tasks with PUT method for nd_rest module
+  ansible.builtin.assert:
+    that:
+    - nm_update_security_domain is changed
+    - nm_update_security_domain.previous.spec.name == "ansible_security_domain_test"
+    - nm_update_security_domain.previous.spec.description == "Security Domain Test for nd_rest module."
+    - nm_update_security_domain.current.spec.name == "ansible_security_domain_test"
+    - nm_update_security_domain.current.spec.description == "Updated Security Domain Test for nd_rest module."
+    - nm_update_security_domain.data.spec.description == "Updated Security Domain Test for nd_rest module."
+    - nm_update_security_domain.current.spec.name == "ansible_security_domain_test"
+    - nm_update_security_domain.jsondata.spec.description == "Updated Security Domain Test for nd_rest module."
+    - nm_update_security_domain_again is not changed
+    - nm_update_security_domain_again.previous.spec.name == "ansible_security_domain_test"
+    - nm_update_security_domain_again.previous.spec.description == "Updated Security Domain Test for nd_rest module."
+    - nm_update_security_domain_again.current.spec.name == "ansible_security_domain_test"
+    - nm_update_security_domain_again.current.spec.description == "Updated Security Domain Test for nd_rest module."
+    - nm_update_security_domain_again.data.spec.description == "Updated Security Domain Test for nd_rest module."
+    - nm_update_security_domain_again.current.spec.name == "ansible_security_domain_test"
+    - nm_update_security_domain_again.jsondata.spec.description == "Updated Security Domain Test for nd_rest module."
+
+# GET tasks
+
+- name: Query Security Domain with GET method
+  cisco.nd.nd_rest:
+    <<: *nd_info
+    path: /nexus/infra/api/aaa/v4/securitydomains/ansible_security_domain_test
+    method: get
+  register: quey_one_security_domain
+
+- name: Query all Security Domains with GET method
+  cisco.nd.nd_rest:
+    <<: *nd_info
+    path: /nexus/infra/api/aaa/v4/securitydomains
+    method: get
+  register: quey_all_security_domains
+
+- name: Assert udpate tasks with PUT method for nd_rest module
+  ansible.builtin.assert:
+    that:
+    - quey_one_security_domain is not changed
+    - quey_one_security_domain.current.spec.name == "ansible_security_domain_test"
+    - quey_one_security_domain.jsondata.spec.name == "ansible_security_domain_test"
+    - quey_all_security_domains is not changed
+    - quey_all_security_domains.current["items"][0].spec.name == "all"
+    - quey_all_security_domains.current["items"][1].spec.name == "ansible_security_domain_test"
+    - quey_all_security_domains.jsondata["items"][0].spec.name == "all"
+    - quey_all_security_domains.jsondata["items"][1].spec.name == "ansible_security_domain_test"
+
+# DELETE tasks
+
+- name: Delete Security Domain with DELETE method
+  cisco.nd.nd_rest:
+    <<: *delete_security_domain
+  register: nm_delete_security_domain
+
+- name: Delete Security Domain with DELETE method again
+  cisco.nd.nd_rest:
+    <<: *delete_security_domain
+  register: nm_delete_security_domain_again
+
+- name: Assert udpate tasks with PUT method for nd_rest module
+  ansible.builtin.assert:
+    that:
+    - nm_delete_security_domain is changed
+    - nm_delete_security_domain.previous.spec.name == "ansible_security_domain_test"
+    - nm_delete_security_domain.previous.spec.description == "Updated Security Domain Test for nd_rest module."
+    - nm_delete_security_domain.current == {}
+    - nm_delete_security_domain.jsondata == {}
+    - nm_delete_security_domain_again is not changed
+    - nm_delete_security_domain_again.previous == {}
+    - nm_delete_security_domain_again.current == {}
+    - nm_delete_security_domain_again.jsondata == {}
+
+# PATCH tasks
+
+- name: Create a Fabric Policy Template on NDO with POST method
+  cisco.nd.nd_rest:
+    <<: *nd_info
+    path: /mso/api/v1/templates
+    method: post
+    content: |
+      displayName: "ansible_nd_rest_fabric_policies_template"
+      fabricPolicyTemplate: {}
+      templateType: "fabricPolicy"
+  register: nm_create_fabric_policies_template_post
+
+- name: Update a Fabric Policy Template on NDO with PATCH method
+  cisco.nd.nd_rest:
+    <<: *nd_info
+    path: "/mso/api/v1/templates/{{ nm_create_fabric_policies_template_post.current.templateId }}"
+    method: patch
+    content: |
+      - op: "replace"
+        path: "/fabricPolicyTemplate/template/domains"
+        value:
+          - name: "ansible_nd_rest_physical_domain"
+            description: "Ansible nd_rest Physical Domain test for PATCH"
+            pool: ""
+  register: nm_update_fabric_policies_template_patch
+
+- name: Delete Fabric Policy Template on NDO with Delete method
+  cisco.nd.nd_rest:
+    <<: *nd_info
+    path: "/mso/api/v1/templates/{{ nm_create_fabric_policies_template_post.current.templateId }}"
+    method: delete
+
+- name: Assert update tasks with PATCH method for nd_rest module
+  ansible.builtin.assert:
+    that:
+    - nm_update_fabric_policies_template_patch is changed
+    - nm_update_fabric_policies_template_patch.previous.displayName == "ansible_nd_rest_fabric_policies_template"
+    - nm_update_fabric_policies_template_patch.previous.fabricPolicyTemplate.template == {}
+    - nm_update_fabric_policies_template_patch.previous.templateId == nm_create_fabric_policies_template_post.current.templateId
+    - nm_update_fabric_policies_template_patch.current.displayName == "ansible_nd_rest_fabric_policies_template"
+    - nm_update_fabric_policies_template_patch.current.fabricPolicyTemplate.template.domains.0.name == "ansible_nd_rest_physical_domain"
+    - nm_update_fabric_policies_template_patch.current.fabricPolicyTemplate.template.domains.0.description == "Ansible nd_rest Physical Domain test for PATCH"
+    - nm_update_fabric_policies_template_patch.current.templateId == nm_create_fabric_policies_template_post.current.templateId

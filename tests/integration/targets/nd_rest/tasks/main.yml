@@ -1,0 +1,27 @@
+# Test code for the ND modules
+# Copyright: (c) 2024, Gaspard Micol (@gmciol) <gmicol@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- ansible.builtin.include_tasks: json_inline.yml
+  tags: json_inline
+
+- ansible.builtin.include_tasks: json_string.yml
+  tags: json_string
+
+- ansible.builtin.include_tasks: yaml_inline.yml
+  tags: yaml_inline
+
+- ansible.builtin.include_tasks: yaml_string.yml
+  tags: yaml_string
+
+- ansible.builtin.include_tasks: json_file.yml
+  tags: json_file
+
+- ansible.builtin.include_tasks: error_handling.yml
+  tags: error_handling

@@ -1,0 +1,6 @@
+{
+    "spec": {
+      "description": "description with POST method",
+      "name": "ansible_security_domain_test"
+    }
+}
