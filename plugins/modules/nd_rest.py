@@ -56,7 +56,7 @@ notes:
 """
 
 EXAMPLES = r"""
-- name: Create Security Domain using POST method
+- name: Create Security Domain using POST method by providing a JSON payload
   cisco.nd.nd_rest:
     host: nd
     username: admin
@@ -71,7 +71,28 @@ EXAMPLES = r"""
         }
       }
 
-- name: Update Security Domain using PUT method
+- name: Create Security Domain using POST method by providing a YAML payload
+  cisco.nd.nd_rest:
+    host: nd
+    username: admin
+    password: SomeSecretPassword
+    path: /nexus/infra/api/aaa/v4/securitydomains
+    method: post
+    content:
+      spec:
+        description: "Security Domain Test for nd_rest module."
+        name: "ansible_security_domain_test"
+
+- name: Create Security Domain with POST method by providing a JSON file
+  cisco.nd.nd_rest:
+    host: nd
+    username: admin
+    password: SomeSecretPassword
+    path: /nexus/infra/api/aaa/v4/securitydomains
+    method: post
+    file_path: "path/to/json/file.json"
+
+- name: Update Security Domain using PUT method by providing a JSON payload
   cisco.nd.nd_rest:
     host: nd
     username: admin
@@ -111,7 +132,7 @@ EXAMPLES = r"""
     path: /nexus/infra/api/aaa/v4/securitydomains/ansible_security_domain_test
     method: delete
 
-- name: Create a Fabric Policy Template on NDO using POST method
+- name: Create a Fabric Policy Template on NDO using POST method by providing a JSON payload
   cisco.nd.nd_rest:
     host: nd
     username: admin
@@ -126,7 +147,7 @@ EXAMPLES = r"""
       }
   register: create_fabric_policies_template
 
-- name: Update Fabric Policy Template on NDO using PATCH method
+- name: Update Fabric Policy Template on NDO using PATCH method by providing a JSON payload
   cisco.nd.nd_rest:
     host: nd
     username: admin
@@ -210,7 +231,7 @@ def main():
             error_msg = (
                 "Failed to parse provided YAML/JSON payload: {0}".format(to_text(e))
                 if HAS_YAML
-                else "Failed to parse provided JSON payload: {0}. If a YAML file was provided, the PyYAML package is required to be installed.".format(
+                else "Failed to parse provided JSON payload: {0}. If a YAML payload was provided, the PyYAML package is required to be installed.".format(
                     to_text(e)
                 )
             )
