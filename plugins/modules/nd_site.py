@@ -180,6 +180,7 @@ def main():
 
     path = "/nexus/api/sitemanagement/v4/sites"
     site_obj = nd.query_obj(path).get("items")
+    site_path = None
 
     if site_name:
         site_info = next((site_dict for site_dict in site_obj if site_dict.get("spec").get("name") == site_name), None)
@@ -194,7 +195,7 @@ def main():
     if state == "query":
         nd.exit_json()
     elif state == "absent":
-        if nd.existing:
+        if nd.existing and site_path:
             if not module.check_mode:
                 nd.request(site_path, method="DELETE")
             nd.existing = {}
@@ -234,7 +235,7 @@ def main():
 
         if not module.check_mode:
             method = "POST"
-            if re_register:
+            if re_register and site_path:
                 nd.request(site_path, method="DELETE")
                 nd.existing = {}
             if nd.existing and not re_register:

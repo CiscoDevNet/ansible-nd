@@ -190,6 +190,7 @@ def main():
     filter_by_attributes = nd.params.get("filter_by_attributes")
     output_csv = nd.params.get("output_csv")
 
+    hit_count_pair = ""
     if tenants and (contracts or filters):
         module.fail_json(msg="cannot specify contracts or filters with tenants")
     elif epgs and tenants and leafs:
