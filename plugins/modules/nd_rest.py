@@ -47,6 +47,14 @@ options:
     - The file path containing the body of the HTTP request.
     type: path
     aliases: [ config_file ]
+  page_size:
+    description:
+    - The number of items to return in a single page.
+    type: int
+  page:
+    description:
+    - The page number to return.
+    type: int
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -176,7 +184,12 @@ RETURN = r"""
 import json
 import os
 
-# Optional, only used for YAML validation
+# Optional, only used for YAML validation and  update a URL
+try:
+    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+    HAS_URLPARSE = True
+except Exception:
+    HAS_URLPARSE = False
 try:
     import yaml
 
@@ -188,6 +201,21 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, sanitize
 from ansible_collections.cisco.nd.plugins.module_utils.constants import ND_REST_KEYS_TO_SANITIZE
 from ansible.module_utils._text import to_text
+
+
+def update_qsl(url, params):
+    """Add or update a URL query string"""
+
+    if HAS_URLPARSE:
+        url_parts = list(urlparse(url))
+        query = dict(parse_qsl(url_parts[4]))
+        query.update(params)
+        url_parts[4] = urlencode(query)
+        return urlunparse(url_parts)
+    elif "?" in url:
+        return url + "&" + "&".join(["%s=%s" % (k, v) for k, v in params.items()])
+    else:
+        return url + "?" + "&".join(["%s=%s" % (k, v) for k, v in params.items()])
 
 
 def main():
@@ -202,6 +230,8 @@ def main():
         ),
         content=dict(type="raw", aliases=["payload"]),
         file_path=dict(type="path", aliases=["config_file"]),
+        page=dict(type="int"),
+        page_size=dict(type="int"),
     )
 
     module = AnsibleModule(
@@ -212,6 +242,8 @@ def main():
     content = module.params.get("content")
     path = module.params.get("path")
     file_path = module.params.get("config_file")
+    page = module.params.get("page")
+    page_size = module.params.get("page_size")
 
     nd = NDModule(module)
 
@@ -243,6 +275,13 @@ def main():
     if method in ("PUT", "DELETE", "PATCH"):
         nd.existing = nd.previous = sanitize(nd.query_obj(path, ignore_not_found_error=True), ND_REST_KEYS_TO_SANITIZE)
     nd.result["previous"] = nd.previous
+
+    # Check paginition
+    if method == "GET":
+        if page:
+            path = update_qsl(path, {"page": page})
+        if page_size:
+            path = update_qsl(path, {"page-size": page_size})
 
     # Perform request
     if module.check_mode:
