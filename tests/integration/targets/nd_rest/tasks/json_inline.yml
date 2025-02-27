@@ -121,6 +121,13 @@
     method: get
   register: quey_all_security_domains
 
+- name: Query all Sites ordered by name with GET method (url query string test)
+  cisco.nd.nd_rest:
+    <<: *nd_info
+    path: /nexus/api/sitemanagement/v4/sites?orderBy=spec.name
+    method: get
+  register: query_all_sites_ordered
+
 - name: Assert query tasks with GET method for nd_rest module
   ansible.builtin.assert:
     that:
@@ -132,6 +139,11 @@
     - quey_all_security_domains.current["items"][1].spec.name == "ansible_security_domain_test"
     - quey_all_security_domains.jsondata["items"][0].spec.name == "all"
     - quey_all_security_domains.jsondata["items"][1].spec.name == "ansible_security_domain_test"
+    - query_all_sites_ordered is not changed
+    - query_all_sites_ordered.current["items"][0].spec.name == "ansible_test"
+    - query_all_sites_ordered.current["items"][1].spec.name == "ansible_test_2"
+    - query_all_sites_ordered.jsondata["items"][0].spec.name == "ansible_test"
+    - query_all_sites_ordered.jsondata["items"][1].spec.name == "ansible_test_2"
 
 # DELETE tasks
 
