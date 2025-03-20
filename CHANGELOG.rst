@@ -4,6 +4,25 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 
 .. contents:: Topics
 
+v1.3.0
+======
+
+Release Summary
+---------------
+
+Release v1.3.0 of the ``ansible-nd`` collection on 2025-03-20.
+This changelog describes all changes made to the modules and plugins included in this collection since v1.2.0.
+
+Minor Changes
+-------------
+
+- Add deployment mode to nd_setup.
+- Add nd_rest as a new generic ND REST API module.
+- Add nd_setup support for ND version 3.1.1 and later.
+- Add support for Ansible 2.18 and dropped support for 2.15 as required by Ansible Galaxy.
+- Add support for IPv6-only configurations with nd_setup module on ND version 3.0.1 and later.
+- Add support for XML file upload pre-change in nd_pcv (DCNE-150) (#77).
+
 v1.2.0
 ======
 
