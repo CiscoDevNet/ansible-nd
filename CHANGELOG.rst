@@ -10,17 +10,22 @@ v1.3.0
 Release Summary
 ---------------
 
-Release v1.3.0 of the ``ansible-nd`` collection on 2025-03-20.
+Release v1.3.0 of the ``ansible-nd`` collection on 2025-04-18.
 This changelog describes all changes made to the modules and plugins included in this collection since v1.2.0.
 
 Minor Changes
 -------------
 
-- Add deployment mode to nd_setup.
-- Add nd_setup support for ND version 3.1.1 and later.
-- Add support for Ansible 2.18 and dropped support for 2.15 as required by Ansible Galaxy.
-- Add support for IPv6-only configurations with nd_setup module on ND version 3.0.1 and later.
-- Add support for XML file upload pre-change in nd_pcv (DCNE-150) (#77).
+- Add nd_rest as a new generic ND REST API module.
+- Add nd_setup support for ND version 3.1.1 and later. Add deployment mode to nd_setup.
+- Add support for XML file upload pre-change in nd_pcv (DCNE-150) (#77)
+- Added support for Ansible 2.18 and dropped support for 2.15
+- Enable the possibility to support pure IPv6 configurations for nd_setup module on nd version 3.0.1 and later.
+
+Bugfixes
+--------
+
+- Updated README to match RedHat s ansible collection template.
 
 New Modules
 -----------
