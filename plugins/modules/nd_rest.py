@@ -13,6 +13,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_rest
+version_added: "1.3.0"
 short_description: Allows direct access to the Cisco Nexus Dashboard REST API
 description:
 - Enables the management of Cisco Nexus Dashboard (ND) through direct access to the Cisco ND REST API.
