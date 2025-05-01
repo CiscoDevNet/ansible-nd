@@ -85,6 +85,24 @@ class HttpApi(HttpApiBase):
         except Exception:
             return []
 
+    # Required for cisco.dcnm modules
+    # The cisco.nd HTTPAPI provider only supports NDFC 12+
+    # TODO Add support for more platforms.
+    # TODO Add support for dynamically returning platform versions.
+    def get_version(self, platform="ndfc"):
+        if platform == "ndfc":
+            return 12
+        else:
+            raise ValueError("Unknown platform type: {0}".format(platform))
+
+    # Required for cisco.dcnm modules
+    def get_token(self):
+        return self.connection._auth
+
+    # Required for cisco.dcnm modules
+    def get_url_connection(self):
+        return self.connection._url
+
     def login(self, username, password):
         """Log in to ND"""
         # Perform login request
@@ -152,8 +170,19 @@ class HttpApi(HttpApiBase):
         self.connection._auth = None
 
     def send_request(self, method, path, data=None):
-        """This method handles all ND REST API requests other than login"""
+        """This method handles all json ND REST API requests other than login"""
+        json_headers = {"Content-Type": "application/json"}
+        return self._send_nd_request(method, path, json_headers, data)
 
+    # Required for cisco.dcnm modules
+    def send_txt_request(self, method, path, txt=None):
+        """This method handles all text ND REST API requests"""
+        txt_headers = {"Content-Type": "text/plain"}
+        if txt is None:
+            txt = ""
+        return self._send_nd_request(method, path, txt_headers, txt)
+
+    def _send_nd_request(self, method, path, headers, data=None):
         self.error = None
         self.path = ""
         self.status = -1
@@ -161,6 +190,7 @@ class HttpApi(HttpApiBase):
         self.method = "GET"
         if method is not None:
             self.method = method
+        self.headers = headers
 
         self.connection.queue_message("info", "send_request() - send_request method called")
         # # Case1: List of hosts is provided
@@ -336,6 +366,13 @@ class HttpApi(HttpApiBase):
         # else:
         #     self.info['msg'] = msg
         self.info["body"] = response_data
+
+        # Set info keys required for cisco.dcnm modules
+        self.info["RETURN_CODE"] = response_code
+        self.info["METHOD"] = method
+        self.info["REQUEST_PATH"] = path
+        self.info["DATA"] = response_data
+        self.info["MESSAGE"] = response.msg
 
         return self.info
 
