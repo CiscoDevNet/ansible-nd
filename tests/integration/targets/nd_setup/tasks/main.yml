@@ -292,6 +292,7 @@
         - hostname: Test
           serial_number: "{{ serial_number }}"
           role: primary
+          deployment_type: virtual
           management_ip_address: "{{ management_ip_address }}"
           username: "{{ deployment_username | default('rescue-user') }}"
           password: "{{ deployment_password }}"
@@ -339,6 +340,7 @@
         - hostname: Test
           serial_number: "{{ serial_number }}"
           role: primary
+          deployment_type: virtual
           management_ip_address: "{{ management_ip_address }}"
           username: "{{ deployment_username | default('rescue-user') }}"
           password: "{{ deployment_password }}"
@@ -357,6 +359,7 @@
         - hostname: Test
           serial_number: "{{ serial_number }}"
           role: primary
+          deployment_type: virtual
           management_ip_address: "{{ management_ip_address }}"
           username: "{{ deployment_username | default('rescue-user') }}"
           password: "{{ deployment_password }}"
@@ -379,6 +382,7 @@
         - hostname: Test
           serial_number: "{{ serial_number }}"
           role: primary
+          deployment_type: virtual
           management_ip_address: "{{ management_ip_address }}"
           username: "{{ deployment_username | default('rescue-user') }}"
           password: "{{ deployment_password }}"
