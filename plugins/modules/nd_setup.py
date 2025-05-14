@@ -152,6 +152,12 @@ options:
         - The serial number of the node.
         type: str
         required: true
+      deployment_type:
+        description:
+        - The type of deployment for the node.
+        type: str
+        required: true
+        choices: [ physical, virtual ]
       role:
         description:
         - The role or type of the node.
@@ -349,7 +355,7 @@ import re
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_argument_specs import network_spec, bgp_spec, ntp_server_spec, ntp_keys_spec
-from ansible_collections.cisco.nd.plugins.module_utils.constants import ND_SETUP_NODE_ROLE_MAPPING
+from ansible_collections.cisco.nd.plugins.module_utils.constants import ND_SETUP_NODE_ROLE_MAPPING, ND_SETUP_NODE_DEPLOYMENT_TYPE
 
 
 def check_network_requirements(nd, version, nodes, internal_network_ipv4, internal_network_ipv6):
@@ -433,6 +439,7 @@ def main():
             options=dict(
                 hostname=dict(type="str", required=True),
                 serial_number=dict(type="str", required=True),
+                deployment_type=dict(type="str", required=True, choices=["physical", "virtual"]),
                 role=dict(type="str", default="primary", choices=["primary", "secondary", "standby"], aliases=["type"]),
                 management_ip_address=dict(type="str"),
                 username=dict(type="str", required=True),
@@ -556,6 +563,7 @@ def main():
                         "peers": node.get("bgp").get("peers") if node.get("bgp") is not None else None,
                     },
                     "nodeController": {
+                        "id": ND_SETUP_NODE_DEPLOYMENT_TYPE.get(node.get("deployment_type")),
                         "ipAddress": node.get("management_ip_address"),
                         "loginUser": node.get("username"),
                         "loginPassword": node.get("password"),
