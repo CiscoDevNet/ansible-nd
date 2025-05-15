@@ -113,7 +113,7 @@ Once the collection is installed, you can use it in a playbook by specifying the
 
 With the following inventory file:
 
-```yaml
+```ini
 [nd]
 nd1 ansible_host=10.0.0.1 ansible_user=admin ansible_ssh_pass="MySuperPassword"
 
@@ -135,6 +135,22 @@ You can also use the ND HTTPAPI connection plugin with your cisco.mso Ansible co
   - name: Get MSO version from MSO >= 3.2
     cisco.mso.mso_version:
       state: query
+```
+
+User API Key authorization is also supported in the ND HTTPAPI connection plugin. Use the `ansible_httpapi_session_key` option to specify the key instead of a password. The session key option must be defined as a dictionary.
+
+See the [Authorization Using API Key](https://developer.cisco.com/docs/nexus-dashboard/latest/getting-started/#authorization-using-api-key) documentation for more information.
+
+```ini
+[nd]
+nd1 ansible_host=10.0.0.1 ansible_user=admin ansible_httpapi_session_key='{"key": "MySuperSecretUserApiKey"}'
+
+[nd:vars]
+ansible_connection=ansible.netcommon.httpapi
+ansible_network_os=cisco.nd.nd
+ansible_httpapi_validate_certs=False
+ansible_httpapi_use_ssl=True
+ansible_httpapi_use_proxy=True
 ```
 
 ## Testing
