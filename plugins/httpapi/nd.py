@@ -204,6 +204,15 @@ class HttpApi(HttpApiBase):
         if self.params.get("timeout") is not None:
             self.connection.set_option("persistent_command_timeout", self.params.get("timeout"))
 
+        # Support ND User API Key authentication within the session_key option.
+        session_key = self.connection.get_option("session_key")
+        if session_key and "X-Nd-Username" not in session_key.keys():
+            session_key_header = {
+                "X-Nd-Username" : self.connection.get_option("remote_user"),
+                "X-Nd-Apikey": list(session_key.values())[0]
+            }
+            self.connection.set_option("session_key", session_key_header)
+
         # Perform some very basic path input validation.
         path = str(path)
         if path[0] != "/":
