@@ -4,6 +4,21 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 
 .. contents:: Topics
 
+v1.4.0
+======
+
+Release Summary
+---------------
+
+Release v1.4.0 of the ``ansible-nd`` collection on 2025-05-21.
+This changelog describes all changes made to the modules and plugins included in this collection since v1.3.0.
+
+Minor Changes
+-------------
+
+- Added testing support for Ansible Core 2.19
+- Updated the `cisco.nd.nd` HTTPAPI plugin to be compatible with the `cisco.dcnm` collection.
+
 v1.3.0
 ======
 
