@@ -155,8 +155,8 @@ options:
       deployment_type:
         description:
         - The type of deployment for the node.
+        - This defaults to C(physical) when unset on creation.
         type: str
-        required: true
         choices: [ physical, virtual ]
       role:
         description:
@@ -439,7 +439,7 @@ def main():
             options=dict(
                 hostname=dict(type="str", required=True),
                 serial_number=dict(type="str", required=True),
-                deployment_type=dict(type="str", required=True, choices=["physical", "virtual"]),
+                deployment_type=dict(type="str", choices=["physical", "virtual"]),
                 role=dict(type="str", default="primary", choices=["primary", "secondary", "standby"], aliases=["type"]),
                 management_ip_address=dict(type="str"),
                 username=dict(type="str", required=True),
