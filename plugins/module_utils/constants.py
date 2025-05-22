@@ -166,3 +166,5 @@ INTERFACE_FLOW_RULES_STATUS_MAPPING = {"enabled": "ENABLED", "disabled": "DISABL
 ND_SETUP_NODE_ROLE_MAPPING = {"primary": "Master", "secondary": "Worker", "standby": "Standby"}
 
 ND_REST_KEYS_TO_SANITIZE = ["metadata"]
+
+ND_SETUP_NODE_DEPLOYMENT_TYPE = {"physical": "cimc", "virtual": "vnode"}
