@@ -139,7 +139,7 @@ You can also use the ND HTTPAPI connection plugin with your cisco.mso Ansible co
 
 User API Key authorization is also supported in the ND HTTPAPI connection plugin. Use the `ansible_httpapi_session_key` option to specify the key instead of a password. The `ansible_httpapi_session_key` option takes precedence over the `ansible_password` option if defined. If authorization fails using the API Key, the plugin will fallback to using the password. The session key option must be defined as a dictionary. The dictionary can either be formated in two ways:
 
-1. Using a single key-value dictionary eg. `{"keyname": "<APIKEY>"}`. Only the dictionary value is used with the `ansible_user` option to format the ND authorization header.
+1. Using a single key-value dictionary eg. `{"key": "<APIKEY>"}`. Only the dictionary value is used with the `ansible_user` option to format the ND authorization header.
 
 2. Providing the ND authorization header manually eg. `{"X-Nd-Username": "admin", "X-Nd-Apikey": "<APIKEY>"}`. The `ansible_httpapi_session_key` option will be used as-is and the `ansible_user` option is ignored.
 
