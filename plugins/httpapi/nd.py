@@ -2,6 +2,7 @@
 
 # Copyright: (c) 2020, Lionel Hercot (@lhercot) <lhercot@cisco.com>
 # Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+# Copyright: (c) 2025, Samita Bhattacharjee (@samiib) <samitab@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -22,6 +23,7 @@ options:
   login_domain:
     description:
     - The login domain name to use for authentication.
+    - The O(login_domain) is ignored when using an API Key in C(ansible_httpapi_session_key).
     - The default value is DefaultAuth.
     type: string
     env:
@@ -204,14 +206,25 @@ class HttpApi(HttpApiBase):
         if self.params.get("timeout") is not None:
             self.connection.set_option("persistent_command_timeout", self.params.get("timeout"))
 
-        # Support ND User API Key authentication within the session_key option.
+        # Support ND User API Key authorization within the session_key option.
         session_key = self.connection.get_option("session_key")
+        user = self.connection.get_option("remote_user")
         if session_key and "X-Nd-Username" not in session_key.keys():
+            self._queue_message_if_disconnected(
+                "debug", "send_request() - authorizing with API key defined in `ansible_httpapi_session_key` and inserting username: {0}".format(user)
+            )
             session_key_header = {
-                "X-Nd-Username": self.connection.get_option("remote_user"),
+                "X-Nd-Username": user,
                 "X-Nd-Apikey": list(session_key.values())[0],
             }
             self.connection.set_option("session_key", session_key_header)
+        elif session_key:
+            self._queue_message_if_disconnected(
+                "debug",
+                "send_request() - authorizing with ND API Key header defined in `ansible_httpapi_session_key` while ignoring username and password options.",
+            )
+        else:
+            self._queue_message_if_disconnected("debug", "send_request() - authorizing with username and password options.")
 
         # Perform some very basic path input validation.
         path = str(path)
@@ -431,3 +444,7 @@ class HttpApi(HttpApiBase):
 
         verified_response["tmpsrc"] = tmpsrc
         return verified_response
+
+    def _queue_message_if_disconnected(self, level, msg):
+        if not self.connection._connected:
+            self.connection.queue_message(level, msg)
