@@ -26,62 +26,33 @@ options:
     description:
     - The name of the ND cluster.
     type: str
-  ntp_server:
+  persona:
     description:
-    - The IP address of the NTP server.
-    - This option is only applicable and required for ND version 2.3.2d and later.
-    type: list
-    elements: str
-    aliases: [ ntp_servers ]
+    - The Nexus Dashboard implementation type.
+    - This option is only applicable for ND version 4.1.0 and later.
+    - This defaults to C(lan) when unset on creation.
+    type: str
+    choices: [ lan, san ]
+    aliases: [ nd_implementation_type, implementation_type ]
   dns_server:
     description:
     - The IP address of the DNS server.
     type: list
     elements: str
     aliases: [ dns_servers ]
-  proxy_server:
-    description:
-    - The proxy server.
-    type: str
-  proxy_username:
-    description:
-    - The username of the proxy server.
-    type: str
-  proxy_password:
-    description:
-    - The password of the proxy server.
-    type: str
-  ignore_proxy:
-    description:
-    - Proxy is ignored for the list of host addresses provided in this option.
-    type: list
-    elements: str
   dns_search_domain:
     description:
     - The DNS search domains.
     type: list
     elements: str
     aliases: [ dns_search_domains ]
-  app_network:
+  ntp_server:
     description:
-    - The app subnet.
-    - This is a 'pod-to-pod' network and is used to run inter pod traffic.
-    type: str
-  service_network:
-    description:
-    - The service subnet.
-    - This is a virtual level subnet used for communication within the cluster.
-    type: str
-  app_network_ipv6:
-    description:
-    - The IPv6 app subnet.
-    - This option is only applicable for ND version 3.0.1f and later.
-    type: str
-  service_network_ipv6:
-    description:
-    - The IPv6 service subnet.
-    - This option is only applicable for ND version 3.0.1f and later.
-    type: str
+    - The IP address of the NTP server.
+    - This option is only applicable and required for ND version 2.3.2d.
+    type: list
+    elements: str
+    aliases: [ ntp_servers ]
   ntp_config:
     description:
     - This is used for configuring NTP server and its other options.
@@ -136,6 +107,43 @@ options:
             - The trusted status of the NTP key.
             type: bool
             default: false
+  proxy_server:
+    description:
+    - The proxy server.
+    type: str
+  proxy_username:
+    description:
+    - The username of the proxy server.
+    type: str
+  proxy_password:
+    description:
+    - The password of the proxy server.
+    type: str
+  ignore_proxy:
+    description:
+    - Proxy is ignored for the list of host addresses provided in this option.
+    type: list
+    elements: str
+  app_network:
+    description:
+    - The app subnet.
+    - This is a 'pod-to-pod' network and is used to run inter pod traffic.
+    type: str
+  service_network:
+    description:
+    - The service subnet.
+    - This is a virtual level subnet used for communication within the cluster.
+    type: str
+  app_network_ipv6:
+    description:
+    - The IPv6 app subnet.
+    - This option is only applicable for ND version 3.0.1f and later.
+    type: str
+  service_network_ipv6:
+    description:
+    - The IPv6 service subnet.
+    - This option is only applicable for ND version 3.0.1f and later.
+    type: str
   nodes:
     description:
     - The node details to set up Nexus Dashboard and bring up the User Interface.
@@ -268,7 +276,7 @@ options:
       The deployment mode cannot be changed after the cluster is deployed.
       Therefore, you must ensure that you have completed all service-specific prerequisites described in the early chapters of this guide
       U(https://www.cisco.com/c/en/us/td/docs/dcn/nd/3x/deployment/cisco-nexus-dashboard-and-services-deployment-guide-311.html)
-    - This option is only applicable for ND version 3.1.1 and later.
+    - This option is only applicable for ND version 3.1.1 to 3.2.2.
     type: list
     elements: str
     choices: [ ndo, ndfc, ndi-virtual, ndi-physical ]
@@ -276,7 +284,8 @@ options:
   external_services:
     description:
     - The persistent Service IPs/Pools to be provided.
-    - This can be used when O(deployment_mode) includes V(ndi) or V(ndo) otherwise it will be ignored.
+    - For ND versions between 3.1.1 and 3.2.2,
+      This can only be used when O(deployment_mode) includes V(ndi) or V(ndo) otherwise it will be ignored.
     - This option is only applicable for ND version 3.1.1 and later.
     type: dict
     suboptions:
@@ -449,6 +458,7 @@ def main():
                 bgp=dict(type="dict", options=bgp_spec()),
             ),
         ),
+        persona=dict(type="str", choices=["lan", "san"], aliases=["nd_implementation_type", "implementation_type"]),
         state=dict(type="str", default="present", choices=["present", "query"]),
     )
 
@@ -484,6 +494,7 @@ def main():
     service_network_ipv6 = nd.params.get("service_network_ipv6")
     ntp_config = nd.params.get("ntp_config")
     nodes = nd.params.get("nodes")
+    persona = nd.params.get("persona")
     state = nd.params.get("state")
 
     if state == "query":
@@ -491,6 +502,13 @@ def main():
     else:
         nd_version = nd.query_obj("/version.json")
         nd_version = ".".join(str(nd_version[key]) for key in ["major", "minor", "maintenance"])
+
+        # Previous API endpoint for cluster bringup introduced in ND versions prior 4.1.0
+        path = "/bootstrap/cluster"
+        # New API endpoint for cluster bringup introduced in ND version 4.1.0 and later
+        if nd_version >= "4.1.0":
+            path = "/v2" + path
+
         # Checking internal and external network requirements
         check_network_requirements(nd, nd_version, nodes, (app_network, service_network), (app_network_ipv6, service_network_ipv6))
 
@@ -573,8 +591,8 @@ def main():
             ],
         }
 
-        # Deployment mode options introduced in ND version 3.1.1
-        if isinstance(deployment_mode, list) and nd_version >= "3.1.1":
+        # Deployment mode options introduced between ND version 3.1.1 and 3.2.2
+        if isinstance(deployment_mode, list) and nd_version >= "3.1.1" and nd_version < "4.1.0":
             payload["clusterConfig"]["deploymentMode"] = deployment_mode if len(deployment_mode) > 1 else deployment_mode[0]
             if external_services is not None and any(service in {"ndi-virtual", "ndi-physical", "ndfc"} for service in deployment_mode):
                 payload["clusterConfig"]["externalServices"] = []
@@ -593,10 +611,29 @@ def main():
                         }
                     )
 
+        # Cluster setup options introduced in ND version 4.1.0 and later
+        if nd_version >= "4.1.0":
+            payload["clusterConfig"]["persona"] = persona.upper() if isinstance(persona, str) else persona
+            payload["clusterConfig"]["externalServices"] = []
+            if external_services.get("management_service_ips") is not None:
+                payload["clusterConfig"]["externalServices"].append(
+                    {
+                        "target": "Management",
+                        "pool": list(external_services.get("management_service_ips")),
+                    }
+                )
+            if external_services.get("data_service_ips") is not None:
+                payload["clusterConfig"]["externalServices"].append(
+                    {
+                        "target": "Data",
+                        "pool": list(external_services.get("data_service_ips")),
+                    }
+                )
+
         nd.sanitize(payload, collate=True)
 
         if not module.check_mode:
-            nd.request("/bootstrap/cluster", method="POST", data=payload)
+            nd.request(path, method="POST", data=payload)
         nd.existing = nd.proposed
 
     nd.exit_json()
