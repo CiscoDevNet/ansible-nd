@@ -428,9 +428,16 @@ class NDI:
             return "ipRouteP"
         elif prefix == "nh":
             return "ipNexthopP"
+        elif prefix == "lifp":
+            return "l3extLIfP"
+        elif prefix == "vlifp":
+            return "l3extVirtualLIfP"
+        elif prefix == "rsdynPathAtt":
+            return "l3extRsDynPathAtt"
+        elif prefix == "addr":
+            return "l3extIp"
         else:
             self.nd.fail_json(msg="Unsupported ACI class identifier prefix: {0}".format(prefix))
-            return False
 
     def construct_tree(self, item_list):
         """
