@@ -505,9 +505,6 @@ def main():
 
         # Previous API endpoint for cluster bringup introduced in ND versions prior 4.1.0
         path = "/bootstrap/cluster"
-        # New API endpoint for cluster bringup introduced in ND version 4.1.0 and later
-        if nd_version >= "4.1.0":
-            path = "/v2" + path
 
         # Checking internal and external network requirements
         check_network_requirements(nd, nd_version, nodes, (app_network, service_network), (app_network_ipv6, service_network_ipv6))
@@ -592,7 +589,7 @@ def main():
         }
 
         # Deployment mode options introduced between ND version 3.1.1 and 3.2.2
-        if isinstance(deployment_mode, list) and nd_version >= "3.1.1" and nd_version < "4.1.0":
+        if isinstance(deployment_mode, list) and "3.1.1" <= nd_version < "4.1.0":
             payload["clusterConfig"]["deploymentMode"] = deployment_mode if len(deployment_mode) > 1 else deployment_mode[0]
             if external_services is not None and any(service in {"ndi-virtual", "ndi-physical", "ndfc"} for service in deployment_mode):
                 payload["clusterConfig"]["externalServices"] = []
@@ -629,6 +626,8 @@ def main():
                         "pool": list(external_services.get("data_service_ips")),
                     }
                 )
+            # New API endpoint for cluster bringup introduced in ND version 4.1.0 and later
+            path = "/v2" + path
 
         nd.sanitize(payload, collate=True)
 
