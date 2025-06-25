@@ -420,8 +420,24 @@ class NDI:
             return "spanSpanLbl"
         elif prefix == "ctx":
             return "fvCtx"
+        elif prefix == "lnodep":
+            return "l3extLNodeP"
+        elif prefix == "rsnodeL3OutAtt":
+            return "l3extRsNodeL3OutAtt"
+        elif prefix == "rt":
+            return "ipRouteP"
+        elif prefix == "nh":
+            return "ipNexthopP"
+        elif prefix == "lifp":
+            return "l3extLIfP"
+        elif prefix == "vlifp":
+            return "l3extVirtualLIfP"
+        elif prefix == "rsdynPathAtt":
+            return "l3extRsDynPathAtt"
+        elif prefix == "addr":
+            return "l3extIp"
         else:
-            return False
+            self.nd.fail_json(msg="Unsupported ACI class identifier prefix: {0}".format(prefix))
 
     def construct_tree(self, item_list):
         """
