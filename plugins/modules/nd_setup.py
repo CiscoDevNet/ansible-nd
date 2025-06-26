@@ -276,7 +276,7 @@ options:
       The deployment mode cannot be changed after the cluster is deployed.
       Therefore, you must ensure that you have completed all service-specific prerequisites described in the early chapters of this guide
       U(https://www.cisco.com/c/en/us/td/docs/dcn/nd/3x/deployment/cisco-nexus-dashboard-and-services-deployment-guide-311.html)
-    - This option is only applicable for ND version 3.1.1 to 3.2.2.
+    - This option is only applicable for ND versions from 3.1.1 to 3.2.2.
     type: list
     elements: str
     choices: [ ndo, ndfc, ndi-virtual, ndi-physical ]
@@ -284,9 +284,9 @@ options:
   external_services:
     description:
     - The persistent Service IPs/Pools to be provided.
-    - For ND versions between 3.1.1 and 3.2.2,
-      This can only be used when O(deployment_mode) includes V(ndi) or V(ndo) otherwise it will be ignored.
-    - This option is only applicable for ND version 3.1.1 and later.
+    - For ND versions between 3.1.1 and 3.2.2, This can only be used when O(deployment_mode)
+      includes V(ndi) or V(ndo) otherwise it will be ignored.
+    - This option is only applicable for ND versions 3.1.1 and later.
     type: dict
     suboptions:
       management_service_ips:
@@ -503,7 +503,7 @@ def main():
         nd_version = nd.query_obj("/version.json")
         nd_version = ".".join(str(nd_version[key]) for key in ["major", "minor", "maintenance"])
 
-        # Previous API endpoint for cluster bringup introduced in ND versions prior 4.1.0
+        # Previous API endpoint for cluster bringup in ND versions prior to v4.1.0
         path = "/bootstrap/cluster"
 
         # Checking internal and external network requirements
@@ -588,7 +588,7 @@ def main():
             ],
         }
 
-        # Deployment mode options introduced between ND version 3.1.1 and 3.2.2
+        # Deployment mode options available from ND version 3.1.1 to 3.2.2
         if isinstance(deployment_mode, list) and "3.1.1" <= nd_version < "4.1.0":
             payload["clusterConfig"]["deploymentMode"] = deployment_mode if len(deployment_mode) > 1 else deployment_mode[0]
             if external_services is not None and any(service in {"ndi-virtual", "ndi-physical", "ndfc"} for service in deployment_mode):
