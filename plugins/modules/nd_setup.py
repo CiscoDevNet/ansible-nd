@@ -284,7 +284,7 @@ options:
   external_services:
     description:
     - The persistent Service IPs/Pools to be provided.
-    - For ND versions between 3.1.1 and 3.2.2, This can only be used when O(deployment_mode)
+    - For ND versions between 3.1.1 and 3.2.2, this can only be used when O(deployment_mode)
       includes V(ndi) or V(ndo) otherwise it will be ignored.
     - This option is only applicable for ND versions 3.1.1 and later.
     type: dict
@@ -588,7 +588,7 @@ def main():
             ],
         }
 
-        # Deployment mode options available from ND version 3.1.1 to 3.2.2
+        # Deployment mode options available in ND from version 3.1.1 to 3.2.2
         if isinstance(deployment_mode, list) and "3.1.1" <= nd_version < "4.1.0":
             payload["clusterConfig"]["deploymentMode"] = deployment_mode if len(deployment_mode) > 1 else deployment_mode[0]
             if external_services is not None and any(service in {"ndi-virtual", "ndi-physical", "ndfc"} for service in deployment_mode):
