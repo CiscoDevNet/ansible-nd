@@ -14,8 +14,6 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 from datetime import datetime as dt, timedelta
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
-from ansible_collections.cisco.nd.plugins.module_utils.constants import EPOCH_DELTA_TYPES
 
 def main():
     argument_spec = nd_argument_spec()
@@ -44,11 +42,10 @@ def main():
 
     path = "api/v1/infra/aaa/apiKeys"
 
-    existing_key = None
     if api_key_id:
         # existing_key = next((key for key in keyList if key.get("id") == api_key_id), None)
-        path = "{0}/{1}".format(path, api_key_id)
-        nd.existing = nd.query_obj(path)
+        query_path = "{0}/{1}".format(path, api_key_id)
+        nd.existing = nd.query_obj(query_path)
     elif api_key_name:
         # existing_key = next((key for key in keyList if key.get("apiKeyName") == api_key_name), None)
         nd.existing = nd.get_obj(path, apiKeyName=api_key_name)
@@ -56,14 +53,11 @@ def main():
         nd.existing = nd.query_objs(path).get("apiKeys", [])
 
     if state == "present":
-        if existing_key:
-            nd.exit_json()
         
         payload = {
             "apiKeyName": api_key_name
         }
-        
-            
+                  
         if annotations:
             payload["annotations"] = annotations
 
@@ -71,39 +65,31 @@ def main():
         nd.sent = payload
         
         if not module.check_mode:
-            resp = nd.request(path, method="POST", data=payload)
-            if isinstance(resp, dict) and "id" in resp:
-                nd.existing = resp
+            if nd.existing:
+                nd.previous = nd.existing
+                if nd.existing.get("apiKeyName") != api_key_name or nd.existing.get("annotations") != annotations:
+                    update_path = "{0}/{1}".format(path, api_key_id)
+                    nd.request(update_path, method="PUT", data=payload)
+                    nd.existing = nd.query_obj(update_path)
             else:
-                updated_keys = nd.query_obj(path).get("apiKeys", [])
-                nd.existing = next((key for key in updated_keys if key.get("apiKeyName") == api_key_name), {})
+                resp = nd.request(path, method="POST", data=payload)
+                if isinstance(resp, dict) and "id" in resp:
+                    nd.existing = resp
         else:
-            nd.existing = {}
+            nd.existing = nd.proposed
+        
+        if nd.existing != nd.previous:
+            nd.changed = True
             
-        nd.changed = True
-
     elif state == "absent":
-        if existing_key:
-            nd.previous = existing_key
-            delete_path = "{0}/{1}".format(path, existing_key["id"])
+        if nd.existing:
+            nd.previous = nd.existing
+            delete_path = "{0}/{1}".format(path, nd.existing["id"])
             
             if not module.check_mode:
-                try:
-                    nd.request(delete_path, method="DELETE")
-                except Exception as e:
-                    module.fail_json(msg="Failed to delete API key: {0}".format(str(e)))
-            
+                nd.request(delete_path, method="DELETE")
+              
             nd.changed = True
-            nd.existing = {}
-        else:
-            nd.existing = {}
-
-    elif state == "query":
-        if existing_key:
-            nd.existing = existing_key
-        elif not id and not api_key_name:
-            nd.existing = keyList
-        else:
             nd.existing = {}
 
     nd.exit_json()
