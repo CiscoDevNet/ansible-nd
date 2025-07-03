@@ -11,19 +11,24 @@
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
-      output_level: '{{ api_key_output_level | default("info") }}'
+      output_level: '{{ api_key_output_level | default("debug") }}'
 
 - name: Delete existing API keys (cleanup)
   cisco.nd.nd_api_key:
     <<: *nd_info
     api_key_name: "{{ item }}"
     state: absent
-  ignore_errors: true
   loop:
     - test_api_key_1
     - test_api_key_2
-    - test_api_key_modified
+    - test_api_key_modified  
     - test_api_key_annotations
+    - test_api_key_no_annotations
+    - test_api_key_updated       
+    - test_api_key_update
+    - test_empty_annotations
+    - test_api_key_with_much_more_than_32_characters_in_name
+    - test_api_key_invalid_chars
 
 - name: Create API key (check mode)
   cisco.nd.nd_api_key: &create_api_key
@@ -53,16 +58,16 @@
       - nm_create_api_key.current.apiKeyName == "test_api_key_1"
       - nm_create_api_key.current.id is defined
 
-- name: Create API key again (idempotency test - should detect existing)
+- name: Create API key again (idempotency)
   cisco.nd.nd_api_key:
     <<: *create_api_key
   register: create_api_key_again
 
-# - name: Verify create_api_key_again (idempotency)
-#   ansible.builtin.assert:
-#     that:
-#       - create_api_key_again is not changed
-#       - create_api_key_again.current.apiKeyName == "test_api_key_1"
+- name: Verify create_api_key_again (idempotency)
+  ansible.builtin.assert:
+    that:
+      - create_api_key_again is not changed
+      - create_api_key_again.current.apiKeyName == "test_api_key_1"
 
 - name: Create API key with annotations
   cisco.nd.nd_api_key:
@@ -85,12 +90,263 @@
       - create_api_key_with_annotations.current.annotations.environment == "dev"
       - create_api_key_with_annotations.current.annotations.owner == "ansible-test"
 
+- name: Create API key without annotations for testing annotation updates
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: test_api_key_no_annotations
+    state: present
+  register: create_api_key_no_annotations
+
+- name: Verify API key created without annotations
+  ansible.builtin.assert:
+    that:
+      - create_api_key_no_annotations is changed
+      - create_api_key_no_annotations.current.apiKeyName == "test_api_key_no_annotations"
+      - create_api_key_no_annotations.current.annotations is not defined or create_api_key_no_annotations.current.annotations == {}
+
+- name: Add annotations to existing API key (check mode)
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_id: "{{ create_api_key_no_annotations.current.id }}"
+    api_key_name: test_api_key_no_annotations
+    annotations:
+      stage: "development"
+      team: "infrastructure"
+      version: "1.0"
+    state: present
+  check_mode: true
+  register: cm_add_annotations_to_existing
+
+- name: Verify cm_add_annotations_to_existing
+  ansible.builtin.assert:
+    that:
+      - cm_add_annotations_to_existing is changed
+      - cm_add_annotations_to_existing.proposed.annotations is defined
+      - cm_add_annotations_to_existing.proposed.annotations.stage == "development"
+      - cm_add_annotations_to_existing.proposed.annotations.team == "infrastructure"
+      - cm_add_annotations_to_existing.proposed.annotations.version == "1.0"
+
+- name: Test empty annotations
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: test_empty_annotations
+    annotations: {}
+    state: present
+  register: empty_annotations
+
+- name: Verify empty annotations
+  ansible.builtin.assert:
+    that:
+      - empty_annotations is changed
+      - empty_annotations.current.apiKeyName == "test_empty_annotations"
+
+# - name: Add annotations to existing API key
+#   cisco.nd.nd_api_key:
+#     <<: *nd_info
+#     api_key_id: "{{ create_api_key_no_annotations.current.id }}"
+#     api_key_name: test_api_key_no_annotations
+#     annotations:
+#       stage: "development"
+#       team: "infrastructure"
+#       version: "1.0"
+#     state: present
+#   register: add_annotations_to_existing
+
+# - name: Verify annotations were added
+#   ansible.builtin.assert:
+#     that:
+#       - add_annotations_to_existing is changed
+#       - add_annotations_to_existing.current.annotations is defined
+#       - add_annotations_to_existing.current.annotations.stage == "development"
+#       - add_annotations_to_existing.current.annotations.team == "infrastructure"
+#       - add_annotations_to_existing.current.annotations.version == "1.0"
+
+# - name: Update existing annotations (check mode)
+#   cisco.nd.nd_api_key:
+#     <<: *nd_info
+#     api_key_id: "{{ create_api_key_no_annotations.current.id }}"
+#     api_key_name: test_api_key_no_annotations
+#     annotations:
+#       stage: "production"
+#       team: "infrastructure"
+#       version: "2.0"
+#       criticality: "high"
+#     state: present
+#   check_mode: true
+#   register: cm_update_annotations
+
+# - name: Verify cm_update_annotations
+#   ansible.builtin.assert:
+#     that:
+#       - cm_update_annotations is changed
+#       - cm_update_annotations.proposed.annotations is defined
+#       - cm_update_annotations.proposed.annotations.stage == "production"
+#       - cm_update_annotations.proposed.annotations.team == "infrastructure"
+#       - cm_update_annotations.proposed.annotations.version == "2.0"
+#       - cm_update_annotations.proposed.annotations.criticality == "high"
+
+# - name: Update existing annotations
+#   cisco.nd.nd_api_key:
+#     <<: *nd_info
+#     api_key_id: "{{ create_api_key_no_annotations.current.id }}"
+#     api_key_name: test_api_key_no_annotations
+#     annotations:
+#       stage: "production"
+#       team: "infrastructure"
+#       version: "2.0"
+#       criticality: "high"
+#     state: present
+#   register: update_annotations
+
+# - name: Verify annotations were updated
+#   ansible.builtin.assert:
+#     that:
+#       - update_annotations is changed
+#       - update_annotations.current.annotations.stage == "production"
+#       - update_annotations.current.annotations.team == "infrastructure"
+#       - update_annotations.current.annotations.version == "2.0"
+#       - update_annotations.current.annotations.criticality == "high"
+
+# - name: Update with same annotations (idempotency test)
+#   cisco.nd.nd_api_key:
+#     <<: *nd_info
+#     api_key_id: "{{ create_api_key_no_annotations.current.id }}"
+#     api_key_name: test_api_key_no_annotations
+#     annotations:
+#       stage: "production"
+#       team: "infrastructure"
+#       version: "2.0"
+#       criticality: "high"
+#     state: present
+#   register: update_same_annotations
+
+# - name: Verify no change when annotations are the same
+#   ansible.builtin.assert:
+#     that:
+#       - update_same_annotations is not changed
+#       - update_same_annotations.current.annotations.stage == "production"
+#       - update_same_annotations.current.annotations.team == "infrastructure"
+#       - update_same_annotations.current.annotations.version == "2.0"
+#       - update_same_annotations.current.annotations.criticality == "high"
+
+# - name: Remove all annotations by setting empty dict
+#   cisco.nd.nd_api_key:
+#     <<: *nd_info
+#     api_key_id: "{{ create_api_key_no_annotations.current.id }}"
+#     api_key_name: test_api_key_no_annotations
+#     annotations: {}
+#     state: present
+#   register: remove_all_annotations
+
+# - name: Verify all annotations were removed
+#   ansible.builtin.assert:
+#     that:
+#       - remove_all_annotations is changed
+#       - remove_all_annotations.current.annotations == {} or remove_all_annotations.current.annotations is not defined
+
+# - name: Re-add annotations to test partial updates
+#   cisco.nd.nd_api_key:
+#     <<: *nd_info
+#     api_key_id: "{{ create_api_key_no_annotations.current.id }}"
+#     api_key_name: test_api_key_no_annotations
+#     annotations:
+#       environment: "staging"
+#       owner: "devops-team"
+#       project: "api-management"
+#     state: present
+#   register: re_add_annotations
+
+# - name: Verify annotations were re-added
+#   ansible.builtin.assert:
+#     that:
+#       - re_add_annotations is changed
+#       - re_add_annotations.current.annotations.environment == "staging"
+#       - re_add_annotations.current.annotations.owner == "devops-team"
+#       - re_add_annotations.current.annotations.project == "api-management"
+
+# - name: Test updating annotations with special characters and values
+#   cisco.nd.nd_api_key:
+#     <<: *nd_info
+#     api_key_id: "{{ create_api_key_no_annotations.current.id }}"
+#     api_key_name: test_api_key_no_annotations
+#     annotations:
+#       "special-key": "value-with-dashes"
+#       "key.with.dots": "value.with.dots"
+#       "key_with_underscores": "value_with_underscores"
+#       "numeric-key": "12345"
+#       "boolean-like": "true"
+#       "date-like": "2025-01-01"
+#     state: present
+#   register: special_annotations
+
+# - name: Verify special character annotations
+#   ansible.builtin.assert:
+#     that:
+#       - special_annotations is changed
+#       - special_annotations.current.annotations["special-key"] == "value-with-dashes"
+#       - special_annotations.current.annotations["key.with.dots"] == "value.with.dots"
+#       - special_annotations.current.annotations["key_with_underscores"] == "value_with_underscores"
+#       - special_annotations.current.annotations["numeric-key"] == "12345"
+#       - special_annotations.current.annotations["boolean-like"] == "true"
+#       - special_annotations.current.annotations["date-like"] == "2025-01-01"
+
 - name: Create second API key for testing
   cisco.nd.nd_api_key:
     <<: *nd_info
     api_key_name: test_api_key_2
     state: present
   register: create_api_key_2
+
+- name: Create API key for update testing
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: test_api_key_update
+    state: present
+  register: create_api_key_update
+
+- name: Update API key name (check mode)
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_id: "{{ create_api_key_update.current.id }}"
+    api_key_name: test_api_key_updated
+    state: present
+  check_mode: true
+  register: cm_update_api_key
+
+- name: Verify cm_update_api_key
+  ansible.builtin.assert:
+    that:
+      - cm_update_api_key is changed
+      - cm_update_api_key.proposed.apiKeyName == "test_api_key_updated"
+
+- name: Update API key name (normal mode)
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_id: "{{ create_api_key_update.current.id }}"
+    api_key_name: test_api_key_updated
+    state: present
+  register: nm_update_api_key
+
+- name: Verify nm_update_api_key
+  ansible.builtin.assert:
+    that:
+      - nm_update_api_key is changed
+      - nm_update_api_key.current.apiKeyName == "test_api_key_updated"
+      - nm_update_api_key.current.id == create_api_key_update.current.id
+
+- name: Update API key with same name (idempotency)
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_id: "{{ create_api_key_update.current.id }}"
+    api_key_name: test_api_key_updated
+    state: present
+  register: update_api_key_idempotent
+
+- name: Verify update_api_key_idempotent
+  ansible.builtin.assert:
+    that:
+      - update_api_key_idempotent is not changed
+      - update_api_key_idempotent.current.apiKeyName == "test_api_key_updated"
 
 - name: Query all API keys
   cisco.nd.nd_api_key:
@@ -134,7 +390,6 @@
       - query_api_key_by_id.current.id == create_api_key_2.current.id
       - query_api_key_by_id.current.apiKeyName == "test_api_key_2"
 
-# DELETE API KEY TESTS
 - name: Delete API key by name (check mode)
   cisco.nd.nd_api_key: &delete_api_key
     <<: *nd_info
@@ -143,25 +398,22 @@
   check_mode: true
   register: cm_delete_api_key
 
-# Note: This test might fail due to the bug in the code where existing_key is not properly set
-# Commenting out until the code is fixed
-# - name: Verify cm_delete_api_key
-#   ansible.builtin.assert:
-#     that:
-#       - cm_delete_api_key is changed
-#       - cm_delete_api_key.current == {}
+- name: Verify cm_delete_api_key
+  ansible.builtin.assert:
+    that:
+      - cm_delete_api_key is changed
+      - cm_delete_api_key.current == {}
 
 - name: Delete API key by name (normal mode)
   cisco.nd.nd_api_key:
     <<: *delete_api_key
   register: nm_delete_api_key
 
-# Note: This test might fail due to the bug in the code
-# - name: Verify delete API key by name
-#   ansible.builtin.assert:
-#     that:
-#       - nm_delete_api_key is changed
-#       - nm_delete_api_key.current == {}
+- name: Verify delete API key by name
+  ansible.builtin.assert:
+    that:
+      - nm_delete_api_key is changed
+      - nm_delete_api_key.current == {}
 
 - name: Delete API key by ID
   cisco.nd.nd_api_key:
@@ -175,13 +427,11 @@
     <<: *delete_api_key
   register: delete_api_key_again
 
-# Note: This test might fail due to the bug in the code
-# - name: Verify delete_api_key_again (idempotency)
-#   ansible.builtin.assert:
-#     that:
-#       - delete_api_key_again is not changed
+- name: Verify delete_api_key_again (idempotency)
+  ansible.builtin.assert:
+    that:
+      - delete_api_key_again is not changed
 
-# ERROR HANDLING TESTS
 - name: Test missing required parameter (api_key_name for present)
   cisco.nd.nd_api_key:
     <<: *nd_info
@@ -233,7 +483,6 @@
     that:
       - delete_non_existent is not changed
 
-# EDGE CASE TESTS
 - name: Test with invalid api_key_id
   cisco.nd.nd_api_key:
     <<: *nd_info
@@ -242,37 +491,48 @@
   register: invalid_api_key_id
   ignore_errors: true
 
-- name: Test empty annotations
+- name: Test API key name with invalid length (should fail)
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: "test_api_key_with_much_more_than_32_characters_in_name"
+    state: present
+  register: api_key_name_too_long
+  ignore_errors: true
+
+- name: Verify API key name length validation
+  ansible.builtin.assert:
+    that:
+      - api_key_name_too_long is failed
+
+- name: Test API key name with invalid characters (should fail)
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: "test@key#with$symbols"
+    state: present
+  register: api_key_name_invalid_chars
+  ignore_errors: true
+
+- name: Verify API key name character validation
+  ansible.builtin.assert:
+    that:
+      - api_key_name_invalid_chars is failed    
+
+- name: Test empty annotations (check mode)
   cisco.nd.nd_api_key:
     <<: *nd_info
     api_key_name: test_empty_annotations
     annotations: {}
     state: present
-  register: empty_annotations
+  check_mode: true
+  register: cm_empty_annotations
 
-- name: Verify empty annotations
+- name: Verify cm_empty_annotations
   ansible.builtin.assert:
     that:
-      - empty_annotations is changed
-      - empty_annotations.current.apiKeyName == "test_empty_annotations"
+      - cm_empty_annotations.proposed.apiKeyName == "test_empty_annotations"
+      - cm_empty_annotations.proposed.annotations is defined
+      - cm_empty_annotations.proposed.annotations == {}
 
-- name: Test long API key name
-  cisco.nd.nd_api_key:
-    <<: *nd_info
-    api_key_name: "test_very_long_api_key_name_that_might_exceed_limits_and_cause_issues_with_the_backend_system"
-    state: present
-  register: long_api_key_name
-  ignore_errors: true
-
-- name: Test special characters in API key name
-  cisco.nd.nd_api_key:
-    <<: *nd_info
-    api_key_name: "test-api-key_with.special@chars#123"
-    state: present
-  register: special_chars_api_key
-  ignore_errors: true
-
-# CLEANUP
 - name: Final cleanup - Delete all test API keys
   cisco.nd.nd_api_key:
     <<: *nd_info
@@ -284,11 +544,13 @@
     - test_api_key_2
     - test_api_key_modified  
     - test_api_key_annotations
+    - test_api_key_no_annotations
+    - test_api_key_updated       
+    - test_api_key_update
     - test_empty_annotations
-    # - "test_very_long_api_key_name_that_might_exceed_limits_and_cause_issues_with_the_backend_system"
-    # - "test-api-key_with.special@chars#123"
+    - test_api_key_with_much_more_than_32_characters_in_name
+    - test_api_key_invalid_chars
 
-# SUMMARY TEST
 - name: Summary - Verify no test API keys remain
   cisco.nd.nd_api_key:
     <<: *nd_info
