@@ -27,8 +27,7 @@
     - test_api_key_updated       
     - test_api_key_update
     - test_empty_annotations
-    - test_api_key_with_much_more_than_32_characters_in_name
-    - test_api_key_invalid_chars
+    - test_api_key_with_much_more_than_32_characters_in_name    
 
 - name: Create API key (check mode)
   cisco.nd.nd_api_key: &create_api_key
@@ -121,6 +120,8 @@
   ansible.builtin.assert:
     that:
       - cm_add_annotations_to_existing is changed
+      - cm_add_annotations_to_existing.proposed.apiKeyName == "test_api_key_no_annotations"
+      - cm_add_annotations_to_existing.proposed.id == create_api_key_no_annotations.current.id
       - cm_add_annotations_to_existing.proposed.annotations is defined
       - cm_add_annotations_to_existing.proposed.annotations.stage == "development"
       - cm_add_annotations_to_existing.proposed.annotations.team == "infrastructure"
@@ -139,7 +140,7 @@
     that:
       - empty_annotations is changed
       - empty_annotations.current.apiKeyName == "test_empty_annotations"
-
+      - empty_annotations.current.id is defined
 # - name: Add annotations to existing API key
 #   cisco.nd.nd_api_key:
 #     <<: *nd_info
@@ -549,7 +550,6 @@
     - test_api_key_update
     - test_empty_annotations
     - test_api_key_with_much_more_than_32_characters_in_name
-    - test_api_key_invalid_chars
 
 - name: Summary - Verify no test API keys remain
   cisco.nd.nd_api_key:

@@ -11,31 +11,24 @@ __metaclass__ = type
 
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
-from copy import deepcopy
-import re
-from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
-
 DOCUMENTATION = r"""
 ---
 module: nd_api_key
 version_added: "1.4.0"
 short_description: Manage API keys in Nexus Dashboard
 description:
-- This module allows you to manage API keys in Cisco Nexus Dashboard.
+- Manage API keys in Cisco Nexus Dashboard (ND).
 - It supports creating, updating, querying, and deleting API keys.
-- API key names must be 1-32 characters long and can only contain letters, digits, '_', '.', and '-'.
 author:
 - Dev Sinha (@DevSinha13)
 options:
   api_key_id:
     description:
-    - The ID of the API key to manage.
-    - Required when state is 'absent' if api_key_name is not specified.
+    - The ID of the API key.
     type: str
   api_key_name:
     description:
-    - The name/description of the API key.
+    - The name of the API key.
     - Required when state is 'present'.
     - Must be 1-32 characters long.
     - Only alphanumeric characters, underscores, periods, and hyphens are allowed.
@@ -43,9 +36,10 @@ options:
     aliases: [ description ]
   annotations:
     description:
-    - Key-value pairs of annotations to add to the API key.
+    - The annotations attached to the API key.
+    - Annotations are optional custom metadata to add to the API key.
+    - Stored in a key value pair in the form (key: value).
     type: dict
-    default: {}
   state:
     description:
     - The desired state of the API key.
@@ -72,6 +66,14 @@ EXAMPLES = r"""
     api_key_name: "simple_key"
     state: present
 
+- name: Update API key annotations
+  cisco.nd.nd_api_key:
+    api_key_name: "existing_key"
+    annotations:
+      owner: "updated_owner"
+      environment: "production"
+    state: present
+
 - name: Query an existing API key by name
   cisco.nd.nd_api_key:
     api_key_name: "ansible_test_key"
@@ -93,13 +95,6 @@ EXAMPLES = r"""
     api_key_name: "ansible_test_key"
     state: absent
 
-- name: Update API key annotations
-  cisco.nd.nd_api_key:
-    api_key_name: "existing_key"
-    annotations:
-      owner: "updated_owner"
-      environment: "production"
-    state: present
 """
 
 RETURN = r"""
@@ -137,6 +132,11 @@ proposed:
       owner: "ansible"
       purpose: "automation"
 """
+from copy import deepcopy
+import re
+from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
+
 
 def main():
     argument_spec = nd_argument_spec()
@@ -166,31 +166,29 @@ def main():
     path = "/api/v1/infra/aaa/apiKeys"
     nd.stdout = ""
     if api_key_id:
-        query_path = "{0}/{1}".format(path, api_key_id)
-        nd.existing = nd.previous = deepcopy(nd.query_obj(query_path))
+        nd.existing = nd.previous = deepcopy(nd.query_obj("{0}/{1}".format(path, api_key_id)))
     elif api_key_name:
         nd.existing = nd.previous = deepcopy(nd.get_obj(path, key="apiKeys", apiKeyName=api_key_name))
     else:
         nd.existing = nd.previous = nd.query_objs(path, key="apiKeys")
-    
+
     if state == "present":
 
-        if len(api_key_name) > 32:
+        if len(api_key_name) > 32 or len(api_key_name) < 1:
             nd.fail_json("A length of 1 to 32 characters is allowed.")
-        elif re.search(r'[^a-zA-Z0-9_.-]', api_key_name):
+        elif re.search(r"[^a-zA-Z0-9_.-]", api_key_name):
             nd.fail_json("API Key name contains invalid characters. Valid characters include letters, digits, '_', '.', and '-'.")
-            
+
         payload = {
             "apiKeyName": api_key_name,
             "annotations": annotations,
         }
 
         nd.sanitize(payload)
-        
+
         if not module.check_mode:
             if nd.existing:
                 if nd.existing.get("apiKeyName") != api_key_name or nd.existing.get("annotations") != annotations:
-                    nd.previous = nd.existing
                     update_path = "{0}/{1}".format(path, api_key_id)
                     nd.request(update_path, method="PUT", data=payload)
                     nd.existing = nd.query_obj(update_path)
@@ -198,20 +196,21 @@ def main():
                 resp = nd.request(path, method="POST", data=payload)
                 if isinstance(resp, dict) and "id" in resp:
                     nd.existing = resp
+                else:
+                    nd.fail_json(
+                        msg="API request succeeded but returned an unexpected response format. Expected a dictionary with an 'id' key.", response=resp
+                    )
         else:
-            nd.previous = nd.existing
             nd.existing = nd.proposed
-            
+
         if nd.existing != nd.previous:
             nd.changed = True
-            
+
     elif state == "absent":
         if nd.existing:
-            nd.previous = nd.existing
             if not module.check_mode:
-                delete_path = "{0}/{1}".format(path, nd.existing["id"])
-                nd.request(delete_path, method="DELETE")
-              
+                nd.request("{0}/{1}".format(path, nd.existing["id"]), method="DELETE")
+
             nd.existing = {}
             nd.changed = True
 
