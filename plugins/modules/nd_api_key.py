@@ -160,12 +160,7 @@ def main():
                     nd.existing = nd.query_obj(update_path)
             else:
                 resp = nd.request(path, method="POST", data=payload)
-                if isinstance(resp, dict) and "id" in resp:
-                    nd.existing = resp
-                else:
-                    nd.fail_json(
-                        msg="API request succeeded but returned an unexpected response format. Expected a dictionary with an 'id' key.", response=resp
-                    )
+                nd.existing = resp
         else:
             nd.existing = nd.proposed
 
