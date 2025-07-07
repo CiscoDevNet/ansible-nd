@@ -93,7 +93,6 @@ EXAMPLES = r"""
   cisco.nd.nd_api_key:
     api_key_name: "ansible_test_key"
     state: absent
-
 """
 
 RETURN = r"""
