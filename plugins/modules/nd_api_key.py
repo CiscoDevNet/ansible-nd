@@ -37,8 +37,7 @@ options:
   annotations:
     description:
     - The annotations attached to the API key.
-    - Annotations are optional custom metadata to add to the API key.
-    - Stored in a key value pair in the form (key: value).
+    - Annotations are optional key-value pairs used to add custom metadata to the API key.
     type: dict
   state:
     description:
@@ -98,40 +97,8 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
-current:
-  description: The current state of the API key after the task has been performed.
-  returned: always
-  type: dict
-  sample:
-    apiKeyName: "ansible_test_key"
-    id: "12345678-1234-1234-1234-1234567890ab"
-    key: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
-    annotations:
-      owner: "ansible"
-      purpose: "automation"
-    createdTime: "2025-01-01T12:00:00.000Z"
-    lastUsedTime: "2025-01-01T12:30:00.000Z"
-
-previous:
-  description: The previous state of the API key before the task was performed.
-  returned: when state is changed
-  type: dict
-  sample:
-    apiKeyName: "ansible_test_key"
-    id: "12345678-1234-1234-1234-1234567890ab"
-    annotations:
-      owner: "old_owner"
-
-proposed:
-  description: The proposed configuration that would be applied.
-  returned: when check_mode is enabled
-  type: dict
-  sample:
-    apiKeyName: "ansible_test_key"
-    annotations:
-      owner: "ansible"
-      purpose: "automation"
 """
+
 from copy import deepcopy
 import re
 from ansible.module_utils.basic import AnsibleModule
