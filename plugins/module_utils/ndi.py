@@ -424,6 +424,10 @@ class NDI:
             return "l3extLNodeP"
         elif prefix == "rsnodeL3OutAtt":
             return "l3extRsNodeL3OutAtt"
+        elif prefix == "rspathL3OutAtt":
+            return "l3extRsPathL3OutAtt"
+        elif prefix == "mem":
+            return "l3extMember"
         elif prefix == "rt":
             return "ipRouteP"
         elif prefix == "nh":
