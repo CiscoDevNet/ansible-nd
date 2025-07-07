@@ -437,7 +437,7 @@ class NDI:
         elif prefix == "addr":
             return "l3extIp"
         else:
-            self.nd.fail_json(msg="Unsupported ACI class identifier prefix: {0}".format(prefix))
+            return False
 
     def construct_tree(self, item_list):
         """
@@ -579,7 +579,7 @@ class NDI:
 
     def create_structured_data(self, tree, file):
         if tree is False:
-            self.module.fail_json(msg="Error parsing input file, unsupported object found in hierarchy.", **self.result)
+            self.nd.fail_json(msg="Error parsing input file, unsupported object found in hierarchy.", **self.result)
         tree_roots = self.find_tree_roots(tree)
         ansible_ds = {}
         for root in tree_roots:
