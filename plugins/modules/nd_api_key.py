@@ -39,6 +39,7 @@ options:
     - The annotations attached to the API key.
     - Annotations are optional key-value pairs used to add custom metadata to the API key.
     type: dict
+    default: {}
   state:
     description:
     - The desired state of the API key.
