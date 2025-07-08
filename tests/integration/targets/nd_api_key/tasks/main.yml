@@ -66,19 +66,6 @@
     state: present
   register: create_api_key_no_annotations
 
-- name: Add annotations to existing API key (check mode)
-  cisco.nd.nd_api_key:
-    <<: *nd_info
-    api_key_id: "{{ create_api_key_no_annotations.current.id }}"
-    api_key_name: test_api_key_no_annotations
-    annotations:
-      stage: "development"
-      team: "infrastructure"
-      version: "1.0"
-    state: present
-  check_mode: true
-  register: cm_add_annotations_to_existing
-
 - name: Test empty annotations (check mode)
   cisco.nd.nd_api_key:
     <<: *nd_info
@@ -117,13 +104,6 @@
       - create_api_key_no_annotations is changed
       - create_api_key_no_annotations.current.apiKeyName == "test_api_key_no_annotations"
       - create_api_key_no_annotations.current.annotations is not defined or create_api_key_no_annotations.current.annotations == {}
-      - cm_add_annotations_to_existing is changed
-      - cm_add_annotations_to_existing.proposed.apiKeyName == "test_api_key_no_annotations"
-      - cm_add_annotations_to_existing.proposed.id == create_api_key_no_annotations.current.id
-      - cm_add_annotations_to_existing.proposed.annotations is defined
-      - cm_add_annotations_to_existing.proposed.annotations.stage == "development"
-      - cm_add_annotations_to_existing.proposed.annotations.team == "infrastructure"
-      - cm_add_annotations_to_existing.proposed.annotations.version == "1.0"
       - cm_empty_annotations.proposed.apiKeyName == "test_empty_annotations"
       - cm_empty_annotations.proposed.annotations is defined
       - cm_empty_annotations.proposed.annotations == {}

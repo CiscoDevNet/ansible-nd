@@ -29,8 +29,7 @@ options:
   api_key_name:
     description:
     - The name of the API key.
-    - Required when state is 'present'.
-    - Must be 1-32 characters long.
+    - The API key name must be between 1 and 32 characters in length. 
     - Only alphanumeric characters, underscores, periods, and hyphens are allowed.
     type: str
     aliases: [ description ]
@@ -155,7 +154,7 @@ def main():
 
         if not module.check_mode:
             if nd.existing:
-                if nd.existing.get("apiKeyName") != api_key_name or nd.existing.get("annotations") != annotations:
+                if nd.existing.get("apiKeyName") != api_key_name:
                     update_path = "{0}/{1}".format(path, api_key_id)
                     nd.request(update_path, method="PUT", data=payload)
                     nd.existing = nd.query_obj(update_path)
