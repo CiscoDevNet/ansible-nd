@@ -29,7 +29,7 @@ options:
   api_key_name:
     description:
     - The name of the API key.
-    - The API key name must be between 1 and 32 characters in length. 
+    - The API key name must be between 1 and 32 characters in length.
     - Only alphanumeric characters, underscores, periods, and hyphens are allowed.
     type: str
     aliases: [ description ]
