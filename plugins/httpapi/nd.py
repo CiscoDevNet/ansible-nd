@@ -72,6 +72,7 @@ class HttpApi(HttpApiBase):
         self.path = ""
         self.status = -1
         self.info = {}
+        self.version = None
 
     def get_platform(self):
         return self.platform
@@ -93,7 +94,14 @@ class HttpApi(HttpApiBase):
     # TODO Add support for dynamically returning platform versions.
     def get_version(self, platform="ndfc"):
         if platform == "ndfc":
-            return 12
+            if self.version is None:
+                self.version = 12
+            return self.version
+        elif platform == "nd":
+            if self.version is None:
+                response_json = self._send_nd_request("GET", "/version.json", self.headers)
+                self.version = ".".join(str(response_json.get("body")[key]) for key in ["major", "minor", "maintenance"])
+            return self.version
         else:
             raise ValueError("Unknown platform type: {0}".format(platform))
 
@@ -326,11 +334,14 @@ class HttpApi(HttpApiBase):
             raise ConnectionError(json.dumps(self._verify_response(None, method, path, None)))
 
         try:
+            fields = None
             # create fields for MultipartEncoder
             if remote_path:
                 fields = dict(rdir=remote_path, name=(filename, open(file, "rb"), mimetypes.guess_type(filename)))
-            elif file_key == "importfile":
-                fields = dict(spec=(json.dumps(data)), importfile=(filename, open(file, "rb"), mimetypes.guess_type(filename)))
+            elif file_key in ["importfile", "files"]:
+                fields = {file_key: (filename, open(file, "rb"), mimetypes.guess_type(filename))}
+                if file_key == "importfile":
+                    fields["spec"] = json.dumps(data)
             else:
                 fields = dict(data=("data.json", data_str, "application/json"), file=(filename, open(file, "rb"), mimetypes.guess_type(filename)))
 
@@ -342,6 +353,7 @@ class HttpApi(HttpApiBase):
 
             mp_encoder = MultipartEncoder(fields=fields)
             multiheader = {"Content-Type": mp_encoder.content_type, "Accept": "*/*", "Accept-Encoding": "gzip, deflate, br"}
+            self.connection.queue_message("info", "send_file_request() - connection.send({0}, {1}, {2}, {3})".format(path, method, fields, multiheader))
             response, rdata = self.connection.send(path, mp_encoder.to_string(), method=method, headers=multiheader)
         except Exception as e:
             self.error = dict(code=self.status, message="ND HTTPAPI MultipartEncoder Exception: {0} - {1} ".format(e, traceback.format_exc()))

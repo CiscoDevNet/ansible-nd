@@ -1,7 +1,13 @@
 # Test code for the ND modules
 # Copyright: (c) 2023, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# Copyright: (c) 2025, Sabari Jaganathan (@sajagana) <sajagana@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: "info"
+      timeout: 90
 
 - name: Create a directory if it does not exist
   ansible.builtin.file:
@@ -9,173 +15,623 @@
     state: directory
     mode: 0775
 
-- name: Create a backup nexus in check mode
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
-    state: backup
-  check_mode: true
-  register: cm_add_nexus
-
-- name: Create a backup nexus
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
-    state: backup
-  register: add_nexus
-
-- name: Create a backup nexus2
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus2
-    encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus2_{{ ansible_host }}.tgz"
-    state: backup
-  register: add_nexus2
-
-- name: Find backup nexus to ensure that it was created
-  ansible.builtin.find:
-    paths: "{{ role_path }}/backups"
-    patterns: "nexus_{{ ansible_host }}.tgz"
-  register: find_nexus
-
-- name: Find backup nexus2 to ensure that it was created
-  ansible.builtin.find:
-    paths: "{{ role_path }}/backups"
-    patterns: "nexus2_{{ ansible_host }}.tgz"
-  register: find_nexus2
-
-- name: Query backup nexus2
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus2
+# QUERY VERSION
+- name: Query ND version
+  cisco.nd.nd_version:
     state: query
-  register: query_nexus2
+  register: version
 
-- name: Query all backups
-  cisco.nd.nd_backup:
-    output_level: debug
-    state: query
-  register: query_all
+- name: Execute tasks only for ND version >= 3.2.1
+  when: version.current.platformVersion is version('3.2.1', '>=')
+  block:
+    - name: Ensure local ND backup does not exist
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: localbackup
+        state: absent
 
-- name: Delete backup nexus in check mode
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    state: absent
-  check_mode: true
-  register: cm_remove_nexus
+    - name: Ensure remote ND backup does not exist
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: remotebackup
+        state: absent
 
-- name: Delete backup nexus 
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    state: absent
-  register: delete_nexus
+    - name: Create local ND backup (check mode)
+      cisco.nd.nd_backup:
+        name: localbackup
+        file_location: "{{ role_path }}/backups/localbackup0_{{ ansible_host }}.tgz"
+        encryption_key: localbackup1
+        state: backup
+        output_level: debug
+      check_mode: true
+      register: cm_add_local_backup
 
-- name: Delete backup nexus again
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    state: absent
-  register: delete_nexus_again
+    - name: Create local ND backup
+      cisco.nd.nd_backup:
+        name: localbackup
+        encryption_key: localbackup1
+        file_location: "{{ role_path }}/backups/localbackup0_{{ ansible_host }}.tgz"
+        state: backup
+        output_level: debug
+      register: add_local_backup
 
-- name: Delete backup nexus2
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus2
-    state: absent
-  register: delete_nexus2
+    - name: Query local ND backup to check the backup status
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: localbackup
+        state: query
+      register: query_local_backup_status
+      until:
+        - query_local_backup_status.current is defined
+        - query_local_backup_status.current != {}
+        - query_local_backup_status.current.status == "completed"
+      retries: 40
+      delay: 20
 
-- name: Create backups with the same name
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: "{{ item }}"
-    encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus2_{{ ansible_host }}.tgz"
-    state: backup
-  loop:
-    - nexus
-    - nexus
+    - name: Create local ND backup again
+      cisco.nd.nd_backup:
+        name: localbackup
+        encryption_key: localbackup1
+        file_location: "{{ role_path }}/backups/localbackup0_{{ ansible_host }}.tgz"
+        state: backup
+      register: add_local_backup_again
 
-# Failure scenarios
-- name: Create backup with password having a length < 8 characters
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    encryption_key: test
-    file_location: "{{ role_path }}/backups/nexus2_{{ ansible_host }}.tgz"
-    state: backup
-  ignore_errors: true
-  register: add_nexus_incorrect_pwd_length
+    - name: Assertion check for create local ND backup
+      ansible.builtin.assert:
+        that:
+          - cm_add_local_backup is changed
+          - cm_add_local_backup.current.destination == ""
+          - cm_add_local_backup.current.encryptionKey == "localbackup1"
+          - cm_add_local_backup.current.name == "localbackup"
+          - cm_add_local_backup.current.type == "configOnly"
+          - cm_add_local_backup.previous == {}
+          - cm_add_local_backup.proposed.destination == ""
+          - cm_add_local_backup.proposed.encryptionKey == "localbackup1"
+          - cm_add_local_backup.proposed.name == "localbackup"
+          - cm_add_local_backup.proposed.type == "configOnly"
+          - add_local_backup is changed
+          - add_local_backup.current.name == "localbackup"
+          - add_local_backup.current.path == "localbackup.tar.gz"
+          - add_local_backup.current.schedule == ""
+          - add_local_backup.current.size == 0
+          - add_local_backup.current.endTime == "0001-01-01T00:00:00Z"
+          - add_local_backup.current.startTime is defined
+          - add_local_backup.current.status == "inProgress"
+          - add_local_backup.current.type == "configOnly"
+          - add_local_backup.current.user is defined
+          - add_local_backup.previous == {}
+          - add_local_backup.proposed.destination == ""
+          - add_local_backup.proposed.encryptionKey == "localbackup1"
+          - add_local_backup.proposed.name == "localbackup"
+          - add_local_backup.proposed.type == "configOnly"
+          - add_local_backup_again is not changed
+          - add_local_backup_again.current.destination == ""
+          - add_local_backup_again.current.details.progress == 100
+          - add_local_backup_again.current.name == "localbackup"
+          - add_local_backup_again.current.path == "localbackup.tar.gz"
+          - add_local_backup_again.current.schedule == ""
+          - add_local_backup_again.current.size is defined
+          - add_local_backup_again.current.startTime is defined
+          - add_local_backup_again.current.status == "completed"
+          - add_local_backup_again.current.type == "configOnly"
+          - add_local_backup_again.current.user is defined
+          - add_local_backup_again.previous.destination == ""
+          - add_local_backup_again.previous.details.progress == 100
+          - add_local_backup_again.previous.name == "localbackup"
+          - add_local_backup_again.previous.path == "localbackup.tar.gz"
+          - add_local_backup_again.previous.schedule == ""
+          - add_local_backup_again.previous.size is defined
+          - add_local_backup_again.previous.startTime is defined
+          - add_local_backup_again.previous.status == "completed"
+          - add_local_backup_again.previous.type == "configOnly"
+          - add_local_backup_again.previous.user is defined
 
-- name: Try querying backup nexus
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    state: query
-  ignore_errors: true
-  register: query_duplicate_nexus
+    - name: Query local ND backup
+      cisco.nd.nd_backup:
+        name: localbackup
+        state: query
+      register: query_local_backup
 
-- name: Try deleting backup nexus
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    state: absent
-  ignore_errors: true
-  register: delete_duplicate_nexus
+    - name: Download local ND backup file
+      cisco.nd.nd_backup:
+        name: localbackup
+        file_location: "{{ role_path }}/backups/localbackup1_{{ ansible_host }}.tgz"
+        state: download
+      register: download_local_backup
 
-- name: Delete Backup with the wrong backup key
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    backup_key: 0
-    state: absent
-  ignore_errors: true
-  register: delete_wrong_key_nexus
+    - name: Create remote ND backup (check mode)
+      cisco.nd.nd_backup:
+        name: remotebackup
+        encryption_key: remotebackup1
+        remote_location: test
+        state: backup
+        output_level: debug
+      check_mode: true
+      register: cm_add_remote_backup
 
-- name: Verify all assertions
-  ansible.builtin.assert:
-    that:
-    - cm_add_nexus.changed is true
-    - cm_add_nexus.current.spec.description == "nexus"
-    - cm_add_nexus.current.spec.password == "testtest"
-    - add_nexus.changed is true
-    - add_nexus.current.spec.description == "nexus"
-    - add_nexus.current.spec.password == "testtest"
-    - add_nexus2.changed is true
-    - add_nexus2.current.spec.description == "nexus2"
-    - add_nexus2.current.spec.password == "testtest"
-    - find_nexus.matched == 1
-    - find_nexus2.matched == 1
-    - query_nexus2.changed is false
-    - query_nexus2.current.description == "nexus2"
-    - query_all.changed is false
-    - query_all.current | length >= 2
-    - cm_remove_nexus.changed is true
-    - delete_nexus.changed is true
-    - delete_nexus_again.changed is false
-    - delete_nexus2.changed is true
-    - cm_remove_nexus.current == delete_nexus.current == delete_nexus2.current == delete_nexus_again.current == {}
-    - add_nexus_incorrect_pwd_length.msg == "Please provide a minimum of 8 characters for the encryption key."
-    - query_duplicate_nexus.msg == delete_duplicate_nexus.msg == "Multiple backups with the name 'nexus' found. Please provide a backup key for the corresponding backup."
-    - delete_wrong_key_nexus.msg == "Provided key for the backup 'nexus' not found. Please provide a valid backup key by querying all the backups and looking up the desired backup key."
+    - name: Create remote ND backup
+      cisco.nd.nd_backup:
+        name: remotebackup
+        encryption_key: remotebackup1
+        remote_location: test
+        state: backup
+        output_level: debug
+      register: add_remote_backup
 
-- name: Query all backups for deleting them
-  cisco.nd.nd_backup:
-    output_level: debug
-    state: query
-  register: backups
+    - name: Query remote ND backup to check the backup status
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: remotebackup
+        state: query
+      register: query_remote_backup_status
+      until:
+        - query_remote_backup_status.current is defined
+        - query_remote_backup_status.current != {}
+        - query_remote_backup_status.current.status == "completed"
+      retries: 40
+      delay: 20
 
-- name: Delete all backups to clean up environment
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    backup_key: "{{ item }}"
-    state: absent
-  loop: "{{ backups.current | map(attribute='key') | list }}"
-  
+    - name: Create remote ND backup again
+      cisco.nd.nd_backup:
+        name: remotebackup
+        encryption_key: remotebackup1
+        remote_location: test
+        state: backup
+      register: add_remote_backup_again
+
+    - name: Assertion check for create remote ND backup
+      ansible.builtin.assert:
+        that:
+          - cm_add_remote_backup is changed
+          - cm_add_remote_backup.current.destination == "test"
+          - cm_add_remote_backup.current.encryptionKey == "remotebackup1"
+          - cm_add_remote_backup.current.name == "remotebackup"
+          - cm_add_remote_backup.current.type == "configOnly"
+          - cm_add_remote_backup.previous == {}
+          - cm_add_remote_backup.proposed.destination == "test"
+          - cm_add_remote_backup.proposed.encryptionKey == "remotebackup1"
+          - cm_add_remote_backup.proposed.name == "remotebackup"
+          - cm_add_remote_backup.proposed.type == "configOnly"
+          - add_remote_backup is changed
+          - add_remote_backup.current.destination == "test"
+          - add_remote_backup.current.name == "remotebackup"
+          - add_remote_backup.current.path is defined
+          - add_remote_backup.current.schedule == ""
+          - add_remote_backup.current.size is defined
+          - add_remote_backup.current.startTime is defined
+          - add_remote_backup.current.status == "inProgress"
+          - add_remote_backup.current.type == "configOnly"
+          - add_remote_backup.current.user is defined
+          - add_remote_backup.previous == {}
+          - add_remote_backup.proposed.destination == "test"
+          - add_remote_backup.proposed.encryptionKey == "remotebackup1"
+          - add_remote_backup.proposed.name == "remotebackup"
+          - add_remote_backup.proposed.type == "configOnly"
+          - add_remote_backup_again is not changed
+          - add_remote_backup_again.current.destination == "test"
+          - add_remote_backup_again.current.details.progress == 100
+          - add_remote_backup_again.current.name == "remotebackup"
+          - add_remote_backup_again.current.path is defined
+          - add_remote_backup_again.current.schedule == ""
+          - add_remote_backup_again.current.size is defined
+          - add_remote_backup_again.current.startTime is defined
+          - add_remote_backup_again.current.status == "completed"
+          - add_remote_backup_again.current.type == "configOnly"
+          - add_remote_backup_again.current.user is defined
+          - add_remote_backup_again.previous.destination == "test"
+          - add_remote_backup_again.previous.details.progress == 100
+          - add_remote_backup_again.previous.name == "remotebackup"
+          - add_remote_backup_again.previous.path is defined
+          - add_remote_backup_again.previous.schedule == ""
+          - add_remote_backup_again.previous.size is defined
+          - add_remote_backup_again.previous.startTime is defined
+          - add_remote_backup_again.previous.status == "completed"
+          - add_remote_backup_again.previous.type == "configOnly"
+          - add_remote_backup_again.previous.user is defined
+
+    - name: Query remote ND backup
+      cisco.nd.nd_backup:
+        name: remotebackup
+        state: query
+      register: query_remote_backup
+
+    - name: Query all ND backups
+      cisco.nd.nd_backup:
+        state: query
+      register: query_all_backups
+
+    - name: Assertion check for query ND backup
+      ansible.builtin.assert:
+        that:
+          - query_local_backup is not changed
+          - query_local_backup.current.destination == ""
+          - query_local_backup.current.details.progress == 100
+          - query_local_backup.current.name == "localbackup"
+          - query_local_backup.current.path == "localbackup.tar.gz"
+          - query_local_backup.current.schedule == ""
+          - query_local_backup.current.size is defined
+          - query_local_backup.current.startTime is defined
+          - query_local_backup.current.endTime is defined
+          - query_local_backup.current.status == "completed"
+          - query_local_backup.current.type == "configOnly"
+          - query_local_backup.current.user is defined
+          - query_remote_backup is not changed
+          - query_remote_backup.current.destination == "test"
+          - query_remote_backup.current.details.progress == 100
+          - query_remote_backup.current.name == "remotebackup"
+          - query_remote_backup.current.path is defined
+          - query_remote_backup.current.schedule == ""
+          - query_remote_backup.current.size is defined
+          - query_remote_backup.current.startTime is defined
+          - query_remote_backup.current.endTime is defined
+          - query_remote_backup.current.status == "completed"
+          - query_remote_backup.current.type == "configOnly"
+          - query_remote_backup.current.user is defined
+          - query_all_backups is not changed
+          - query_all_backups.current | length >= 2
+          - "'localbackup' in query_all_backups.current | map(attribute='name') | list"
+          - "'remotebackup' in query_all_backups.current | map(attribute='name') | list"
+
+    - name: Download remote ND backup file
+      cisco.nd.nd_backup:
+        name: remotebackup
+        file_location: "{{ role_path }}/backups/remotebackup_{{ ansible_host }}.tgz"
+        state: download
+      register: download_remote_backup
+
+    - name: Assertion check for download ND backup files
+      ansible.builtin.assert:
+        that:
+          - download_local_backup is changed
+          - download_local_backup.current.destination == ""
+          - download_local_backup.current.details.progress == 100
+          - download_local_backup.current.name == "localbackup"
+          - download_local_backup.current.path == "localbackup.tar.gz"
+          - download_local_backup.current.schedule == ""
+          - download_local_backup.current.size is defined
+          - download_local_backup.current.startTime is defined
+          - download_local_backup.current.endTime is defined
+          - download_local_backup.current.status == "completed"
+          - download_local_backup.current.type == "configOnly"
+          - download_local_backup.current.user == "admin"
+          - download_remote_backup is changed
+          - download_remote_backup.current.destination == "test"
+          - download_remote_backup.current.details.progress == 100
+          - download_remote_backup.current.name == "remotebackup"
+          - download_remote_backup.current.path is defined
+          - download_remote_backup.current.schedule == ""
+          - download_remote_backup.current.status == "completed"
+          - download_remote_backup.current.type == "configOnly"
+
+    - name: Find local backup to ensure that it was downloaded
+      ansible.builtin.find:
+        paths: "{{ role_path }}/backups"
+        patterns: "localbackup0_{{ ansible_host }}.tgz"
+      register: find_local_backup0
+
+    - name: Find local backup to ensure that it was downloaded
+      ansible.builtin.find:
+        paths: "{{ role_path }}/backups"
+        patterns: "localbackup1_{{ ansible_host }}.tgz"
+      register: find_local_backup1
+
+    - name: Find remote backup to ensure that it was downloaded
+      ansible.builtin.find:
+        paths: "{{ role_path }}/backups"
+        patterns: "remotebackup_{{ ansible_host }}.tgz"
+      register: find_remote_backup
+
+    - name: Assertion check for find ND backups to ensure that it was downloaded
+      ansible.builtin.assert:
+        that:
+          - find_local_backup0 is not changed
+          - find_local_backup0.examined == 3
+          - find_local_backup0.files.0.path is match( ".+/tests/integration/targets/nd_backup/backups/localbackup0_.+.tgz")
+          - find_local_backup0.matched == 1
+          - find_local_backup1 is not changed
+          - find_local_backup1.examined == 3
+          - find_local_backup1.files.0.path is match( ".+/tests/integration/targets/nd_backup/backups/localbackup1_.+.tgz")
+          - find_local_backup1.matched == 1
+          - find_remote_backup is not changed
+          - find_remote_backup.examined == 3
+          - find_remote_backup.files.0.path is match (".+/tests/integration/targets/nd_backup/backups/remotebackup_.+.tgz")
+          - find_remote_backup.matched == 1
+
+    # ERROR
+    - name: Negative test for create ND backup with encryption_key < 8 characters
+      cisco.nd.nd_backup:
+        name: ntlocalbackup
+        encryption_key: local
+        state: backup
+      register: nt_add_backup_with_invalid_encryption_key1
+      ignore_errors: true
+
+    - name: Negative test for create ND backup with string only encryption_key
+      cisco.nd.nd_backup:
+        name: ntlocalbackup
+        encryption_key: localbackup
+        state: backup
+      register: nt_add_backup_with_invalid_encryption_key2
+      ignore_errors: true
+
+    - name: Assertion check for negative test for create ND backup with string only encryption_key
+      ansible.builtin.assert:
+        that:
+          - nt_add_backup_with_invalid_encryption_key1 is not changed
+          - nt_add_backup_with_invalid_encryption_key1.msg == "Please provide a minimum of 8 alphanumeric characters for the encryption key."
+          - nt_add_backup_with_invalid_encryption_key2 is not changed
+          - nt_add_backup_with_invalid_encryption_key2.msg == "The encryption_key must contain at least one letter and one number, and have a minimum length of 8 characters."
+
+    - name: Ensure local ND backup does not exist (check_mode)
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: localbackup
+        state: absent
+      register: cm_rm_local_backup
+      check_mode: true
+
+    - name: Ensure remote ND backup does not exist (check_mode)
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: remotebackup
+        state: absent
+      register: cm_rm_remote_backup
+      check_mode: true
+
+    - name: Ensure local ND backup does not exist
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: localbackup
+        state: absent
+      register: rm_local_backup
+
+    - name: Ensure remote ND backup does not exist
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: remotebackup
+        state: absent
+      register: rm_remote_backup
+
+    - name: Ensure local ND backup does not exist again
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: localbackup
+        state: absent
+      register: rm_local_backup_again
+
+    - name: Ensure remote ND backup does not exist again
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: remotebackup
+        state: absent
+      register: rm_remote_backup_again
+
+    - name: Assertion check for remove ND backupa
+      ansible.builtin.assert:
+        that:
+          - cm_rm_local_backup is changed
+          - cm_rm_local_backup.current == {}
+          - cm_rm_local_backup.previous.destination == ""
+          - cm_rm_local_backup.previous.details.progress == 100
+          - cm_rm_local_backup.previous.name == "localbackup"
+          - cm_rm_local_backup.previous.path == "localbackup.tar.gz"
+          - cm_rm_local_backup.previous.schedule == ""
+          - cm_rm_local_backup.previous.status == "completed"
+          - cm_rm_local_backup.previous.type == "configOnly"
+          - cm_rm_remote_backup is changed
+          - cm_rm_remote_backup.current == {}
+          - cm_rm_remote_backup.previous.destination == "test"
+          - cm_rm_remote_backup.previous.details.progress == 100
+          - cm_rm_remote_backup.previous.name == "remotebackup"
+          - cm_rm_remote_backup.previous.path is defined
+          - cm_rm_remote_backup.previous.schedule == ""
+          - cm_rm_remote_backup.previous.status == "completed"
+          - cm_rm_remote_backup.previous.type == "configOnly"
+          - rm_local_backup is changed
+          - rm_local_backup.current == {}
+          - rm_local_backup.previous.destination == ""
+          - rm_local_backup.previous.details.progress == 100
+          - rm_local_backup.previous.name == "localbackup"
+          - rm_local_backup.previous.path == "localbackup.tar.gz"
+          - rm_local_backup.previous.schedule == ""
+          - rm_local_backup.previous.status == "completed"
+          - rm_local_backup.previous.type == "configOnly"
+          - rm_remote_backup is changed
+          - rm_remote_backup.current == {}
+          - rm_remote_backup.previous.destination == "test"
+          - rm_remote_backup.previous.details.progress == 100
+          - rm_remote_backup.previous.name == "remotebackup"
+          - rm_remote_backup.previous.path is defined
+          - rm_remote_backup.previous.schedule == ""
+          - rm_remote_backup.previous.status == "completed"
+          - rm_remote_backup.previous.type == "configOnly"
+          - rm_local_backup_again is not changed
+          - rm_local_backup_again.current == {}
+          - rm_local_backup_again.previous == {}
+          - rm_remote_backup_again is not changed
+          - rm_remote_backup_again.current == {}
+          - rm_remote_backup_again.previous == {}
+
+- name: Execute tasks only for ND version < 3.2.1
+  when: version.current.platformVersion is version('3.2.1', '<')
+  block:
+    - name: Create a backup nexus in check mode
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        encryption_key: testtest
+        file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
+        state: backup
+      check_mode: true
+      register: cm_add_nexus
+
+    - name: Create a backup nexus
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        encryption_key: testtest
+        file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
+        state: backup
+      register: add_nexus
+
+    - name: Create a backup nexus2
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus2
+        encryption_key: testtest
+        file_location: "{{ role_path }}/backups/nexus2_{{ ansible_host }}.tgz"
+        state: backup
+      register: add_nexus2
+
+    - name: Find backup nexus to ensure that it was created
+      ansible.builtin.find:
+        paths: "{{ role_path }}/backups"
+        patterns: "nexus_{{ ansible_host }}.tgz"
+      register: find_nexus
+
+    - name: Find backup nexus2 to ensure that it was created
+      ansible.builtin.find:
+        paths: "{{ role_path }}/backups"
+        patterns: "nexus2_{{ ansible_host }}.tgz"
+      register: find_nexus2
+
+    - name: Query backup nexus2
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus2
+        state: query
+      register: query_nexus2
+
+    - name: Query all backups
+      cisco.nd.nd_backup:
+        output_level: debug
+        state: query
+      register: query_all
+
+    - name: Delete backup nexus in check mode
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        state: absent
+      check_mode: true
+      register: cm_remove_nexus
+
+    - name: Delete backup nexus
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        state: absent
+      register: delete_nexus
+
+    - name: Delete backup nexus again
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        state: absent
+      register: delete_nexus_again
+
+    - name: Delete backup nexus2
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus2
+        state: absent
+      register: delete_nexus2
+
+    - name: Create backups with the same name
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: "{{ item }}"
+        encryption_key: testtest
+        file_location: "{{ role_path }}/backups/nexus2_{{ ansible_host }}.tgz"
+        state: backup
+      loop:
+        - nexus
+        - nexus
+
+    # Failure scenarios
+    - name: Create backup with password having a length < 8 characters
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        encryption_key: test
+        file_location: "{{ role_path }}/backups/nexus2_{{ ansible_host }}.tgz"
+        state: backup
+      ignore_errors: true
+      register: add_nexus_incorrect_pwd_length
+
+    - name: Create backup without file_location
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        encryption_key: test
+        state: backup
+      ignore_errors: true
+      register: add_nexus_without_file_location
+
+    - name: Try querying backup nexus
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        state: query
+      ignore_errors: true
+      register: query_duplicate_nexus
+
+    - name: Try deleting backup nexus
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        state: absent
+      ignore_errors: true
+      register: delete_duplicate_nexus
+
+    - name: Delete Backup with the wrong backup key
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        backup_key: 0
+        state: absent
+      ignore_errors: true
+      register: delete_wrong_key_nexus
+
+    - name: Verify all assertions
+      ansible.builtin.assert:
+        that:
+          - cm_add_nexus.changed is true
+          - cm_add_nexus.current.spec.description == "nexus"
+          - cm_add_nexus.current.spec.password == "testtest"
+          - add_nexus.changed is true
+          - add_nexus.current.spec.description == "nexus"
+          - add_nexus.current.spec.password == "testtest"
+          - add_nexus2.changed is true
+          - add_nexus2.current.spec.description == "nexus2"
+          - add_nexus2.current.spec.password == "testtest"
+          - find_nexus.matched == 1
+          - find_nexus2.matched == 1
+          - query_nexus2.changed is false
+          - query_nexus2.current.description == "nexus2"
+          - query_all.changed is false
+          - query_all.current | length >= 2
+          - cm_remove_nexus.changed is true
+          - delete_nexus.changed is true
+          - delete_nexus_again.changed is false
+          - delete_nexus2.changed is true
+          - cm_remove_nexus.current == delete_nexus.current == delete_nexus2.current == delete_nexus_again.current == {}
+          - add_nexus_incorrect_pwd_length.msg == "Please provide a minimum of 8 characters for the encryption key."
+          - query_duplicate_nexus.msg == delete_duplicate_nexus.msg == "Multiple backups with the name 'nexus' found. Please provide a backup key for the corresponding backup."
+          - delete_wrong_key_nexus.msg == "Provided key for the backup 'nexus' not found. Please provide a valid backup key by querying all the backups and looking up the desired backup key."
+          - add_nexus_without_file_location is not changed
+          - add_nexus_without_file_location.msg == "Parameter 'file_location' is required when state is 'backup|download' for ND versions < 3.2.1."
+
+    - name: Query all backups for deleting them
+      cisco.nd.nd_backup:
+        output_level: debug
+        state: query
+      register: backups
+
+    - name: Delete all backups to clean up environment
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        backup_key: "{{ item }}"
+        state: absent
+      loop: "{{ backups.current | map(attribute='key') | list }}"
