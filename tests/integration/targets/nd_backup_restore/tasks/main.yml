@@ -1,7 +1,19 @@
 # Test code for the ND modules
 # Copyright: (c) 2023, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# Copyright: (c) 2025, Sabari Jaganathan (@sajagana) <sajagana@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: "info"
+      timeout: 90
+
+# QUERY VERSION
+- name: Query ND version
+  cisco.nd.nd_version:
+    state: query
+  register: version
 
 - name: Create a directory if it does not exist
   ansible.builtin.file:
@@ -9,241 +21,692 @@
     state: directory
     mode: 0775
 
-- name: Create a route to have some config in the route cluster configuration
-  cisco.nd.nd_cluster_config_route:
-    output_level: debug
-    destination_ip: 12.23.45.68/32
-    target_network: data
-    state: present
+- name: Execute tasks only for ND version >= 3.2.1
+  when: version.current.platformVersion is version('3.2.1', '>=')
+  block:
+    # CLEAN TEST ENVIRONMENT
+    - name: Query all routes
+      cisco.nd.nd_rest:
+        method: get
+        path: /api/config/class/routes/
+      register: query_all_routes
 
-- name: Create a backup nexus
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
-    state: backup
+    - name: Delete all Data Routes
+      cisco.nd.nd_rest:
+        method: delete
+        ignore_previous_state: true
+        path: "/api/config/routes/{{ item.destination }}"
+      loop: "{{ query_all_routes.current | list }}"
 
-- name: Query all routes
-  cisco.nd.nd_cluster_config_route:
-    output_level: debug
-    state: query
-  register: query_all_routes
+    - name: Query all backups
+      cisco.nd.nd_backup:
+        output_level: debug
+        state: query
+      register: query_all_backups
 
-- name: Delete all routes to change the route configuration
-  cisco.nd.nd_cluster_config_route:
-    output_level: debug
-    destination_ip: "{{ item }}"
-    state: absent
-  loop: "{{ query_all_routes.current | map(attribute='spec.destination') | list }}"
+    - name: Delete all backups
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: "{{ item.name }}"
+        state: absent
+      loop: "{{ query_all_backups.current | list }}"
+      delay: 5
 
-- name: Import the backup file nexus with restore job's name called nexus in check mode
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus
-    encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
-    state: restore
-  check_mode: true
-  register: restore_nexus_cm
+    # Local backup restore test
+    - name: Add Data Route before ND local backup
+      cisco.nd.nd_rest:
+        path: /api/config/routes/
+        method: post
+        content:
+          target: Data
+          destination: 12.23.45.68/32
 
-- name: Import the backup file nexus with restore job's name called nexus
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus
-    encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
-    state: restore
-  register: restore_nexus
+    - name: Create ND local backup
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: localbackup
+        encryption_key: testtest1
+        state: backup
 
-- name: Query all routes again
-  cisco.nd.nd_cluster_config_route:
-    output_level: debug
-    state: query
-  register: query_all_routes_again
+    - name: Restore ND backup with name and file_location
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: localbackup
+        encryption_key: testtest1
+        file_location: "/tmp/localbackup.tar.gz"
+        state: restore
+      register: nt_name_and_file_location
+      ignore_errors: true
 
-- name: Delete all routes again to add another restore job
-  cisco.nd.nd_cluster_config_route:
-    output_level: debug
-    destination_ip: "{{ item }}"
-    state: absent
-  loop: "{{ query_all_routes.current | map(attribute='spec.destination') | list }}"
+    - name: Restore ND backup when backup is in progress
+      cisco.nd.nd_backup_restore:
+        <<: *nd_info
+        output_level: debug
+        name: localbackup
+        encryption_key: testtest1
+        state: restore
+      register: nt_restore
+      ignore_errors: true
 
-- name: Import the backup file nexus again with a different restore name nexus2
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus2
-    encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
-    state: restore
-  register: restore_nexus2
+    - name: Query ND local backup status
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: localbackup
+        state: query
+      register: query_local_backup_status
+      until:
+        - query_local_backup_status.current is defined
+        - query_local_backup_status.current != {}
+        - query_local_backup_status.current.status == "completed"
+      retries: 80
+      delay: 20
 
-- name: Query all routes after second import
-  cisco.nd.nd_cluster_config_route:
-    output_level: debug
-    state: query
-  register: query_all_routes_after_second_import
+    - name: Delete Data Route after ND local backup
+      cisco.nd.nd_rest:
+        ignore_previous_state: true
+        method: delete
+        path: /api/config/routes/12.23.45.68%2f32
 
-- name: Delete all routes again to add a third restore job
-  cisco.nd.nd_cluster_config_route:
-    output_level: debug
-    destination_ip: "{{ item }}"
-    state: absent
-  loop: "{{ query_all_routes.current | map(attribute='spec.destination') | list }}"
+    - name: Restore ND local backup from the ND backup list (check_mode)
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: localbackup
+        encryption_key: testtest1
+        state: restore
+      check_mode: true
+      register: cm_restore_local_backup
 
-- name: Import the backup file with the name nexus to have multiple restore jobs with the same name
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus
-    encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
-    state: restore
-  register: restore_nexus_again
+    - name: Restore ND local backup from the ND backup list
+      cisco.nd.nd_backup_restore:
+        <<: *nd_info
+        output_level: debug
+        name: localbackup
+        encryption_key: testtest1
+        state: restore
+      register: restore_local_backup
 
-- name: Query all routes after third import
-  cisco.nd.nd_cluster_config_route:
-    output_level: debug
-    state: query
-  register: query_all_routes_after_third_import
+    - name: Query ND local backup restore status
+      cisco.nd.nd_backup_restore:
+        <<: *nd_info
+        state: query
+      register: query_local_backup_restore_status
+      until:
+        - query_local_backup_restore_status.current is defined
+        - query_local_backup_restore_status.current != {}
+        - query_local_backup_restore_status.current.state == "completed"
+      retries: 200
+      delay: 20
 
-- name: Query a restore job
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus2
-    state: query
-  register: query_nexus2
+    - name: Query Data Route after ND local backup restore
+      cisco.nd.nd_rest:
+        method: get
+        path: /api/config/class/routes/
+      register: query_all_routes
 
-- name: Query all restore jobs
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    state: query
-  register: query_all
+    - name: Assertion check for ND local backup restore
+      ansible.builtin.assert:
+        that:
+          - cm_restore_local_backup is changed
+          - cm_restore_local_backup.current.fileUploadPayload.fileLocation is none
+          - cm_restore_local_backup.current.importPayload.name == "localbackup"
+          - cm_restore_local_backup.current.restorePayload.ignorePersistentIPs == false
+          - cm_restore_local_backup.current.restorePayload.type == "configOnly"
+          - restore_local_backup is changed
+          - restore_local_backup.current != {}
+          - restore_local_backup.current.type == "configOnly"
+          - restore_local_backup.current.state == "processing"
+          - restore_local_backup.current.operation == "restore"
+          - restore_local_backup.current.restoreConfiguration.path == "localbackup.tar.gz"
+          - restore_local_backup.current.restoreConfiguration.source == ""
+          - restore_local_backup.current.restoreConfiguration.type == "configOnly"
+          - query_all_routes is not changed
+          - query_all_routes.current | length == 1
+          - query_all_routes.current.0.target == "Data"
+          - query_all_routes.current.0.destination == "12.23.45.68/32"
+          - nt_name_and_file_location is failed
+          - nt_name_and_file_location.msg == "The parameters name and (remote_location or file_location) cannot be specified at the same time."
+          - nt_restore is failed
+          - nt_restore.msg is match ("The restore operation could not proceed because a system backup is in progress (.+% complete).")
 
-- name: Delete a restore job in check mode
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus2
-    state: absent
-  check_mode: true
-  register: delete_nexus2_cm
+    - name: Delete all Data Routes
+      cisco.nd.nd_rest:
+        method: delete
+        ignore_previous_state: true
+        path: "/api/config/routes/{{ item.destination }}"
+      loop: "{{ query_all_routes.current | list }}"
 
-- name: Delete a restore job
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus2
-    state: absent
-  register: delete_nexus2
+    - name: Query all backups
+      cisco.nd.nd_backup:
+        output_level: debug
+        state: query
+      register: query_all_backups
 
-- name: Delete a restore job again
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus2
-    state: absent
-  register: delete_nexus2_again
+    - name: Delete all backups
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: "{{ item.name }}"
+        state: absent
+      loop: "{{ query_all_backups.current | list }}"
+      delay: 5
 
-# Failure Scenarios
-- name: Try querying restore nexus
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus
-    state: query
-  ignore_errors: true
-  register: query_duplicate_nexus
+    # Remote backup restore test
+    - name: Add Data Route before ND remote backup
+      cisco.nd.nd_rest:
+        output_level: debug
+        path: /api/config/routes/
+        method: post
+        content: "{{ item }}"
+      loop:
+        - target: Data
+          destination: 12.23.45.68/32
+        - target: Data
+          destination: 12.23.45.69/32
 
-- name: Try deleting restore nexus
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus
-    state: absent
-  ignore_errors: true
-  register: delete_duplicate_nexus
+    - name: Create ND remote backup
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: remotebackup
+        encryption_key: testtest1
+        remote_location: test
+        state: backup
 
-- name: Delete restore with the wrong restore key
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus
-    restore_key: 0
-    state: absent
-  ignore_errors: true
-  register: delete_wrong_key_nexus
+    - name: Query ND remote backup status
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: remotebackup
+        state: query
+      register: query_remote_backup_status
+      until:
+        - query_remote_backup_status.current is defined
+        - query_remote_backup_status.current != {}
+        - query_remote_backup_status.current.status == "completed"
+      retries: 80
+      delay: 20
 
-- name: Import backup with password having a length < 8 characters
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus
-    encryption_key: test
-    file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
-    state: restore
-  ignore_errors: true
-  register: import_nexus_incorrect_pwd_length
+    - name: Delete Data Route after ND remote backup
+      cisco.nd.nd_rest:
+        output_level: debug
+        ignore_previous_state: true
+        method: delete
+        path: "{{ item }}"
+      loop:
+        - /api/config/routes/12.23.45.68%2f32
+        - /api/config/routes/12.23.45.69%2f32
 
-- name: Import backup to ND which already has the routes configured
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus
-    encryption_key: testtest
-    file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
-    state: restore
-  ignore_errors: true
-  register: import_nexus_existing
+    - name: Restore ND remote backup from the remote storage location (check_mode)
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        remote_location: test # Remote storage location name
+        encryption_key: testtest1
+        file_location: "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
+        state: restore
+      check_mode: true
+      register: cm_restore_remote_backup
 
-- name: Gather and sort the list of specs
-  ansible.builtin.set_fact:
-    query_all_routes_original: "{{ query_all_routes.current | map(attribute='spec') | list | sort(attribute='destination') }}"
-    query_all_routes_restored1: "{{ query_all_routes_again.current | map(attribute='spec') | list | sort(attribute='destination') }}"
-    query_all_routes_restored2: "{{ query_all_routes_after_second_import.current | map(attribute='spec') | list | sort(attribute='destination') }}"
-    query_all_routes_restored3: "{{ query_all_routes_after_third_import.current | map(attribute='spec') | list | sort(attribute='destination') }}"
+    - name: Restore ND remote backup from the remote storage location
+      cisco.nd.nd_backup_restore:
+        <<: *nd_info
+        output_level: debug
+        remote_location: test # Remote storage location name
+        encryption_key: testtest1
+        file_location: "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
+        state: restore
+      register: restore_remote_backup
 
-- name: Verify all assertions
-  ansible.builtin.assert:
-    that:
-    - restore_nexus_cm.changed is true
-    - restore_nexus.changed is true
-    - restore_nexus2.changed is true
-    - restore_nexus_again.changed is true
-    - query_all_routes_original == query_all_routes_restored1 == query_all_routes_restored2 == query_all_routes_restored3
-    - query_nexus2.changed is false
-    - query_nexus2.current.description == "nexus2"
-    - query_all.current | length >= 3
-    - delete_nexus2.changed is true
-    - delete_nexus2_cm.changed is true
-    - delete_nexus2_again.changed is false
-    - delete_nexus2.current == delete_nexus2_cm.current == delete_nexus2_again.current == {}
-    - import_nexus_incorrect_pwd_length.msg == "The encryption key must have a minium of 8 characters."
-    - '"Import of configuration failed. System is already configured with routes/persistent-ip-pools/syslogs" in import_nexus_existing.raw'
-    - query_duplicate_nexus.msg == delete_duplicate_nexus.msg == "Multiple restore jobs with the name 'nexus' found. Please provide a restore key for the corresponding restored job."
-    - delete_wrong_key_nexus.msg == "Provided key for the restore 'nexus' not found. Please provide a valid restore key by querying all the restored jobs and looking up the desired restore key."
+    - name: Query ND remote backup restore status
+      cisco.nd.nd_backup_restore:
+        <<: *nd_info
+        state: query
+      register: query_remote_backup_restore_status
+      until:
+        - query_remote_backup_restore_status.current is defined
+        - query_remote_backup_restore_status.current != {}
+        - query_remote_backup_restore_status.current.state == "completed"
+      retries: 200
+      delay: 20
 
-- name: Query all restored jobs for deleting them
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    state: query
-  register: restores
+    - name: Query Data Route after ND remote backup restore
+      cisco.nd.nd_rest:
+        output_level: debug
+        method: get
+        path: /api/config/class/routes/
+      register: query_all_routes
 
-- name: Delete the other restored jobs to clean up the environment
-  cisco.nd.nd_backup_restore:
-    output_level: debug
-    name: nexus
-    restore_key: "{{ item }}"
-    state: absent
-  loop: "{{ restores.current | map(attribute='key') | list }}"
+    - name: Assertion check for ND remote backup restore
+      ansible.builtin.assert:
+        that:
+          - cm_restore_remote_backup is changed
+          - cm_restore_remote_backup.current.fileUploadPayload.fileLocation == "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
+          - cm_restore_remote_backup.current.importPayload.path == "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
+          - cm_restore_remote_backup.current.importPayload.source == "test"
+          - cm_restore_remote_backup.current.restorePayload.ignorePersistentIPs == false
+          - cm_restore_remote_backup.current.restorePayload.type == "configOnly"
+          - restore_remote_backup is changed
+          - restore_remote_backup.current != {}
+          - restore_remote_backup.current.type == "configOnly"
+          - restore_remote_backup.current.state == "processing"
+          - restore_remote_backup.current.operation == "restore"
+          - restore_remote_backup.current.restoreConfiguration.path == "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
+          - restore_remote_backup.current.restoreConfiguration.source == "test" # Remote storage location name
+          - restore_remote_backup.current.restoreConfiguration.type == "configOnly"
+          - query_all_routes is not changed
+          - query_all_routes.current | length == 2
+          - query_all_routes.current.0.target == "Data"
+          - query_all_routes.current.0.destination == "12.23.45.68/32"
+          - query_all_routes.current.1.target == "Data"
+          - query_all_routes.current.1.destination == "12.23.45.69/32"
 
-- name: Query all backups for deleting them
-  cisco.nd.nd_backup:
-    output_level: debug
-    state: query
-  register: backups
+    - name: Delete all Data Routes
+      cisco.nd.nd_rest:
+        output_level: debug
+        method: delete
+        ignore_previous_state: true
+        path: "/api/config/routes/{{ item.destination }}"
+      loop: "{{ query_all_routes.current | list }}"
 
-- name: Delete all backup jobs to clean up environment
-  cisco.nd.nd_backup:
-    output_level: debug
-    name: nexus
-    backup_key: "{{ item }}"
-    state: absent
-  loop: "{{ backups.current | map(attribute='key') | list }}"
+    - name: Query all backups
+      cisco.nd.nd_backup:
+        output_level: debug
+        state: query
+      register: query_all_backups
 
-- name: Delete the route created in the beginning of this test
-  cisco.nd.nd_cluster_config_route:
-    output_level: debug
-    destination_ip: 12.23.45.68/32
-    state: absent
+    - name: Delete all backups
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: "{{ item.name }}"
+        state: absent
+      loop: "{{ query_all_backups.current | list }}"
+      delay: 5
+
+    # Local backup and download restore test
+    - name: Add Data Route before ND local backup download
+      cisco.nd.nd_rest:
+        output_level: debug
+        path: /api/config/routes/
+        method: post
+        content: "{{ item }}"
+      loop:
+        - target: Data
+          destination: 12.23.45.68/32
+        - target: Data
+          destination: 12.23.45.69/32
+        - target: Data
+          destination: 12.23.45.70/32
+
+    - name: Create ND local backup
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: localbackupbownload
+        encryption_key: testtest1
+        state: backup
+
+    - name: Query ND local backup status
+      cisco.nd.nd_backup:
+        <<: *nd_info
+        name: localbackupbownload
+        state: query
+      register: query_local_backup_status
+      until:
+        - query_local_backup_status.current is defined
+        - query_local_backup_status.current != {}
+        - query_local_backup_status.current.status == "completed"
+      retries: 80
+      delay: 20
+
+    - name: Download ND local backup file
+      cisco.nd.nd_backup:
+        name: localbackupbownload
+        file_location: "{{ role_path }}/backups/localbackupbownload.tar.gz"
+        state: download
+
+    - name: Delete Data Route after ND local and download
+      cisco.nd.nd_rest:
+        output_level: debug
+        method: delete
+        ignore_previous_state: true
+        path: "{{ item }}"
+      loop:
+        - /api/config/routes/12.23.45.68%2f32
+        - /api/config/routes/12.23.45.69%2f32
+        - /api/config/routes/12.23.45.70%2f32
+
+    - name: Restore ND local downloaded backup from the local machine (check_mode)
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        encryption_key: testtest1
+        file_location: "{{ role_path }}/backups/localbackupbownload.tar.gz"
+        state: restore
+      check_mode: true
+      register: cm_restore_downloaded_local_backup
+
+    - name: Restore ND local downloaded backup from the local machine
+      cisco.nd.nd_backup_restore:
+        <<: *nd_info
+        output_level: debug
+        encryption_key: testtest1
+        file_location: "{{ role_path }}/backups/localbackupbownload.tar.gz"
+        state: restore
+      register: restore_downloaded_local_backup
+
+    - name: Query ND downloaded local backup restore status
+      cisco.nd.nd_backup_restore:
+        <<: *nd_info
+        state: query
+      register: query_downloaded_backup_restore_status
+      until:
+        - query_downloaded_backup_restore_status.current is defined
+        - query_downloaded_backup_restore_status.current != {}
+        - query_downloaded_backup_restore_status.current.state == "completed"
+      retries: 200
+      delay: 20
+
+    - name: Query Data Route after ND downloaded local backup file restore # ND4.1 routes API is not published officially
+      cisco.nd.nd_rest:
+        output_level: debug
+        method: get
+        path: /api/config/class/routes/
+      register: query_all_routes
+
+    - name: Assertion check for ND remote backup restore
+      ansible.builtin.assert:
+        that:
+          - cm_restore_downloaded_local_backup is changed
+          - cm_restore_downloaded_local_backup.current.fileUploadPayload.fileLocation is match (".+/localbackupbownload.tar.gz")
+          - cm_restore_downloaded_local_backup.current.importPayload.name is not defined
+          - cm_restore_downloaded_local_backup.current.importPayload.source is not defined
+          - cm_restore_downloaded_local_backup.current.importPayload.path is not defined
+          - cm_restore_downloaded_local_backup.current.restorePayload.ignorePersistentIPs == false
+          - cm_restore_downloaded_local_backup.current.restorePayload.type == "configOnly"
+          - restore_downloaded_local_backup is changed
+          - restore_downloaded_local_backup.current != {}
+          - restore_downloaded_local_backup.current.type == "configOnly"
+          - restore_downloaded_local_backup.current.state == "processing"
+          - restore_downloaded_local_backup.current.operation == "restore"
+          - restore_downloaded_local_backup.current.restoreConfiguration.path is defined
+          - restore_downloaded_local_backup.current.restoreConfiguration.source == ""
+          - restore_downloaded_local_backup.current.restoreConfiguration.type == "configOnly"
+          - query_all_routes is not changed
+          - query_all_routes.current | length == 3
+          - query_all_routes.current.0.target == "Data"
+          - query_all_routes.current.0.destination == "12.23.45.68/32"
+          - query_all_routes.current.1.target == "Data"
+          - query_all_routes.current.1.destination == "12.23.45.69/32"
+          - query_all_routes.current.2.target == "Data"
+          - query_all_routes.current.2.destination == "12.23.45.70/32"
+
+    - name: Delete all Data Routes
+      cisco.nd.nd_rest:
+        output_level: debug
+        method: delete
+        ignore_previous_state: true
+        path: "/api/config/routes/{{ item.destination }}"
+      loop: "{{ query_all_routes.current | list }}"
+
+    - name: Delete imported backup file (check_mode)
+      cisco.nd.nd_backup_restore:
+        <<: *nd_info
+        state: absent
+      check_mode: true
+      register: cm_rm_imported_backup
+
+    - name: Delete imported backup file
+      cisco.nd.nd_backup_restore:
+        <<: *nd_info
+        state: absent
+      check_mode: true
+      register: rm_imported_backup
+
+    - name: Query all backups
+      cisco.nd.nd_backup:
+        output_level: debug
+        state: query
+      register: query_all_backups
+
+    - name: Delete all backups
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: "{{ item.name }}"
+        state: absent
+      loop: "{{ query_all_backups.current | list }}"
+      delay: 5
+
+- name: Execute tasks only for ND version < 3.2.1
+  when: version.current.platformVersion is version('3.2.1', '<')
+  block:
+    - name: Create a route to have some config in the route cluster configuration
+      cisco.nd.nd_cluster_config_route:
+        output_level: debug
+        destination_ip: 12.23.45.68/32
+        target_network: data
+        state: present
+
+    - name: Create a backup nexus
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        encryption_key: testtest
+        file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
+        state: backup
+
+    - name: Query all routes
+      cisco.nd.nd_cluster_config_route:
+        output_level: debug
+        state: query
+      register: query_all_routes
+
+    - name: Delete all routes to change the route configuration
+      cisco.nd.nd_cluster_config_route:
+        output_level: debug
+        destination_ip: "{{ item }}"
+        state: absent
+      loop: "{{ query_all_routes.current | map(attribute='spec.destination') | list }}"
+
+    - name: Import the backup file nexus with restore job's name called nexus in check mode
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus
+        encryption_key: testtest
+        file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
+        state: restore
+      check_mode: true
+      register: restore_nexus_cm
+
+    - name: Import the backup file nexus with restore job's name called nexus
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus
+        encryption_key: testtest
+        file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
+        state: restore
+      register: restore_nexus
+
+    - name: Query all routes again
+      cisco.nd.nd_cluster_config_route:
+        output_level: debug
+        state: query
+      register: query_all_routes_again
+
+    - name: Delete all routes again to add another restore job
+      cisco.nd.nd_cluster_config_route:
+        output_level: debug
+        destination_ip: "{{ item }}"
+        state: absent
+      loop: "{{ query_all_routes.current | map(attribute='spec.destination') | list }}"
+
+    - name: Import the backup file nexus again with a different restore name nexus2
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus2
+        encryption_key: testtest
+        file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
+        state: restore
+      register: restore_nexus2
+
+    - name: Query all routes after second import
+      cisco.nd.nd_cluster_config_route:
+        output_level: debug
+        state: query
+      register: query_all_routes_after_second_import
+
+    - name: Delete all routes again to add a third restore job
+      cisco.nd.nd_cluster_config_route:
+        output_level: debug
+        destination_ip: "{{ item }}"
+        state: absent
+      loop: "{{ query_all_routes.current | map(attribute='spec.destination') | list }}"
+
+    - name: Import the backup file with the name nexus to have multiple restore jobs with the same name
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus
+        encryption_key: testtest
+        file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
+        state: restore
+      register: restore_nexus_again
+
+    - name: Query all routes after third import
+      cisco.nd.nd_cluster_config_route:
+        output_level: debug
+        state: query
+      register: query_all_routes_after_third_import
+
+    - name: Query a restore job
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus2
+        state: query
+      register: query_nexus2
+
+    - name: Query all restore jobs
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        state: query
+      register: query_all
+
+    - name: Delete a restore job in check mode
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus2
+        state: absent
+      check_mode: true
+      register: delete_nexus2_cm
+
+    - name: Delete a restore job
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus2
+        state: absent
+      register: delete_nexus2
+
+    - name: Delete a restore job again
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus2
+        state: absent
+      register: delete_nexus2_again
+
+    # Failure Scenarios
+    - name: Try querying restore nexus
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus
+        state: query
+      ignore_errors: true
+      register: query_duplicate_nexus
+
+    - name: Try deleting restore nexus
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus
+        state: absent
+      ignore_errors: true
+      register: delete_duplicate_nexus
+
+    - name: Delete restore with the wrong restore key
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus
+        restore_key: 0
+        state: absent
+      ignore_errors: true
+      register: delete_wrong_key_nexus
+
+    - name: Import backup with password having a length < 8 characters
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus
+        encryption_key: test
+        file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
+        state: restore
+      ignore_errors: true
+      register: import_nexus_incorrect_pwd_length
+
+    - name: Import backup to ND which already has the routes configured
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus
+        encryption_key: testtest
+        file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
+        state: restore
+      ignore_errors: true
+      register: import_nexus_existing
+
+    - name: Gather and sort the list of specs
+      ansible.builtin.set_fact:
+        query_all_routes_original: "{{ query_all_routes.current | map(attribute='spec') | list | sort(attribute='destination') }}"
+        query_all_routes_restored1: "{{ query_all_routes_again.current | map(attribute='spec') | list | sort(attribute='destination') }}"
+        query_all_routes_restored2: "{{ query_all_routes_after_second_import.current | map(attribute='spec') | list | sort(attribute='destination') }}"
+        query_all_routes_restored3: "{{ query_all_routes_after_third_import.current | map(attribute='spec') | list | sort(attribute='destination') }}"
+
+    - name: Verify all assertions
+      ansible.builtin.assert:
+        that:
+          - restore_nexus_cm.changed is true
+          - restore_nexus.changed is true
+          - restore_nexus2.changed is true
+          - restore_nexus_again.changed is true
+          - query_all_routes_original == query_all_routes_restored1 == query_all_routes_restored2 == query_all_routes_restored3
+          - query_nexus2.changed is false
+          - query_nexus2.current.description == "nexus2"
+          - query_all.current | length >= 3
+          - delete_nexus2.changed is true
+          - delete_nexus2_cm.changed is true
+          - delete_nexus2_again.changed is false
+          - delete_nexus2.current == delete_nexus2_cm.current == delete_nexus2_again.current == {}
+          - import_nexus_incorrect_pwd_length.msg == "The encryption key must have a minium of 8 characters."
+          - query_duplicate_nexus.msg == delete_duplicate_nexus.msg == "Multiple restore jobs with the name 'nexus' found. Please provide a restore key for the corresponding restored job."
+          - delete_wrong_key_nexus.msg == "Provided key for the restore 'nexus' not found. Please provide a valid restore key by querying all the restored jobs and looking up the desired restore key."
+
+    - name: Query all restored jobs for deleting them
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        state: query
+      register: restores
+
+    - name: Delete the other restored jobs to clean up the environment
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        name: nexus
+        restore_key: "{{ item }}"
+        state: absent
+      loop: "{{ restores.current | map(attribute='key') | list }}"
+
+    - name: Query all backups for deleting them
+      cisco.nd.nd_backup:
+        output_level: debug
+        state: query
+      register: backups
+
+    - name: Delete all backup jobs to clean up environment
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        backup_key: "{{ item }}"
+        state: absent
+      loop: "{{ backups.current | map(attribute='key') | list }}"
+
+    - name: Delete the route created in the beginning of this test
+      cisco.nd.nd_cluster_config_route:
+        output_level: debug
+        destination_ip: 12.23.45.68/32
+        state: absent

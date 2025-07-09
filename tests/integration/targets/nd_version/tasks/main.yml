@@ -14,38 +14,41 @@
 - name: Verify cm_query_version
   ansible.builtin.assert:
     that:
-    - cm_query_version is not changed
-    - cm_query_version.current.major is defined
-    - cm_query_version.current.minor is defined
-    - cm_query_version.current.maintenance is defined
-    - cm_query_version.current.patch is defined
-    - cm_query_version.current.commit_id is defined
-    - cm_query_version.current.product_name == "Nexus Dashboard"
+      - cm_query_version is not changed
+      - cm_query_version.current.major is defined
+      - cm_query_version.current.minor is defined
+      - cm_query_version.current.maintenance is defined
+      - cm_query_version.current.patch is defined
+      - cm_query_version.current.commit_id is defined
+      - cm_query_version.current.product_name == "Nexus Dashboard"
+      - cm_query_version.current.platformVersion is defined
 
 - name: Query ND version (normal mode)
   cisco.nd.nd_version:
     <<: *nd_query
   register: nm_query_version
   # environment:
-      #   http_proxy: http://localhost:8080
-      #   https_proxy: http://localhost:8080
+  #   http_proxy: http://localhost:8080
+  #   https_proxy: http://localhost:8080
 
 - name: Verify nm_query_version
   ansible.builtin.assert:
     that:
-    - nm_query_version is not changed
-    - nm_query_version.current.major is defined
-    - nm_query_version.current.minor is defined
-    - nm_query_version.current.maintenance is defined
-    - nm_query_version.current.patch is defined
-    - nm_query_version.current.commit_id is defined
-    - nm_query_version.current.product_name == "Nexus Dashboard"
-    - nm_query_version.current.major == cm_query_version.current.major
-    - nm_query_version.current.minor == cm_query_version.current.minor
-    - nm_query_version.current.maintenance == cm_query_version.current.maintenance
-    - nm_query_version.current.patch == cm_query_version.current.patch
-    - nm_query_version.current.commit_id == cm_query_version.current.commit_id
-    - nm_query_version.current.product_name == cm_query_version.current.product_name
+      - nm_query_version is not changed
+      - nm_query_version.current.major is defined
+      - nm_query_version.current.minor is defined
+      - nm_query_version.current.maintenance is defined
+      - nm_query_version.current.patch is defined
+      - nm_query_version.current.commit_id is defined
+      - nm_query_version.current.platformVersion is defined
+      - nm_query_version.current.product_name == "Nexus Dashboard"
+      - nm_query_version.current.major == cm_query_version.current.major
+      - nm_query_version.current.minor == cm_query_version.current.minor
+      - nm_query_version.current.maintenance == cm_query_version.current.maintenance
+      - nm_query_version.current.patch == cm_query_version.current.patch
+      - nm_query_version.current.commit_id == cm_query_version.current.commit_id
+      - nm_query_version.current.product_name == cm_query_version.current.product_name
+      - nm_query_version.current.platformVersion == cm_query_version.current.platformVersion
 
 # USE A NON-EXISTING STATE
 - name: Non-existing state for version (check_mode)
@@ -66,10 +69,10 @@
 - name: Verify non_existing_state
   ansible.builtin.assert:
     that:
-    - cm_non_existing_state is not changed
-    - nm_non_existing_state is not changed
-    - cm_non_existing_state == nm_non_existing_state
-    - cm_non_existing_state.msg == nm_non_existing_state.msg == "value of state must be one of{{':'}} query, got{{':'}} non-existing-state"
+      - cm_non_existing_state is not changed
+      - nm_non_existing_state is not changed
+      - cm_non_existing_state == nm_non_existing_state
+      - cm_non_existing_state.msg == nm_non_existing_state.msg == "value of state must be one of{{':'}} query, got{{':'}} non-existing-state"
 
 - name: Query ND version by global parameters (check_mode)
   cisco.nd.nd_version:
@@ -91,6 +94,7 @@
       - nm_query_global_params.current.maintenance is defined
       - nm_query_global_params.current.patch is defined
       - nm_query_global_params.current.commit_id is defined
+      - nm_query_global_params.current.platformVersion is defined
       - nm_query_global_params.current.product_name == "Nexus Dashboard"
       - nm_query_global_params.current.major == cm_query_global_params.current.major
       - nm_query_global_params.current.minor == cm_query_global_params.current.minor
@@ -98,3 +102,4 @@
       - nm_query_global_params.current.patch == cm_query_global_params.current.patch
       - nm_query_global_params.current.commit_id == cm_query_global_params.current.commit_id
       - nm_query_global_params.current.product_name == cm_query_global_params.current.product_name
+      - nm_query_global_params.current.platformVersion == cm_query_global_params.current.platformVersion
