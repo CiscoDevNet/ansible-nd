@@ -130,7 +130,6 @@ def main():
     state = nd.params.get("state")
 
     path = "/api/v1/infra/aaa/apiKeys"
-    nd.stdout = ""
     if api_key_id:
         nd.existing = nd.previous = deepcopy(nd.query_obj("{0}/{1}".format(path, api_key_id)))
     elif api_key_name:
