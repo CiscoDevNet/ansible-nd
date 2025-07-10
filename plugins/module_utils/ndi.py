@@ -272,9 +272,16 @@ class NDI:
         return result
 
     def query_pcvs(self, ig_name):
-        pcvs_path = "{0}/{1}/prechangeAnalysis?$sort=-analysisSubmissionTime".format(self.config_ig_path, ig_name)
-        obj = self.nd.query_obj(pcvs_path, prefix=self.prefix)
-        return obj["value"]["data"]
+        page = 0
+        pcvs_data = []
+        has_more_data = True
+        while has_more_data:
+            pcvs_path = "{0}/{1}/prechangeAnalysis?$size=50&$page={2}&$sort=-analysisSubmissionTime".format(self.config_ig_path, ig_name, page)
+            obj = self.nd.query_obj(pcvs_path, prefix=self.prefix)
+            has_more_data = obj.get("value", {}).get("dataSummary", {}).get("hasMoreData", False)
+            pcvs_data = pcvs_data + obj.get("value", {}).get("data", [])
+            page = page + 1
+        return pcvs_data
 
     def query_pcv(self, ig_name, site_name, pcv_name):
         pcv_results = self.query_pcvs(ig_name)
