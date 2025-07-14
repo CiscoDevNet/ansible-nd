@@ -158,13 +158,9 @@ def main():
                     nd.request(update_path, method="PUT", data=payload)
                     nd.existing = nd.query_obj(update_path)
             else:
-                resp = nd.request(path, method="POST", data=payload)
-                nd.existing = resp
+                nd.existing = nd.request(path, method="POST", data=payload)
         else:
             nd.existing = nd.proposed
-
-        if nd.existing != nd.previous:
-            nd.changed = True
 
     elif state == "absent":
         if nd.existing:
@@ -172,7 +168,6 @@ def main():
                 nd.request("{0}/{1}".format(path, nd.existing["id"]), method="DELETE")
 
             nd.existing = {}
-            nd.changed = True
 
     nd.exit_json()
 
