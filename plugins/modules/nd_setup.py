@@ -41,6 +41,7 @@ options:
     - This option is only applicable for ND version 4.1.0 and later.
     type: str
     choices: [ cisco, ibm ]
+    aliases: [ persona_vendor ]
   dns_server:
     description:
     - The IP address of the DNS server.
@@ -466,7 +467,7 @@ def main():
             ),
         ),
         persona=dict(type="str", choices=["lan", "san"], aliases=["nd_implementation_type", "implementation_type"]),
-        san_vendor=dict(type="str", choices=["cisco", "ibm"]),
+        san_vendor=dict(type="str", choices=["cisco", "ibm"], aliases=["persona_vendor"]),
         state=dict(type="str", default="present", choices=["present", "query"]),
     )
 
