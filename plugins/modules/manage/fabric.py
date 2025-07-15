@@ -198,8 +198,23 @@ class Merged():
         self.common = Common(playbook)
         self.common.have = have_state
 
-        self.verb = "POST"
-        self.path = "/api/v1/manage/fabrics"
+        self.verb = ""
+        self.path = ""
+
+        self.build_payload()
+
+        msg = "ENTERED Merged(): "
+        msg += f"state: {self.common.state}, "
+        # msg += f"check_mode: {self.check_mode}"
+        self.log.debug(msg)
+
+    def build_payload(self):
+
+        self.class_name = self.__class__.__name__
+        method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
+
+        msg = f"ENTERED: {self.class_name}.{method_name}"
+        self.log.debug(msg)
 
         for fabric in self.common.want:
             want_fabric = fabric
@@ -225,17 +240,17 @@ class Merged():
             # have_fabric = next((h for h in self.common.have if h.name == fabric.name), None)
             self.common.payloads[want_fabric.name] = {'verb': self.verb, 'path': self.path, 'payload': payload}
 
-
-        msg = "ENTERED Merged(): "
-        msg += f"state: {self.common.state}, "
-        # msg += f"check_mode: {self.check_mode}"
-        self.log.debug(msg)
-
     def _parse_path(self, path):
         """
         Helper function to parse paths from DeepDiff.
         Handles both dot notation and bracket notation.
         """
+
+        self.class_name = self.__class__.__name__
+        method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
+
+        msg = f"ENTERED: {self.class_name}.{method_name}"
+        self.log.debug(msg)
         # Handle paths like "root.key1.key2"
         if '.' in path and "[" not in path:
             parts = path.split('.')
@@ -246,6 +261,63 @@ class Merged():
         # Handle paths like "root['key1']['key2']"
         parts = re.findall(r"'([^']*)'", path)
         return parts
+
+    def _process_values_changed(self, diff, updated_payload):
+
+        self.class_name = self.__class__.__name__
+        method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
+
+        msg = f"ENTERED: {self.class_name}.{method_name}"
+        self.log.debug(msg)
+
+        if 'values_changed' not in diff:
+            return
+
+        # Log the values changed for debugging
+        self.log.debug(f"Values changed: {diff['values_changed']}")
+
+        for path, change in diff['values_changed'].items():
+            parts = self._parse_path(path)
+
+            # Navigate to the correct nested dictionary
+            current = updated_payload
+            for part in parts[:-1]:
+                current = current[part]
+
+            # Update the value
+            current[parts[-1]] = change['new_value']
+
+    def _process_dict_items_added(self, diff, updated_payload, want_dict):
+
+        self.class_name = self.__class__.__name__
+        method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
+
+        msg = f"ENTERED: {self.class_name}.{method_name}"
+        self.log.debug(msg)
+
+        if 'dictionary_item_added' not in diff:
+            return
+
+        # Log the dictionary items added for debugging
+        self.log.debug(f"Dictionary items added: {diff['dictionary_item_added']}")
+
+        for path in diff['dictionary_item_added']:
+            parts = self._parse_path(path)
+
+            # Navigate to the correct nested dictionary
+            current = updated_payload
+            for i, part in enumerate(parts[:-1]):
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+
+            # Get the value from want
+            value = want_dict
+            for part in parts:
+                value = value[part]
+
+            # Add the new item
+            current[parts[-1]] = value
 
     def update_payload_merged(self, have, want):
         """
@@ -272,44 +344,9 @@ class Merged():
         # Get want as dictionary for reference
         want_dict = want.model_dump()
 
-        # Update changed values
-        if 'values_changed' in diff:
-            # Log the values changed for debugging
-            self.log.debug(f"Values changed: {diff['values_changed']}")
-
-            for path, change in diff['values_changed'].items():
-                parts = self._parse_path(path)
-
-                # Navigate to the correct nested dictionary
-                current = updated_payload
-                for part in parts[:-1]:
-                    current = current[part]
-
-                # Update the value
-                current[parts[-1]] = change['new_value']
-
-        # Add new dictionary items
-        if 'dictionary_item_added' in diff:
-            # Log the dictionary items added for debugging
-            self.log.debug(f"Dictionary items added: {diff['dictionary_item_added']}")
-
-            for path in diff['dictionary_item_added']:
-                parts = self._parse_path(path)
-
-                # Navigate to the correct nested dictionary
-                current = updated_payload
-                for i, part in enumerate(parts[:-1]):
-                    if part not in current:
-                        current[part] = {}
-                    current = current[part]
-
-                # Get the value from want
-                value = want_dict
-                for part in parts:
-                    value = value[part]
-
-                # Add the new item
-                current[parts[-1]] = value
+        # Update changed values and add any new items
+        self._process_values_changed(diff, updated_payload)
+        self._process_dict_items_added(diff, updated_payload, want_dict)
 
         return updated_payload
 
@@ -357,6 +394,24 @@ class Deleted():
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
 
+class Overridden():
+    """
+    Common methods, properties, and resources for all states.
+    """
+
+    def __init__(self, playbook, have_state):
+        self.class_name = self.__class__.__name__
+        self.log = logging.getLogger(f"nd.{self.class_name}")
+
+        self.common = Common(playbook)
+        self.common.have = have_state
+
+
+        msg = "ENTERED Overridden(): "
+        msg += f"state: {self.common.state}, "
+        # msg += f"check_mode: {self.check_mode}"
+        self.log.debug(msg)
+
 class Query():
     """
     Common methods, properties, and resources for all states.
@@ -377,7 +432,7 @@ class Query():
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        state=dict(type="str", default="merged", choices=["merged", "replaced", "deleted"]),
+        state=dict(type="str", default="merged", choices=["merged", "replaced", "deleted", "overridden", "query"]),
         config=dict(required=False, type="list", elements="dict"),
     )
 
@@ -394,6 +449,10 @@ def main():
     except ValueError as error:
         module.fail_json(str(error))
 
+    mainlog.info("---------------------------------------------")
+    mainlog.info("Starting cisco.nd.manage.fabric module")
+    mainlog.info("---------------------------------------------\n")
+
     nd = NDModule(module)
     playbook = nd.params
     fabrics = GetHave(nd)
@@ -408,6 +467,8 @@ def main():
             task = Replaced(playbook, fabrics.have)
         elif playbook.get("state") == "deleted":
             task = Deleted(playbook, fabrics.have)
+        elif playbook.get("state") == "overridden":
+            task = Overridden(playbook, fabrics.have)
         elif playbook.get("state") == "query":
             task = Query(playbook, fabrics.have)
         if task is None:
