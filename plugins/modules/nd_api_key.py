@@ -38,7 +38,6 @@ options:
     - The annotations attached to the API key.
     - Annotations are optional key-value pairs used to add custom metadata to the API key.
     type: dict
-    default: {}
   state:
     description:
     - The desired state of the API key.
@@ -109,7 +108,7 @@ def main():
     argument_spec.update(
         api_key_id=dict(type="str"),
         api_key_name=dict(type="str", aliases=["description"]),
-        annotations=dict(type="dict", default={}),
+        annotations=dict(type="dict"),
         state=dict(type="str", default="present", choices=["present", "absent", "query"]),
     )
 
@@ -128,6 +127,9 @@ def main():
     api_key_name = nd.params.get("api_key_name")
     annotations = nd.params.get("annotations")
     state = nd.params.get("state")
+
+    if annotations is None:
+        annotations = {}
 
     path = "/api/v1/infra/aaa/apiKeys"
     if api_key_id:
