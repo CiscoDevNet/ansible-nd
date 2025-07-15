@@ -14,10 +14,43 @@ from ...module_utils.common.log import Log
 
 class GetHave():
     """
-    Object To Get Fabric State From ND
+    Class to retrieve and process fabric state information from Nexus Dashboard.
+
+    This class handles the retrieval of fabric state information from the Nexus Dashboard
+    API and processes the response into a list of FabricModel objects.
+
+    Attributes:
+        class_name (str): Name of the class.
+        log (Logger): Logger instance for this class.
+        path (str): API endpoint path for fabric information.
+        verb (str): HTTP method used for the request (GET).
+        fabric_state (dict): Raw fabric state data retrieved from ND.
+        have (list): List of processed FabricModel objects.
+        nd: Nexus Dashboard instance for making API requests.
+
+    Methods:
+        refresh(): Fetches the current fabric state from Nexus Dashboard.
+        validate_nd_state(): Processes the fabric state data into FabricModel objects.
     """
 
     def __init__(self, nd):
+        """Initialize GetHave class for fabric management.
+
+        This constructor sets up the necessary attributes to interact with the
+        Cisco Nexus Dashboard API for retrieving fabric information.
+
+        Args:
+            nd: Nexus Dashboard client instance used for API communication.
+
+        Attributes:
+            class_name (str): Name of the current class.
+            log: Logger instance for this class.
+            path (str): API endpoint path for fabrics.
+            verb (str): HTTP method to use (GET).
+            fabric_state (dict): Dictionary to store fabric state information.
+            have (list): List to store retrieved fabric data.
+            nd: Reference to the Nexus Dashboard client instance.
+        """
         self.class_name = self.__class__.__name__
         self.log = logging.getLogger(f"nd.{self.class_name}")
 
@@ -31,6 +64,15 @@ class GetHave():
         self.log.debug(msg)
 
     def refresh(self):
+        """
+        Refreshes the fabric state by fetching the latest data from the ND API.
+
+        This method updates the internal fabric_state attribute with fresh data
+        retrieved from the network controller using the configured path and HTTP verb.
+
+        Returns:
+            None: Updates the self.fabric_state attribute directly.
+        """
         self.class_name = self.__class__.__name__
         method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
 
@@ -40,6 +82,23 @@ class GetHave():
         self.fabric_state = self.nd.request(self.path, method=self.verb)
 
     def validate_nd_state(self):
+        """
+        Validates the Nexus Dashboard (ND) state by extracting fabric information.
+
+        This method processes the current fabric state data stored in self.fabric_state,
+        extracts relevant attributes for each fabric, and converts them into FabricModel
+        objects that are appended to the self.have list.
+
+        The method logs its entry point for debugging purposes and creates a standardized
+        representation of each fabric with the following attributes:
+        - name
+        - category
+        - securityDomain
+        - management information (type, bgpAsn, anycastGatewayMac, replicationMode)
+
+        Returns:
+            None
+        """
         self.class_name = self.__class__.__name__
         method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
 
@@ -364,7 +423,6 @@ def main():
         module.exit_json(**task.common.result)
 
 
-    # import epdb ; epdb.serve(port=5555)
     # Process all the payloads from task.common.payloads
     # Sample entry:
     #   {'fabric-ansible': {'verb': 'DELETE', 'path': '/api/v1/manage/fabrics/fabric-ansible', 'payload': ''}
