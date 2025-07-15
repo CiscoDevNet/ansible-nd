@@ -78,6 +78,12 @@ EXAMPLES = r"""
     state: query
   register: query_result
 
+- name: Query an existing API key by ID
+  cisco.nd.nd_api_key:
+    api_key_id: "{{ result.current.id }}"
+    state: query
+  register: query_result_by_id
+
 - name: Query all API keys
   cisco.nd.nd_api_key:
     state: query
@@ -85,7 +91,7 @@ EXAMPLES = r"""
 
 - name: Delete an API key by ID
   cisco.nd.nd_api_key:
-    api_key_id: "12345678-1234-1234-1234-1234567890ab"
+    api_key_id: "{{ result.current.id }}"
     state: absent
 
 - name: Delete an API key by name
