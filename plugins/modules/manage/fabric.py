@@ -144,9 +144,9 @@ class GetHave():
         validate_nd_state(): Processes the fabric state data into FabricModel objects.
     """
 
-    def __init__(self, nd):
+    def __init__(self, nd, logger=None):
         self.class_name = self.__class__.__name__
-        self.log = logging.getLogger(f"nd.{self.class_name}")
+        self.log = logger or logging.getLogger(f"nd.{self.class_name}")
 
         self.path = "/api/v1/manage/fabrics"
         self.verb = "GET"
@@ -244,9 +244,9 @@ class Common():
         _build_playbook_params_replaced(fabric): Builds configuration payload for 'replaced' state operation.
     """
 
-    def __init__(self, playbook, have_state):
+    def __init__(self, playbook, have_state, logger=None):
         self.class_name = self.__class__.__name__
-        self.log = logging.getLogger(f"nd.{self.class_name}")
+        self.log = logger or logging.getLogger(f"nd.{self.class_name}")
 
         self.result = dict(changed=False, diff=[], response=[], warnings=[])
         self.playbook_params = playbook
@@ -434,11 +434,11 @@ class Merged():
         _process_dict_items_added(diff, updated_payload, want_dict): Adds new items to the payload
     """
 
-    def __init__(self, playbook, have_state):
+    def __init__(self, playbook, have_state, logger=None, common_util=None):
         self.class_name = self.__class__.__name__
-        self.log = logging.getLogger(f"nd.{self.class_name}")
+        self.log = logger or logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = Common(playbook, have_state)
+        self.common = common_util or Common(playbook, have_state)
         self.common.have = have_state
 
         self.verb = ""
@@ -721,11 +721,11 @@ class Replaced():
         appropriate API payloads for creation or replacement
     """
 
-    def __init__(self, playbook, have_state):
+    def __init__(self, playbook, have_state, logger=None, common_util=None):
         self.class_name = self.__class__.__name__
-        self.log = logging.getLogger(f"nd.{self.class_name}")
+        self.log = logger or logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = Common(playbook, have_state)
+        self.common = common_util or Common(playbook, have_state)
         self.common.have = have_state
 
         self.verb = ""
@@ -820,11 +820,11 @@ class Deleted():
     the operation details in the common payloads dictionary.
     """
 
-    def __init__(self, playbook, have_state):
+    def __init__(self, playbook, have_state, logger=None, common_util=None):
         self.class_name = self.__class__.__name__
-        self.log = logging.getLogger(f"nd.{self.class_name}")
+        self.log = logger or logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = Common(playbook, have_state)
+        self.common = common_util or Common(playbook, have_state)
         self.common.have = have_state
         self.verb = "DELETE"
         self.path = "/api/v1/manage/fabrics/{fabric_name}"
@@ -845,32 +845,34 @@ class Overridden():
     """
     Handles the 'overridden' state for fabric management operations.
 
-    This class implements the overridden state behavior which:
-    1. Deletes fabrics that exist in the current state (have) but are not specified
-        in the desired state (want)
-    2. Creates or replaces fabrics that are specified in the desired state using
-        the Replaced class functionality
+    This class manages the overridden state by deleting fabrics that exist in the current
+    state but are not present in the desired state, and then creating or replacing fabrics
+    that are specified in the desired state.
 
-    The overridden state ensures that only the fabrics explicitly defined in the
-    playbook configuration will exist, removing any others that may be present.
+    The overridden operation is a combination of:
+    1. Deleting fabrics that exist in 'have' but not in 'want'
+    2. Creating or replacing fabrics specified in 'want'
 
     Args:
-         playbook: The Ansible playbook configuration containing the desired state
-         have_state: The current state of fabrics in the system
+        playbook: The Ansible playbook context containing configuration data
+        have_state: Current state of fabrics in the system
+        logger (optional): Logger instance for debugging. Defaults to None
+        common_util (optional): Common utility instance. Defaults to None
+        replaced_task (optional): Replaced task instance. Defaults to None
 
     Attributes:
-         class_name (str): Name of the current class for logging purposes
-         log (Logger): Logger instance for this class
-         common (Common): Common utility instance for shared operations
-         verb (str): HTTP verb used for delete operations ("DELETE")
-         path (str): API endpoint template for fabric deletion operations
-         delete_fabric_names (list): List of fabric names to be deleted
+        class_name (str): Name of the current class
+        log: Logger instance for debugging operations
+        common: Common utility instance for shared operations
+        verb (str): HTTP verb used for delete operations ('DELETE')
+        path (str): API endpoint template for fabric deletion
+        delete_fabric_names (list): List of fabric names to be deleted
     """
-    def __init__(self, playbook, have_state):
+    def __init__(self, playbook, have_state, logger=None, common_util=None, replaced_task=None):
         self.class_name = self.__class__.__name__
-        self.log = logging.getLogger(f"nd.{self.class_name}")
+        self.log = logger or logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = Common(playbook, have_state)
+        self.common = common_util or Common(playbook, have_state)
         self.common.have = have_state
         self.verb = "DELETE"
         self.path = "/api/v1/manage/fabrics/{fabric_name}"
@@ -915,11 +917,9 @@ class Query():
         This class is part of the Cisco ND Ansible collection for fabric management
         operations and follows the standard query pattern for state retrieval.
     """
-    def __init__(self, playbook, have_state):
+    def __init__(self, playbook, have_state, logger=None, common_util=None):
         self.class_name = self.__class__.__name__
-        self.log = logging.getLogger(f"nd.{self.class_name}")
-
-        self.common = Common(playbook, have_state)
+        self.log = logger or logging.getLogger(f"nd.{self.class_name}")
         self.have = have_state
 
         msg = "ENTERED Query(): "
