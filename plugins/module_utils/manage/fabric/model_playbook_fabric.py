@@ -5,7 +5,7 @@ __copyright__ = "Copyright (c) 2025 Cisco and/or its affiliates."
 __author__ = "Mike Wiebe"
 
 """
-Validation model for dcnm_vrf playbooks.
+Validation model for cisco.nd.manage.fabric playbooks.
 """
 from typing import Optional, Union
 
@@ -15,7 +15,35 @@ import re
 
 class FabricManagementType(Enum):
     """
-    Enumeration for Fabric Management Types.
+    Enumeration for Fabric Management Types used in Cisco Nexus Dashboard.
+
+    This enum defines the supported fabric management types that can be configured
+    when creating or managing network fabrics. Each type represents a different
+    networking topology and configuration approach.
+
+    Attributes:
+        VXLAN_IBGP (str): VXLAN fabric with iBGP routing protocol
+        VXLAN_EBGP (str): VXLAN fabric with eBGP routing protocol
+        VXLAN_CAMPUS (str): VXLAN fabric optimized for campus networks
+        AIML_VXLAN_IBGP (str): AI/ML optimized VXLAN fabric with iBGP
+        AIML_VXLAN_EBGP (str): AI/ML optimized VXLAN fabric with eBGP
+        AIML_ROUTED (str): AI/ML optimized routed fabric
+        ROUTED (str): Traditional routed fabric topology
+        CLASSIC_LAN (str): Classic LAN fabric configuration
+        CLASSIC_LAN_ENHANCED (str): Enhanced classic LAN fabric with additional features
+        IPFM (str): IP Fabric for Media configuration
+        IPFM_ENHANCED (str): Enhanced IP Fabric for Media with additional capabilities
+        EXTERNAL_CONNECTIVITY (str): Fabric for external network connectivity
+        VXLAN_EXTERNAL (str): VXLAN fabric with external connectivity focus
+        ACI (str): Application Centric Infrastructure fabric type
+        META (str): Meta fabric type for special configurations
+
+    Methods:
+        choices(): Returns a list of all available fabric management types
+
+    Example:
+        >>> fabric_type = FabricManagementType.VXLAN_IBGP
+        >>> all_types = FabricManagementType.choices()
     """
     VXLAN_IBGP = "vxlanIbgp"
     VXLAN_EBGP = "vxlanEbgp"
@@ -45,10 +73,26 @@ class FabricManagementType(Enum):
                 cls.EXTERNAL_CONNECTIVITY, cls.VXLAN_EXTERNAL,
                 cls.ACI, cls.META]
 
-# Write an Enum Class for replicationMode with values multicast and ingress
 class FabricReplicationMode(Enum):
     """
-    Enumeration for Fabric Replication Modes.
+    This enumeration defines the available replication modes for fabric configuration
+    in Cisco ND (Nexus Dashboard). The replication mode determines how multicast
+    traffic is handled within the fabric.
+
+    Attributes:
+        MULTICAST (str): Uses multicast replication mode for traffic distribution.
+        INGRESS (str): Uses ingress replication mode for traffic distribution.
+
+    Methods:
+        choices(): Returns a list of all available replication mode values.
+
+    Example:
+        >>> mode = FabricReplicationMode.MULTICAST
+        >>> print(mode.value)
+        'multicast'
+        >>> available_modes = FabricReplicationMode.choices()
+        >>> print(available_modes)
+        [<FabricReplicationMode.MULTICAST: 'multicast'>, <FabricReplicationMode.INGRESS: 'ingress'>]
     """
     MULTICAST = "multicast"
     INGRESS = "ingress"
@@ -96,9 +140,28 @@ class FabricManagementModel(BaseModel):
     @classmethod
     def validate_bgpAsn(cls, value: str) -> str:
         """
-        Validate bgpAsn adheres to pattern ^(([1-9]{1}[0-9]{0,8}|[1-3]{1}[0-9]{1,9}|[4]{1}([0-1]{1}[0-9]{8}|[2]{1}([0-8]{1}[0-9]{7}|[9]{1}([0-3]{1}[0-9]{6}|[4]{1}([0-8]{1}[0-9]{5}|[9]{1}([0-5]{1}[0-9]{4}|[6]{1}([0-6]{1}[0-9]{3}|[7]{1}([0-1]{1}[0-9]{2}|[2]{1}([0-8]{1}[0-9]{1}|[9]{1}[0-5]{1})))))))))|([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])(\.([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]|0))?)$
-        """
+        Validate BGP Autonomous System Number (ASN) format.
 
+        This validator ensures the BGP ASN is provided as a string and matches
+        the expected format for both 2-byte and 4-byte ASNs.
+
+        Args:
+            value (str): The BGP ASN value to validate
+
+        Returns:
+            str: The validated BGP ASN value
+
+        Raises:
+            ValueError: If the value is not a string, is empty, or doesn't match
+                    the valid ASN format
+
+        Note:
+            Accepts the following ASN formats:
+            - Plain ASN format: "65001"
+            - Dotted notation: "65000.123"
+            - 4-byte ASN range: 1-4294967295
+            - 2-byte ASN range: 1-65535 (with optional dotted notation)
+        """
         pattern = r"^(([1-9]{1}[0-9]{0,8}|[1-3]{1}[0-9]{1,9}|[4]{1}([0-1]{1}[0-9]{8}|[2]{1}([0-8]{1}[0-9]{7}|[9]{1}([0-3]{1}[0-9]{6}|[4]{1}([0-8]{1}[0-9]{5}|[9]{1}([0-5]{1}[0-9]{4}|[6]{1}([0-6]{1}[0-9]{3}|[7]{1}([0-1]{1}[0-9]{2}|[2]{1}([0-8]{1}[0-9]{1}|[9]{1}[0-5]{1})))))))))|([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])(\.([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]|0))?)$"
         if not isinstance(value, str):
             raise ValueError("BGP ASN must be a string")
@@ -116,13 +179,27 @@ class FabricManagementModel(BaseModel):
     @classmethod
     def validate_anycastGatewayMac(cls, value: str) -> str:
         """
-        Validate anycastGatewayMac is a valid Cisco-style MAC address in the format "2020.0000.00aa".
+        Validates that the anycastGatewayMac field follows Cisco-style MAC address format.
 
-        This format is commonly used in Cisco configurations and differs from standard MAC address notation.
+        This validator ensures that the MAC address is provided as a string in the
+        Cisco-style format (XXXX.XXXX.XXXX) where each X represents a hexadecimal digit.
+
+        Args:
+            value (str): The MAC address string to validate.
+
+        Returns:
+            str: The validated MAC address string in Cisco-style format.
+
+        Raises:
+            ValueError: If the value is not a string or if the MAC address format
+                        is invalid (not matching XXXX.XXXX.XXXX pattern with hex digits).
+
+        Example:
+            Valid formats: "2020.0000.00aa", "ABCD.1234.5678"
+            Invalid formats: "20:20:00:00:00:aa", "202000000aa", "XXXX.YYYY.ZZZZ"
         """
 
         # Create a regex pattern to match the Cisco-Style format below
-
         pattern = r"^[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}$"
         if not isinstance(value, str):
             raise ValueError("Anycast Gateway MAC must be a string in Cisco-style format (e.g., 2020.0000.00aa)")
@@ -161,9 +238,25 @@ class FabricModel(BaseModel):
     @classmethod
     def validate_name(cls, value: str) -> str:
         """
-        Validate name adheres to pattern ^[A-Za-z][A-Za-z0-9_-]*$
-        """
+        Validates that a fabric name follows the required naming conventions.
 
+        Args:
+            value (str): The fabric name to validate.
+
+        Returns:
+            str: The validated fabric name if it passes all checks.
+
+        Raises:
+            ValueError: If the name is empty, not a string, or doesn't match the required pattern.
+                        The name must start with a letter and contain only alphanumeric characters,
+                        underscores, or hyphens.
+
+        Example:
+            >>> validate_name("MyFabric-1")
+            'MyFabric-1'
+            >>> validate_name("123Invalid")
+            ValueError: Name must start with a letter and contain only alphanumeric characters, underscores, or hyphens.
+        """
         if not value or not isinstance(value, str):
             raise ValueError("Name must be a non-empty string.")
         pattern = r"^[A-Za-z][A-Za-z0-9_-]*$"
