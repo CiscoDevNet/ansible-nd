@@ -13,7 +13,7 @@
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
 
-- name: Delete existing API keys (cleanup)
+- name: Ensure API keys do not exist before test starts
   cisco.nd.nd_api_key:
     <<: *nd_info
     api_key_name: "{{ item }}"
@@ -21,12 +21,8 @@
   loop:
     - test_api_key_1
     - test_api_key_2
-    - test_api_key_modified  
     - test_api_key_annotations
-    - test_api_key_no_annotations
     - test_api_key_updated       
-    - test_api_key_update
-    - test_empty_annotations
     - test_api_key_with_much_more_than_32_characters_in_name
 
 #CREATE
@@ -98,7 +94,7 @@
     <<: *update_api_key
   register: update_api_key_idempotent
 
-- name: Verify update_api_key_idempotent
+- name: Verify API key update tasks
   ansible.builtin.assert:
     that:
       - cm_update_api_key is changed
@@ -186,12 +182,6 @@
     <<: *delete_api_key
   register: delete_api_key_again
 
-- name: Test missing required parameter for absent (both api_key_name and api_key_id)
-  cisco.nd.nd_api_key:
-    <<: *nd_info
-    state: absent
-  register: missing_delete_params
-  ignore_errors: true
 
 - name: Test delete non-existent API key
   cisco.nd.nd_api_key:
@@ -208,8 +198,6 @@
       - cm_delete_api_key is changed
       - cm_delete_api_key.current == {}
       - delete_api_key_again is not changed
-      - missing_delete_params is failed
-      - "'state is absent but any of the following are missing: api_key_name, api_key_id' in missing_delete_params.msg"
       - delete_non_existent is not changed
 
 #NEGATIVE
@@ -220,6 +208,13 @@
   register: missing_api_key_name
   ignore_errors: true
 
+- name: Test missing required parameter for absent (both api_key_name and api_key_id)
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    state: absent
+  register: missing_delete_params
+  ignore_errors: true
+
 - name: Test with invalid api_key_id
   cisco.nd.nd_api_key:
     <<: *nd_info
@@ -228,7 +223,7 @@
   register: invalid_api_key_id
   ignore_errors: true
 
-- name: Test API key name with invalid length (should fail)
+- name: Test API key name with invalid length
   cisco.nd.nd_api_key:
     <<: *nd_info
     api_key_name: "test_api_key_with_much_more_than_32_characters_in_name"
@@ -236,7 +231,7 @@
   register: api_key_name_too_long
   ignore_errors: true
 
-- name: Test API key name with invalid characters (should fail)
+- name: Test API key name with invalid characters
   cisco.nd.nd_api_key:
     <<: *nd_info
     api_key_name: "test@key#with$symbols"
@@ -244,13 +239,15 @@
   register: api_key_name_invalid_chars
   ignore_errors: true
 
-- name: Verify negative tests for ADI key
+- name: Verify API key negative tests
   ansible.builtin.assert:
     that:
       - missing_api_key_name is failed
       - "'state is present but all of the following are missing: api_key_name' in missing_api_key_name.msg"
       - invalid_api_key_id is failed
       - "'ND Error: Unknown error no error code in decoded payload' in invalid_api_key_id.msg or 'Resource not found' in invalid_api_key_id.msg"
+      - missing_delete_params is failed
+      - "'state is absent but any of the following are missing: api_key_name, api_key_id' in missing_delete_params.msg"
       - api_key_name_too_long is failed
       - "'A length of 1 to 32 characters is allowed.' in api_key_name_too_long.msg"
       - api_key_name_invalid_chars is failed
@@ -266,12 +263,8 @@
   loop:
     - test_api_key_1
     - test_api_key_2
-    - test_api_key_modified  
     - test_api_key_annotations
-    - test_api_key_no_annotations
     - test_api_key_updated       
-    - test_api_key_update
-    - test_empty_annotations
     - test_api_key_with_much_more_than_32_characters_in_name
 
 - name: Summary - Verify no test API keys remain
