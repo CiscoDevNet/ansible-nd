@@ -842,14 +842,52 @@ class Deleted():
         self.log.debug(msg)
 
 class Overridden():
+    """
+    Handles the 'overridden' state for fabric management operations.
 
+    This class implements the overridden state behavior which:
+    1. Deletes fabrics that exist in the current state (have) but are not specified
+        in the desired state (want)
+    2. Creates or replaces fabrics that are specified in the desired state using
+        the Replaced class functionality
+
+    The overridden state ensures that only the fabrics explicitly defined in the
+    playbook configuration will exist, removing any others that may be present.
+
+    Args:
+         playbook: The Ansible playbook configuration containing the desired state
+         have_state: The current state of fabrics in the system
+
+    Attributes:
+         class_name (str): Name of the current class for logging purposes
+         log (Logger): Logger instance for this class
+         common (Common): Common utility instance for shared operations
+         verb (str): HTTP verb used for delete operations ("DELETE")
+         path (str): API endpoint template for fabric deletion operations
+         delete_fabric_names (list): List of fabric names to be deleted
+    """
     def __init__(self, playbook, have_state):
         self.class_name = self.__class__.__name__
         self.log = logging.getLogger(f"nd.{self.class_name}")
 
         self.common = Common(playbook, have_state)
         self.common.have = have_state
+        self.verb = "DELETE"
+        self.path = "/api/v1/manage/fabrics/{fabric_name}"
 
+        # Use the Replaced() to create new fabrics or replace existing ones
+        replaced_task = Replaced(playbook, have_state)
+
+        # Create a list of fabric names to be deleted that are not in self.common.want but are in self.have
+        self.delete_fabric_names = [fabric.name for fabric in self.common.have if fabric.name not in [w.name for w in self.common.want]]
+
+        for fabric in self.delete_fabric_names:
+            # Create a path for each fabric name to be deleted
+            self.common.payloads[fabric] = {'verb': self.verb, 'path': self.path.format(fabric_name=fabric), 'payload': ""}
+
+        # Merge replace_task.common.payloads into self.common.payloads
+        for fabric, request_data in replaced_task.common.payloads.items():
+            self.common.payloads[fabric] = request_data
 
         msg = "ENTERED Overridden(): "
         msg += f"state: {self.common.state}, "
@@ -857,7 +895,26 @@ class Overridden():
         self.log.debug(msg)
 
 class Query():
+    """
+    Query class for managing fabric queries in Cisco ND.
 
+    This class handles querying operations for fabric management in the Cisco Nexus Dashboard.
+    It provides functionality to retrieve and return fabric state information.
+
+    Args:
+        playbook: The Ansible playbook context containing configuration parameters
+        have_state: The current state of the fabric being queried
+
+    Attributes:
+        class_name (str): The name of the current class
+        log (logging.Logger): Logger instance for the Query class
+        common (Common): Common utility instance for shared operations
+        have: The current have state of the fabric
+
+    Note:
+        This class is part of the Cisco ND Ansible collection for fabric management
+        operations and follows the standard query pattern for state retrieval.
+    """
     def __init__(self, playbook, have_state):
         self.class_name = self.__class__.__name__
         self.log = logging.getLogger(f"nd.{self.class_name}")
