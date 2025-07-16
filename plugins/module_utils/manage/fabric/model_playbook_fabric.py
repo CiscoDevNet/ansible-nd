@@ -96,6 +96,12 @@ class FabricManagementModel(BaseModel):
         pattern = r"^(([1-9]{1}[0-9]{0,8}|[1-3]{1}[0-9]{1,9}|[4]{1}([0-1]{1}[0-9]{8}|[2]{1}([0-8]{1}[0-9]{7}|[9]{1}([0-3]{1}[0-9]{6}|[4]{1}([0-8]{1}[0-9]{5}|[9]{1}([0-5]{1}[0-9]{4}|[6]{1}([0-6]{1}[0-9]{3}|[7]{1}([0-1]{1}[0-9]{2}|[2]{1}([0-8]{1}[0-9]{1}|[9]{1}[0-5]{1})))))))))|([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])(\.([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]|0))?)$"
         if not isinstance(value, str):
             raise ValueError("BGP ASN must be a string")
+        # Check if the value is empty
+        if not value:
+            raise ValueError("BGP ASN cannot be an empty string")
+        # Check if the value matches the regex pattern
+        # The regex allows for both plain ASN (e.g., "65001") and dotted notation (e.g., "65000.123")
+        # It also allows for 32-bit ASNs in the format "65535.65535"
         if not re.match(pattern, value):
             raise ValueError(f"Invalid BGP ASN format: {value}. Must be a valid ASN number.")
         return value

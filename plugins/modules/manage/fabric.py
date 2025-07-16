@@ -8,7 +8,7 @@ from deepdiff import DeepDiff
 from ansible.module_utils._text import to_bytes
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, write_file
-from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import FabricModel
+from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import FabricModel, FabricManagementModel
 
 from ...module_utils.common.log import Log
 
@@ -106,19 +106,21 @@ class GetHave():
         self.log.debug(msg)
 
         for fabric in self.fabric_state.get('fabrics'):
-            fabric_state = {
-                "name": f"{fabric['name']}",
-                "category": f"{fabric['category']}",
-                "securityDomain": f"{fabric['securityDomain']}",
-                "management": {
-                    "type": f"{fabric['management']['type']}",
-                    "bgpAsn": f"{fabric['management']['bgpAsn']}",
-                    "anycastGatewayMac": f"{fabric['management']['anycastGatewayMac']}",
-                    "replicationMode": f"{fabric['management']['replicationMode']}",
-                }
-            }
-            fabric = FabricModel(**fabric_state)
-            self.have.append(fabric)
+            if not isinstance(fabric, dict):
+                raise ValueError(f"Fabric data is not a dictionary: {fabric}")
+            validated_fabric = FabricModel(**fabric)
+            self.have.append(validated_fabric)
+            # fabric_state = {
+            #     "name": f"{fabric['name']}",
+            #     "category": f"{fabric['category']}",
+            #     "securityDomain": f"{fabric['securityDomain']}",
+            #     "management": {
+            #         "type": f"{fabric['management']['type']}",
+            #         "bgpAsn": f"{fabric['management']['bgpAsn']}",
+            #         "anycastGatewayMac": f"{fabric['management']['anycastGatewayMac']}",
+            #         "replicationMode": f"{fabric['management']['replicationMode']}",
+            #     }
+            # }
 
 
 
@@ -127,7 +129,7 @@ class Common():
     Common methods, properties, and resources for all states.
     """
 
-    def __init__(self, playbook):
+    def __init__(self, playbook, have_state):
         self.class_name = self.__class__.__name__
         self.log = logging.getLogger(f"nd.{self.class_name}")
         # super().__init__()
@@ -138,7 +140,7 @@ class Common():
         self.state = playbook['state']
         self.payloads = {}
 
-        self.have = {}
+        self.have = have_state
         self.query = []
         self.validated = []
         self.want = []
@@ -150,6 +152,89 @@ class Common():
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
 
+    def _build_playbook_params_merged(self, fabric):
+        """
+        Build playbook parameters for 'merged' state operation on a fabric.
+
+        This function constructs a configuration payload for updating a fabric with the 'merged' state,
+        which combines the provided fabric configuration with the existing configuration. When specific
+        parameters are not provided in the input, the function preserves the existing values from the
+        current fabric configuration.
+
+        Args:
+            fabric (dict): The desired fabric configuration. Should contain at least a 'name' key
+                          and can optionally contain other fabric parameters like 'category',
+                          'securityDomain', and a 'management' dictionary with networking parameters.
+
+        Returns:
+            dict: A configuration payload dictionary containing the merged fabric configuration
+                  that can be sent to the network device. The dictionary contains the fabric name,
+                  category, security domain, and management parameters like type, BGP ASN,
+                  anycast gateway MAC, and replication mode.
+        """
+        self.class_name = self.__class__.__name__
+        method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
+
+        msg = f"ENTERED: {self.class_name}.{method_name}"
+        self.log.debug(msg)
+
+        have_fabric = self.fabric_in_have(fabric['name'])
+        fabric_config_payload = {
+            "name": f"{fabric.get('name', have_fabric.name)}",
+            "category": f"{fabric.get('category', have_fabric.category)}",
+            "securityDomain": f"{fabric.get('securityDomain', have_fabric.category)}",
+            "management": {
+                "type": f"{fabric.get('management', {}).get('type', have_fabric.management.type)}",
+                "bgpAsn": f"{fabric.get('management', {}).get('bgpAsn', have_fabric.management.bgpAsn)}",
+                "anycastGatewayMac": f"{fabric.get('management', {}).get('anycastGatewayMac', have_fabric.management.anycastGatewayMac)}",
+                "replicationMode": f"{fabric.get('management', {}).get('replicationMode', have_fabric.management.replicationMode)}",
+            }
+        }
+
+        return fabric_config_payload
+
+    def _build_playbook_params_replaced(self, fabric):
+        """
+        Builds a standardized configuration payload for fabric replacement operations.
+
+        This method constructs a dictionary containing fabric configuration parameters
+        for use in Ansible playbooks when the 'replaced' state is specified. It extracts
+        values from the provided fabric dictionary, falling back to model default values
+        when specific parameters are not present.
+
+        Args:
+            fabric (dict): Dictionary containing fabric configuration parameters.
+                           Expected to potentially contain 'name', 'category', 'securityDomain',
+                           and nested 'management' dictionary with its own parameters.
+
+        Returns:
+            dict: Structured dictionary containing fabric configuration parameters
+                  formatted for use in NDFC API operations.
+
+        Notes:
+            - Logs debug information when the method is entered
+            - Uses model field defaults when parameters are not specified in input
+        """
+        self.class_name = self.__class__.__name__
+        method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
+
+        msg = f"ENTERED: {self.class_name}.{method_name}"
+        self.log.debug(msg)
+
+        fabric_config_payload = {
+            "name": f"{fabric.get('name', FabricModel.model_fields['name'].default)}",
+            "category": f"{fabric.get('category', FabricModel.model_fields['category'].default)}",
+            "securityDomain": f"{fabric.get('securityDomain', FabricModel.model_fields['securityDomain'].default)}",
+            "management": {
+                "type": f"{fabric.get('management', {}).get('type', FabricManagementModel.model_fields['type'].default)}",
+                "bgpAsn": f"{fabric.get('management', {}).get('bgpAsn', FabricManagementModel.model_fields['bgpAsn'].default)}",
+                "anycastGatewayMac": f"{fabric.get('management', {}).get('anycastGatewayMac', FabricManagementModel.model_fields['anycastGatewayMac'].default)}",
+                "replicationMode": f"{fabric.get('management', {}).get('replicationMode', FabricManagementModel.model_fields['replicationMode'].default)}",
+            }
+        }
+
+        return fabric_config_payload
+
     def validate_playbook_params(self):
         self.class_name = self.__class__.__name__
         method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
@@ -158,17 +243,36 @@ class Common():
         self.log.debug(msg)
 
         for fabric in self.playbook_params.get('config'):
-            fabric_config_payload = {
-                "name": f"{fabric['name']}",
-                "category": f"{fabric['category']}",
-                "securityDomain": f"{fabric['securityDomain']}",
-                "management": {
-                    "type": f"{fabric['management']['type']}",
-                    "bgpAsn": f"{fabric['management']['bgpAsn']}",
-                    "anycastGatewayMac": f"{fabric['management']['anycastGatewayMac']}",
-                    "replicationMode": f"{fabric['management']['replicationMode']}",
-                }
-            }
+            if self.state == "merged" and self.fabric_in_have(fabric['name']):
+                fabric_config_payload = self._build_playbook_params_merged(fabric)
+                # have_fabric = self.fabric_in_have(fabric['name'])
+                # fabric_config_payload = {
+                #     "name": f"{fabric.get('name', have_fabric.name)}",
+                #     "category": f"{fabric.get('category', have_fabric.category)}",
+                #     "securityDomain": f"{fabric.get('securityDomain', have_fabric.category)}",
+                #     "management": {
+                #         "type": f"{fabric.get('management', {}).get('type', have_fabric.management.type)}",
+                #         "bgpAsn": f"{fabric.get('management', {}).get('bgpAsn', have_fabric.management.bgpAsn)}",
+                #         "anycastGatewayMac": f"{fabric.get('management', {}).get('anycastGatewayMac', have_fabric.management.anycastGatewayMac)}",
+                #         "replicationMode": f"{fabric.get('management', {}).get('replicationMode', have_fabric.management.replicationMode)}",
+                #     }
+                # }
+            else:
+                # This handles
+                #  - Merged when the fabric does not yet exist
+                #  - Replaced, Deleted, and Query states
+                fabric_config_payload = self._build_playbook_params_replaced(fabric)
+                # fabric_config_payload = {
+                #     "name": f"{fabric.get('name', FabricModel.model_fields['name'].default)}",
+                #     "category": f"{fabric.get('category', FabricModel.model_fields['category'].default)}",
+                #     "securityDomain": f"{fabric.get('securityDomain', FabricModel.model_fields['securityDomain'].default)}",
+                #     "management": {
+                #         "type": f"{fabric.get('management', {}).get('type', FabricManagementModel.model_fields['type'].default)}",
+                #         "bgpAsn": f"{fabric.get('management', {}).get('bgpAsn', FabricManagementModel.model_fields['bgpAsn'].default)}",
+                #         "anycastGatewayMac": f"{fabric.get('management', {}).get('anycastGatewayMac', FabricManagementModel.model_fields['anycastGatewayMac'].default)}",
+                #         "replicationMode": f"{fabric.get('management', {}).get('replicationMode', FabricManagementModel.model_fields['replicationMode'].default)}",
+                #     }
+                # }
             fabric = FabricModel(**fabric_config_payload)
             self.want.append(fabric)
 
@@ -195,7 +299,7 @@ class Merged():
         self.class_name = self.__class__.__name__
         self.log = logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = Common(playbook)
+        self.common = Common(playbook, have_state)
         self.common.have = have_state
 
         self.verb = ""
@@ -236,8 +340,6 @@ class Merged():
                 self.verb = "PUT"
                 payload = self.update_payload_merged(have_fabric, want_fabric)
 
-            # Check if want_fabric is in the last of have fabrics
-            # have_fabric = next((h for h in self.common.have if h.name == fabric.name), None)
             self.common.payloads[want_fabric.name] = {'verb': self.verb, 'path': self.path, 'payload': payload}
 
     def _parse_path(self, path):
@@ -321,9 +423,31 @@ class Merged():
 
     def update_payload_merged(self, have, want):
         """
-        Calculate the difference between the have and want states.
-        Returns an updated paylod based on those differences.
+        Calculate the difference between the have and want states and generate an updated payload.
+
+        This method computes what needs to be changed to transform the current state ('have')
+        into the desired state ('want'). It uses DeepDiff to identify differences and applies
+        a merge strategy, keeping existing values and updating only what's different or new.
+
+        Parameters
+        ----------
+        have : object
+            The current state of the object as a Pydantic model
+        want : object
+            The desired state of the object as a Pydantic model
+
+        Returns
+        -------
+        dict
+            Updated payload dictionary containing the merged state that reflects
+            the differences between 'have' and 'want'
+
+        Notes
+        -----
+        - Changed values are processed by _process_values_changed
+        - New items are added via _process_dict_items_added
         """
+
         self.class_name = self.__class__.__name__
         method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
 
@@ -359,13 +483,50 @@ class Replaced():
         self.class_name = self.__class__.__name__
         self.log = logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = Common(playbook)
+        self.common = Common(playbook, have_state)
         self.common.have = have_state
+
+        self.verb = ""
+        self.path = ""
+
+        self.build_payload()
 
         msg = "ENTERED Replaced(): "
         msg += f"state: {self.common.state}, "
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
+
+    def build_payload(self):
+
+        self.class_name = self.__class__.__name__
+        method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
+
+        msg = f"ENTERED: {self.class_name}.{method_name}"
+        self.log.debug(msg)
+
+        for fabric in self.common.want:
+            want_fabric = fabric
+            have_fabric = self.common.fabric_in_have(want_fabric.name)
+
+            if want_fabric == have_fabric:
+                # want_fabric and have_fabric are the same, no action needed
+                self.log.debug(f"Fabric {want_fabric.name} is already in the desired state, skipping.")
+                continue
+
+            if not have_fabric:
+                # If the fabric does not exist in the have state, we will create it
+                self.path = "/api/v1/manage/fabrics"
+                self.verb = "POST"
+            else:
+                # If the fabric already exists in the have state, we will update it
+                self.path = "/api/v1/manage/fabrics" + f"/{want_fabric.name}"
+                self.verb = "PUT"
+
+            # For replaced we just use the want payload "as is" including any default values
+            # This is different from merged where we calculate the difference and only update
+            # the changed values and add any new items
+            payload = copy.deepcopy(want_fabric.model_dump())
+            self.common.payloads[want_fabric.name] = {'verb': self.verb, 'path': self.path, 'payload': payload}
 
 class Deleted():
     """
@@ -376,7 +537,7 @@ class Deleted():
         self.class_name = self.__class__.__name__
         self.log = logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = Common(playbook)
+        self.common = Common(playbook, have_state)
         self.common.have = have_state
         self.verb = "DELETE"
         self.path = "/api/v1/manage/fabrics/{fabric_name}"
@@ -403,7 +564,7 @@ class Overridden():
         self.class_name = self.__class__.__name__
         self.log = logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = Common(playbook)
+        self.common = Common(playbook, have_state)
         self.common.have = have_state
 
 
@@ -421,7 +582,7 @@ class Query():
         self.class_name = self.__class__.__name__
         self.log = logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = Common(playbook)
+        self.common = Common(playbook, have_state)
         self.have = have_state
 
         msg = "ENTERED Query(): "
