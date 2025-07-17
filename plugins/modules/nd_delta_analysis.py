@@ -27,39 +27,41 @@ options:
     type: str
     default: default
     aliases: [ fab_name, ig_name ]
-  site_name:
+  fabric:
     description:
     - Name of the Assurance Entity.
     type: str
     required: true
-    aliases: [ site ]
+    aliases: [ site, site_name, fabric_name ]
   name:
     description:
     - The name of the delta analysis job
     type: str
-    aliases: [ job_name, delta_name ]
+    aliases: [ job_name, delta_name, delta_analysis_name ]
   earlier_epoch_id:
     description:
     - Epoch UUID for the earlier epoch
     - Ignored if state is C(query) or C(absent)
     type: str
-    aliases: [ earlier_epoch_uuid, earlier_epoch ]
+    aliases: [ earlier_epoch_uuid, earlier_epoch, earlier_snapshot ]
   later_epoch_id:
     description:
     - Epoch UUID for the later epoch
     - Ignored if state is C(query) or C(absent)
     type: str
-    aliases: [ later_epoch_uuid, later_epoch ]
+    aliases: [ later_epoch_uuid, later_epoch, later_snapshot ]
   earlier_epoch_time:
     description:
     - Epoch collection time, in ISO format, for the earlier epoch
     - Ignored if state is C(query) or C(absent)
     type: str
+    aliases: [ earlier_snapshot_time ]
   later_epoch_time:
     description:
     - Epoch collection time, in ISO format, for the later epoch
     - Ignored if state is C(query) or C(absent)
     type: str
+    aliases: [ later_snapshot_time ]
   state:
     description:
     - Use C(present) or C(absent) for creating or deleting a delta analysis job.
@@ -82,6 +84,7 @@ EXAMPLES = r"""
     earlier_epoch_id: 0e5604f9-53b9c234-03dc-3997-9850-501b925f7d65
     later_epoch_id: 0e5604f9-ad5b12ae-9834-348b-aed1-8ca124e32e9b
     state: present
+
 - name: Creates a new delta analysis job using epoch time
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
@@ -90,25 +93,29 @@ EXAMPLES = r"""
     earlier_epoch_time: 2023-01-15T12:24:34Z
     later_epoch_time: 2023-01-17T18:27:34Z
     state: present
+
 - name: Validates a running delta analysis job
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
     site_name: siteName
     name: testDeltaAnalysis
     state: validate
+
 - name: Delete an existing delta analysis
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
     site_name: siteName
     name: testDeltaAnalysis
     state: absent
-- name: Queries existing delta analysis jobs
+
+- name: Queries all existing delta analysis jobs
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
     site_name: siteName
     state: query
   register: query_results
-- name: Queries an specific delta analysis job
+
+- name: Queries a specific delta analysis job
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
     site_name: siteName
@@ -137,12 +144,12 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
-        site_name=dict(type="str", required=True, aliases=["site"]),
-        name=dict(type="str", aliases=["job_name", "delta_name"]),
-        earlier_epoch_id=dict(type="str", aliases=["earlier_epoch_uuid", "earlier_epoch"]),
-        later_epoch_id=dict(type="str", aliases=["later_epoch_uuid", "later_epoch"]),
-        earlier_epoch_time=dict(type="str"),
-        later_epoch_time=dict(type="str"),
+        fabric=dict(type="str", required=True, aliases=["site", "site_name", "fabric_name"]),
+        name=dict(type="str", aliases=["job_name", "delta_name", "delta_analysis_name"]),
+        earlier_epoch_id=dict(type="str", aliases=["earlier_epoch_uuid", "earlier_epoch", "earlier_snapshot"]),
+        later_epoch_id=dict(type="str", aliases=["later_epoch_uuid", "later_epoch", "later_snapshot"]),
+        earlier_epoch_time=dict(type="str", aliases=["earlier_snapshot_time"]),
+        later_epoch_time=dict(type="str", aliases=["later_snapshot_time"]),
         state=dict(type="str", default="query", choices=["query", "absent", "present", "validate"]),
     )
 

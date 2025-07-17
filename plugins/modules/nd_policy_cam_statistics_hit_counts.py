@@ -28,18 +28,19 @@ options:
     type: str
     default: default
     aliases: [ fab_name, ig_name ]
-  site:
+  fabric:
     description:
     - The name of the site.
     type: str
     required: true
-    aliases: [ site_name ]
+    aliases: [ site_name, site, fabric_name ]
   epoch_id:
     description:
     - The id of the epoch.
     - When epoch id is not provided it will retrieve the latest known epoch id.
     - The M(cisco.nd.nd_epoch) can be used to retrieve a specific epoch id.
     type: str
+    aliases: [ snapshot ]
   epgs:
     description:
     - All Policy CAM Rules by Hit Count by EPGs.
@@ -55,6 +56,7 @@ options:
     - All Policy CAM Rules by Hit Count by Leafs.
     type: bool
     default: false
+    aliases: [ node ]
   contracts:
     description:
     - All Policy CAM Rules by Hit Count by Contracts.
@@ -149,11 +151,11 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
-        site=dict(type="str", required=True, aliases=["site_name"]),
-        epoch_id=dict(type="str"),
+        fabric=dict(type="str", required=True, aliases=["site_name", "site", "fabric_name"]),
+        epoch_id=dict(type="str", aliases=["snapshot"]),
         epgs=dict(type="bool", default=False),
         tenants=dict(type="bool", default=False),
-        leafs=dict(type="bool", default=False),
+        leafs=dict(type="bool", default=False, aliases=["node"]),
         contracts=dict(type="bool", default=False),
         filters=dict(type="bool", default=False),
         filter_by_attributes=dict(
