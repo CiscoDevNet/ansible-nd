@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+# Copyright: (c) 2025, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -13,14 +14,15 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 
 DOCUMENTATION = r"""
 ---
-module: nd_epoch
+module: nd_snapshot
 version_added: "0.3.0"
-short_description: Query epoch data from Cisco Nexus Dashboard Insights (NDI)
+short_description: Query fabric snapshot/epoch data from Cisco Nexus Dashboard Insights (NDI)
 description:
-- Query epoch data from Cisco Nexus Dashboard Insights (NDI).
-- M(cisco.nd.nd_epoch) can only be used with python 3.7 and higher.
+- Query fabric snapshot/epoch data from Cisco Nexus Dashboard Insights (NDI).
+- M(cisco.nd.nd_snapshot) can only be used with python 3.7 and higher.
 author:
 - Akini Ross (@akinross)
+- Gaspard Micol (@gmicol)
 options:
   insights_group:
     description:
@@ -29,35 +31,40 @@ options:
     type: str
     default: default
     aliases: [ fab_name, ig_name ]
-  site:
+  fabric:
     description:
-    - Names of the Assurance Entity.
+    - The name of the fabric.
     type: str
     required: true
+    aliases: [ fabric_name, site, site_name ]
   period:
     description:
-    - Epoch period.
+    - The snapshot/epoch period.
     type: str
     choices: [ latest, last_15_min, last_hour, last_2_hours, last_6_hours, last_day, last_week]
   from_date:
     description:
-    - String representing the date and time in ISO 8601 format "YYYY-MM-DDTHH:MM:SS".
+    - The starting date and time from which to query snapshot/epoch data.
+    - This paramater's input should be in ISO 8601 format "YYYY-MM-DDTHH:MM:SS".
     - Minimum required input is "YYYY-MM-DD".
     type: str
   to_date:
     description:
-    - String representing the date and time in ISO 8601 format "YYYY-MM-DDTHH:MM:SS".
+    - The limit date and time to which query snapshot/epoch data.
+    - This paramater's input should be in ISO 8601 format "YYYY-MM-DDTHH:MM:SS".
     - Minimum required input is "YYYY-MM-DD".
     type: str
   range:
     description:
-    - Return a range of epoch IDs or just 1.
+    - Set to return a range of snapshot/epoch IDs or just one.
     type: bool
     default: false
-  max_epochs:
+  max_snapshots:
     description:
-    - When range is selected, max amount epoch IDs to be returned.
+    - The max amount of snapshot/epoch IDs to be returned.
+    - This parameter is used when O(range=true), otherwise it will be ignored.
     type: int
+    aliases: [ max_epochs ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -65,40 +72,40 @@ extends_documentation_fragment:
 
 EXAMPLES = r"""
 - name: Get the latest epoch id
-  cisco.nd.nd_epoch:
+  cisco.nd.nd_snapshot:
     insights_group: igName
-    site: siteName
+    fabric: fabricName
     period: latest
   register: query_results
 
 - name: Get the epoch id from period
-  cisco.nd.nd_epoch:
+  cisco.nd.nd_snapshot:
     insights_group: igName
-    site: siteName
+    fabric: fabricName
     period: last_week
   register: period_last_week
 
 - name: Get all epoch ids from last week
-  cisco.nd.nd_epoch:
+  cisco.nd.nd_snapshot:
     insights_group: igName
-    site: siteName
+    fabric: fabricName
     period: last_week
     range: true
   register: period_last_week
 
 - name: Get 3 epoch ids from last week closest to latest
-  cisco.nd.nd_epoch:
+  cisco.nd.nd_snapshot:
     insights_group: igName
-    site: siteName
+    fabric: fabricName
     period: last_week
     range: true
-    max_epochs: 3
+    max_snapshots: 3
   register: period_last_week
 
 - name: Get all epoch ids from date range
-  cisco.nd.nd_epoch:
+  cisco.nd.nd_snapshot:
     insights_group: igName
-    site: siteName
+    fabric: fabricName
     from_date: 2023-01-01T10:00:00
     to_date: 2023-01-02T14:00:00
     range: true
@@ -127,12 +134,12 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
-        site=dict(type="str", required=True),
+        fabric=dict(type="str", required=True, aliases=["fabric_name", "site", "site_name"]),
         period=dict(type="str", choices=list(EPOCH_DELTA_TYPES)),
         from_date=dict(type="str"),
         to_date=dict(type="str"),
         range=dict(type="bool", default=False),
-        max_epochs=dict(type="int"),
+        max_snapshots=dict(type="int", aliases=["max_epochs"]),
     )
 
     module = AnsibleModule(
@@ -144,14 +151,14 @@ def main():
     ndi = NDI(nd)
 
     if not (hasattr(dt, "fromisoformat") and callable(getattr(dt, "fromisoformat"))):
-        nd.fail_json(msg="M(cisco.nd.nd_epoch) can only be used with python 3.7 and higher.")
+        nd.fail_json(msg="M(cisco.nd.nd_snapshot) can only be used with python 3.7 and higher.")
 
     insights_group = nd.params.get("insights_group")
-    site = nd.params.get("site")
+    fabric = nd.params.get("fabric")
     period = nd.params.get("period")
     from_date = nd.params.get("from_date")
     to_date = nd.params.get("to_date")
-    max_epochs = nd.params.get("max_epochs")
+    max_snapshots = nd.params.get("max_snapshots")
 
     if period:
         to_date = dt.today()
@@ -167,8 +174,8 @@ def main():
 
     path = (
         "{0}/epochs?%24fromCollectionTimeMsecs={1}&%24toCollectionTimeMsecs={2}&%24status=FINISHED&%24"
-        "epochType=ONLINE%2C+OFFLINE&%24sort=-collectionTime%2CanalysisStartTime".format(
-            ndi.event_insight_group_path.format(insights_group, site), to_collection, from_collection
+        "epochType=ONLINE%2C+OFFLINE&%24sort=-collectionTime%2C-analysisStartTime".format(
+            ndi.event_insight_group_path.format(insights_group, fabric), to_collection, from_collection
         )
     )
 
@@ -178,7 +185,7 @@ def main():
     if period == "latest":
         nd.existing = results[0]
     elif nd.params.get("range"):
-        nd.existing = results[0:max_epochs] if max_epochs else results
+        nd.existing = results[0:max_snapshots] if max_snapshots else results
     elif results:
         nd.existing = results[-1]
 
