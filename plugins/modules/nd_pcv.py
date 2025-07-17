@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
+# Copyright: (c) 2025, Samita Bhattacharjee (@samiib) <samitab@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
@@ -14,47 +15,62 @@ DOCUMENTATION = r"""
 ---
 module: nd_pcv
 version_added: "0.2.0"
-short_description: Manage pre-change validation job
+short_description: Manage Pre-change Analysis jobs on Cisco Nexus Dashboard Insights (NDI).
 description:
-- Manage pre-change validation job on Cisco Nexus Dashboard Insights (NDI).
+- Manage Pre-change Analysis jobs on Cisco Nexus Dashboard Insights (NDI) and Cisco Nexus Dashboard (ND).
 author:
 - Cindy Zhao (@cizhao)
+- Samita Bhattacharjee (@samiib)
 options:
   insights_group:
     description:
-    - The name of the insights group.
-    - This attribute should only be set for NDI versions prior to 6.3. Later versions require this attribute to be set to default.
+    - The name of the Insights Group.
+    - This option should only be set for NDI versions prior to 6.3. Later versions require this attribute to be set to default.
     type: str
     default: default
     aliases: [ fab_name, ig_name ]
   name:
     description:
-    - The name of the pre-change validation job.
+    - The name of the Pre-change Analysis job.
     type: str
   description:
     description:
-    - Description for the pre-change validation job.
+    - Description for the Pre-change Analysis job.
     type: str
     aliases: [ descr ]
-  site_name:
+  fabric:
     description:
-    - Name of the Assurance Entity.
+    - The name of the Fabric.
     type: str
-    aliases: [ site ]
+    aliases: [ fabric_name, site_name, site ]
   file:
     description:
-    - Optional parameter if creating new pre-change analysis from file.
+    - Optional parameter if creating new Pre-change Analysis job from a file.
     - XML and JSON files are supported. If no file extension is provided, the file is assumed to be JSON.
     type: str
   manual:
     description:
-    - Optional parameter if creating new pre-change analysis from change-list (manual)
+    - Optional parameter if creating new Pre-change Analysis job from a manual change list.
     type: str
+  wait_delay:
+    description:
+    - The time to wait in seconds between queries to check for Pre-change Analysis job completion.
+    - This option is only used when O(state=wait_and_query).
+    type: int
+    default: 1
+    aliases: [ delay ]
+  wait_timeout:
+    description:
+    - The total time in seconds to wait for a Pre-change Analysis job to complete before failing the module.
+    - This option is only used when O(state=wait_and_query).
+    - When a timeout is not provided the module will wait indefinitely.
+    type: int
+    aliases: [ timeout ]
   state:
     description:
-    - Use C(present) or C(absent) for creating or deleting a Pre-Change Validation (PCV).
+    - Use C(present) or C(absent) for creating or deleting a Pre-change Analysis.
     - Use C(query) for retrieving the PCV information.
-    - Use C(wait_and_query) to execute the query until the Pre-Change Validation (PCV) task status is COMPLETED or FAILED
+    - Use C(wait_and_query) to execute the query until the Pre-change Analysis jobs' status is COMPLETED or FAILED.
     type: str
     choices: [ absent, present, query, wait_and_query ]
     default: query
@@ -64,29 +80,18 @@ extends_documentation_fragment:
 """
 
 EXAMPLES = r"""
-- name: Get prechange validation jobs' status
-  cisco.nd.nd_pcv:
-    insights_group: exampleIG
-    state: query
-  register: query_results
-- name: Get a specific prechange validation job status
-  cisco.nd.nd_pcv:
-    insights_group: exampleIG
-    site_name: siteName
-    name: demoName
-    state: query
-  register: query_result
-- name: Create a new Pre-Change analysis from file
+- name: Create a new Pre-change Analysis from JSON file
   cisco.nd.nd_pcv:
     insights_group: igName
-    site_name: siteName
+    fabric: fabricName
     name: demoName
-    file: configFilePath
+    file: config_file.json
     state: present
-- name: Present Pre-Change analysis from manual changes
+
+- name: Create a new Pre-change Analysis job from manual changes
   cisco.nd.nd_pcv:
-    insights_group: idName
-    site_name: SiteName
+    insights_group: igName
+    fabric: fabricName
     name: demoName
     manual: |
         [
@@ -102,16 +107,34 @@ EXAMPLES = r"""
         ]
     state: present
   register: present_pcv_manual
-- name: Wait until Pre-Change analysis is completed, and query status
+
+- name: Query the status of all Pre-change Analysis jobs
   cisco.nd.nd_pcv:
     insights_group: igName
-    site_name: siteName
+    state: query
+  register: query_results
+
+- name: Get a specific Pre-change Analysis job status
+  cisco.nd.nd_pcv:
+    insights_group: igName
+    fabric: fabricName
     name: demoName
-    state: wait_and_query
-- name: Delete Pre-Change analysis
+    state: query
+  register: query_result
+
+- name: Wait until Pre-change Analysis job is completed then query status
   cisco.nd.nd_pcv:
     insights_group: igName
-    site_name: siteName
+    fabric: fabricName
+    name: demoName
+    wait_delay: 2
+    wait_timeout: 600
+    state: wait_and_query
+
+- name: Delete a Pre-change Analysis job
+  cisco.nd.nd_pcv:
+    insights_group: igName
+    fabric: fabricName
     name: demoName
     state: absent
 """
@@ -133,9 +156,11 @@ def main():
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
         name=dict(type="str"),
         description=dict(type="str", aliases=["descr"]),
-        site_name=dict(type="str", aliases=["site"]),
+        fabric=dict(type="str", aliases=["site", "site_name", "fabric_name"]),
         file=dict(type="str"),
         manual=dict(type="str"),
+        wait_delay=dict(type="int", default=1, aliases=["delay"]),
+        wait_timeout=dict(type="int", aliases=["timeout"]),
         state=dict(type="str", default="query", choices=["query", "absent", "present", "wait_and_query"]),
     )
 
@@ -143,9 +168,9 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
         required_if=[
-            ["state", "absent", ["name", "site_name"]],
-            ["state", "present", ["name", "site_name"]],
-            ["state", "wait_and_query", ["name", "site_name"]],
+            ["state", "absent", ["name", "fabric"]],
+            ["state", "present", ["name", "fabric"]],
+            ["state", "wait_and_query", ["name", "fabric"]],
         ],
     )
 
@@ -154,29 +179,35 @@ def main():
 
     state = nd.params.get("state")
     name = nd.params.get("name")
-    site_name = nd.params.get("site_name")
+    fabric = nd.params.get("fabric")
     insights_group = nd.params.get("insights_group")
     description = nd.params.get("description")
     file = nd.params.get("file")
     manual = nd.params.get("manual")
+    delay = nd.params.get("wait_delay")
+    timeout = nd.params.get("wait_timeout")
 
     path = "config/insightsGroup"
     if name is None:
         nd.existing = ndi.query_pcvs(insights_group)
-    elif site_name is not None:
-        nd.existing = ndi.query_pcv(insights_group, site_name, name)
+    elif fabric is not None:
+        nd.existing = ndi.query_pcv(insights_group, fabric, name)
 
     if state == "wait_and_query" and nd.existing:
         status = nd.existing.get("analysisStatus")
+        start_time = time.time()
         while status != "COMPLETED":
             try:
-                verified_pcv = ndi.query_pcv(insights_group, site_name, name)
+                verified_pcv = ndi.query_pcv(insights_group, fabric, name)
                 status = verified_pcv.get("analysisStatus")
                 if status == "COMPLETED" or status == "FAILED":
                     nd.existing = verified_pcv
                     break
             except BaseException:
                 nd.existing = {}
+            if timeout and time.time() - start_time >= timeout:
+                nd.fail_json(msg="Timeout occured after {0} seconds while waiting for Pre-change Analysis {1} to complete".format(timeout, name))
+            time.sleep(delay)
 
     elif state == "absent":
         nd.previous = nd.existing
@@ -191,7 +222,7 @@ def main():
                 if rm_resp["success"] is True:
                     nd.existing = {}
                 else:
-                    nd.fail_json(msg="Pre-change validation {0} is not able to be deleted".format(name))
+                    nd.fail_json(msg="Pre-change Analysis {0} is not able to be deleted".format(name))
 
     elif state == "present":
         nd.previous = nd.existing
@@ -201,8 +232,8 @@ def main():
                 if os.path.basename(file) == pcv_file_name:
                     nd.exit_json()
                 else:
-                    nd.fail_json(msg="Pre-change validation {0} already exists with configuration file {1}".format(name, pcv_file_name))
-        base_epoch_data = ndi.get_last_epoch(insights_group, site_name)
+                    nd.fail_json(msg="Pre-change Analysis {0} already exists with configuration file {1}".format(name, pcv_file_name))
+        base_epoch_data = ndi.get_last_epoch(insights_group, fabric)
 
         data = {
             "allowUnsupportedObjectModification": "true",
@@ -212,7 +243,7 @@ def main():
             "fabricUuid": base_epoch_data["fabricId"],
             "description": description,
             "name": name,
-            "assuranceEntityName": site_name,
+            "assuranceEntityName": fabric,
         }
         if file:
             if not os.path.exists(file):
@@ -237,13 +268,13 @@ def main():
                     ndi.create_structured_data(tree, file)
 
             # Send REST API request to create a new PCV job
-            create_pcv_path = "{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges".format(path, insights_group, site_name)
+            create_pcv_path = "{0}/{1}/fabric/{2}/prechangeAnalysis/fileChanges".format(path, insights_group, fabric)
             file_resp = nd.request(create_pcv_path, method="POST", file=os.path.abspath(file), file_ext=file_ext, data=data, prefix=ndi.prefix)
             if file_resp.get("success") is True:
                 nd.existing = file_resp.get("value")["data"]
         elif manual:
             data["imdata"] = json.loads(manual)
-            create_pcv_path = "{0}/{1}/fabric/{2}/prechangeAnalysis/manualChanges?action=RUN".format(path, insights_group, site_name)
+            create_pcv_path = "{0}/{1}/fabric/{2}/prechangeAnalysis/manualChanges?action=RUN".format(path, insights_group, fabric)
             manual_resp = nd.request(create_pcv_path, method="POST", data=data, prefix=ndi.prefix)
             if manual_resp.get("success") is True:
                 nd.existing = manual_resp.get("value")["data"]
