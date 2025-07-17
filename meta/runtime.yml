@@ -27,3 +27,8 @@ action_groups:
     - nd_setup
     - nd_site
     - nd_version
+
+plugin_routing:
+  modules:
+    nd_epoch:
+      redirect: cisco.nd.nd_snapshot

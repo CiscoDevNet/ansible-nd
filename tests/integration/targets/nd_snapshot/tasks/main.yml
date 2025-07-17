@@ -1,5 +1,6 @@
 # Test code for the ND modules
 # Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+# Copyright: (c) 2025, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -17,63 +18,63 @@
     date: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
     datetime: "{{ lookup('pipe', 'date +%Y-%m-%dU%H:%M:%S') }}"
 
-# PASS TESTS CREATE
+# CREATION TEST TASKS
 
-- name: Get Epoch with period ( latest )
-  cisco.nd.nd_epoch:  
+- name: Get snapshot with period ( latest )
+  cisco.nd.nd_snapshot:  
     <<: *ndi_info
     <<: *ndi_site
     period: latest
   register: period_latest
 
-- name: Get Epoch with period ( last_week )
-  cisco.nd.nd_epoch:
+- name: Get snapshot with period ( last_week )
+  cisco.nd.nd_snapshot:
     <<: *ndi_info
     <<: *ndi_site
     period: last_week
   register: period_last_week
 
-- name: Get Epochs with period range ( last_week )
-  cisco.nd.nd_epoch:  
+- name: Get snapshots with period range ( last_week )
+  cisco.nd.nd_snapshot:  
     <<: *ndi_info
     <<: *ndi_site
     period: last_week
     range: true
   register: period_range_last_week
 
-- name: Get Epochs with period range and max epochs( last_week )
-  cisco.nd.nd_epoch:  
+- name: Get snapshots with period range and max epochs( last_week )
+  cisco.nd.nd_snapshot:  
     <<: *ndi_info
     <<: *ndi_site
     period: last_week
     range: true
-    max_epochs: 2
+    max_snapshots: 2
   register: period_range_last_week_max_epochs
 
-- name: Get Epochs with date ( from_date )
-  cisco.nd.nd_epoch:  
+- name: Get snapshots with date ( from_date )
+  cisco.nd.nd_snapshot:  
     <<: *ndi_info
     <<: *ndi_site
     from_date: "{{ date }}"
   register: date_from_date
 
-- name: Get Epochs with date ( to_date )
-  cisco.nd.nd_epoch:  
+- name: Get snapshots with date ( to_date )
+  cisco.nd.nd_snapshot:  
     <<: *ndi_info
     <<: *ndi_site
     to_date: "{{ datetime }}"
   register: date_to_date
 
-- name: Get Epochs with date ( from_date & to_date )
-  cisco.nd.nd_epoch:  
+- name: Get snapshots with date ( from_date & to_date )
+  cisco.nd.nd_snapshot:  
     <<: *ndi_info
     <<: *ndi_site
     from_date: "{{ date }}"
     to_date: "{{ datetime }}"
   register: date_from_date_to_date
 
-- name: Get Epochs with date range ( from_date & to_date )
-  cisco.nd.nd_epoch: 
+- name: Get snapshots with date range ( from_date & to_date )
+  cisco.nd.nd_snapshot: 
     <<: *ndi_info
     <<: *ndi_site
     from_date: "{{ date }}"
@@ -81,7 +82,7 @@
     range: true
   register: date_range_from_date_to_date
 
-- name: Get Epochs with date range ( from_date & to_date )
+- name: Get snapshots with date range ( from_date & to_date )
   cisco.nd.nd_epoch:  
     <<: *ndi_info
     <<: *ndi_site
@@ -91,7 +92,7 @@
     max_epochs: 3
   register: date_range_from_date_to_date_max_epochs
 
-- name: Verify Epochs
+- name: Verify snapshot queries
   ansible.builtin.assert:
     that:
       - period_latest.current | type_debug == "dict"
@@ -104,26 +105,26 @@
       - date_range_from_date_to_date.current | type_debug == "list"
       - date_range_from_date_to_date_max_epochs.current | type_debug == "list"
 
-# FAIL TESTS
+# FAIL TESTS TASKS
 
-- name: Get Epochs with date ( from_date invalid )
-  cisco.nd.nd_epoch:
+- name: Get snapshots with date ( from_date invalid )
+  cisco.nd.nd_snapshot:
     <<: *ndi_info
     <<: *ndi_site
     from_date: "invalid"
   ignore_errors: true
   register: date_from_date_invalid
 
-- name: Get Epochs with date ( to_date invalid )
-  cisco.nd.nd_epoch:
+- name: Get snapshots with date ( to_date invalid )
+  cisco.nd.nd_snapshot:
     <<: *ndi_info
     <<: *ndi_site
     to_date: "invalid"
   ignore_errors: true
   register: date_to_date_invalid
 
-- name: Get Epochs with period ( invalid )
-  cisco.nd.nd_epoch:  
+- name: Get snapshots with period ( invalid )
+  cisco.nd.nd_snapshot:  
     <<: *ndi_info
     <<: *ndi_site
     period: "invalid"
