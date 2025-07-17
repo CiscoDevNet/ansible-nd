@@ -39,6 +39,7 @@ options:
     - The Storage Area Network (SAN) vendor.
     - This option is only applicable when O(persona=san) otherwise it would be ignored.
     - This option is only applicable for ND version 4.1.0 and later.
+    - This defaults to C(cisco) when unset on creation.
     type: str
     choices: [ cisco, ibm ]
     aliases: [ persona_vendor ]
@@ -476,7 +477,6 @@ def main():
         supports_check_mode=True,
         required_if=[
             ["state", "present", ["cluster_name", "dns_server", "nodes"]],
-            ["persona", "san", ["san_vendor"]],
         ],
         required_together=[
             ["proxy_username", "proxy_password"],
@@ -621,9 +621,10 @@ def main():
 
         # Cluster setup options introduced in ND version 4.1.0 and later
         if nd_version >= "4.1.0":
-            payload["clusterConfig"]["persona"] = persona.upper() if isinstance(persona, str) else persona
-            if persona == "san":
-                payload["clusterConfig"]["personaVendor"] = san_vendor.capitalize()
+            if persona:
+                payload["clusterConfig"]["persona"] = persona.upper()
+                if persona == "san" and san_vendor:
+                    payload["clusterConfig"]["personaVendor"] = san_vendor.capitalize()
             payload["clusterConfig"]["externalServices"] = []
             if external_services.get("management_service_ips") is not None:
                 payload["clusterConfig"]["externalServices"].append(
