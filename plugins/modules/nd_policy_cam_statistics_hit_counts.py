@@ -30,7 +30,7 @@ options:
     aliases: [ fab_name, ig_name ]
   fabric:
     description:
-    - The name of the site.
+    - The name of the fabric.
     type: str
     required: true
     aliases: [ site_name, site, fabric_name ]
