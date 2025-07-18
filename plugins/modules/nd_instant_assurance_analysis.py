@@ -29,7 +29,7 @@ options:
     aliases: [ fab_name, ig_name ]
   fabric:
     description:
-    - Name of the Assurance Entity.
+    - Name of the fabric.
     type: str
     required: true
     aliases: [ site, site_name, fabric_name ]
