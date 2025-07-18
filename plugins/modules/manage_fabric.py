@@ -154,7 +154,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playb
     FabricManagementModel,
 )
 
-from ...module_utils.common.log import Log
+from ..module_utils.common.log import Log
 
 
 class GetHave:
