@@ -52,20 +52,20 @@ options:
     description:
     - Optional parameter if creating new Pre-change Analysis job from a manual change list.
     type: str
-  wait_delay:
+  job_wait_delay:
     description:
     - The time to wait in seconds between queries to check for Pre-change Analysis job completion.
     - This option is only used when O(state=wait_and_query).
     type: int
     default: 1
-    aliases: [ delay ]
-  wait_timeout:
+    aliases: [ wait_delay ]
+  job_wait_timeout:
     description:
     - The total time in seconds to wait for a Pre-change Analysis job to complete before failing the module.
     - This option is only used when O(state=wait_and_query).
     - When a timeout is not provided the module will wait indefinitely.
     type: int
-    aliases: [ timeout ]
+    aliases: [ wait_timeout ]
   state:
     description:
     - Use C(present) or C(absent) for creating or deleting a Pre-change Analysis.
@@ -127,8 +127,8 @@ EXAMPLES = r"""
     insights_group: igName
     fabric: fabricName
     name: demoName
-    wait_delay: 2
-    wait_timeout: 600
+    job_wait_delay: 2
+    job_wait_timeout: 600
     state: wait_and_query
 
 - name: Delete a Pre-change Analysis job
@@ -159,8 +159,8 @@ def main():
         fabric=dict(type="str", aliases=["site", "site_name", "fabric_name"]),
         file=dict(type="str"),
         manual=dict(type="str"),
-        wait_delay=dict(type="int", default=1, aliases=["delay"]),
-        wait_timeout=dict(type="int", aliases=["timeout"]),
+        job_wait_delay=dict(type="int", default=1, aliases=["wait_delay"]),
+        job_wait_timeout=dict(type="int", aliases=["wait_timeout"]),
         state=dict(type="str", default="query", choices=["query", "absent", "present", "wait_and_query"]),
     )
 
@@ -184,8 +184,8 @@ def main():
     description = nd.params.get("description")
     file = nd.params.get("file")
     manual = nd.params.get("manual")
-    delay = nd.params.get("wait_delay")
-    timeout = nd.params.get("wait_timeout")
+    wait_delay = nd.params.get("job_wait_delay")
+    wait_timeout = nd.params.get("job_wait_timeout")
 
     path = "config/insightsGroup"
     if name is None:
@@ -205,9 +205,9 @@ def main():
                     break
             except BaseException:
                 nd.existing = {}
-            if timeout and time.time() - start_time >= timeout:
-                nd.fail_json(msg="Timeout occured after {0} seconds while waiting for Pre-change Analysis {1} to complete".format(timeout, name))
-            time.sleep(delay)
+            if wait_timeout and time.time() - start_time >= wait_timeout:
+                nd.fail_json(msg="Timeout occured after {0} seconds while waiting for Pre-change Analysis {1} to complete".format(wait_timeout, name))
+            time.sleep(wait_delay)
 
     elif state == "absent":
         nd.previous = nd.existing
