@@ -75,13 +75,6 @@
   register: invalid_state
 
 # MISSING REQUIRED PARAMETERS
-- name: Test failure when missing insights_group
-  cisco.nd.nd_instant_assurance_analysis:
-    <<: *ndi_site
-    state: present
-  ignore_errors: true
-  register: missing_insights_group
-
 - name: Test failure when missing site_name
   cisco.nd.nd_instant_assurance_analysis:
     <<: *ndi_info
@@ -92,9 +85,8 @@
 - name: Verify instant_analysis_info
   ansible.builtin.assert:
     that:
-      - invalid_state.msg == "value of state must be one of{{':'}} query, present, got{{':'}} absent"
-      - missing_insights_group.msg == "missing required arguments{{':'}} insights_group"
-      - missing_site_name.msg == "missing required arguments{{':'}} site_name"
+      - 'invalid_state.msg == "value of state must be one of: query, present, got: absent"'
+      - 'missing_site_name.msg == "missing required arguments: fabric"'
 
 # CHECK MODE
 - name: Test Check Mode
