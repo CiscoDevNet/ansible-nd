@@ -157,7 +157,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd import (
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import (
     FabricModel,
-    FabricManagementModel,
 )
 
 from ..module_utils.common.log import Log
