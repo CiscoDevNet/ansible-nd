@@ -148,9 +148,7 @@ class TestGetHave:
             get_have.refresh()
 
     @patch("ansible_collections.cisco.nd.plugins.modules.manage.fabric.FabricModel")
-    def test_validate_nd_state_success(
-        self, mock_fabric_model, mock_nd, mock_logger, sample_fabric_state
-    ):
+    def test_validate_nd_state_success(self, mock_fabric_model, mock_nd, mock_logger, sample_fabric_state):
         """Test successful validate_nd_state method."""
         # Setup mock FabricModel instances
         fabric1_mock = Mock()
@@ -195,9 +193,7 @@ class TestGetHave:
             get_have.validate_nd_state()
 
     @patch("ansible_collections.cisco.nd.plugins.modules.manage.fabric.FabricModel")
-    def test_validate_nd_state_fabric_model_error(
-        self, mock_fabric_model, mock_nd, mock_logger, sample_fabric_state
-    ):
+    def test_validate_nd_state_fabric_model_error(self, mock_fabric_model, mock_nd, mock_logger, sample_fabric_state):
         """Test validate_nd_state when FabricModel raises an exception."""
         mock_fabric_model.side_effect = ValueError("Invalid fabric configuration")
 
@@ -219,9 +215,7 @@ class TestGetHave:
 
     def test_full_workflow(self, mock_nd, mock_logger, sample_fabric_state):
         """Test complete workflow: init -> refresh -> validate."""
-        with patch(
-            "ansible_collections.cisco.nd.plugins.modules.manage.fabric.FabricModel"
-        ) as mock_fabric_model:
+        with patch("ansible_collections.cisco.nd.plugins.modules.manage.fabric.FabricModel") as mock_fabric_model:
             # Setup
             mock_nd.request.return_value = sample_fabric_state
             fabric1_mock = Mock()
@@ -240,9 +234,7 @@ class TestGetHave:
             assert get_have.have[1] == fabric2_mock
 
             # Verify API was called correctly
-            mock_nd.request.assert_called_once_with(
-                "/api/v1/manage/fabrics", method="GET"
-            )
+            mock_nd.request.assert_called_once_with("/api/v1/manage/fabrics", method="GET")
 
             # Verify logging calls
             assert mock_logger.debug.call_count == 3  # Init + refresh + validate
@@ -266,13 +258,9 @@ class TestGetHave:
         assert get_have.class_name == original_class_name  # This shouldn't change
 
     @pytest.mark.parametrize("fabric_count", [0, 1, 5, 10])
-    def test_validate_nd_state_various_fabric_counts(
-        self, mock_nd, mock_logger, fabric_count
-    ):
+    def test_validate_nd_state_various_fabric_counts(self, mock_nd, mock_logger, fabric_count):
         """Test validate_nd_state with various numbers of fabrics."""
-        with patch(
-            "ansible_collections.cisco.nd.plugins.modules.manage.fabric.FabricModel"
-        ) as mock_fabric_model:
+        with patch("ansible_collections.cisco.nd.plugins.modules.manage.fabric.FabricModel") as mock_fabric_model:
             # Create fabric data
             fabrics = []
             mock_instances = []

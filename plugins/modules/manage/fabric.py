@@ -5,6 +5,7 @@ __copyright__ = "Copyright (c) 2025 Cisco and/or its affiliates."
 __author__ = "Mike Wiebe"
 
 DOCUMENTATION = """
+
 ---
 module: fabric
 short_description: Manage fabrics in Cisco Nexus Dashboard.
@@ -32,17 +33,19 @@ options:
         suboptions:
             name:
                 description:
-                - Name of the fabric.
+                - Name of the fabric. Must start with a letter and contain only alphanumeric characters, underscores, or hyphens.
                 required: true
                 type: str
             category:
                 description:
                 - Category of the fabric.
                 type: str
+                default: fabric
             securityDomain:
                 description:
                 - Security domain for the fabric.
                 type: str
+                default: all
             management:
                 description:
                 - Management configuration for the fabric.
@@ -52,18 +55,41 @@ options:
                         description:
                         - Management type for the fabric.
                         type: str
+                        choices:
+                        - vxlanIbgp
+                        - vxlanEbgp
+                        - vxlanCampus
+                        - aimlVxlanIbgp
+                        - aimlVxlanEbgp
+                        - aimlRouted
+                        - routed
+                        - classicLan
+                        - classicLanEnhanced
+                        - ipfm
+                        - ipfmEnhanced
+                        - externalConnectivity
+                        - vxlanExternal
+                        - aci
+                        - meta
+                        default: vxlanIbgp
                     bgpAsn:
                         description:
-                        - BGP autonomous system number.
+                        - BGP autonomous system number. Must be a valid ASN string (plain or dotted notation).
+                        required: true
                         type: str
                     anycastGatewayMac:
                         description:
-                        - Anycast gateway MAC address.
+                        - Anycast gateway MAC address in Cisco format (XXXX.XXXX.XXXX).
                         type: str
+                        default: 2020.0000.00aa
                     replicationMode:
                         description:
                         - Replication mode for the fabric.
                         type: str
+                        choices:
+                        - multicast
+                        - ingress
+                        default: multicast
 """
 
 EXAMPLES = """
@@ -73,11 +99,11 @@ EXAMPLES = """
     state: merged
     config:
       - name: example-fabric
-        category: VXLAN
+        category: fabric
         securityDomain: default
         management:
-          type: vxlan
-          bgpAsn: "65001"
+          type: vxlanIbgp
+          bgpAsn: 65001
           anycastGatewayMac: "00:00:00:00:00:01"
           replicationMode: multicast
 
@@ -87,11 +113,11 @@ EXAMPLES = """
     state: replaced
     config:
       - name: example-fabric
-        category: VXLAN
+        category: fabric
         securityDomain: default
         management:
-          type: vxlan
-          bgpAsn: "65002"
+          type: vxlanIbgp
+          bgpAsn: 65002
           anycastGatewayMac: "00:00:00:00:00:02"
           replicationMode: ingress
 
@@ -118,14 +144,22 @@ from deepdiff import DeepDiff
 
 from ansible.module_utils._text import to_bytes
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, write_file
-from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import FabricModel, FabricManagementModel
+from ansible_collections.cisco.nd.plugins.module_utils.nd import (
+    NDModule,
+    nd_argument_spec,
+    write_file,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import (
+    FabricModel,
+    FabricManagementModel,
+)
 
 from ...module_utils.common.log import Log
 
-class GetHave():
+
+class GetHave:
     """
-    Class to retrieve and process fabric state information from Nexus Dashboard.
+    Class to retrieve and process fabric state information from Nexus Dashboard (ND).
 
     This class handles the retrieval of fabric state information from the Nexus Dashboard
     API and processes the response into a list of FabricModel objects.
@@ -199,7 +233,7 @@ class GetHave():
         msg = f"ENTERED: {self.class_name}.{method_name}"
         self.log.debug(msg)
 
-        for fabric in self.fabric_state.get('fabrics'):
+        for fabric in self.fabric_state.get("fabrics"):
             if not isinstance(fabric, dict):
                 raise ValueError(f"Fabric data is not a dictionary: {fabric}")
             validated_fabric = FabricModel(**fabric)
@@ -218,8 +252,7 @@ class GetHave():
             # }
 
 
-
-class Common():
+class Common:
     """
     Common utility class that provides shared functionality for all state operations in the Cisco ND fabric module.
 
@@ -250,7 +283,7 @@ class Common():
 
         self.result = dict(changed=False, diff=[], response=[], warnings=[])
         self.playbook_params = playbook
-        self.state = playbook['state']
+        self.state = playbook["state"]
         self.payloads = {}
 
         self.have = have_state
@@ -291,7 +324,7 @@ class Common():
         msg = f"ENTERED: {self.class_name}.{method_name}"
         self.log.debug(msg)
 
-        have_fabric = self.fabric_in_have(fabric['name'])
+        have_fabric = self.fabric_in_have(fabric["name"])
         fabric_config_payload = {
             "name": f"{fabric.get('name', have_fabric.name)}",
             "category": f"{fabric.get('category', have_fabric.category)}",
@@ -301,7 +334,7 @@ class Common():
                 "bgpAsn": f"{fabric.get('management', {}).get('bgpAsn', have_fabric.management.bgpAsn)}",
                 "anycastGatewayMac": f"{fabric.get('management', {}).get('anycastGatewayMac', have_fabric.management.anycastGatewayMac)}",
                 "replicationMode": f"{fabric.get('management', {}).get('replicationMode', have_fabric.management.replicationMode)}",
-            }
+            },
         }
 
         return fabric_config_payload
@@ -343,7 +376,7 @@ class Common():
                 "bgpAsn": f"{fabric.get('management', {}).get('bgpAsn', FabricManagementModel.model_fields['bgpAsn'].default)}",
                 "anycastGatewayMac": f"{fabric.get('management', {}).get('anycastGatewayMac', FabricManagementModel.model_fields['anycastGatewayMac'].default)}",
                 "replicationMode": f"{fabric.get('management', {}).get('replicationMode', FabricManagementModel.model_fields['replicationMode'].default)}",
-            }
+            },
         }
 
         return fabric_config_payload
@@ -374,8 +407,8 @@ class Common():
         msg = f"ENTERED: {self.class_name}.{method_name}"
         self.log.debug(msg)
 
-        for fabric in self.playbook_params.get('config'):
-            if self.state == "merged" and self.fabric_in_have(fabric['name']):
+        for fabric in self.playbook_params.get("config"):
+            if self.state == "merged" and self.fabric_in_have(fabric["name"]):
                 fabric_config_payload = self._build_playbook_params_merged(fabric)
             else:
                 # This handles
@@ -408,7 +441,8 @@ class Common():
         have_fabric = next((h for h in self.have if h.name == fabric_name), None)
         return have_fabric
 
-class Merged():
+
+class Merged:
     """
     A class that implements the 'merged' state strategy for Cisco ND fabric configurations.
 
@@ -498,7 +532,11 @@ class Merged():
                 self.verb = "PUT"
                 payload = self.update_payload_merged(have_fabric, want_fabric)
 
-            self.common.payloads[want_fabric.name] = {'verb': self.verb, 'path': self.path, 'payload': payload}
+            self.common.payloads[want_fabric.name] = {
+                "verb": self.verb,
+                "path": self.path,
+                "payload": payload,
+            }
 
     def _parse_path(self, path):
         """
@@ -530,9 +568,9 @@ class Merged():
         msg = f"ENTERED: {self.class_name}.{method_name}"
         self.log.debug(msg)
         # Handle paths like "root.key1.key2"
-        if '.' in path and "[" not in path:
-            parts = path.split('.')
-            if parts[0] == 'root':
+        if "." in path and "[" not in path:
+            parts = path.split(".")
+            if parts[0] == "root":
                 parts = parts[1:]
             return parts
 
@@ -567,13 +605,13 @@ class Merged():
         msg = f"ENTERED: {self.class_name}.{method_name}"
         self.log.debug(msg)
 
-        if 'values_changed' not in diff:
+        if "values_changed" not in diff:
             return
 
         # Log the values changed for debugging
         self.log.debug(f"Values changed: {diff['values_changed']}")
 
-        for path, change in diff['values_changed'].items():
+        for path, change in diff["values_changed"].items():
             parts = self._parse_path(path)
 
             # Navigate to the correct nested dictionary
@@ -582,7 +620,7 @@ class Merged():
                 current = current[part]
 
             # Update the value
-            current[parts[-1]] = change['new_value']
+            current[parts[-1]] = change["new_value"]
 
     def _process_dict_items_added(self, diff, updated_payload, want_dict):
         """
@@ -612,13 +650,13 @@ class Merged():
         msg = f"ENTERED: {self.class_name}.{method_name}"
         self.log.debug(msg)
 
-        if 'dictionary_item_added' not in diff:
+        if "dictionary_item_added" not in diff:
             return
 
         # Log the dictionary items added for debugging
         self.log.debug(f"Dictionary items added: {diff['dictionary_item_added']}")
 
-        for path in diff['dictionary_item_added']:
+        for path in diff["dictionary_item_added"]:
             parts = self._parse_path(path)
 
             # Navigate to the correct nested dictionary
@@ -688,7 +726,8 @@ class Merged():
 
         return updated_payload
 
-class Replaced():
+
+class Replaced:
     """
     A class for handling 'replaced' state operations on Cisco ND fabric resources.
 
@@ -792,9 +831,14 @@ class Replaced():
             # This is different from merged where we calculate the difference and only update
             # the changed values and add any new items
             payload = copy.deepcopy(want_fabric.model_dump())
-            self.common.payloads[want_fabric.name] = {'verb': self.verb, 'path': self.path, 'payload': payload}
+            self.common.payloads[want_fabric.name] = {
+                "verb": self.verb,
+                "path": self.path,
+                "payload": payload,
+            }
 
-class Deleted():
+
+class Deleted:
     """
     Handle deletion of fabric configurations.
 
@@ -834,14 +878,19 @@ class Deleted():
 
         for fabric in self.delete_fabric_names:
             # Create a path for each fabric name to be deleted
-            self.common.payloads[fabric] = {'verb': self.verb, 'path': self.path.format(fabric_name=fabric), 'payload': ""}
+            self.common.payloads[fabric] = {
+                "verb": self.verb,
+                "path": self.path.format(fabric_name=fabric),
+                "payload": "",
+            }
 
         msg = "ENTERED Deleted(): "
         msg += f"state: {self.common.state}, "
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
 
-class Overridden():
+
+class Overridden:
     """
     Handles the 'overridden' state for fabric management operations.
 
@@ -868,6 +917,7 @@ class Overridden():
         path (str): API endpoint template for fabric deletion
         delete_fabric_names (list): List of fabric names to be deleted
     """
+
     def __init__(self, playbook, have_state, logger=None, common_util=None, replaced_task=None):
         self.class_name = self.__class__.__name__
         self.log = logger or logging.getLogger(f"nd.{self.class_name}")
@@ -885,7 +935,11 @@ class Overridden():
 
         for fabric in self.delete_fabric_names:
             # Create a path for each fabric name to be deleted
-            self.common.payloads[fabric] = {'verb': self.verb, 'path': self.path.format(fabric_name=fabric), 'payload': ""}
+            self.common.payloads[fabric] = {
+                "verb": self.verb,
+                "path": self.path.format(fabric_name=fabric),
+                "payload": "",
+            }
 
         # Merge replace_task.common.payloads into self.common.payloads
         for fabric, request_data in replaced_task.common.payloads.items():
@@ -896,7 +950,8 @@ class Overridden():
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
 
-class Query():
+
+class Query:
     """
     Query class for managing fabric queries in Cisco ND.
 
@@ -917,6 +972,7 @@ class Query():
         This class is part of the Cisco ND Ansible collection for fabric management
         operations and follows the standard query pattern for state retrieval.
     """
+
     def __init__(self, playbook, have_state, logger=None, common_util=None):
         self.class_name = self.__class__.__name__
         self.log = logger or logging.getLogger(f"nd.{self.class_name}")
@@ -927,10 +983,15 @@ class Query():
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
 
+
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
-        state=dict(type="str", default="merged", choices=["merged", "replaced", "deleted", "overridden", "query"]),
+        state=dict(
+            type="str",
+            default="merged",
+            choices=["merged", "replaced", "deleted", "overridden", "query"],
+        ),
         config=dict(required=False, type="list", elements="dict"),
     )
 
@@ -978,30 +1039,30 @@ def main():
     if isinstance(task, Query):
         for fabric in fabrics.have:
             task.common.query.append(fabric.model_dump())
-        task.common.result['query'] = task.common.query
-        task.common.result['changed'] = False
+        task.common.result["query"] = task.common.query
+        task.common.result["changed"] = False
         module.exit_json(**task.common.result)
-
 
     # Process all the payloads from task.common.payloads
     # Sample entry:
     #   {'fabric-ansible': {'verb': 'DELETE', 'path': '/api/v1/manage/fabrics/fabric-ansible', 'payload': ''}
     if task.common.payloads:
         for fabric, request_data in task.common.payloads.items():
-            verb = request_data['verb']
-            path = request_data['path']
-            payload = request_data['payload']
+            verb = request_data["verb"]
+            path = request_data["path"]
+            payload = request_data["payload"]
 
             mainlog.info(f"Calling nd.request with path: {path}, verb: {verb}, and payload: {payload}")
             # Make the API request
             response = nd.request(path, method=verb, data=payload if payload else None)
-            task.common.result['response'].append(response)
-            task.common.result['changed'] = True
+            task.common.result["response"].append(response)
+            task.common.result["changed"] = True
     else:
         mainlog.info("No payloads to process")
 
     # nd.exit_json()
     module.exit_json(**task.common.result)
+
 
 if __name__ == "__main__":
     main()

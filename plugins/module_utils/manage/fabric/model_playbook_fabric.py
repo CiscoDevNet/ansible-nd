@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 from enum import Enum
 import re
 
+
 class FabricManagementType(Enum):
     """
     Enumeration for Fabric Management Types used in Cisco Nexus Dashboard.
@@ -45,6 +46,7 @@ class FabricManagementType(Enum):
         >>> fabric_type = FabricManagementType.VXLAN_IBGP
         >>> all_types = FabricManagementType.choices()
     """
+
     VXLAN_IBGP = "vxlanIbgp"
     VXLAN_EBGP = "vxlanEbgp"
     VXLAN_CAMPUS = "vxlanCampus"
@@ -66,12 +68,24 @@ class FabricManagementType(Enum):
         """
         Returns a list of all the encryption types.
         """
-        return [cls.VXLAN_IBGP, cls.VXLAN_EBGP, cls.VXLAN_CAMPUS,
-                cls.AIML_VXLAN_IBGP, cls.AIML_VXLAN_EBGP,
-                cls.AIML_ROUTED, cls.ROUTED, cls.CLASSIC_LAN,
-                cls.CLASSIC_LAN_ENHANCED, cls.IPFM, cls.IPFM_ENHANCED,
-                cls.EXTERNAL_CONNECTIVITY, cls.VXLAN_EXTERNAL,
-                cls.ACI, cls.META]
+        return [
+            cls.VXLAN_IBGP,
+            cls.VXLAN_EBGP,
+            cls.VXLAN_CAMPUS,
+            cls.AIML_VXLAN_IBGP,
+            cls.AIML_VXLAN_EBGP,
+            cls.AIML_ROUTED,
+            cls.ROUTED,
+            cls.CLASSIC_LAN,
+            cls.CLASSIC_LAN_ENHANCED,
+            cls.IPFM,
+            cls.IPFM_ENHANCED,
+            cls.EXTERNAL_CONNECTIVITY,
+            cls.VXLAN_EXTERNAL,
+            cls.ACI,
+            cls.META,
+        ]
+
 
 class FabricReplicationMode(Enum):
     """
@@ -94,6 +108,7 @@ class FabricReplicationMode(Enum):
         >>> print(available_modes)
         [<FabricReplicationMode.MULTICAST: 'multicast'>, <FabricReplicationMode.INGRESS: 'ingress'>]
     """
+
     MULTICAST = "multicast"
     INGRESS = "ingress"
 
@@ -125,6 +140,7 @@ class FabricManagementModel(BaseModel):
     The class includes validators that enforce proper formatting for BGP ASN and
     anycast gateway MAC address values.
     """
+
     model_config = ConfigDict(
         str_strip_whitespace=True,
         use_enum_values=True,
@@ -206,6 +222,7 @@ class FabricManagementModel(BaseModel):
         if not re.match(pattern, value):
             raise ValueError(f"Invalid Anycast Gateway MAC format: {value}. Must be in Cisco-style format 'XXXX.XXXX.XXXX' where X is a hex digit.")
         return value
+
 
 class FabricModel(BaseModel):
     """
