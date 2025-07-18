@@ -97,7 +97,7 @@ EXAMPLES = r"""
 - name: Get Policy CAM Statistics Hit Counts for epgs, tenants, and leafs
   cisco.nd.nd_policy_cam_statistics_hit_counts:
     insights_group: igName
-    site: siteName
+    fabric: fabricName
     epgs: true
     tenants: true
     leafs: true
@@ -106,7 +106,7 @@ EXAMPLES = r"""
 - name: Get Policy CAM Statistics Hit Counts for epgs, with a specific epoch_id
   cisco.nd.nd_policy_cam_statistics_hit_counts:
     insights_group: igName
-    site: siteName
+    fabric: fabricName
     epoch_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
     epgs: true
   register: query_results
@@ -114,7 +114,7 @@ EXAMPLES = r"""
 - name: Get Policy CAM Statistics Hit Counts for contracts, filters, and a attributes filtering
   cisco.nd.nd_policy_cam_statistics_hit_counts:
     insights_group: igName
-    site: siteName
+    fabric: fabricName
     contracts: true
     filters: true
     filter_by_attributes:
@@ -127,7 +127,7 @@ EXAMPLES = r"""
 - name: Get Policy CAM Statistics Hit Counts for epgs, leafs, contracts, filters, and output to csv
   cisco.nd.nd_policy_cam_statistics_hit_counts:
     insights_group: igName
-    site: siteName
+    fabric: fabricName
     epgs: true
     leafs: true
     contracts: true
@@ -182,8 +182,8 @@ def main():
     ndi = NDI(nd)
 
     insights_group = nd.params.get("insights_group")
-    site = nd.params.get("site")
-    epoch_id = nd.params.get("epoch_id") if nd.params.get("epoch_id") else ndi.get_last_epoch(insights_group, site).get("epochId")
+    fabric = nd.params.get("fabric")
+    epoch_id = nd.params.get("epoch_id") if nd.params.get("epoch_id") else ndi.get_last_epoch(insights_group, fabric).get("epochId")
     epgs = nd.params.get("epgs")
     tenants = nd.params.get("tenants")
     leafs = nd.params.get("leafs")
@@ -226,7 +226,7 @@ def main():
         )
 
     path = "{0}/model/aciPolicy/tcam/hitcountByRules/{1}?%24epochId={2}&%24view=histogram{3}".format(
-        ndi.event_insight_group_path.format(insights_group, site), hit_count_pair, epoch_id, filter_by_attributes_result
+        ndi.event_insight_group_path.format(insights_group, fabric), hit_count_pair, epoch_id, filter_by_attributes_result
     )
 
     response = nd.request(path, method="GET", prefix=ndi.prefix)

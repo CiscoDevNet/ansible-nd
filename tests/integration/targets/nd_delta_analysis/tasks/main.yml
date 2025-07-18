@@ -81,7 +81,7 @@
     <<: *ndi_info
     <<: *ndi_site
     name: testDeltaAnalysis-time
-    earlier_epoch_time: "{{ period_last_week.current.2.collectionTimeRfc3339 }}"
+    earlier_epoch_time: "{{ period_last_week.current.1.collectionTimeRfc3339 }}"
     later_epoch_time: "{{ period_last_week.current.0.collectionTimeRfc3339 }}"
     state: present
   register: delta_analysis_w_time

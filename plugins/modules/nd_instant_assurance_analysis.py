@@ -27,12 +27,12 @@ options:
     type: str
     default: default
     aliases: [ fab_name, ig_name ]
-  site_name:
+  fabric:
     description:
     - Name of the Assurance Entity.
     type: str
     required: true
-    aliases: [ site ]
+    aliases: [ site, site_name, fabric_name ]
   id:
     description:
     - ID for the instant assurance job to query.
@@ -53,12 +53,13 @@ EXAMPLES = r"""
 - name: Trigger instant assurance analysis job
   cisco.nd.nd_instant_assurance_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     state: present
+
 - name: Get history of instant assurance analysis
   cisco.nd.nd_instant_assurance_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     state: query
   register: query_results
 """
@@ -76,7 +77,7 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
-        site_name=dict(type="str", required=True, aliases=["site"]),
+        fabric=dict(type="str", required=True, aliases=["site", "site_name", "fabric_name"]),
         id=dict(type="str", aliases=["job_id"]),
         state=dict(type="str", default="query", choices=["query", "present"]),
     )
@@ -91,33 +92,33 @@ def main():
 
     state = nd.params.get("state")
     insights_group = nd.params.get("insights_group")
-    site_name = nd.params.get("site_name")
+    fabric = nd.params.get("fabric")
     job_id = nd.params.get("id")
 
     if state == "query":
         if job_id:
-            analysis_history = ndi.query_instant_assurance_analysis(insights_group, site_name, job_id)
+            analysis_history = ndi.query_instant_assurance_analysis(insights_group, fabric, job_id)
             if len(analysis_history) == 1:
                 nd.existing = analysis_history[0]
                 if nd.existing.get("operSt") == "COMPLETE":
-                    nd.existing["epochInfo"] = ndi.get_epoch_by_jobid(insights_group, site_name, job_id)
+                    nd.existing["epochInfo"] = ndi.get_epoch_by_jobid(insights_group, fabric, job_id)
                 else:
                     nd.existing["epochInfo"] = {}
             else:
                 nd.fail_json(msg="Instant Assurance Analysis job {0} not found".format(job_id))
         else:
-            analysis_history = ndi.query_instant_assurance_analysis(insights_group, site_name)
+            analysis_history = ndi.query_instant_assurance_analysis(insights_group, fabric)
             nd.existing = analysis_history
 
     elif state == "present":
-        trigger_path = ndi.config_ig_path + "/" + ndi.run_analysis_ig_path.format(insights_group, site_name)
+        trigger_path = ndi.config_ig_path + "/" + ndi.run_analysis_ig_path.format(insights_group, fabric)
         resp = nd.request(trigger_path, method="POST", prefix=ndi.prefix)
 
         if resp["success"] is True:
             # Added a pause to give time to NDI to create the job before querying
             time.sleep(10)
             job_id = resp["value"]["data"]["configId"]
-            analysis_history = ndi.query_instant_assurance_analysis(insights_group, site_name, job_id)
+            analysis_history = ndi.query_instant_assurance_analysis(insights_group, fabric, job_id)
             if len(analysis_history) == 1:
                 nd.existing = analysis_history[0]
             else:

@@ -79,7 +79,7 @@ EXAMPLES = r"""
 - name: Creates a new delta analysis job using epoch UUIDs
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     name: testDeltaAnalysis
     earlier_epoch_id: 0e5604f9-53b9c234-03dc-3997-9850-501b925f7d65
     later_epoch_id: 0e5604f9-ad5b12ae-9834-348b-aed1-8ca124e32e9b
@@ -88,7 +88,7 @@ EXAMPLES = r"""
 - name: Creates a new delta analysis job using epoch time
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     name: testDeltaAnalysis
     earlier_epoch_time: 2023-01-15T12:24:34Z
     later_epoch_time: 2023-01-17T18:27:34Z
@@ -97,28 +97,28 @@ EXAMPLES = r"""
 - name: Validates a running delta analysis job
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     name: testDeltaAnalysis
     state: validate
 
 - name: Delete an existing delta analysis
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     name: testDeltaAnalysis
     state: absent
 
 - name: Queries all existing delta analysis jobs
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     state: query
   register: query_results
 
 - name: Queries a specific delta analysis job
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     name: testDeltaAnalysis
     state: query
   register: query_results
@@ -172,7 +172,7 @@ def main():
 
     state = nd.params.get("state")
     insights_group = nd.params.get("insights_group")
-    site_name = nd.params.get("site_name")
+    fabric = nd.params.get("fabric")
     name = nd.params.get("name")
     earlier_epoch_id = nd.params.get("earlier_epoch_id")
     later_epoch_id = nd.params.get("later_epoch_id")
@@ -180,13 +180,13 @@ def main():
     later_epoch_time = nd.params.get("later_epoch_time")
 
     if name:
-        nd.existing = ndi.query_delta_analysis(insights_group, site_name, jobName=name)
+        nd.existing = ndi.query_delta_analysis(insights_group, fabric, jobName=name)
     else:
         nd.existing = {}
 
     if state == "query":
         if name is None:
-            delta_job_list = ndi.query_delta_analysis(insights_group, site_name)
+            delta_job_list = ndi.query_delta_analysis(insights_group, fabric)
             nd.existing = delta_job_list
 
     elif state == "present":
@@ -209,12 +209,12 @@ def main():
         if nd.existing:
             nd.exit_json()
 
-        trigger_path = ndi.config_ig_path + "/" + ndi.run_epoch_delta_ig_path.format(insights_group, site_name)
+        trigger_path = ndi.config_ig_path + "/" + ndi.run_epoch_delta_ig_path.format(insights_group, fabric)
         resp = nd.request(trigger_path, method="POST", data=data, prefix=ndi.prefix)
 
         if resp["success"] is True:
             job_id = resp["value"]["data"]["configId"]
-            delta_job_info = ndi.query_delta_analysis(insights_group, site_name, jobId=job_id)
+            delta_job_info = ndi.query_delta_analysis(insights_group, fabric, jobId=job_id)
             nd.existing = delta_job_info
         else:
             nd.fail_json(msg="Creating delta analysis job failed")
@@ -225,7 +225,7 @@ def main():
         # Wait for Epoch Delta Analysis to complete
         while nd.existing.get("operSt") not in ["COMPLETE", "FAILED"]:
             try:
-                nd.existing = ndi.query_delta_analysis(insights_group, site_name, jobName=name)
+                nd.existing = ndi.query_delta_analysis(insights_group, fabric, jobName=name)
                 if nd.existing.get("operSt") == "FAILED":
                     nd.fail_json(msg="Epoch Delta Analysis {0} has failed".format(name))
                 if nd.existing.get("operSt") == "COMPLETE":
@@ -237,11 +237,11 @@ def main():
             nd.fail_json(msg="Epoch Delta Analysis {0} has failed".format(name))
 
         job_id = nd.existing.get("jobId")
-        nd.existing["anomaly_count"] = ndi.query_event_severity(insights_group, site_name, job_id)
-        anomalies = ndi.query_anomalies(insights_group, site_name, job_id, epoch_map[epoch_choice], exclude_ack_anomalies)
+        nd.existing["anomaly_count"] = ndi.query_event_severity(insights_group, fabric, job_id)
+        anomalies = ndi.query_anomalies(insights_group, fabric, job_id, epoch_map[epoch_choice], exclude_ack_anomalies)
         nd.existing["anomalies"] = anomalies
         # nd.existing["unhealthy_resources"] = ndi.query_impacted_resource(
-        #     insights_group, site_name, job_id)
+        #     insights_group, fabric, job_id)
         if anomalies:
             anomalies_count = {"minor": 0, "major": 0, "critical": 0, "warning": 0}
             for anomaly in anomalies:
@@ -261,7 +261,7 @@ def main():
             if module.check_mode:
                 nd.existing = {}
             else:
-                rm_path = ndi.config_ig_path + "/" + "{0}/fabric/{1}/deleteEpochDelta".format(insights_group, site_name)
+                rm_path = ndi.config_ig_path + "/" + "{0}/fabric/{1}/deleteEpochDelta".format(insights_group, fabric)
                 rm_payload = [job_id]
 
                 rm_resp = nd.request(rm_path, method="POST", data=rm_payload, prefix=ndi.prefix)
