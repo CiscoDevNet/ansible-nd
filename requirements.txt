@@ -1,3 +1,5 @@
 requests_toolbelt
 jsonpath-ng
 lxml
+deepdiff
+pydantic

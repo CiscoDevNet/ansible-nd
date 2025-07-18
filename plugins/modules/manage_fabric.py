@@ -1,3 +1,9 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+# Copyright: (c) 2025, Mike Wiebe (@mwiebe) <mwiebe@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
@@ -7,12 +13,15 @@ __author__ = "Mike Wiebe"
 DOCUMENTATION = """
 
 ---
-module: fabric
+module: manage_fabric
 short_description: Manage fabrics in Cisco Nexus Dashboard.
 version_added: "1.0.0"
 author: Mike Wiebe (@mikewiebe)
 description:
-- Create, update, and delete fabrics in Cisco Nexus Dashboard.
+- Create, update, delete, override, and query fabrics in Cisco Nexus Dashboard.
+- Supports Pydantic model validation for fabric configurations.
+- Provides utility functions for merging models and handling default values.
+- Uses state-based operations with intelligent diff calculation for optimal API calls.
 options:
     state:
         choices:
@@ -103,7 +112,7 @@ EXAMPLES = """
         securityDomain: default
         management:
           type: vxlanIbgp
-          bgpAsn: 65001
+          bgpAsn: "65001"
           anycastGatewayMac: "00:00:00:00:00:01"
           replicationMode: multicast
 
@@ -117,7 +126,7 @@ EXAMPLES = """
         securityDomain: default
         management:
           type: vxlanIbgp
-          bgpAsn: 65002
+          bgpAsn: "65002"
           anycastGatewayMac: "00:00:00:00:00:02"
           replicationMode: ingress
 
@@ -137,17 +146,14 @@ EXAMPLES = """
 """
 import copy
 import inspect
-import json
 import logging
 import re
 from deepdiff import DeepDiff
 
-from ansible.module_utils._text import to_bytes
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import (
     NDModule,
     nd_argument_spec,
-    write_file,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import (
     FabricModel,
@@ -257,13 +263,16 @@ class Common:
     Common utility class that provides shared functionality for all state operations in the Cisco ND fabric module.
 
     This class handles the core logic for processing fabric configurations across different operational states
-    (merged, replaced, deleted, query) in Ansible playbooks. It manages state comparison, parameter validation,ß
-    and payload construction for ND API operations.
+    (merged, replaced, deleted, overridden, query) in Ansible playbooks. It manages state comparison, parameter
+    validation, and payload construction for ND API operations using Pydantic models and utility functions.
+
+    The class leverages utility functions (merge_models, model_payload_with_defaults) to intelligently handle
+    fabric configuration merging and default value application based on the operation state.
 
     Attributes:
         result (dict): Dictionary to store operation results including changed state, diffs, API responses and warnings.
         playbook_params (dict): Parameters provided from the Ansible playbook.
-        state (str): The desired state operation (merged, replaced, deleted, or query).
+        state (str): The desired state operation (merged, replaced, deleted, overridden, or query).
         payloads (dict): Container for API request payloads.
         have (list): List of FabricModel objects representing the current state of fabrics.
         query (list): List for storing query results.
@@ -271,10 +280,8 @@ class Common:
         want (list): List of FabricModel objects representing the desired state of fabrics.
 
     Methods:
-        validate_playbook_params(): Validates the playbook parameters and builds the desired state.
+        validate_playbook_params(): Validates the playbook parameters and builds the desired state using utility functions.
         fabric_in_have(fabric_name): Checks if a fabric with the given name exists in current state.
-        _build_playbook_params_merged(fabric): Builds configuration payload for 'merged' state operation.
-        _build_playbook_params_replaced(fabric): Builds configuration payload for 'replaced' state operation.
     """
 
     def __init__(self, playbook, have_state, logger=None):
@@ -298,89 +305,6 @@ class Common:
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
 
-    def _build_playbook_params_merged(self, fabric):
-        """
-        Build playbook parameters for 'merged' state operation on a fabric.
-
-        This function constructs a configuration payload for updating a fabric with the 'merged' state,
-        which combines the provided fabric configuration with the existing configuration. When specific
-        parameters are not provided in the input, the function preserves the existing values from the
-        current fabric configuration.
-
-        Args:
-            fabric (dict): The desired fabric configuration. Should contain at least a 'name' key
-                          and can optionally contain other fabric parameters like 'category',
-                          'securityDomain', and a 'management' dictionary with networking parameters.
-
-        Returns:
-            dict: A configuration payload dictionary containing the merged fabric configuration
-                  that can be sent to the network device. The dictionary contains the fabric name,
-                  category, security domain, and management parameters like type, BGP ASN,
-                  anycast gateway MAC, and replication mode.
-        """
-        self.class_name = self.__class__.__name__
-        method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
-
-        msg = f"ENTERED: {self.class_name}.{method_name}"
-        self.log.debug(msg)
-
-        have_fabric = self.fabric_in_have(fabric["name"])
-        fabric_config_payload = {
-            "name": f"{fabric.get('name', have_fabric.name)}",
-            "category": f"{fabric.get('category', have_fabric.category)}",
-            "securityDomain": f"{fabric.get('securityDomain', have_fabric.category)}",
-            "management": {
-                "type": f"{fabric.get('management', {}).get('type', have_fabric.management.type)}",
-                "bgpAsn": f"{fabric.get('management', {}).get('bgpAsn', have_fabric.management.bgpAsn)}",
-                "anycastGatewayMac": f"{fabric.get('management', {}).get('anycastGatewayMac', have_fabric.management.anycastGatewayMac)}",
-                "replicationMode": f"{fabric.get('management', {}).get('replicationMode', have_fabric.management.replicationMode)}",
-            },
-        }
-
-        return fabric_config_payload
-
-    def _build_playbook_params_replaced(self, fabric):
-        """
-        Builds a standardized configuration payload for fabric replacement operations.
-
-        This method constructs a dictionary containing fabric configuration parameters
-        for use in Ansible playbooks when the 'replaced' state is specified. It extracts
-        values from the provided fabric dictionary, falling back to model default values
-        when specific parameters are not present.
-
-        Args:
-            fabric (dict): Dictionary containing fabric configuration parameters.
-                           Expected to potentially contain 'name', 'category', 'securityDomain',
-                           and nested 'management' dictionary with its own parameters.
-
-        Returns:
-            dict: Structured dictionary containing fabric configuration parameters
-                  formatted for use in ND API operations.
-
-        Notes:
-            - Logs debug information when the method is entered
-            - Uses model field defaults when parameters are not specified in input
-        """
-        self.class_name = self.__class__.__name__
-        method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
-
-        msg = f"ENTERED: {self.class_name}.{method_name}"
-        self.log.debug(msg)
-
-        fabric_config_payload = {
-            "name": f"{fabric.get('name', FabricModel.model_fields['name'].default)}",
-            "category": f"{fabric.get('category', FabricModel.model_fields['category'].default)}",
-            "securityDomain": f"{fabric.get('securityDomain', FabricModel.model_fields['securityDomain'].default)}",
-            "management": {
-                "type": f"{fabric.get('management', {}).get('type', FabricManagementModel.model_fields['type'].default)}",
-                "bgpAsn": f"{fabric.get('management', {}).get('bgpAsn', FabricManagementModel.model_fields['bgpAsn'].default)}",
-                "anycastGatewayMac": f"{fabric.get('management', {}).get('anycastGatewayMac', FabricManagementModel.model_fields['anycastGatewayMac'].default)}",
-                "replicationMode": f"{fabric.get('management', {}).get('replicationMode', FabricManagementModel.model_fields['replicationMode'].default)}",
-            },
-        }
-
-        return fabric_config_payload
-
     def validate_playbook_params(self):
         """
         Validates and processes playbook parameters to create fabric model objects.
@@ -390,16 +314,16 @@ class Common:
         existing fabric configurations. The resulting models are stored in the want list
         for further processing.
 
-        For 'merged' state with existing fabrics, it uses _build_playbook_params_merged to
-        construct the configuration payload. For other states or when fabrics don't exist,
-        it uses _build_playbook_params_replaced.
+        The method uses utility functions to handle different scenarios:
+        - For 'merged' state with existing fabrics: Uses merge_models() to combine current and desired state
+        - For other states or when fabrics don't exist: Uses model_payload_with_defaults() for complete configuration
 
         The method handles the following scenarios:
         - 'merged' state for new and existing fabrics
-        - 'replaced', 'deleted', and 'query' states
+        - 'replaced', 'deleted', 'overridden', and 'query' states
 
         Returns:
-            None
+            None: Updates self.want list with processed FabricModel objects
         """
         self.class_name = self.__class__.__name__
         method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
@@ -408,14 +332,20 @@ class Common:
         self.log.debug(msg)
 
         for fabric in self.playbook_params.get("config"):
-            if self.state == "merged" and self.fabric_in_have(fabric["name"]):
-                fabric_config_payload = self._build_playbook_params_merged(fabric)
+            have_fabric = self.fabric_in_have(fabric["name"])
+            want_fabric = FabricModel(**fabric)
+            if self.state == "merged" and have_fabric is not None:
+                fabric_config_payload = merge_models(have_fabric, want_fabric)
             else:
                 # This handles
                 #  - Merged when the fabric does not yet exist
                 #  - Replaced, Deleted, and Query states
-                fabric_config_payload = self._build_playbook_params_replaced(fabric)
+                fabric_config_payload = model_payload_with_defaults(want_fabric)
+
             fabric = FabricModel(**fabric_config_payload)
+            self.log.debug("Adding fabric to want list: %s", fabric.name)
+            self.log.debug("Fabric model created: %s", fabric.model_dump())
+            # Add the fabric model to the want list
             self.want.append(fabric)
 
     def fabric_in_have(self, fabric_name):
@@ -518,7 +448,7 @@ class Merged:
 
             if want_fabric == have_fabric:
                 # want_fabric and have_fabric are the same, no action needed
-                self.log.debug(f"Fabric {want_fabric.name} is already in the desired state, skipping.")
+                self.log.debug("Fabric %s is already in the desired state, skipping.", want_fabric.name)
                 continue
 
             if not have_fabric:
@@ -609,7 +539,7 @@ class Merged:
             return
 
         # Log the values changed for debugging
-        self.log.debug(f"Values changed: {diff['values_changed']}")
+        self.log.debug("Values changed: %s", diff["values_changed"])
 
         for path, change in diff["values_changed"].items():
             parts = self._parse_path(path)
@@ -654,7 +584,7 @@ class Merged:
             return
 
         # Log the dictionary items added for debugging
-        self.log.debug(f"Dictionary items added: {diff['dictionary_item_added']}")
+        self.log.debug("Dictionary items added: %s", diff["dictionary_item_added"])
 
         for path in diff["dictionary_item_added"]:
             parts = self._parse_path(path)
@@ -815,7 +745,7 @@ class Replaced:
 
             if want_fabric == have_fabric:
                 # want_fabric and have_fabric are the same, no action needed
-                self.log.debug(f"Fabric {want_fabric.name} is already in the desired state, skipping.")
+                self.log.debug("Fabric %s is already in the desired state, skipping.", want_fabric.name)
                 continue
 
             if not have_fabric:
@@ -976,12 +906,97 @@ class Query:
     def __init__(self, playbook, have_state, logger=None, common_util=None):
         self.class_name = self.__class__.__name__
         self.log = logger or logging.getLogger(f"nd.{self.class_name}")
+        self.common = common_util or Common(playbook, have_state)
         self.have = have_state
 
         msg = "ENTERED Query(): "
         msg += f"state: {self.common.state}, "
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
+
+
+def merge_models(have_model, want_model):
+    """
+    Recursively merge two Pydantic models, preferring values from want_model when present.
+
+    This utility function combines two Pydantic model instances by taking values from the
+    want_model when they are not None, otherwise preserving values from have_model.
+    It handles nested Pydantic models by recursively applying the same merge logic.
+
+    Args:
+        have_model (BaseModel): The current/existing Pydantic model instance
+        want_model (BaseModel): The desired Pydantic model instance with new values
+
+    Returns:
+        dict: A dictionary suitable for API payloads containing the merged configuration
+
+    Raises:
+        ValueError: If either argument is not a Pydantic model instance
+
+    Example:
+        >>> have_fabric = FabricModel(name="test", category="fabric")
+        >>> want_fabric = FabricModel(name="test", category="updated")
+        >>> merged = merge_models(have_fabric, want_fabric)
+        >>> # Result: {"name": "test", "category": "updated", ...}
+    """
+    from pydantic import BaseModel
+
+    if not isinstance(have_model, BaseModel) or not isinstance(want_model, BaseModel):
+        raise ValueError("Both arguments must be Pydantic models.")
+    result = {}
+    for field in type(have_model).model_fields:
+        have_value = getattr(have_model, field)
+        new_value = getattr(want_model, field, None)
+        # If the field is itself a Pydantic model, recurse
+        if isinstance(have_value, BaseModel) and isinstance(new_value, BaseModel):
+            result[field] = merge_models(have_value, new_value)
+        else:
+            # Use new_value if not None, else have_value
+            result[field] = new_value if new_value is not None else have_value
+    return result
+
+
+def model_payload_with_defaults(want_model):
+    """
+    Build a payload dict from a Pydantic model, using set fields or default values if not set.
+
+    This utility function creates a dictionary representation of a Pydantic model by using
+    the actual field values when they are set, or falling back to the model's default values
+    when fields are not explicitly provided. It handles nested Pydantic models recursively.
+
+    Args:
+        want_model (BaseModel): The Pydantic model instance to convert to a payload dict
+
+    Returns:
+        dict: A dictionary containing all model fields with their values or defaults,
+              suitable for API payloads
+
+    Example:
+        >>> fabric = FabricModel(name="test")  # Other fields use defaults
+        >>> payload = model_payload_with_defaults(fabric)
+        >>> # Result: {"name": "test", "category": "fabric", "securityDomain": "all", ...}
+
+    Note:
+        This function ensures that all required fields have values by using model defaults,
+        making it suitable for 'replaced' and 'overridden' operations where complete
+        configuration is needed.
+    """
+    from pydantic import BaseModel
+
+    model_cls = type(want_model)
+    result = {}
+    for field, field_info in model_cls.model_fields.items():
+        value = getattr(want_model, field, None)
+        default_value = field_info.default
+        # If the field is itself a Pydantic model, recurse
+        if isinstance(field_info.annotation, type) and issubclass(field_info.annotation, BaseModel):
+            if isinstance(value, BaseModel):
+                result[field] = model_payload_with_defaults(value)
+            else:
+                result[field] = model_payload_with_defaults(field_info.default)
+        else:
+            result[field] = value if value is not None else default_value
+    return result
 
 
 def main():
@@ -1004,7 +1019,7 @@ def main():
     try:
         log = Log()
         log.commit()
-        mainlog = logging.getLogger(f"nd.main")
+        mainlog = logging.getLogger("nd.main")
     except ValueError as error:
         module.fail_json(str(error))
 
@@ -1052,7 +1067,7 @@ def main():
             path = request_data["path"]
             payload = request_data["payload"]
 
-            mainlog.info(f"Calling nd.request with path: {path}, verb: {verb}, and payload: {payload}")
+            mainlog.info("Calling nd.request with path: %s, verb: %s, and payload: %s", path, verb, payload)
             # Make the API request
             response = nd.request(path, method=verb, data=payload if payload else None)
             task.common.result["response"].append(response)

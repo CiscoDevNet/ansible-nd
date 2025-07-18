@@ -1,10 +1,7 @@
 import pytest
 import logging
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
 from ansible_collections.cisco.nd.plugins.modules.manage_fabric import GetHave
-from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import (
-    FabricModel,
-)
 
 
 class TestGetHave:
