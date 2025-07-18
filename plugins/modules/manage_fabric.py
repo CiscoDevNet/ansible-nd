@@ -95,7 +95,7 @@ options:
 EXAMPLES = """
 # Create a new fabric or update an existing one
 - name: Create or update fabric
-  cisco.nd.manage.fabric:
+  cisco.nd.manage_fabric:
     state: merged
     config:
       - name: example-fabric
@@ -109,7 +109,7 @@ EXAMPLES = """
 
 # Replace existing fabric configuration
 - name: Replace fabric configuration
-  cisco.nd.manage.fabric:
+  cisco.nd.manage_fabric:
     state: replaced
     config:
       - name: example-fabric
@@ -123,14 +123,14 @@ EXAMPLES = """
 
 # Delete a fabric
 - name: Delete fabric
-  cisco.nd.manage.fabric:
+  cisco.nd.manage_fabric:
     state: deleted
     config:
       - name: example-fabric
 
 # Query existing fabrics
 - name: Query fabrics
-  cisco.nd.manage.fabric:
+  cisco.nd.manage_fabric:
     state: query
     config:
       - name: example-fabric
@@ -1009,7 +1009,7 @@ def main():
         module.fail_json(str(error))
 
     mainlog.info("---------------------------------------------")
-    mainlog.info("Starting cisco.nd.manage.fabric module")
+    mainlog.info("Starting cisco.nd.manage_fabric module")
     mainlog.info("---------------------------------------------\n")
 
     nd = NDModule(module)
