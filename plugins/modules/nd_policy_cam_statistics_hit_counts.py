@@ -53,10 +53,10 @@ options:
     default: false
   leafs:
     description:
-    - All Policy CAM Rules by Hit Count by Leafs.
+    - All Policy CAM Rules by Hit Count by Leafs/Nodes.
     type: bool
     default: false
-    aliases: [ node ]
+    aliases: [ nodes ]
   contracts:
     description:
     - All Policy CAM Rules by Hit Count by Contracts.
@@ -155,7 +155,7 @@ def main():
         epoch_id=dict(type="str", aliases=["snapshot"]),
         epgs=dict(type="bool", default=False),
         tenants=dict(type="bool", default=False),
-        leafs=dict(type="bool", default=False, aliases=["node"]),
+        leafs=dict(type="bool", default=False, aliases=["nodes"]),
         contracts=dict(type="bool", default=False),
         filters=dict(type="bool", default=False),
         filter_by_attributes=dict(
