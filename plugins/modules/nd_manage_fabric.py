@@ -967,6 +967,7 @@ def merge_models(have_model, want_model):
     if not isinstance(have_model, BaseModel) or not isinstance(want_model, BaseModel):
         raise ValueError("Both arguments must be Pydantic models.")
     result = {}
+    # pylint: disable=unidiomatic-typecheck
     for field in type(have_model).model_fields:
         have_value = getattr(have_model, field)
         new_value = getattr(want_model, field, None)
