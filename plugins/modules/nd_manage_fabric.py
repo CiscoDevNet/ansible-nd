@@ -1039,6 +1039,10 @@ def main():
         supports_check_mode=True,
     )
 
+    import sys
+    if sys.version_info < (3, 9):
+        module.fail_json(msg="Python version 3.9 or higher is required for this module.")
+
     if not HAS_PYDANTIC:
         module.fail_json(msg=missing_required_lib("pydantic"), exception=PYDANTIC_IMPORT_ERROR)
     if not HAS_DEEPDIFF:
