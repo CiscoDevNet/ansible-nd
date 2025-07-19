@@ -149,6 +149,7 @@ import inspect
 import logging
 import re
 import traceback
+import sys
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
@@ -1039,7 +1040,6 @@ def main():
         supports_check_mode=True,
     )
 
-    import sys
     if sys.version_info < (3, 9):
         module.fail_json(msg="Python version 3.9 or higher is required for this module.")
 
