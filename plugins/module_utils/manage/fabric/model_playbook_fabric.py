@@ -7,9 +7,43 @@ __author__ = "Mike Wiebe"
 """
 Validation model for cisco.nd.manage.fabric playbooks.
 """
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 from enum import Enum
 import re
+
+# This try-except block is used to handle the import of Pydantic.
+# If Pydantic is not available, it will define a minimal BaseModel class
+# and related functions to ensure compatibility with existing code.
+#
+# This is used to satisfy the ansible sanity test requirements
+try:
+    from pydantic import BaseModel, ConfigDict, Field, field_validator
+except ImportError as imp_exc:
+    PYDANTIC_IMPORT_ERROR = imp_exc
+
+    # If Pydantic is not available, define a minimal BaseModel and related functions
+    # Reference: https://docs.ansible.com/ansible-core/2.17/dev_guide/testing/sanity/import.html
+    class BaseModel:
+        pass
+
+    def ConfigDict(*args, **kwargs):
+        return dict(*args, **kwargs)
+
+    def Field(*args, **kwargs):
+        return None
+
+    def field_validator(*args, **kwargs):
+        """
+        A placeholder for field_validator to maintain compatibility with Pydantic.
+        This will not perform any validation but allows the code to run without errors.
+        """
+
+        def decorator(func):
+            return func
+
+        return decorator
+
+else:
+    PYDANTIC_IMPORT_ERROR = None
 
 
 class FabricManagementType(Enum):

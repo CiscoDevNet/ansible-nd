@@ -13,7 +13,7 @@ __author__ = "Mike Wiebe"
 DOCUMENTATION = """
 
 ---
-module: manage_fabric
+module: nd_manage_fabric
 short_description: Manage fabrics in Cisco Nexus Dashboard.
 version_added: "1.0.0"
 author: Mike Wiebe (@mikewiebe)
@@ -148,18 +148,42 @@ import copy
 import inspect
 import logging
 import re
-from deepdiff import DeepDiff
+import traceback
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd import (
-    NDModule,
-    nd_argument_spec,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import (
-    FabricModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
+from ansible.module_utils.basic import missing_required_lib
 
 from ..module_utils.common.log import Log
+
+from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import FabricModel
+
+# try:
+#     from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import FabricModel
+# except ImportError:
+#     # If FabricModel is not available, define a minimal BaseModel and related functions
+#     # Reference: https://docs.ansible.com/ansible-core/2.17/dev_guide/testing/sanity/import.html
+#     # This is used to satisfy the ansible sanity test requirements
+#     class FabricModel:
+#         pass
+
+try:
+    from pydantic import BaseModel
+except ImportError:
+    HAS_PYDANTIC = False
+    PYDANTIC_IMPORT_ERROR = traceback.format_exc()
+else:
+    HAS_PYDANTIC = True
+    PYDANTIC_IMPORT_ERROR = None
+
+try:
+    from deepdiff import DeepDiff
+except ImportError:
+    HAS_DEEPDIFF = False
+    DEEPDIFF_IMPORT_ERROR = traceback.format_exc()
+else:
+    HAS_DEEPDIFF = True
+    DEEPDIFF_IMPORT_ERROR = None
 
 
 class GetHave:
@@ -938,7 +962,7 @@ def merge_models(have_model, want_model):
         >>> merged = merge_models(have_fabric, want_fabric)
         >>> # Result: {"name": "test", "category": "updated", ...}
     """
-    from pydantic import BaseModel
+    # from pydantic import BaseModel
 
     if not isinstance(have_model, BaseModel) or not isinstance(want_model, BaseModel):
         raise ValueError("Both arguments must be Pydantic models.")
@@ -980,7 +1004,7 @@ def model_payload_with_defaults(want_model):
         making it suitable for 'replaced' and 'overridden' operations where complete
         configuration is needed.
     """
-    from pydantic import BaseModel
+    # from pydantic import BaseModel
 
     model_cls = type(want_model)
     result = {}
@@ -999,7 +1023,7 @@ def model_payload_with_defaults(want_model):
 
 
 def main():
-    argument_spec = nd_argument_spec()
+    argument_spec = {}
     argument_spec.update(
         state=dict(
             type="str",
@@ -1013,6 +1037,11 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
     )
+
+    if not HAS_PYDANTIC:
+        module.fail_json(msg=missing_required_lib("pydantic"), exception=PYDANTIC_IMPORT_ERROR)
+    if not HAS_DEEPDIFF:
+        module.fail_json(msg=missing_required_lib("deepdiff"), exception=DEEPDIFF_IMPORT_ERROR)
 
     # Logging setup
     try:
