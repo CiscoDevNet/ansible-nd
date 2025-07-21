@@ -4,6 +4,34 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 
 .. contents:: Topics
 
+v1.4.0
+======
+
+Release Summary
+---------------
+
+Release v1.4.0 of the ``ansible-nd`` collection on 2025-07-21.
+This changelog describes all changes made to the modules and plugins included in this collection since v1.3.0.
+
+Minor Changes
+-------------
+
+- Add deployment_type to nodes configuration for nd_setup module.
+- Add san_vendor to nd_setup module for ND v4.1 and later.
+- Add support for l3extRsPathL3OutAtt and l3extMember classes
+- Added support for authentication with User API Keys.
+- Added testing support for Ansible Core 2.19
+- Changed site to fabric and added aliases for nd_delta_analysis and nd_policy_cam_statistics_hit_counts
+- Modify nd_setup module to be compatible with ND version 4.1.0 and later. Modify Documentation to be clearer.
+- Rename nd_epoch module to nd_snapshot, modify the name of the attributes and their description to better reflect the latest ND versions.
+- Updated the `cisco.nd.nd` HTTPAPI plugin to be compatible with the `cisco.dcnm` collection.
+
+Bugfixes
+--------
+
+- Fix error handling message for unsupported objects
+- Fixed an issue when querying for Pre Change Validation results when more than 50 exist in NDI.
+
 v1.3.0
 ======
 
