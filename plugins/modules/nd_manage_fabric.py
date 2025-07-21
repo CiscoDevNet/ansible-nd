@@ -969,7 +969,7 @@ def merge_models(have_model, want_model):
         raise ValueError("Both arguments must be Pydantic models.")
     result = {}
     # pylint: disable=unidiomatic-typecheck
-    for field in type(have_model).model_fields:
+    for field in type(have_model).model_fields:  # pylint: disable=unidiomatic-typecheck
         have_value = getattr(have_model, field)
         new_value = getattr(want_model, field, None)
         # If the field is itself a Pydantic model, recurse
