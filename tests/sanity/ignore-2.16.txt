@@ -4,4 +4,3 @@ plugins/module_utils/manage/fabric/model_playbook_fabric.py compile-2.7!skip
 plugins/module_utils/manage/fabric/model_playbook_fabric.py import-2.7!skip
 plugins/modules/nd_manage_fabric.py compile-2.7!skip
 plugins/modules/nd_manage_fabric.py import-2.7!skip
-plugins/modules/nd_manage_fabric.py validate-modules!skip
