@@ -177,16 +177,17 @@ class FabricManagementModel(BaseModel):
         str_strip_whitespace=True,
         use_enum_values=True,
         validate_assignment=True,
+        populate_by_name=True,  # Allow both snake_case and camelCase
     )
 
-    type: FabricManagementType = Field(default=FabricManagementType.VXLAN_IBGP.value)
-    bgpAsn: str = Field(default="")
-    anycastGatewayMac: str = Field(default="2020.0000.00aa")
-    replicationMode: FabricReplicationMode = Field(default=FabricReplicationMode.MULTICAST.value)
+    type: FabricManagementType = Field(default=FabricManagementType.VXLAN_IBGP.value, alias="type")
+    bgp_asn: str = Field(default="", alias="bgpAsn")
+    anycast_gateway_mac: str = Field(default="2020.0000.00aa", alias="anycastGatewayMac")
+    replication_mode: FabricReplicationMode = Field(default=FabricReplicationMode.MULTICAST.value, alias="replicationMode")
 
-    @field_validator("bgpAsn", mode="before")
+    @field_validator("bgp_asn", mode="before")
     @classmethod
-    def validate_bgpAsn(cls, value: str) -> str:
+    def validate_bgp_asn(cls, value: str) -> str:
         """
         Validate BGP Autonomous System Number (ASN) format.
 
@@ -230,9 +231,9 @@ class FabricManagementModel(BaseModel):
             raise ValueError(f"Invalid BGP ASN format: {value}. Must be a valid ASN number.")
         return value
 
-    @field_validator("anycastGatewayMac", mode="before")
+    @field_validator("anycast_gateway_mac", mode="before")
     @classmethod
-    def validate_anycastGatewayMac(cls, value: str) -> str:
+    def validate_anycast_gateway_mac(cls, value: str) -> str:
         """
         Validates that the anycastGatewayMac field follows Cisco-style MAC address format.
 
@@ -283,12 +284,13 @@ class FabricModel(BaseModel):
         str_strip_whitespace=True,
         use_enum_values=True,
         validate_assignment=True,
+        populate_by_name=True,  # Allow both snake_case and camelCase
     )
 
-    name: str = Field(default="")
-    category: str = Field(default="fabric")
-    securityDomain: str = Field(default="all")
-    management: FabricManagementModel
+    name: str = Field(default="", alias="name")
+    category: str = Field(default="fabric", alias="category")
+    security_domain: str = Field(default="all", alias="securityDomain")
+    management: FabricManagementModel = Field(alias="management")
 
     @field_validator("name", mode="before")
     @classmethod

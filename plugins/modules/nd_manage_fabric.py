@@ -289,7 +289,7 @@ class Common:
         result (dict): Dictionary to store operation results including changed state, diffs, API responses and warnings.
         task_params (dict): Parameters provided from the Ansible task.
         state (str): The desired state operation (merged, replaced, deleted, overridden, or query).
-        payloads (dict): Container for API request payloads.
+        requests (dict): Container for API request requests.
         have (list): List of FabricModel objects representing the current state of fabrics.
         query (list): List for storing query results.
         validated (list): List of validated configuration items.
@@ -307,7 +307,7 @@ class Common:
         self.result = dict(changed=False, diff=[], response=[], warnings=[])
         self.task_params = task_params
         self.state = task_params["state"]
-        self.payloads = {}
+        self.requests = {}
 
         self.have = have_state
         self.query = []
@@ -360,7 +360,7 @@ class Common:
 
             fabric = FabricModel(**fabric_config_payload)
             self.log.debug("Adding fabric to want list: %s", fabric.name)
-            self.log.debug("Fabric model created: %s", fabric.model_dump())
+            self.log.debug("Fabric model created: %s", fabric.model_dump(by_alias=True))
             # Add the fabric model to the want list
             self.want.append(fabric)
 
@@ -393,12 +393,12 @@ class Merged:
     A class that implements the 'merged' state strategy for Cisco ND fabric configurations.
 
     This class compares the desired state ('want') with the current state ('have') of
-    fabrics and generates the necessary API payloads to bring the current state in line
+    fabrics and generates the necessary API requests to bring the current state in line
     with the desired state. When using the 'merged' state, existing configurations are
     preserved and only the differences or additions are applied.
 
     The class calculates differences between configurations using DeepDiff and constructs
-    appropriate REST API calls (POST for new fabrics, PUT for existing ones) with payloads
+    appropriate REST API calls (POST for new fabrics, PUT for existing ones) with requests
     that reflect only the changes needed.
 
     Attributes:
@@ -407,8 +407,8 @@ class Merged:
         path (str): API endpoint path for the request
 
     Methods:
-        build_payload(): Analyzes desired state against current state and builds API payloads
-        update_payload_merged(have, want): Generates a merged payload from current and desired states
+        build_request(): Analyzes desired state against current state and builds API requests
+        update_payload_merged(have, want): Generates a merged request payload from current and desired states
         _parse_path(path): Parses DeepDiff paths into component parts
         _process_values_changed(diff, updated_payload): Updates changed values in the payload
         _process_dict_items_added(diff, updated_payload, want_dict): Adds new items to the payload
@@ -424,25 +424,25 @@ class Merged:
         self.verb = ""
         self.path = ""
 
-        self.build_payload()
+        self.build_request()
 
         msg = "ENTERED Merged(): "
         msg += f"state: {self.common.state}, "
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
 
-    def build_payload(self):
+    def build_request(self):
         """
-        Build API payloads for creating or updating fabrics.
+        Build API request for creating or updating fabrics.
 
         This method compares the desired fabric configurations (want) with the current
-        configurations (have) and prepares appropriate payloads for API operations.
+        configurations (have) and prepares appropriate requests for API operations.
         For each fabric in the desired state:
         - If the fabric matches the current state, it is skipped
         - If the fabric doesn't exist in the current state, a POST payload is created
         - If the fabric exists but differs from desired state, a PUT payload is created
 
-        The method populates self.common.payloads with dictionaries containing:
+        The method populates self.common.requests with dictionaries containing:
         - verb: HTTP method (POST or PUT)
         - path: API endpoint path
         - payload: The data to be sent to the API
@@ -450,7 +450,7 @@ class Merged:
         No parameters are required as it uses instance attributes for processing.
 
         Returns:
-            None: Updates self.common.payloads with operation details
+            None: Updates self.common.requests with operation details
         """
         self.class_name = self.__class__.__name__
         method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
@@ -471,14 +471,14 @@ class Merged:
                 # If the fabric does not exist in the have state, we will create it
                 self.path = "/api/v1/manage/fabrics"
                 self.verb = "POST"
-                payload = copy.deepcopy(want_fabric.model_dump())
+                payload = copy.deepcopy(want_fabric.model_dump(by_alias=True))
             else:
                 # If the fabric already exists in the have state, we will update it
                 self.path = "/api/v1/manage/fabrics" + f"/{want_fabric.name}"
                 self.verb = "PUT"
                 payload = self.update_payload_merged(have_fabric, want_fabric)
 
-            self.common.payloads[want_fabric.name] = {
+            self.common.requests[want_fabric.name] = {
                 "verb": self.verb,
                 "path": self.path,
                 "payload": payload,
@@ -656,7 +656,7 @@ class Merged:
         diff = DeepDiff(have, want, ignore_order=True)
 
         # Create a copy of have as a dictionary
-        updated_payload = have.model_dump()
+        updated_payload = have.model_dump(by_alias=True)
 
         # If there are no differences, just return the original payload
         # NOTE: I don't think we will ever hit this condition
@@ -664,7 +664,7 @@ class Merged:
             return updated_payload
 
         # Get want as dictionary for reference
-        want_dict = want.model_dump()
+        want_dict = want.model_dump(by_alias=True)
 
         # Update changed values and add any new items
         self._process_values_changed(diff, updated_payload)
@@ -701,9 +701,9 @@ class Replaced:
 
     Methods
     -------
-    build_payload()
+    build_request()
         Processes each fabric in the desired state, compares with current state, and builds
-        appropriate API payloads for creation or replacement
+        appropriate API requests for creation or replacement
     """
 
     def __init__(self, task_params, have_state, logger=None, common_util=None):
@@ -716,19 +716,19 @@ class Replaced:
         self.verb = ""
         self.path = ""
 
-        self.build_payload()
+        self.build_request()
 
         msg = "ENTERED Replaced(): "
         msg += f"state: {self.common.state}, "
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
 
-    def build_payload(self):
+    def build_request(self):
         """
-        Build API payloads for fabric management operations.
+        Build API requests for fabric management operations.
 
         This method processes the desired fabric configurations and generates
-        appropriate API payloads for creating or updating fabrics. It compares
+        appropriate API requests for creating or updating fabrics. It compares
         the desired state (want) with the current state (have) and determines
         the necessary actions.
 
@@ -736,11 +736,11 @@ class Replaced:
         - Iterates through all desired fabric configurations
         - Compares each desired fabric with its current state
         - Skips fabrics that are already in the desired state
-        - Creates POST payloads for new fabrics that don't exist
-        - Creates PUT payloads for existing fabrics that need updates
+        - Creates POST requests for new fabrics that don't exist
+        - Creates PUT requests for existing fabrics that need updates
         - Uses the complete desired configuration for replaced operations
 
-        The generated payloads are stored in self.common.payloads dictionary
+        The generated requests are stored in self.common.requests dictionary
         with the fabric name as the key and a dictionary containing the HTTP
         verb, API path, and payload data as the value.
 
@@ -776,8 +776,8 @@ class Replaced:
             # For replaced we just use the want payload "as is" including any default values
             # This is different from merged where we calculate the difference and only update
             # the changed values and add any new items
-            payload = copy.deepcopy(want_fabric.model_dump())
-            self.common.payloads[want_fabric.name] = {
+            payload = copy.deepcopy(want_fabric.model_dump(by_alias=True))
+            self.common.requests[want_fabric.name] = {
                 "verb": self.verb,
                 "path": self.path,
                 "payload": payload,
@@ -807,7 +807,7 @@ class Deleted:
     The class identifies fabrics that exist in both the desired configuration
     and current system state, then prepares the necessary API calls to delete
     those fabrics by formatting the deletion path for each fabric and storing
-    the operation details in the common payloads dictionary.
+    the operation details in the common requests dictionary.
     """
 
     def __init__(self, task_params, have_state, logger=None, common_util=None):
@@ -824,7 +824,7 @@ class Deleted:
 
         for fabric in self.delete_fabric_names:
             # Create a path for each fabric name to be deleted
-            self.common.payloads[fabric] = {
+            self.common.requests[fabric] = {
                 "verb": self.verb,
                 "path": self.path.format(fabric_name=fabric),
                 "payload": "",
@@ -881,15 +881,15 @@ class Overridden:
 
         for fabric in self.delete_fabric_names:
             # Create a path for each fabric name to be deleted
-            self.common.payloads[fabric] = {
+            self.common.requests[fabric] = {
                 "verb": self.verb,
                 "path": self.path.format(fabric_name=fabric),
                 "payload": "",
             }
 
-        # Merge replace_task.common.payloads into self.common.payloads
-        for fabric, request_data in replaced_task.common.payloads.items():
-            self.common.payloads[fabric] = request_data
+        # Merge replace_task.common.requests into self.common.requests
+        for fabric, request_data in replaced_task.common.requests.items():
+            self.common.requests[fabric] = request_data
 
         msg = "ENTERED Overridden(): "
         msg += f"state: {self.common.state}, "
@@ -929,91 +929,6 @@ class Query:
         msg += f"state: {self.common.state}, "
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
-
-
-# def merge_models(have_model, want_model):
-#     """
-#     Recursively merge two Pydantic models, preferring values from want_model when present.
-
-#     This utility function combines two Pydantic model instances by taking values from the
-#     want_model when they are not None, otherwise preserving values from have_model.
-#     It handles nested Pydantic models by recursively applying the same merge logic.
-
-#     Args:
-#         have_model (BaseModel): The current/existing Pydantic model instance
-#         want_model (BaseModel): The desired Pydantic model instance with new values
-
-#     Returns:
-#         dict: A dictionary suitable for API payloads containing the merged configuration
-
-#     Raises:
-#         ValueError: If either argument is not a Pydantic model instance
-
-#     Example:
-#         >>> have_fabric = FabricModel(name="test", category="fabric")
-#         >>> want_fabric = FabricModel(name="test", category="updated")
-#         >>> merged = merge_models(have_fabric, want_fabric)
-#         >>> # Result: {"name": "test", "category": "updated", ...}
-#     """
-#     # from pydantic import BaseModel
-
-#     if not isinstance(have_model, BaseModel) or not isinstance(want_model, BaseModel):
-#         raise ValueError("Both arguments must be Pydantic models.")
-#     model_cls = type(have_model)
-#     result = {}
-#     for field in model_cls.model_fields:
-#         have_value = getattr(have_model, field)
-#         new_value = getattr(want_model, field, None)
-#         # If the field is itself a Pydantic model, recurse
-#         if isinstance(have_value, BaseModel) and isinstance(new_value, BaseModel):
-#             result[field] = merge_models(have_value, new_value)
-#         else:
-#             # Use new_value if not None, else have_value
-#             result[field] = new_value if new_value is not None else have_value
-#     return result
-
-
-# def model_payload_with_defaults(want_model):
-#     """
-#     Build a payload dict from a Pydantic model, using set fields or default values if not set.
-
-#     This utility function creates a dictionary representation of a Pydantic model by using
-#     the actual field values when they are set, or falling back to the model's default values
-#     when fields are not explicitly provided. It handles nested Pydantic models recursively.
-
-#     Args:
-#         want_model (BaseModel): The Pydantic model instance to convert to a payload dict
-
-#     Returns:
-#         dict: A dictionary containing all model fields with their values or defaults,
-#               suitable for API payloads
-
-#     Example:
-#         >>> fabric = FabricModel(name="test")  # Other fields use defaults
-#         >>> payload = model_payload_with_defaults(fabric)
-#         >>> # Result: {"name": "test", "category": "fabric", "securityDomain": "all", ...}
-
-#     Note:
-#         This function ensures that all required fields have values by using model defaults,
-#         making it suitable for 'replaced' and 'overridden' operations where complete
-#         configuration is needed.
-#     """
-#     # from pydantic import BaseModel
-
-#     model_cls = type(want_model)
-#     result = {}
-#     for field, field_info in model_cls.model_fields.items():
-#         value = getattr(want_model, field, None)
-#         default_value = field_info.default
-#         # If the field is itself a Pydantic model, recurse
-#         if isinstance(field_info.annotation, type) and issubclass(field_info.annotation, BaseModel):
-#             if isinstance(value, BaseModel):
-#                 result[field] = model_payload_with_defaults(value)
-#             else:
-#                 result[field] = model_payload_with_defaults(field_info.default)
-#         else:
-#             result[field] = value if value is not None else default_value
-#     return result
 
 
 def main():
@@ -1078,16 +993,16 @@ def main():
     # If the task is a query, we will just return the have state
     if isinstance(task, Query):
         for fabric in fabrics.have:
-            task.common.query.append(fabric.model_dump())
+            task.common.query.append(fabric.model_dump(by_alias=True))
         task.common.result["query"] = task.common.query
         task.common.result["changed"] = False
         module.exit_json(**task.common.result)
 
-    # Process all the payloads from task.common.payloads
+    # Process all the requests from task.common.requests
     # Sample entry:
     #   {'fabric-ansible': {'verb': 'DELETE', 'path': '/api/v1/manage/fabrics/fabric-ansible', 'payload': ''}
-    if task.common.payloads:
-        for fabric, request_data in task.common.payloads.items():
+    if task.common.requests:
+        for fabric, request_data in task.common.requests.items():
             verb = request_data["verb"]
             path = request_data["path"]
             payload = request_data["payload"]
@@ -1098,7 +1013,7 @@ def main():
             task.common.result["response"].append(response)
             task.common.result["changed"] = True
     else:
-        mainlog.info("No payloads to process")
+        mainlog.info("No requests to process")
 
     # nd.exit_json()
     module.exit_json(**task.common.result)
