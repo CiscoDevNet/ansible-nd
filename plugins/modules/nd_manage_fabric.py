@@ -159,15 +159,6 @@ from ..module_utils.common.log import Log
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import FabricModel
 
-# try:
-#     from ansible_collections.cisco.nd.plugins.module_utils.manage.fabric.model_playbook_fabric import FabricModel
-# except ImportError:
-#     # If FabricModel is not available, define a minimal BaseModel and related functions
-#     # Reference: https://docs.ansible.com/ansible-core/2.17/dev_guide/testing/sanity/import.html
-#     # This is used to satisfy the ansible sanity test requirements
-#     class FabricModel:
-#         pass
-
 try:
     from pydantic import BaseModel
 except ImportError:
@@ -287,7 +278,7 @@ class Common:
     Common utility class that provides shared functionality for all state operations in the Cisco ND fabric module.
 
     This class handles the core logic for processing fabric configurations across different operational states
-    (merged, replaced, deleted, overridden, query) in Ansible playbooks. It manages state comparison, parameter
+    (merged, replaced, deleted, overridden, query) in Ansible tasks. It manages state comparison, parameter
     validation, and payload construction for ND API operations using Pydantic models and utility functions.
 
     The class leverages utility functions (merge_models, model_payload_with_defaults) to intelligently handle
@@ -295,7 +286,7 @@ class Common:
 
     Attributes:
         result (dict): Dictionary to store operation results including changed state, diffs, API responses and warnings.
-        playbook_params (dict): Parameters provided from the Ansible playbook.
+        task_params (dict): Parameters provided from the Ansible task.
         state (str): The desired state operation (merged, replaced, deleted, overridden, or query).
         payloads (dict): Container for API request payloads.
         have (list): List of FabricModel objects representing the current state of fabrics.
@@ -304,17 +295,17 @@ class Common:
         want (list): List of FabricModel objects representing the desired state of fabrics.
 
     Methods:
-        validate_playbook_params(): Validates the playbook parameters and builds the desired state using utility functions.
+        validate_task_params(): Validates the task parameters and builds the desired state using utility functions.
         fabric_in_have(fabric_name): Checks if a fabric with the given name exists in current state.
     """
 
-    def __init__(self, playbook, have_state, logger=None):
+    def __init__(self, task_params, have_state, logger=None):
         self.class_name = self.__class__.__name__
         self.log = logger or logging.getLogger(f"nd.{self.class_name}")
 
         self.result = dict(changed=False, diff=[], response=[], warnings=[])
-        self.playbook_params = playbook
-        self.state = playbook["state"]
+        self.task_params = task_params
+        self.state = task_params["state"]
         self.payloads = {}
 
         self.have = have_state
@@ -322,18 +313,18 @@ class Common:
         self.validated = []
         self.want = []
 
-        self.validate_playbook_params()
+        self.validate_task_params()
 
         msg = "ENTERED Common(): "
         msg += f"state: {self.state}, "
         # msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
 
-    def validate_playbook_params(self):
+    def validate_task_params(self):
         """
-        Validates and processes playbook parameters to create fabric model objects.
+        Validates and processes task parameters to create fabric model objects.
 
-        This method iterates through each fabric configuration in the playbook parameters
+        This method iterates through each fabric configuration in the task parameters
         and converts them into FabricModel instances based on the current state and
         existing fabric configurations. The resulting models are stored in the want list
         for further processing.
@@ -355,7 +346,7 @@ class Common:
         msg = f"ENTERED: {self.class_name}.{method_name}"
         self.log.debug(msg)
 
-        for fabric in self.playbook_params.get("config"):
+        for fabric in self.task_params.get("config"):
             have_fabric = self.fabric_in_have(fabric["name"])
             want_fabric = FabricModel(**fabric)
             if self.state == "merged" and have_fabric is not None:
@@ -422,11 +413,11 @@ class Merged:
         _process_dict_items_added(diff, updated_payload, want_dict): Adds new items to the payload
     """
 
-    def __init__(self, playbook, have_state, logger=None, common_util=None):
+    def __init__(self, task_params, have_state, logger=None, common_util=None):
         self.class_name = self.__class__.__name__
         self.log = logger or logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = common_util or Common(playbook, have_state)
+        self.common = common_util or Common(task_params, have_state)
         self.common.have = have_state
 
         self.verb = ""
@@ -693,8 +684,8 @@ class Replaced:
 
     Parameters
     ----------
-    playbook : dict
-        The playbook containing the desired state ('want') for the fabrics
+    task_params : dict
+        The task_params containing the desired state ('want') for the fabrics
     have_state : dict
         The current state of fabrics in the system
 
@@ -714,11 +705,11 @@ class Replaced:
         appropriate API payloads for creation or replacement
     """
 
-    def __init__(self, playbook, have_state, logger=None, common_util=None):
+    def __init__(self, task_params, have_state, logger=None, common_util=None):
         self.class_name = self.__class__.__name__
         self.log = logger or logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = common_util or Common(playbook, have_state)
+        self.common = common_util or Common(task_params, have_state)
         self.common.have = have_state
 
         self.verb = ""
@@ -801,7 +792,7 @@ class Deleted:
     exist in both lists.
 
     Args:
-        playbook: The playbook configuration containing the desired state
+        task_params: The task_params configuration containing the desired state
         have_state: The current state of fabrics in the system
 
     Attributes:
@@ -818,11 +809,11 @@ class Deleted:
     the operation details in the common payloads dictionary.
     """
 
-    def __init__(self, playbook, have_state, logger=None, common_util=None):
+    def __init__(self, task_params, have_state, logger=None, common_util=None):
         self.class_name = self.__class__.__name__
         self.log = logger or logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = common_util or Common(playbook, have_state)
+        self.common = common_util or Common(task_params, have_state)
         self.common.have = have_state
         self.verb = "DELETE"
         self.path = "/api/v1/manage/fabrics/{fabric_name}"
@@ -857,7 +848,7 @@ class Overridden:
     2. Creating or replacing fabrics specified in 'want'
 
     Args:
-        playbook: The Ansible playbook context containing configuration data
+        task_params: The Ansible task_params context containing configuration data
         have_state: Current state of fabrics in the system
         logger (optional): Logger instance for debugging. Defaults to None
         common_util (optional): Common utility instance. Defaults to None
@@ -872,17 +863,17 @@ class Overridden:
         delete_fabric_names (list): List of fabric names to be deleted
     """
 
-    def __init__(self, playbook, have_state, logger=None, common_util=None, replaced_task=None):
+    def __init__(self, task_params, have_state, logger=None, common_util=None, replaced_task=None):
         self.class_name = self.__class__.__name__
         self.log = logger or logging.getLogger(f"nd.{self.class_name}")
 
-        self.common = common_util or Common(playbook, have_state)
+        self.common = common_util or Common(task_params, have_state)
         self.common.have = have_state
         self.verb = "DELETE"
         self.path = "/api/v1/manage/fabrics/{fabric_name}"
 
         # Use the Replaced() to create new fabrics or replace existing ones
-        replaced_task = Replaced(playbook, have_state)
+        replaced_task = Replaced(task_params, have_state)
 
         # Create a list of fabric names to be deleted that are not in self.common.want but are in self.have
         self.delete_fabric_names = [fabric.name for fabric in self.common.have if fabric.name not in [w.name for w in self.common.want]]
@@ -913,7 +904,7 @@ class Query:
     It provides functionality to retrieve and return fabric state information.
 
     Args:
-        playbook: The Ansible playbook context containing configuration parameters
+        task_params: The Ansible task_params context containing configuration parameters
         have_state: The current state of the fabric being queried
 
     Attributes:
@@ -927,10 +918,10 @@ class Query:
         operations and follows the standard query pattern for state retrieval.
     """
 
-    def __init__(self, playbook, have_state, logger=None, common_util=None):
+    def __init__(self, task_params, have_state, logger=None, common_util=None):
         self.class_name = self.__class__.__name__
         self.log = logger or logging.getLogger(f"nd.{self.class_name}")
-        self.common = common_util or Common(playbook, have_state)
+        self.common = common_util or Common(task_params, have_state)
         self.have = have_state
 
         msg = "ENTERED Query(): "
@@ -1061,25 +1052,25 @@ def main():
     mainlog.info("---------------------------------------------\n")
 
     nd = NDModule(module)
-    playbook = nd.params
+    task_params = nd.params
     fabrics = GetHave(nd)
     fabrics.refresh()
     fabrics.validate_nd_state()
 
     try:
         task = None
-        if playbook.get("state") == "merged":
-            task = Merged(playbook, fabrics.have)
-        elif playbook.get("state") == "replaced":
-            task = Replaced(playbook, fabrics.have)
-        elif playbook.get("state") == "deleted":
-            task = Deleted(playbook, fabrics.have)
-        elif playbook.get("state") == "overridden":
-            task = Overridden(playbook, fabrics.have)
-        elif playbook.get("state") == "query":
-            task = Query(playbook, fabrics.have)
+        if task_params.get("state") == "merged":
+            task = Merged(task_params, fabrics.have)
+        elif task_params.get("state") == "replaced":
+            task = Replaced(task_params, fabrics.have)
+        elif task_params.get("state") == "deleted":
+            task = Deleted(task_params, fabrics.have)
+        elif task_params.get("state") == "overridden":
+            task = Overridden(task_params, fabrics.have)
+        elif task_params.get("state") == "query":
+            task = Query(task_params, fabrics.have)
         if task is None:
-            module.fail_json(f"Invalid state: {playbook['state']}")
+            module.fail_json(f"Invalid state: {task_params['state']}")
     except ValueError as error:
         module.fail_json(f"{error}")
 
