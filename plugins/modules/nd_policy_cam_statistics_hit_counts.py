@@ -34,13 +34,13 @@ options:
     type: str
     required: true
     aliases: [ site_name, site, fabric_name ]
-  epoch_id:
+  snapshot:
     description:
-    - The id of the epoch.
-    - When epoch id is not provided it will retrieve the latest known epoch id.
-    - The M(cisco.nd.nd_epoch) can be used to retrieve a specific epoch id.
+    - The id of the snapshot/epoch.
+    - When snapshot/epoch id is not provided it will retrieve the latest known snapshot/epoch id.
+    - The M(cisco.nd.nd_snapshot) can be used to retrieve a specific snapshot/epoch id.
     type: str
-    aliases: [ snapshot ]
+    aliases: [ epoch_id ]
   epgs:
     description:
     - All Policy CAM Rules by Hit Count by EPGs.
@@ -103,11 +103,11 @@ EXAMPLES = r"""
     leafs: true
   register: query_results
 
-- name: Get Policy CAM Statistics Hit Counts for epgs, with a specific epoch_id
+- name: Get Policy CAM Statistics Hit Counts for epgs, with a specific snapshot
   cisco.nd.nd_policy_cam_statistics_hit_counts:
     insights_group: igName
     fabric: fabricName
-    epoch_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
+    snapshot: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
     epgs: true
   register: query_results
 
@@ -152,7 +152,7 @@ def main():
     argument_spec.update(
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
         fabric=dict(type="str", required=True, aliases=["site_name", "site", "fabric_name"]),
-        epoch_id=dict(type="str", aliases=["snapshot"]),
+        snapshot=dict(type="str", aliases=["epoch_id"]),
         epgs=dict(type="bool", default=False),
         tenants=dict(type="bool", default=False),
         leafs=dict(type="bool", default=False, aliases=["nodes"]),
@@ -183,7 +183,7 @@ def main():
 
     insights_group = nd.params.get("insights_group")
     fabric = nd.params.get("fabric")
-    epoch_id = nd.params.get("epoch_id") if nd.params.get("epoch_id") else ndi.get_last_epoch(insights_group, fabric).get("epochId")
+    snapshot = nd.params.get("snapshot") if nd.params.get("snapshot") else ndi.get_last_epoch(insights_group, fabric).get("epochId")
     epgs = nd.params.get("epgs")
     tenants = nd.params.get("tenants")
     leafs = nd.params.get("leafs")
@@ -226,7 +226,7 @@ def main():
         )
 
     path = "{0}/model/aciPolicy/tcam/hitcountByRules/{1}?%24epochId={2}&%24view=histogram{3}".format(
-        ndi.event_insight_group_path.format(insights_group, fabric), hit_count_pair, epoch_id, filter_by_attributes_result
+        ndi.event_insight_group_path.format(insights_group, fabric), hit_count_pair, snapshot, filter_by_attributes_result
     )
 
     response = nd.request(path, method="GET", prefix=ndi.prefix)

@@ -38,30 +38,30 @@ options:
     - The name of the delta analysis job
     type: str
     aliases: [ job_name, delta_name, delta_analysis_name ]
-  earlier_epoch_id:
+  earlier_snapshot:
     description:
-    - Epoch UUID for the earlier epoch
+    - Snapshot/Epoch UUID for the earlier snapshot/epoch
     - Ignored if state is C(query) or C(absent)
     type: str
-    aliases: [ earlier_epoch_uuid, earlier_epoch, earlier_snapshot ]
-  later_epoch_id:
+    aliases: [ earlier_epoch_uuid, earlier_epoch, earlier_epoch_id ]
+  later_snapshot:
     description:
-    - Epoch UUID for the later epoch
+    - Snapshot/Epoch UUID for the later snapshot/epoch
     - Ignored if state is C(query) or C(absent)
     type: str
-    aliases: [ later_epoch_uuid, later_epoch, later_snapshot ]
-  earlier_epoch_time:
+    aliases: [ later_epoch_uuid, later_epoch, later_epoch_id ]
+  earlier_snapshot_time:
     description:
-    - Epoch collection time, in ISO format, for the earlier epoch
+    - Snapshot/Epoch collection time, in ISO format, for the earlier snapshot/epoch
     - Ignored if state is C(query) or C(absent)
     type: str
-    aliases: [ earlier_snapshot_time ]
-  later_epoch_time:
+    aliases: [ earlier_epoch_time ]
+  later_snapshot_time:
     description:
-    - Epoch collection time, in ISO format, for the later epoch
+    - Snapshot/Epoch collection time, in ISO format, for the later snapshot/epoch
     - Ignored if state is C(query) or C(absent)
     type: str
-    aliases: [ later_snapshot_time ]
+    aliases: [ later_epoch_time ]
   state:
     description:
     - Use C(present) or C(absent) for creating or deleting a delta analysis job.
@@ -76,22 +76,22 @@ extends_documentation_fragment:
 """
 
 EXAMPLES = r"""
-- name: Creates a new delta analysis job using epoch UUIDs
+- name: Creates a new delta analysis job using snapshot
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
     fabric: fabricName
     name: testDeltaAnalysis
-    earlier_epoch_id: 0e5604f9-53b9c234-03dc-3997-9850-501b925f7d65
-    later_epoch_id: 0e5604f9-ad5b12ae-9834-348b-aed1-8ca124e32e9b
+    earlier_snapshot: 0e5604f9-53b9c234-03dc-3997-9850-501b925f7d65
+    later_snapshot: 0e5604f9-ad5b12ae-9834-348b-aed1-8ca124e32e9b
     state: present
 
-- name: Creates a new delta analysis job using epoch time
+- name: Creates a new delta analysis job using snapshot time
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
     fabric: fabricName
     name: testDeltaAnalysis
-    earlier_epoch_time: 2023-01-15T12:24:34Z
-    later_epoch_time: 2023-01-17T18:27:34Z
+    earlier_snapshot_time: 2023-01-15T12:24:34Z
+    later_snapshot_time: 2023-01-17T18:27:34Z
     state: present
 
 - name: Validates a running delta analysis job
@@ -146,10 +146,10 @@ def main():
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
         fabric=dict(type="str", required=True, aliases=["site", "site_name", "fabric_name"]),
         name=dict(type="str", aliases=["job_name", "delta_name", "delta_analysis_name"]),
-        earlier_epoch_id=dict(type="str", aliases=["earlier_epoch_uuid", "earlier_epoch", "earlier_snapshot"]),
-        later_epoch_id=dict(type="str", aliases=["later_epoch_uuid", "later_epoch", "later_snapshot"]),
-        earlier_epoch_time=dict(type="str", aliases=["earlier_snapshot_time"]),
-        later_epoch_time=dict(type="str", aliases=["later_snapshot_time"]),
+        earlier_snapshot=dict(type="str", aliases=["earlier_epoch_uuid", "earlier_epoch", "earlier_epoch_id"]),
+        later_snapshot=dict(type="str", aliases=["later_epoch_uuid", "later_epoch", "later_epoch_id"]),
+        earlier_snapshot_time=dict(type="str", aliases=["earlier_epoch_time"]),
+        later_snapshot_time=dict(type="str", aliases=["later_epoch_time"]),
         state=dict(type="str", default="query", choices=["query", "absent", "present", "validate"]),
     )
 
@@ -160,11 +160,11 @@ def main():
             ["state", "validate", ["name"]],
             ["state", "absent", ["name"]],
             ["state", "present", ["name"]],
-            ["state", "present", ("earlier_epoch_id", "earlier_epoch_time"), True],
-            ["state", "present", ("later_epoch_id", "later_epoch_time"), True],
+            ["state", "present", ("earlier_snapshot", "earlier_snapshot_time"), True],
+            ["state", "present", ("later_snapshot", "later_snapshot_time"), True],
         ],
-        mutually_exclusive=[("earlier_epoch_id", "earlier_epoch_time"), ("later_epoch_id", "later_epoch_time")],
-        required_together=[("earlier_epoch_id", "later_epoch_id"), ("earlier_epoch_time", "later_epoch_time")],
+        mutually_exclusive=[("earlier_snapshot", "earlier_snapshot_time"), ("later_snapshot", "later_snapshot_time")],
+        required_together=[("earlier_snapshot", "later_snapshot"), ("earlier_snapshot_time", "later_snapshot_time")],
     )
 
     nd = NDModule(module)
@@ -174,10 +174,10 @@ def main():
     insights_group = nd.params.get("insights_group")
     fabric = nd.params.get("fabric")
     name = nd.params.get("name")
-    earlier_epoch_id = nd.params.get("earlier_epoch_id")
-    later_epoch_id = nd.params.get("later_epoch_id")
-    earlier_epoch_time = nd.params.get("earlier_epoch_time")
-    later_epoch_time = nd.params.get("later_epoch_time")
+    earlier_snapshot = nd.params.get("earlier_snapshot")
+    later_snapshot = nd.params.get("later_snapshot")
+    earlier_snapshot_time = nd.params.get("earlier_snapshot_time")
+    later_snapshot_time = nd.params.get("later_snapshot_time")
 
     if name:
         nd.existing = ndi.query_delta_analysis(insights_group, fabric, jobName=name)
@@ -190,11 +190,11 @@ def main():
             nd.existing = delta_job_list
 
     elif state == "present":
-        if earlier_epoch_id and later_epoch_id:
-            data = {"jobName": name, "priorEpochUuid": earlier_epoch_id, "laterEpochUuid": later_epoch_id}
-        elif earlier_epoch_time and later_epoch_time:
-            earlier_epoch_dt = datetime.datetime.fromisoformat(earlier_epoch_time.replace("Z", ""))
-            later_epoch_dt = datetime.datetime.fromisoformat(later_epoch_time.replace("Z", ""))
+        if earlier_snapshot and later_snapshot:
+            data = {"jobName": name, "priorEpochUuid": earlier_snapshot, "laterEpochUuid": later_snapshot}
+        elif earlier_snapshot_time and later_snapshot_time:
+            earlier_epoch_dt = datetime.datetime.fromisoformat(earlier_snapshot_time.replace("Z", ""))
+            later_epoch_dt = datetime.datetime.fromisoformat(later_snapshot_time.replace("Z", ""))
             data = {
                 "jobName": name,
                 "priorEpochTime": round(earlier_epoch_dt.timestamp() * 1000),
