@@ -317,6 +317,459 @@ class FabricReplicationMode(Enum):
         return [cls.MULTICAST, cls.INGRESS]
 
 
+class VrfLiteAutoConfig(Enum):
+    """
+    Enumeration for VRF Lite Inter-Fabric Connection Deployment Options.
+
+    This enum defines the supported VRF Lite auto-configuration modes for
+    inter-fabric connections in Cisco Nexus Dashboard.
+
+    Attributes:
+        MANUAL (str): Manual configuration mode
+        BACK2BACK_TO_EXTERNAL (str): Auto-create VRF Lite IFCs between border devices
+            of two Easy Fabrics, and between border devices in Easy Fabric and edge
+            routers in External Fabric
+
+    Methods:
+        choices(): Returns a list of all available VRF Lite auto-config modes
+
+    Example:
+        >>> mode = VrfLiteAutoConfig.MANUAL
+        >>> print(mode.value)
+        'manual'
+        >>> available_modes = VrfLiteAutoConfig.choices()
+        >>> print(available_modes)
+        [<VrfLiteAutoConfig.MANUAL: 'manual'>, <VrfLiteAutoConfig.BACK2BACK_TO_EXTERNAL: 'back2Back&ToExternal'>]
+    """
+
+    MANUAL = "manual"
+    BACK2BACK_TO_EXTERNAL = "back2Back&ToExternal"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the VRF Lite auto-config modes.
+        """
+        return [cls.MANUAL, cls.BACK2BACK_TO_EXTERNAL]
+
+
+class BgpAuthenticationKeyType(Enum):
+    """
+    Enumeration for BGP Authentication Key Types.
+
+    This enum defines the supported BGP key encryption types used in
+    Cisco Nexus Dashboard fabric configurations.
+
+    Attributes:
+        THREE_DES (str): 3DES encryption type
+        TYPE6 (str): Cisco type 6 encryption
+        TYPE7 (str): Cisco type 7 encryption
+
+    Methods:
+        choices(): Returns a list of all available BGP authentication key types
+
+    Example:
+        >>> key_type = BgpAuthenticationKeyType.THREE_DES
+        >>> print(key_type.value)
+        '3des'
+        >>> available_types = BgpAuthenticationKeyType.choices()
+    """
+
+    THREE_DES = "3des"
+    TYPE6 = "type6"
+    TYPE7 = "type7"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the BGP authentication key types.
+        """
+        return [cls.THREE_DES, cls.TYPE6, cls.TYPE7]
+
+
+class FabricInterfaceType(Enum):
+    """
+    Enumeration for Fabric Interface Types.
+
+    This enum defines the supported fabric interface types for
+    numbered (Point-to-Point) or unnumbered interfaces.
+
+    Attributes:
+        P2P (str): Point-to-Point numbered interfaces
+        UNNUMBERED (str): Unnumbered interfaces
+
+    Methods:
+        choices(): Returns a list of all available fabric interface types
+
+    Example:
+        >>> interface_type = FabricInterfaceType.P2P
+        >>> print(interface_type.value)
+        'p2p'
+    """
+
+    P2P = "p2p"
+    UNNUMBERED = "unNumbered"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the fabric interface types.
+        """
+        return [cls.P2P, cls.UNNUMBERED]
+
+
+class LinkStateRoutingProtocol(Enum):
+    """
+    Enumeration for Link State Routing Protocols.
+
+    This enum defines the supported underlay routing protocols used for
+    Spine-Leaf connectivity in fabric configurations.
+
+    Attributes:
+        OSPF (str): Open Shortest Path First protocol
+        ISIS (str): Intermediate System to Intermediate System protocol
+
+    Methods:
+        choices(): Returns a list of all available link state routing protocols
+
+    Example:
+        >>> protocol = LinkStateRoutingProtocol.OSPF
+        >>> print(protocol.value)
+        'ospf'
+    """
+
+    OSPF = "ospf"
+    ISIS = "is-is"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the link state routing protocols.
+        """
+        return [cls.OSPF, cls.ISIS]
+
+
+class OverlayMode(Enum):
+    """
+    Enumeration for Overlay Modes.
+
+    This enum defines the supported overlay modes for VRF/Network configuration
+    using config-profile or CLI.
+
+    Attributes:
+        CONFIG_PROFILE (str): Configuration using config-profile mode
+        CLI (str): Configuration using CLI mode
+
+    Methods:
+        choices(): Returns a list of all available overlay modes
+
+    Example:
+        >>> mode = OverlayMode.CLI
+        >>> print(mode.value)
+        'cli'
+    """
+
+    CONFIG_PROFILE = "configProfile"
+    CLI = "cli"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the overlay modes.
+        """
+        return [cls.CONFIG_PROFILE, cls.CLI]
+
+
+class PowerRedundancyMode(Enum):
+    """
+    Enumeration for Power Redundancy Modes.
+
+    This enum defines the supported default power supply modes for NX-OS switches.
+
+    Attributes:
+        REDUNDANT (str): Redundant power supply mode
+        COMBINED (str): Combined power supply mode
+        INPUT_SRC_REDUNDANT (str): Input source redundant power supply mode
+
+    Methods:
+        choices(): Returns a list of all available power redundancy modes
+
+    Example:
+        >>> mode = PowerRedundancyMode.REDUNDANT
+        >>> print(mode.value)
+        'redundant'
+    """
+
+    REDUNDANT = "redundant"
+    COMBINED = "combined"
+    INPUT_SRC_REDUNDANT = "inputSrcRedundant"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the power redundancy modes.
+        """
+        return [cls.REDUNDANT, cls.COMBINED, cls.INPUT_SRC_REDUNDANT]
+
+
+class RendezvousPointMode(Enum):
+    """
+    Enumeration for Rendezvous Point Modes.
+
+    This enum defines the supported multicast rendezvous point modes.
+    For IPv6 underlay, please use ASM only.
+
+    Attributes:
+        ASM (str): Any-Source Multicast mode
+        BIDIR (str): Bidirectional PIM mode
+
+    Methods:
+        choices(): Returns a list of all available rendezvous point modes
+
+    Example:
+        >>> mode = RendezvousPointMode.ASM
+        >>> print(mode.value)
+        'asm'
+    """
+
+    ASM = "asm"
+    BIDIR = "bidir"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the rendezvous point modes.
+        """
+        return [cls.ASM, cls.BIDIR]
+
+
+class IsisLevel(Enum):
+    """
+    Enumeration for ISIS Levels.
+
+    This enum defines the supported IS-IS level configurations.
+
+    Attributes:
+        LEVEL_1 (str): IS-IS Level 1
+        LEVEL_2 (str): IS-IS Level 2
+
+    Methods:
+        choices(): Returns a list of all available ISIS levels
+
+    Example:
+        >>> level = IsisLevel.LEVEL_2
+        >>> print(level.value)
+        'level-2'
+    """
+
+    LEVEL_1 = "level-1"
+    LEVEL_2 = "level-2"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the ISIS levels.
+        """
+        return [cls.LEVEL_1, cls.LEVEL_2]
+
+
+class StpRootOption(Enum):
+    """
+    Enumeration for STP Root Options.
+
+    This enum defines the supported protocols for configuring root bridge.
+
+    Attributes:
+        RPVST_PLUS (str): Rapid Per-VLAN Spanning Tree
+        MST (str): Multiple Spanning Tree
+        UNMANAGED (str): STP Root not managed by ND
+
+    Methods:
+        choices(): Returns a list of all available STP root options
+
+    Example:
+        >>> option = StpRootOption.UNMANAGED
+        >>> print(option.value)
+        'unmanaged'
+    """
+
+    RPVST_PLUS = "rpvst+"
+    MST = "mst"
+    UNMANAGED = "unmanaged"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the STP root options.
+        """
+        return [cls.RPVST_PLUS, cls.MST, cls.UNMANAGED]
+
+
+class VpcPeerKeepAliveOption(Enum):
+    """
+    Enumeration for VPC Peer Keep Alive Options.
+
+    This enum defines the supported vPC peer keep alive options using
+    loopback or management interfaces.
+
+    Attributes:
+        LOOPBACK (str): Use vPC peer keep alive with loopback interface
+        MANAGEMENT (str): Use vPC peer keep alive with management interface
+
+    Methods:
+        choices(): Returns a list of all available VPC peer keep alive options
+
+    Example:
+        >>> option = VpcPeerKeepAliveOption.MANAGEMENT
+        >>> print(option.value)
+        'management'
+    """
+
+    LOOPBACK = "loopback"
+    MANAGEMENT = "management"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the VPC peer keep alive options.
+        """
+        return [cls.LOOPBACK, cls.MANAGEMENT]
+
+
+class AllowVlanOnLeafTorPairing(Enum):
+    """
+    Enumeration for VLAN Settings on Leaf-ToR Pairing.
+
+    This enum defines the supported trunk allowed VLAN settings for
+    leaf-tor pairing port-channels.
+
+    Attributes:
+        NONE (str): Set trunk allowed vlan to 'none'
+        ALL (str): Set trunk allowed vlan to 'all'
+
+    Methods:
+        choices(): Returns a list of all available VLAN pairing options
+
+    Example:
+        >>> option = AllowVlanOnLeafTorPairing.NONE
+        >>> print(option.value)
+        'none'
+    """
+
+    NONE = "none"
+    ALL = "all"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the VLAN pairing options.
+        """
+        return [cls.NONE, cls.ALL]
+
+
+class AimlQosPolicy(Enum):
+    """
+    Enumeration for AI/ML QoS Policy Types.
+
+    This enum defines the supported queuing policies based on predominant
+    fabric link speed for AI/ML network loads.
+
+    Attributes:
+        EIGHT_HUNDRED_G (str): 800G link speed policy
+        FOUR_HUNDRED_G (str): 400G link speed policy
+        ONE_HUNDRED_G (str): 100G link speed policy
+        TWENTY_FIVE_G (str): 25G link speed policy
+
+    Methods:
+        choices(): Returns a list of all available AI/ML QoS policies
+
+    Example:
+        >>> policy = AimlQosPolicy.FOUR_HUNDRED_G
+        >>> print(policy.value)
+        '400G'
+    """
+
+    EIGHT_HUNDRED_G = "800G"
+    FOUR_HUNDRED_G = "400G"
+    ONE_HUNDRED_G = "100G"
+    TWENTY_FIVE_G = "25G"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the AI/ML QoS policies.
+        """
+        return [cls.EIGHT_HUNDRED_G, cls.FOUR_HUNDRED_G, cls.ONE_HUNDRED_G, cls.TWENTY_FIVE_G]
+
+
+class GreenfieldDebugFlag(Enum):
+    """
+    Enumeration for Greenfield Debug Flag Options.
+
+    This enum defines the supported options for allowing switch configuration
+    to be cleared without a reload when preserveConfig is set to false.
+
+    Attributes:
+        ENABLE (str): Enable debug flag
+        DISABLE (str): Disable debug flag
+
+    Methods:
+        choices(): Returns a list of all available debug flag options
+
+    Example:
+        >>> flag = GreenfieldDebugFlag.DISABLE
+        >>> print(flag.value)
+        'disable'
+    """
+
+    ENABLE = "enable"
+    DISABLE = "disable"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the debug flag options.
+        """
+        return [cls.ENABLE, cls.DISABLE]
+
+
+class CoppPolicy(Enum):
+    """
+    Enumeration for CoPP (Control Plane Policing) Policy Types.
+
+    This enum defines the supported fabric wide CoPP policies.
+    Customized CoPP policy should be provided when 'manual' is selected.
+
+    Attributes:
+        DENSE (str): Dense CoPP policy
+        LENIENT (str): Lenient CoPP policy
+        MODERATE (str): Moderate CoPP policy
+        STRICT (str): Strict CoPP policy
+        MANUAL (str): Manual CoPP policy (requires custom configuration)
+
+    Methods:
+        choices(): Returns a list of all available CoPP policies
+
+    Example:
+        >>> policy = CoppPolicy.STRICT
+        >>> print(policy.value)
+        'strict'
+    """
+
+    DENSE = "dense"
+    LENIENT = "lenient"
+    MODERATE = "moderate"
+    STRICT = "strict"
+    MANUAL = "manual"
+
+    @classmethod
+    def choices(cls):
+        """
+        Returns a list of all the CoPP policies.
+        """
+        return [cls.DENSE, cls.LENIENT, cls.MODERATE, cls.STRICT, cls.MANUAL]
+
+
 class FabricManagementModel(BaseModel):
     """
     A comprehensive model representing fabric management configuration for VXLAN fabrics.
@@ -349,7 +802,7 @@ class FabricManagementModel(BaseModel):
     vpc_layer3_peer_router: bool = Field(default=True, alias="vpcLayer3PeerRouter")
     vpc_peer_link_port_channel_id: str = Field(default="500", alias="vpcPeerLinkPortChannelId")
     vpc_peer_link_vlan: str = Field(default="3600", alias="vpcPeerLinkVlan")
-    vpc_peer_keep_alive_option: str = Field(default="management", alias="vpcPeerKeepAliveOption")
+    vpc_peer_keep_alive_option: VpcPeerKeepAliveOption = Field(default=VpcPeerKeepAliveOption.MANAGEMENT.value, alias="vpcPeerKeepAliveOption")
     vpc_domain_id_range: str = Field(default="1-1000", alias="vpcDomainIdRange")
     vpc_delay_restore_timer: int = Field(default=150, alias="vpcDelayRestoreTimer")
     vpc_auto_recovery_timer: int = Field(default=360, alias="vpcAutoRecoveryTimer")
@@ -371,7 +824,7 @@ class FabricManagementModel(BaseModel):
     bgp_loopback_id: int = Field(default=0, alias="bgpLoopbackId")
     bgp_loopback_ip_range: str = Field(default="10.2.0.0/22", alias="bgpLoopbackIpRange")
     bgp_authentication: bool = Field(default=False, alias="bgpAuthentication")
-    bgp_authentication_key_type: str = Field(default="3des", alias="bgpAuthenticationKeyType")
+    bgp_authentication_key_type: BgpAuthenticationKeyType = Field(default=BgpAuthenticationKeyType.THREE_DES.value, alias="bgpAuthenticationKeyType")
     auto_bgp_neighbor_description: bool = Field(default=True, alias="autoBgpNeighborDescription")
 
     # NVE settings
@@ -391,7 +844,7 @@ class FabricManagementModel(BaseModel):
     vrf_lite_subnet_target_mask: int = Field(default=30, alias="vrfLiteSubnetTargetMask")
     vrf_lite_ipv6_subnet_range: str = Field(default="fd00::a33:0/112", alias="vrfLiteIpv6SubnetRange")
     vrf_lite_ipv6_subnet_target_mask: int = Field(default=126, alias="vrfLiteIpv6SubnetTargetMask")
-    vrf_lite_auto_config: str = Field(default="manual", alias="vrfLiteAutoConfig")
+    vrf_lite_auto_config: VrfLiteAutoConfig = Field(default=VrfLiteAutoConfig.MANUAL.value, alias="vrfLiteAutoConfig")
     vrf_lite_macsec: bool = Field(default=False, alias="vrfLiteMacsec")
     auto_unique_vrf_lite_ip_prefix: bool = Field(default=False, alias="autoUniqueVrfLiteIpPrefix")
     auto_symmetric_vrf_lite: bool = Field(default=False, alias="autoSymmetricVrfLite")
@@ -408,7 +861,7 @@ class FabricManagementModel(BaseModel):
     brownfield_skip_overlay_network_attachments: bool = Field(default=False, alias="brownfieldSkipOverlayNetworkAttachments")
 
     # Fabric interface and underlay settings
-    fabric_interface_type: str = Field(default="p2p", alias="fabricInterfaceType")
+    fabric_interface_type: FabricInterfaceType = Field(default=FabricInterfaceType.P2P.value, alias="fabricInterfaceType")
     fabric_mtu: int = Field(default=9216, alias="fabricMtu")
     l2_host_interface_mtu: int = Field(default=9216, alias="l2HostInterfaceMtu")
     target_subnet_mask: int = Field(default=30, alias="targetSubnetMask")
@@ -418,11 +871,11 @@ class FabricManagementModel(BaseModel):
     # OSPF settings
     ospf_area_id: str = Field(default="0.0.0.0", alias="ospfAreaId")
     ospf_authentication: bool = Field(default=False, alias="ospfAuthentication")
-    link_state_routing_protocol: str = Field(default="ospf", alias="linkStateRoutingProtocol")
+    link_state_routing_protocol: LinkStateRoutingProtocol = Field(default=LinkStateRoutingProtocol.OSPF.value, alias="linkStateRoutingProtocol")
     link_state_routing_tag: str = Field(default="UNDERLAY", alias="linkStateRoutingTag")
 
     # ISIS settings
-    isis_level: str = Field(default="level-2", alias="isisLevel")
+    isis_level: IsisLevel = Field(default=IsisLevel.LEVEL_2.value, alias="isisLevel")
     isis_area_number: str = Field(default="0001", alias="isisAreaNumber")
     isis_authentication: bool = Field(default=False, alias="isisAuthentication")
     mpls_isis_area_number: str = Field(default="0001", alias="mplsIsisAreaNumber")
@@ -437,7 +890,7 @@ class FabricManagementModel(BaseModel):
 
     # Multicast settings
     anycast_rendezvous_point_ip_range: str = Field(default="10.254.254.0/24", alias="anycastRendezvousPointIpRange")
-    rendezvous_point_mode: str = Field(default="asm", alias="rendezvousPointMode")
+    rendezvous_point_mode: RendezvousPointMode = Field(default=RendezvousPointMode.ASM.value, alias="rendezvousPointMode")
     rendezvous_point_count: int = Field(default=2, alias="rendezvousPointCount")
     rendezvous_point_loopback_id: int = Field(default=254, alias="rendezvousPointLoopbackId")
     multicast_group_subnet: str = Field(default="239.1.1.0/25", alias="multicastGroupSubnet")
@@ -464,7 +917,7 @@ class FabricManagementModel(BaseModel):
 
     # System settings
     site_id: str = Field(default="4225625065", alias="siteId")
-    power_redundancy_mode: str = Field(default="redundant", alias="powerRedundancyMode")
+    power_redundancy_mode: PowerRedundancyMode = Field(default=PowerRedundancyMode.REDUNDANT.value, alias="powerRedundancyMode")
     heartbeat_interval: int = Field(default=190, alias="heartbeatInterval")
 
     # QoS and queuing
@@ -473,7 +926,7 @@ class FabricManagementModel(BaseModel):
     default_queuing_policy_cloudscale: str = Field(default="queuing_policy_default_8q_cloudscale", alias="defaultQueuingPolicyCloudscale")
     default_queuing_policy_r_series: str = Field(default="queuing_policy_default_r_series", alias="defaultQueuingPolicyRSeries")
     aiml_qos: bool = Field(default=False, alias="aimlQos")
-    aiml_qos_policy: str = Field(default="400G", alias="aimlQosPolicy")
+    aiml_qos_policy: AimlQosPolicy = Field(default=AimlQosPolicy.FOUR_HUNDRED_G.value, alias="aimlQosPolicy")
 
     # DHCP and AAA
     tenant_dhcp: bool = Field(default=True, alias="tenantDhcp")
@@ -489,7 +942,7 @@ class FabricManagementModel(BaseModel):
     snmp_trap: bool = Field(default=True, alias="snmpTrap")
 
     # Overlay and EVPN settings
-    overlay_mode: str = Field(default="cli", alias="overlayMode")
+    overlay_mode: OverlayMode = Field(default=OverlayMode.CLI.value, alias="overlayMode")
     route_reflector_count: int = Field(default=2, alias="routeReflectorCount")
     advertise_physical_ip: bool = Field(default=False, alias="advertisePhysicalIp")
     advertise_physical_ip_on_border: bool = Field(default=True, alias="advertisePhysicalIpOnBorder")
@@ -509,10 +962,10 @@ class FabricManagementModel(BaseModel):
     tcam_allocation: bool = Field(default=True, alias="tcamAllocation")
     l3_vni_no_vlan_default_option: bool = Field(default=False, alias="l3VniNoVlanDefaultOption")
     host_interface_admin_state: bool = Field(default=True, alias="hostInterfaceAdminState")
-    allow_vlan_on_leaf_tor_pairing: str = Field(default="none", alias="allowVlanOnLeafTorPairing")
+    allow_vlan_on_leaf_tor_pairing: AllowVlanOnLeafTorPairing = Field(default=AllowVlanOnLeafTorPairing.NONE.value, alias="allowVlanOnLeafTorPairing")
 
     # Routing and STP
-    stp_root_option: str = Field(default="unmanaged", alias="stpRootOption")
+    stp_root_option: StpRootOption = Field(default=StpRootOption.UNMANAGED.value, alias="stpRootOption")
     leaf_to_r_id_range: bool = Field(default=False, alias="leafToRIdRange")
 
     # Bootstrap and day0
@@ -522,13 +975,13 @@ class FabricManagementModel(BaseModel):
     # OAM and debugging
     next_generation_oam: bool = Field(default=True, alias="nextGenerationOAM")
     ngoam_south_bound_loop_detect: bool = Field(default=False, alias="ngoamSouthBoundLoopDetect")
-    greenfield_debug_flag: str = Field(default="disable", alias="greenfieldDebugFlag")
+    greenfield_debug_flag: GreenfieldDebugFlag = Field(default=GreenfieldDebugFlag.DISABLE.value, alias="greenfieldDebugFlag")
 
     # MPLS
     mpls_handoff: bool = Field(default=False, alias="mplsHandoff")
 
     # CoPP
-    copp_policy: str = Field(default="strict", alias="coppPolicy")
+    copp_policy: CoppPolicy = Field(default=CoppPolicy.STRICT.value, alias="coppPolicy")
 
     # In-band management
     inband_management: bool = Field(default=False, alias="inbandManagement")
@@ -540,7 +993,6 @@ class FabricManagementModel(BaseModel):
     ntp_server_collection: List[str] = Field(default_factory=lambda: ["string"], alias="ntpServerCollection")
     ntp_server_vrf_collection: List[str] = Field(default_factory=lambda: ["string"], alias="ntpServerVrfCollection")
     dns_collection: List[str] = Field(default_factory=lambda: ["5.192.28.174"], alias="dnsCollection")
-    # dns_vrf_collection: List[str] = Field(default_factory=list, alias="dnsVrfCollection")
     dns_vrf_collection: List[str] = Field(default_factory=lambda: ["string"], alias="dnsVrfCollection")
     syslog_server_collection: List[str] = Field(default_factory=lambda: ["string"], alias="syslogServerCollection")
     syslog_server_vrf_collection: List[str] = Field(default_factory=lambda: ["string"], alias="syslogServerVrfCollection")
@@ -555,9 +1007,6 @@ class FabricManagementModel(BaseModel):
     pre_interface_config_leaf: str = Field(default="string", alias="preInterfaceConfigLeaf")
     pre_interface_config_spine: str = Field(default="string", alias="preInterfaceConfigSpine")
     pre_interface_config_tor: str = Field(default="string", alias="preInterfaceConfigTor")
-
-    # Fabric name (from the top level but also appears in management)
-    # name: str = Field(default="postman-fabric", alias="name")
 
     @field_validator("bgp_asn", mode="before")
     @classmethod
