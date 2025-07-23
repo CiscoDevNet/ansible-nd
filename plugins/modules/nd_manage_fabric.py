@@ -150,6 +150,7 @@ import logging
 import re
 import traceback
 import sys
+import json
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
@@ -469,11 +470,13 @@ class Merged:
 
             if not have_fabric:
                 # If the fabric does not exist in the have state, we will create it
+                self.log.debug("Fabric %s does not exist in the current state, creating it.", want_fabric.name)
                 self.path = "/api/v1/manage/fabrics"
                 self.verb = "POST"
                 payload = copy.deepcopy(want_fabric.model_dump(by_alias=True))
             else:
                 # If the fabric already exists in the have state, we will update it
+                self.log.debug("Fabric %s exists in the current state, updating it.", want_fabric.name)
                 self.path = "/api/v1/manage/fabrics" + f"/{want_fabric.name}"
                 self.verb = "PUT"
                 payload = self.update_payload_merged(have_fabric, want_fabric)
@@ -649,26 +652,25 @@ class Merged:
         self.class_name = self.__class__.__name__
         method_name = inspect.stack()[0][3]  # pylint: disable=unused-variable
 
+        have = have.model_dump(by_alias=True)
+        updated_payload = copy.deepcopy(have)  # Start with the current state
+
+        want = want.model_dump(by_alias=True)
+
         msg = f"ENTERED: {self.class_name}.{method_name}"
         self.log.debug(msg)
 
         # Use DeepDiff to calculate the difference
         diff = DeepDiff(have, want, ignore_order=True)
 
-        # Create a copy of have as a dictionary
-        updated_payload = have.model_dump(by_alias=True)
-
         # If there are no differences, just return the original payload
         # NOTE: I don't think we will ever hit this condition
         if not diff:
             return updated_payload
 
-        # Get want as dictionary for reference
-        want_dict = want.model_dump(by_alias=True)
-
         # Update changed values and add any new items
         self._process_values_changed(diff, updated_payload)
-        self._process_dict_items_added(diff, updated_payload, want_dict)
+        self._process_dict_items_added(diff, updated_payload, want)
 
         return updated_payload
 
@@ -1007,7 +1009,9 @@ def main():
             path = request_data["path"]
             payload = request_data["payload"]
 
-            mainlog.info("Calling nd.request with path: %s, verb: %s, and payload: %s", path, verb, payload)
+            # Pretty-print the payload for easier log reading
+            pretty_payload = json.dumps(payload, indent=2, sort_keys=True)
+            mainlog.info("Calling nd.request with path: %s, verb: %s, and payload:\n%s", path, verb, pretty_payload)
             # Make the API request
             response = nd.request(path, method=verb, data=payload if payload else None)
             task.common.result["response"].append(response)
