@@ -45,16 +45,36 @@ options:
                 - Name of the fabric. Must start with a letter and contain only alphanumeric characters, underscores, or hyphens.
                 required: true
                 type: str
+            alert_suspend:
+                description:
+                - Alert suspension setting for the fabric.
+                type: str
+                default: disabled
             category:
                 description:
                 - Category of the fabric.
                 type: str
                 default: fabric
-            securityDomain:
+            security_domain:
                 description:
                 - Security domain for the fabric.
                 type: str
                 default: all
+            location:
+                description:
+                - Geographic location settings for the fabric.
+                type: dict
+                suboptions:
+                    latitude:
+                        description:
+                        - The latitude coordinate.
+                        type: float
+                        default: 0.0
+                    longitude:
+                        description:
+                        - The longitude coordinate.
+                        type: float
+                        default: 0.0
             management:
                 description:
                 - Management configuration for the fabric.
@@ -81,17 +101,17 @@ options:
                         - aci
                         - meta
                         default: vxlanIbgp
-                    bgpAsn:
+                    bgp_asn:
                         description:
                         - BGP autonomous system number. Must be a valid ASN string (plain or dotted notation).
                         required: true
                         type: str
-                    anycastGatewayMac:
+                    anycast_gateway_mac:
                         description:
                         - Anycast gateway MAC address in Cisco format (XXXX.XXXX.XXXX).
                         type: str
                         default: 2020.0000.00aa
-                    replicationMode:
+                    replication_mode:
                         description:
                         - Replication mode for the fabric.
                         type: str
@@ -99,50 +119,966 @@ options:
                         - multicast
                         - ingress
                         default: multicast
+                    vrf_lite_auto_config:
+                        description:
+                        - VRF Lite Inter-Fabric Connection Deployment mode.
+                        type: str
+                        choices:
+                        - manual
+                        - back2Back&ToExternal
+                        default: manual
+                    bgp_authentication_key_type:
+                        description:
+                        - BGP Authentication Key Type for encryption.
+                        type: str
+                        choices:
+                        - 3des
+                        - type6
+                        - type7
+                        default: 3des
+                    fabric_interface_type:
+                        description:
+                        - Fabric interface type for numbered (Point-to-Point) or unnumbered interfaces.
+                        type: str
+                        choices:
+                        - p2p
+                        - unNumbered
+                        default: p2p
+                    link_state_routing_protocol:
+                        description:
+                        - Underlay routing protocol for Spine-Leaf connectivity.
+                        type: str
+                        choices:
+                        - ospf
+                        - is-is
+                        default: ospf
+                    overlay_mode:
+                        description:
+                        - Overlay mode for VRF/Network configuration.
+                        type: str
+                        choices:
+                        - configProfile
+                        - cli
+                        default: cli
+                    power_redundancy_mode:
+                        description:
+                        - Default power supply mode for NX-OS switches.
+                        type: str
+                        choices:
+                        - redundant
+                        - combined
+                        - inputSrcRedundant
+                        default: redundant
+                    rendezvous_point_mode:
+                        description:
+                        - Multicast rendezvous point mode. For IPv6 underlay, use ASM only.
+                        type: str
+                        choices:
+                        - asm
+                        - bidir
+                        default: asm
+                    isis_level:
+                        description:
+                        - IS-IS level configuration.
+                        type: str
+                        choices:
+                        - level-1
+                        - level-2
+                        default: level-2
+                    stp_root_option:
+                        description:
+                        - Protocol for configuring root bridge.
+                        type: str
+                        choices:
+                        - rpvst+
+                        - mst
+                        - unmanaged
+                        default: unmanaged
+                    vpc_peer_keep_alive_option:
+                        description:
+                        - vPC peer keep alive option using loopback or management interfaces.
+                        type: str
+                        choices:
+                        - loopback
+                        - management
+                        default: management
+                    allow_vlan_on_leaf_tor_pairing:
+                        description:
+                        - Trunk allowed VLAN setting for leaf-tor pairing port-channels.
+                        type: str
+                        choices:
+                        - none
+                        - all
+                        default: none
+                    aiml_qos_policy:
+                        description:
+                        - Queuing policy based on predominant fabric link speed for AI/ML network loads.
+                        type: str
+                        choices:
+                        - 800G
+                        - 400G
+                        - 100G
+                        - 25G
+                        default: 400G
+                    greenfield_debug_flag:
+                        description:
+                        - Allow switch configuration to be cleared without a reload when preserveConfig is false.
+                        type: str
+                        choices:
+                        - enable
+                        - disable
+                        default: disable
+                    copp_policy:
+                        description:
+                        - Fabric wide CoPP (Control Plane Policing) policy. Customized CoPP policy should be provided when 'manual' is selected.
+                        type: str
+                        choices:
+                        - dense
+                        - lenient
+                        - moderate
+                        - strict
+                        - manual
+                        default: strict
+                    # VPC and peering settings
+                    vpc_layer3_peer_router:
+                        description:
+                        - Enable vPC layer 3 peer router functionality.
+                        type: bool
+                        default: true
+                    vpc_peer_link_port_channel_id:
+                        description:
+                        - vPC peer link port channel ID.
+                        type: str
+                        default: "500"
+                    vpc_peer_link_vlan:
+                        description:
+                        - vPC peer link VLAN.
+                        type: str
+                        default: "3600"
+                    vpc_domain_id_range:
+                        description:
+                        - vPC domain ID range.
+                        type: str
+                        default: "1-1000"
+                    vpc_delay_restore_timer:
+                        description:
+                        - vPC delay restore timer in seconds.
+                        type: int
+                        default: 150
+                    vpc_auto_recovery_timer:
+                        description:
+                        - vPC auto recovery timer in seconds.
+                        type: int
+                        default: 360
+                    vpc_tor_delay_restore_timer:
+                        description:
+                        - vPC ToR delay restore timer in seconds.
+                        type: int
+                        default: 30
+                    vpc_ipv6_neighbor_discovery_sync:
+                        description:
+                        - Enable vPC IPv6 neighbor discovery sync.
+                        type: bool
+                        default: true
+                    vpc_peer_link_enable_native_vlan:
+                        description:
+                        - Enable native VLAN on vPC peer link.
+                        type: bool
+                        default: false
+                    fabric_vpc_qos:
+                        description:
+                        - Enable fabric vPC QoS.
+                        type: bool
+                        default: false
+                    fabric_vpc_qos_policy_name:
+                        description:
+                        - Fabric vPC QoS policy name.
+                        type: str
+                        default: spine_qos_for_fabric_vpc_peering
+                    fabric_vpc_domain_id:
+                        description:
+                        - Enable fabric vPC domain ID.
+                        type: bool
+                        default: false
+                    # VNI and VLAN ranges
+                    l3_vni_range:
+                        description:
+                        - Layer 3 VNI range.
+                        type: str
+                        default: "50000-59000"
+                    l2_vni_range:
+                        description:
+                        - Layer 2 VNI range.
+                        type: str
+                        default: "30000-49000"
+                    vrf_vlan_range:
+                        description:
+                        - VRF VLAN range.
+                        type: str
+                        default: "2000-2299"
+                    network_vlan_range:
+                        description:
+                        - Network VLAN range.
+                        type: str
+                        default: "2300-2999"
+                    service_network_vlan_range:
+                        description:
+                        - Service network VLAN range.
+                        type: str
+                        default: "3000-3199"
+                    # BGP settings
+                    bgp_loopback_id:
+                        description:
+                        - BGP loopback interface ID.
+                        type: int
+                        default: 0
+                    bgp_loopback_ip_range:
+                        description:
+                        - BGP loopback IP range.
+                        type: str
+                        default: "10.2.0.0/22"
+                    bgp_authentication:
+                        description:
+                        - Enable BGP authentication.
+                        type: bool
+                        default: false
+                    auto_bgp_neighbor_description:
+                        description:
+                        - Enable automatic BGP neighbor description.
+                        type: bool
+                        default: true
+                    # NVE settings
+                    nve_loopback_id:
+                        description:
+                        - NVE loopback interface ID.
+                        type: int
+                        default: 1
+                    nve_loopback_ip_range:
+                        description:
+                        - NVE loopback IP range.
+                        type: str
+                        default: "10.3.0.0/22"
+                    nve_hold_down_timer:
+                        description:
+                        - NVE hold down timer in seconds.
+                        type: int
+                        default: 180
+                    # IPv6 settings
+                    underlay_ipv6:
+                        description:
+                        - Enable IPv6 underlay.
+                        type: bool
+                        default: false
+                    ipv6_link_local:
+                        description:
+                        - Enable IPv6 link local addressing.
+                        type: bool
+                        default: true
+                    ipv6_subnet_target_mask:
+                        description:
+                        - IPv6 subnet target mask length.
+                        type: int
+                        default: 126
+                    # VRF settings
+                    vrf_template:
+                        description:
+                        - VRF template name.
+                        type: str
+                        default: Default_VRF_Universal
+                    vrf_extension_template:
+                        description:
+                        - VRF extension template name.
+                        type: str
+                        default: Default_VRF_Extension_Universal
+                    vrf_lite_subnet_range:
+                        description:
+                        - VRF lite subnet range.
+                        type: str
+                        default: "10.33.0.0/16"
+                    vrf_lite_subnet_target_mask:
+                        description:
+                        - VRF lite subnet target mask length.
+                        type: int
+                        default: 30
+                    vrf_lite_ipv6_subnet_range:
+                        description:
+                        - VRF lite IPv6 subnet range.
+                        type: str
+                        default: "fd00::a33:0/112"
+                    vrf_lite_ipv6_subnet_target_mask:
+                        description:
+                        - VRF lite IPv6 subnet target mask length.
+                        type: int
+                        default: 126
+                    vrf_lite_macsec:
+                        description:
+                        - Enable VRF lite MACSec.
+                        type: bool
+                        default: false
+                    auto_unique_vrf_lite_ip_prefix:
+                        description:
+                        - Enable automatic unique VRF lite IP prefix.
+                        type: bool
+                        default: false
+                    auto_symmetric_vrf_lite:
+                        description:
+                        - Enable automatic symmetric VRF lite.
+                        type: bool
+                        default: false
+                    auto_symmetric_default_vrf:
+                        description:
+                        - Enable automatic symmetric default VRF.
+                        type: bool
+                        default: false
+                    auto_vrf_lite_default_vrf:
+                        description:
+                        - Enable automatic VRF lite default VRF.
+                        type: bool
+                        default: false
+                    vrf_route_import_id_reallocation:
+                        description:
+                        - Enable VRF route import ID reallocation.
+                        type: bool
+                        default: false
+                    per_vrf_loopback_auto_provision:
+                        description:
+                        - Enable per VRF loopback auto provision.
+                        type: bool
+                        default: false
+                    per_vrf_loopback_auto_provision_ipv6:
+                        description:
+                        - Enable per VRF loopback auto provision for IPv6.
+                        type: bool
+                        default: false
+                    # Network settings
+                    network_template:
+                        description:
+                        - Network template name.
+                        type: str
+                        default: Default_Network_Universal
+                    network_extension_template:
+                        description:
+                        - Network extension template name.
+                        type: str
+                        default: Default_Network_Extension_Universal
+                    brownfield_network_name_format:
+                        description:
+                        - Brownfield network name format.
+                        type: str
+                        default: Auto_Net_VNI$$VNI$$_VLAN$$VLAN_ID$$
+                    brownfield_skip_overlay_network_attachments:
+                        description:
+                        - Skip overlay network attachments in brownfield deployments.
+                        type: bool
+                        default: false
+                    # Fabric interface and underlay settings
+                    fabric_mtu:
+                        description:
+                        - Fabric MTU size.
+                        type: int
+                        default: 9216
+                    l2_host_interface_mtu:
+                        description:
+                        - Layer 2 host interface MTU size.
+                        type: int
+                        default: 9216
+                    target_subnet_mask:
+                        description:
+                        - Target subnet mask length.
+                        type: int
+                        default: 30
+                    intra_fabric_subnet_range:
+                        description:
+                        - Intra-fabric subnet range.
+                        type: str
+                        default: "10.4.0.0/16"
+                    static_underlay_ip_allocation:
+                        description:
+                        - Enable static underlay IP allocation.
+                        type: bool
+                        default: false
+                    # OSPF settings
+                    ospf_area_id:
+                        description:
+                        - OSPF area ID.
+                        type: str
+                        default: "0.0.0.0"
+                    ospf_authentication:
+                        description:
+                        - Enable OSPF authentication.
+                        type: bool
+                        default: false
+                    link_state_routing_tag:
+                        description:
+                        - Link state routing tag.
+                        type: str
+                        default: UNDERLAY
+                    # ISIS settings
+                    isis_area_number:
+                        description:
+                        - ISIS area number.
+                        type: str
+                        default: "0001"
+                    isis_authentication:
+                        description:
+                        - Enable ISIS authentication.
+                        type: bool
+                        default: false
+                    mpls_isis_area_number:
+                        description:
+                        - MPLS ISIS area number.
+                        type: str
+                        default: "0001"
+                    # BFD settings
+                    bfd:
+                        description:
+                        - Enable BFD (Bidirectional Forwarding Detection).
+                        type: bool
+                        default: false
+                    bfd_pim:
+                        description:
+                        - Enable BFD for PIM.
+                        type: bool
+                        default: false
+                    bfd_isis:
+                        description:
+                        - Enable BFD for ISIS.
+                        type: bool
+                        default: false
+                    bfd_ospf:
+                        description:
+                        - Enable BFD for OSPF.
+                        type: bool
+                        default: false
+                    bfd_ibgp:
+                        description:
+                        - Enable BFD for iBGP.
+                        type: bool
+                        default: false
+                    bfd_authentication:
+                        description:
+                        - Enable BFD authentication.
+                        type: bool
+                        default: false
+                    # Multicast settings
+                    anycast_rendezvous_point_ip_range:
+                        description:
+                        - Anycast rendezvous point IP range.
+                        type: str
+                        default: "10.254.254.0/24"
+                    rendezvous_point_count:
+                        description:
+                        - Number of rendezvous points.
+                        type: int
+                        default: 2
+                    rendezvous_point_loopback_id:
+                        description:
+                        - Rendezvous point loopback interface ID.
+                        type: int
+                        default: 254
+                    multicast_group_subnet:
+                        description:
+                        - Multicast group subnet.
+                        type: str
+                        default: "239.1.1.0/25"
+                    auto_generate_multicast_group_address:
+                        description:
+                        - Enable automatic multicast group address generation.
+                        type: bool
+                        default: false
+                    underlay_multicast_group_address_limit:
+                        description:
+                        - Underlay multicast group address limit.
+                        type: int
+                        default: 128
+                    tenant_routed_multicast:
+                        description:
+                        - Enable tenant routed multicast.
+                        type: bool
+                        default: false
+                    tenant_routed_multicast_ipv6:
+                        description:
+                        - Enable tenant routed multicast for IPv6.
+                        type: bool
+                        default: false
+                    # Security and authentication
+                    security_group_tag:
+                        description:
+                        - Enable security group tag.
+                        type: bool
+                        default: false
+                    macsec:
+                        description:
+                        - Enable MACSec encryption.
+                        type: bool
+                        default: false
+                    pim_hello_authentication:
+                        description:
+                        - Enable PIM hello authentication.
+                        type: bool
+                        default: false
+                    # PTP and timing
+                    ptp:
+                        description:
+                        - Enable PTP (Precision Time Protocol).
+                        type: bool
+                        default: false
+                    # Management and monitoring
+                    real_time_backup:
+                        description:
+                        - Enable real-time backup.
+                        type: bool
+                        default: true
+                    scheduled_backup:
+                        description:
+                        - Enable scheduled backup.
+                        type: bool
+                        default: true
+                    scheduled_backup_time:
+                        description:
+                        - Scheduled backup time in HH:MM format.
+                        type: str
+                        default: "21:38"
+                    real_time_interface_statistics_collection:
+                        description:
+                        - Enable real-time interface statistics collection.
+                        type: bool
+                        default: false
+                    performance_monitoring:
+                        description:
+                        - Enable performance monitoring.
+                        type: bool
+                        default: false
+                    strict_config_compliance_mode:
+                        description:
+                        - Enable strict configuration compliance mode.
+                        type: bool
+                        default: false
+                    # System settings
+                    site_id:
+                        description:
+                        - Site ID for the fabric.
+                        type: str
+                        default: "4225625065"
+                    heartbeat_interval:
+                        description:
+                        - Heartbeat interval in seconds.
+                        type: int
+                        default: 190
+                    # QoS and queuing
+                    default_queuing_policy:
+                        description:
+                        - Enable default queuing policy.
+                        type: bool
+                        default: false
+                    default_queuing_policy_other:
+                        description:
+                        - Default queuing policy for other switch types.
+                        type: str
+                        default: queuing_policy_default_other
+                    default_queuing_policy_cloudscale:
+                        description:
+                        - Default queuing policy for cloudscale switches.
+                        type: str
+                        default: queuing_policy_default_8q_cloudscale
+                    default_queuing_policy_r_series:
+                        description:
+                        - Default queuing policy for R-series switches.
+                        type: str
+                        default: queuing_policy_default_r_series
+                    aiml_qos:
+                        description:
+                        - Enable AI/ML QoS optimization.
+                        type: bool
+                        default: false
+                    # DHCP and AAA
+                    tenant_dhcp:
+                        description:
+                        - Enable tenant DHCP.
+                        type: bool
+                        default: true
+                    local_dhcp_server:
+                        description:
+                        - Enable local DHCP server.
+                        type: bool
+                        default: false
+                    aaa:
+                        description:
+                        - Enable AAA (Authentication, Authorization, and Accounting).
+                        type: bool
+                        default: false
+                    # Protocol settings
+                    cdp:
+                        description:
+                        - Enable CDP (Cisco Discovery Protocol).
+                        type: bool
+                        default: false
+                    nxapi:
+                        description:
+                        - Enable NX-API.
+                        type: bool
+                        default: false
+                    nxapi_http:
+                        description:
+                        - Enable NX-API HTTP.
+                        type: bool
+                        default: true
+                    nxapi_http_port:
+                        description:
+                        - NX-API HTTP port number.
+                        type: int
+                        default: 80
+                    nxapi_https_port:
+                        description:
+                        - NX-API HTTPS port number.
+                        type: int
+                        default: 443
+                    snmp_trap:
+                        description:
+                        - Enable SNMP trap.
+                        type: bool
+                        default: true
+                    # Overlay and EVPN settings
+                    route_reflector_count:
+                        description:
+                        - Number of route reflectors.
+                        type: int
+                        default: 2
+                    advertise_physical_ip:
+                        description:
+                        - Advertise physical IP addresses.
+                        type: bool
+                        default: false
+                    advertise_physical_ip_on_border:
+                        description:
+                        - Advertise physical IP on border devices.
+                        type: bool
+                        default: true
+                    anycast_border_gateway_advertise_physical_ip:
+                        description:
+                        - Advertise physical IP on anycast border gateway.
+                        type: bool
+                        default: false
+                    # VLAN and interface ranges
+                    sub_interface_dot1q_range:
+                        description:
+                        - Sub-interface dot1q range.
+                        type: str
+                        default: "2-511"
+                    object_tracking_number_range:
+                        description:
+                        - Object tracking number range.
+                        type: str
+                        default: "100-299"
+                    route_map_sequence_number_range:
+                        description:
+                        - Route map sequence number range.
+                        type: str
+                        default: "1-65534"
+                    ip_service_level_agreement_id_range:
+                        description:
+                        - IP Service Level Agreement ID range.
+                        type: str
+                        default: "10000-19999"
+                    # Private VLAN
+                    private_vlan:
+                        description:
+                        - Enable private VLAN.
+                        type: bool
+                        default: false
+                    # Advanced features
+                    policy_based_routing:
+                        description:
+                        - Enable policy-based routing.
+                        type: bool
+                        default: false
+                    tcam_allocation:
+                        description:
+                        - Enable TCAM allocation.
+                        type: bool
+                        default: true
+                    l3_vni_no_vlan_default_option:
+                        description:
+                        - Enable L3 VNI no VLAN default option.
+                        type: bool
+                        default: false
+                    host_interface_admin_state:
+                        description:
+                        - Host interface administrative state.
+                        type: bool
+                        default: true
+                    # Routing and STP
+                    leaf_to_r_id_range:
+                        description:
+                        - Enable leaf to router ID range.
+                        type: bool
+                        default: false
+                    # Bootstrap and day0
+                    day0_bootstrap:
+                        description:
+                        - Enable day 0 bootstrap.
+                        type: bool
+                        default: false
+                    bootstrap_multi_subnet:
+                        description:
+                        - Bootstrap multi-subnet configuration.
+                        type: str
+                        default: "#Scope_Start_IP, Scope_End_IP, Scope_Default_Gateway, Scope_Subnet_Prefix"
+                    # OAM and debugging
+                    next_generation_oam:
+                        description:
+                        - Enable next generation OAM.
+                        type: bool
+                        default: true
+                    ngoam_south_bound_loop_detect:
+                        description:
+                        - Enable NGOAM south bound loop detection.
+                        type: bool
+                        default: false
+                    # MPLS
+                    mpls_handoff:
+                        description:
+                        - Enable MPLS handoff.
+                        type: bool
+                        default: false
+                    # In-band management
+                    inband_management:
+                        description:
+                        - Enable in-band management.
+                        type: bool
+                        default: false
+                    # SSH
+                    advanced_ssh_option:
+                        description:
+                        - Enable advanced SSH options.
+                        type: bool
+                        default: false
+                    # Server collections
+                    ntp_server_collection:
+                        description:
+                        - List of NTP servers.
+                        type: list
+                        elements: str
+                        default: ["string"]
+                    ntp_server_vrf_collection:
+                        description:
+                        - List of NTP server VRFs.
+                        type: list
+                        elements: str
+                        default: ["string"]
+                    dns_collection:
+                        description:
+                        - List of DNS servers.
+                        type: list
+                        elements: str
+                        default: ["5.192.28.174"]
+                    dns_vrf_collection:
+                        description:
+                        - List of DNS server VRFs.
+                        type: list
+                        elements: str
+                        default: ["string"]
+                    syslog_server_collection:
+                        description:
+                        - List of syslog servers.
+                        type: list
+                        elements: str
+                        default: ["string"]
+                    syslog_server_vrf_collection:
+                        description:
+                        - List of syslog server VRFs.
+                        type: list
+                        elements: str
+                        default: ["string"]
+                    syslog_severity_collection:
+                        description:
+                        - List of syslog severity levels.
+                        type: list
+                        elements: str
+                        default: ["7"]
+                    # Extra configuration sections
+                    extra_config_leaf:
+                        description:
+                        - Extra configuration for leaf switches.
+                        type: str
+                        default: string
+                    extra_config_spine:
+                        description:
+                        - Extra configuration for spine switches.
+                        type: str
+                        default: string
+                    extra_config_tor:
+                        description:
+                        - Extra configuration for ToR switches.
+                        type: str
+                        default: string
+                    extra_config_aaa:
+                        description:
+                        - Extra AAA configuration.
+                        type: str
+                        default: string
+                    extra_config_intra_fabric_links:
+                        description:
+                        - Extra configuration for intra-fabric links.
+                        type: str
+                        default: string
+                    pre_interface_config_leaf:
+                        description:
+                        - Pre-interface configuration for leaf switches.
+                        type: str
+                        default: string
+                    pre_interface_config_spine:
+                        description:
+                        - Pre-interface configuration for spine switches.
+                        type: str
+                        default: string
+                    pre_interface_config_tor:
+                        description:
+                        - Pre-interface configuration for ToR switches.
+                        type: str
+                        default: string
+                    # Netflow settings
+                    netflow_settings:
+                        description:
+                        - Netflow monitoring configuration.
+                        type: dict
 """
 
 EXAMPLES = """
-# Create a new fabric or update an existing one
-- name: Create or update fabric
-  cisco.nd.manage_fabric:
+# Create a new fabric with basic VXLAN iBGP configuration
+- name: Create basic VXLAN iBGP fabric
+  cisco.nd.nd_manage_fabric:
     state: merged
     config:
       - name: example-fabric
         category: fabric
-        securityDomain: default
+        security_domain: default
         management:
           type: vxlanIbgp
-          bgpAsn: "65001"
-          anycastGatewayMac: "00:00:00:00:00:01"
-          replicationMode: multicast
+          bgp_asn: "65001"
+          anycast_gateway_mac: "2020.0000.00aa"
+          replication_mode: multicast
+
+# Create a comprehensive fabric with advanced settings
+- name: Create comprehensive fabric with advanced settings
+  cisco.nd.nd_manage_fabric:
+    state: merged
+    config:
+      - name: advanced-fabric
+        category: fabric
+        security_domain: all
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        management:
+          type: vxlanIbgp
+          bgp_asn: "65001"
+          anycast_gateway_mac: "2020.0000.00aa"
+          replication_mode: multicast
+          fabric_interface_type: p2p
+          link_state_routing_protocol: ospf
+          overlay_mode: cli
+          power_redundancy_mode: redundant
+          rendezvous_point_mode: asm
+          isis_level: level-2
+          stp_root_option: unmanaged
+          vpc_peer_keep_alive_option: management
+          allow_vlan_on_leaf_tor_pairing: none
+          aiml_qos_policy: 400G
+          greenfield_debug_flag: disable
+          copp_policy: strict
+          bgp_authentication: true
+          bgp_authentication_key_type: 3des
+          bfd: true
+          bfd_ibgp: true
+          macsec: false
+          ptp: false
+          real_time_backup: true
+          performance_monitoring: true
+
+# Create AI/ML optimized fabric
+- name: Create AI/ML optimized fabric
+  cisco.nd.nd_manage_fabric:
+    state: merged
+    config:
+      - name: aiml-fabric
+        category: fabric
+        security_domain: all
+        management:
+          type: aimlVxlanIbgp
+          bgp_asn: "65100"
+          anycast_gateway_mac: "2020.0000.00ab"
+          replication_mode: ingress
+          aiml_qos: true
+          aiml_qos_policy: 800G
+          fabric_mtu: 9216
+          l2_host_interface_mtu: 9216
+          default_queuing_policy: true
+          tenant_routed_multicast: true
+          security_group_tag: true
 
 # Replace existing fabric configuration
 - name: Replace fabric configuration
-  cisco.nd.manage_fabric:
+  cisco.nd.nd_manage_fabric:
     state: replaced
     config:
       - name: example-fabric
         category: fabric
-        securityDomain: default
+        security_domain: default
         management:
-          type: vxlanIbgp
-          bgpAsn: "65002"
-          anycastGatewayMac: "00:00:00:00:00:02"
-          replicationMode: ingress
+          type: vxlanEbgp
+          bgp_asn: "65002"
+          anycast_gateway_mac: "2020.0000.00ac"
+          replication_mode: ingress
+          fabric_interface_type: unNumbered
+          link_state_routing_protocol: is-is
+          isis_level: level-1
 
 # Delete a fabric
 - name: Delete fabric
-  cisco.nd.manage_fabric:
+  cisco.nd.nd_manage_fabric:
     state: deleted
     config:
       - name: example-fabric
 
 # Query existing fabrics
-- name: Query fabrics
-  cisco.nd.manage_fabric:
+- name: Query all fabrics
+  cisco.nd.nd_manage_fabric:
+    state: query
+
+# Query specific fabric
+- name: Query specific fabric
+  cisco.nd.nd_manage_fabric:
     state: query
     config:
       - name: example-fabric
+
+# Override fabric configurations (replace all with specified configs)
+- name: Override all fabric configurations
+  cisco.nd.nd_manage_fabric:
+    state: overridden
+    config:
+      - name: production-fabric
+        category: fabric
+        security_domain: all
+        management:
+          type: vxlanIbgp
+          bgp_asn: "65000"
+          anycast_gateway_mac: "2020.0000.0001"
+          replication_mode: multicast
+          strict_config_compliance_mode: true
+          real_time_backup: true
+          scheduled_backup: true
+          scheduled_backup_time: "02:00"
+      - name: development-fabric
+        category: fabric
+        security_domain: dev
+        management:
+          type: vxlanEbgp
+          bgp_asn: "65100"
+          anycast_gateway_mac: "2020.0000.0002"
+          replication_mode: ingress
+          greenfield_debug_flag: enable
 """
 import copy
 import inspect
