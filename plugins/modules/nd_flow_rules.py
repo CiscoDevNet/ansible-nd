@@ -27,12 +27,12 @@ options:
     type: str
     default: default
     aliases: [ fab_name, ig_name ]
-  site_name:
+  fabric:
     description:
-    - The name of the Assurance Entity.
+    - Name of the fabric.
     type: str
     required: true
-    aliases: [ site ]
+    aliases: [ fabric_name, site, site_name ]
   flow_rule:
     description:
     - The name of the Flow Rule.
@@ -71,7 +71,7 @@ EXAMPLES = r"""
 - name: Create a VRF Flow Rule with subnet
   cisco.nd.nd_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     tenant: my_tenant
     vrf: my_vrf
@@ -82,7 +82,7 @@ EXAMPLES = r"""
 - name: Update a VRF Flow Rule by adding subnet 10.10.1.0/24
   cisco.nd.nd_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     subnets:
       - 10.10.0.0/24
@@ -92,7 +92,7 @@ EXAMPLES = r"""
 - name: Update a VRF Flow Rule by deleting subnet 10.10.0.0/24
   cisco.nd.nd_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     subnets:
       - 10.10.1.0/24
@@ -101,7 +101,7 @@ EXAMPLES = r"""
 - name: Update a VRF Flow Rule by deleting all subnets
   cisco.nd.nd_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     subnets: []
     state: present
@@ -109,20 +109,20 @@ EXAMPLES = r"""
 - name: Query a specific VRF Flow Rule
   cisco.nd.nd_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     state: query
 
 - name: Query all VRF Flow Rules
   cisco.nd.nd_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     state: query
 
 - name: Delete a VRF Flow Rule
   cisco.nd.nd_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     state: absent
 """
@@ -139,7 +139,7 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
-        site=dict(type="str", required=True, aliases=["site_name"]),
+        fabric=dict(type="str", required=True, aliases=["fabric_name", "site", "site_name"]),
         flow_rule=dict(type="str", aliases=["flow_rule_name", "name"]),  # Not required to query all objects
         tenant=dict(type="str", aliases=["tenant_name"]),
         vrf=dict(type="str", aliases=["vrf_name"]),
@@ -161,7 +161,7 @@ def main():
 
     state = nd.params.get("state")
     insights_group = nd.params.get("insights_group")
-    site = nd.params.get("site")
+    fabric = nd.params.get("fabric")
     flow_rule = nd.params.get("flow_rule")
     tenant = nd.params.get("tenant")
     vrf = nd.params.get("vrf")
@@ -174,7 +174,7 @@ def main():
         "fabricName",
     ]
 
-    path = "{0}/{1}".format(ndi.config_ig_path, ndi.flow_rules_path.format(insights_group, site))
+    path = "{0}/{1}".format(ndi.config_ig_path, ndi.flow_rules_path.format(insights_group, fabric))
     flow_rules_history = ndi.query_data(path)
     uuid = None
     existing_subnets = []
