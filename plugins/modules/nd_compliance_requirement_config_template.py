@@ -54,7 +54,7 @@ EXAMPLES = r"""
   cisco.nd.nd_compliance_requirement_config_template:
     insights_group: igName
     name: complianceRequirementName
-    sites:
+    fabrics:
       - siteName1
       - siteName2
     enabled: false
@@ -88,7 +88,7 @@ def main():
         supports_check_mode=True,
         required_if=[
             ["state", "absent", ["name"]],
-            ["state", "present", ["name", "sites", "enabled", "file"]],
+            ["state", "present", ["name", "fabrics", "enabled", "file"]],
         ],
     )
 
@@ -99,7 +99,7 @@ def main():
     name = nd.params.get("name")
     description = nd.params.get("description")
     enabled = nd.params.get("enabled")
-    sites = nd.params.get("sites")
+    fabrics = nd.params.get("fabrics")
     state = nd.params.get("state")
     file = nd.params.get("file")
     selector_based_on_tags = nd.params.get("selector_based_on_tags")
@@ -147,7 +147,7 @@ def main():
             "enabled": enabled,
             "configurationType": "TEMPLATE_BASED_CONFIGURATION_COMPLIANCE",
             "requirementType": "CONFIGURATION_COMPLIANCE",
-            "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, site, prefix=ndi.prefix)} for site in sites],
+            "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, fabric, prefix=ndi.prefix)} for fabric in fabrics],
             "enableEqualityCheck": False,
             "uploadFileType": "TEMPLATE_BASED_CONFIG",
             "enableSelectorBasedOnTags": selector_based_on_tags,
