@@ -28,33 +28,35 @@ options:
     type: str
     default: default
     aliases: [ fab_name, ig_name ]
-  site:
+  fabric:
     description:
-    - The names of the site.
+    - The names of the fabric.
     type: str
     required: true
-  epoch_id:
+    aliases: [site, site_name, fabric_name ]
+  snapshot_id:
     description:
-    - The id of the epoch.
-    - When epoch id is not provided it will retrieve the latest known epoch id.
+    - The snapshot ID.
+    - When the O(snapshot_id) is not provided it will retrieve the latest known snapshot ID.
     type: str
+    aliases: [ epoch_id ]
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 """
 
 EXAMPLES = r"""
-- name: Run compliance analysis for latest epoch id
+- name: Run compliance analysis for latest snapshot ID
   cisco.nd.nd_compliance_analysis:
     insights_group: igName
-    site: siteName
+    fabric: fabricName
   register: query_results
 
-- name: Run compliance analysis with specified epoch id
+- name: Run compliance analysis with specified snapshot ID
   cisco.nd.nd_compliance_analysis:
     insights_group: igName
-    site: siteName
-    epoch_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
+    fabric: fabricName
+    snapshot_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
   register: query_results
 """
 
@@ -70,8 +72,8 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
-        site=dict(type="str", required=True),
-        epoch_id=dict(type="str"),
+        fabric=dict(type="str", required=True, aliases=["site", "site_name", "fabric_name"]),
+        snapshot_id=dict(type="str", alaises=["epoch_id"]),
     )
 
     module = AnsibleModule(
@@ -83,19 +85,19 @@ def main():
     ndi = NDI(nd)
 
     insights_group = nd.params.get("insights_group")
-    site = nd.params.get("site")
-    epoch_id = nd.params.get("epoch_id")
+    fabric = nd.params.get("fabric")
+    snapshot_id = nd.params.get("snapshot_id")
 
-    if not epoch_id:
-        epoch_id = ndi.get_last_epoch(insights_group, site).get("epochId")
+    if not snapshot_id:
+        snapshot_id = ndi.get_last_epoch(insights_group, fabric).get("epochId")
 
-    nd.existing["smart_events"] = ndi.query_compliance_smart_event(insights_group, site, epoch_id)
-    nd.existing["events_by_severity"] = ndi.query_msg_with_data(insights_group, site, "eventsBySeverity?%24epochId={0}".format(epoch_id))
-    nd.existing["unhealthy_resources"] = ndi.query_unhealthy_resources(insights_group, site, epoch_id)
-    nd.existing["compliance_score"] = ndi.query_compliance_score(insights_group, site, epoch_id)
-    nd.existing["count"] = ndi.query_compliance_count(insights_group, site, epoch_id)
+    nd.existing["smart_events"] = ndi.query_compliance_smart_event(insights_group, fabric, snapshot_id)
+    nd.existing["events_by_severity"] = ndi.query_msg_with_data(insights_group, fabric, "eventsBySeverity?%24epochId={0}".format(snapshot_id))
+    nd.existing["unhealthy_resources"] = ndi.query_unhealthy_resources(insights_group, fabric, snapshot_id)
+    nd.existing["compliance_score"] = ndi.query_compliance_score(insights_group, fabric, snapshot_id)
+    nd.existing["count"] = ndi.query_compliance_count(insights_group, fabric, snapshot_id)
     nd.existing["result_by_requirement"] = ndi.query_msg_with_data(
-        insights_group, site, "complianceResultsByRequirement?%24epochId={0}&%24sort=-requirementName&%24page=0&%24size=10".format(epoch_id)
+        insights_group, fabric, "complianceResultsByRequirement?%24epochId={0}&%24sort=-requirementName&%24page=0&%24size=10".format(snapshot_id)
     )
 
     nd.exit_json()

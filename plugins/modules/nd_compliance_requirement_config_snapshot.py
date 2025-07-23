@@ -21,16 +21,17 @@ description:
 author:
 - Akini Ross (@akinross)
 options:
-  baseline_site:
+  baseline_fabric:
     description:
-    - Name of the Assurance Entity to set as baseline.
+    - Name of the fabric to set as baseline.
     type: str
-    aliases: [ site, site_name ]
-  epoch_id:
+    aliases: [ site, site_name, baseline_site, fabric, fabric_name ]
+  snapshot_id:
     description:
-    - The id of the epoch.
-    - When epoch id is not provided it will retrieve the latest known epoch id.
+    - The snapshot ID.
+    - When O(snapshot_id) is not provided it will retrieve the latest known snapshot ID.
     type: str
+    aliases: [ epoch_id ]
   allow_new_configuration_objects:
     description:
     - Allow addition of new configuration objects.
@@ -60,11 +61,11 @@ EXAMPLES = r"""
   cisco.nd.nd_compliance_requirement_config_snapshot:
     insights_group: igName
     name: complianceRequirementName
-    sites:
+    fabrics:
       - siteName1
       - siteName2
     enabled: false
-    epoch_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
+    snapshot_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
     state: present
 
 - name: Delete snapshot configuration type compliance requirement
@@ -87,8 +88,8 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(compliance_base_spec())
     argument_spec.update(
-        epoch_id=dict(type="str"),
-        baseline_site=dict(type="str", aliases=["site", "site_name"]),
+        snapshot_id=dict(type="str", aliases=["epoch_id"]),
+        baseline_fabric=dict(type="str", aliases=["site", "site_name", "baseline_site", "fabric", "fabric_name"]),
         allow_new_configuration_objects=dict(type="bool", default=False),
     )
 
@@ -97,7 +98,7 @@ def main():
         supports_check_mode=True,
         required_if=[
             ["state", "absent", ["name"]],
-            ["state", "present", ["name", "sites", "enabled", "baseline_site"]],
+            ["state", "present", ["name", "fabrics", "enabled", "baseline_fabric"]],
         ],
     )
 
@@ -108,9 +109,9 @@ def main():
     name = nd.params.get("name")
     description = nd.params.get("description")
     enabled = nd.params.get("enabled")
-    sites = nd.params.get("sites")
-    baseline_site = nd.params.get("baseline_site")
-    epoch_id = nd.params.get("epoch_id")
+    fabrics = nd.params.get("fabrics")
+    baseline_fabric = nd.params.get("baseline_fabric")
+    snapshot_id = nd.params.get("snapshot_id")
     allow_new_configuration_objects = nd.params.get("allow_new_configuration_objects")
     state = nd.params.get("state")
 
@@ -141,16 +142,16 @@ def main():
     elif state == "present":
         nd.previous = sanitize_dict(nd.existing, delete_keys)
 
-        if not epoch_id:
-            epoch_id = ndi.get_last_epoch(insights_group, baseline_site).get("epochId")
+        if not snapshot_id:
+            snapshot_id = ndi.get_last_epoch(insights_group, baseline_fabric).get("epochId")
 
         payload = {
             "name": name,
             "enabled": enabled,
             "configurationType": "SNAPSHOT_BASED_CONFIGURATION_COMPLIANCE",
             "requirementType": "CONFIGURATION_COMPLIANCE",
-            "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, site, prefix=ndi.prefix)} for site in sites],
-            "baseEpochId": epoch_id,
+            "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, fabric, prefix=ndi.prefix)} for fabric in fabrics],
+            "baseEpochId": snapshot_id,
             "enableEqualityCheck": not allow_new_configuration_objects,
         }
 

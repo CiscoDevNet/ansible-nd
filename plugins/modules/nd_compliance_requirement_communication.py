@@ -323,7 +323,7 @@ EXAMPLES = r"""
   cisco.nd.nd_compliance_requirement_communication:
     insights_group: igName
     name: complianceRequirementName
-    sites:
+    fabrics:
       - siteName1
       - siteName2
     enabled: false
@@ -458,7 +458,7 @@ def main():
         supports_check_mode=True,
         required_if=[
             ["state", "absent", ["name"]],
-            ["state", "present", ["name", "sites", "enabled", "type", "from_object", "to_object"]],
+            ["state", "present", ["name", "fabrics", "enabled", "type", "from_object", "to_object"]],
             ["type", "must", ["traffic_selector_rules"]],
             ["type", "may", ["traffic_selector_rules"]],
         ],
@@ -471,7 +471,7 @@ def main():
     name = nd.params.get("name")
     description = nd.params.get("description")
     enabled = nd.params.get("enabled")
-    sites = nd.params.get("sites")
+    fabrics = nd.params.get("fabrics")
     state = nd.params.get("state")
     communication_type = nd.params.get("type")
     from_object_selector = nd.params.get("from_object")
@@ -499,7 +499,7 @@ def main():
             "enabled": enabled,
             "communicationType": communication_type.upper(),
             "requirementType": get_requirement_type(communication_type, traffic_selector_rules),
-            "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, site, prefix=ndi.prefix)} for site in sites],
+            "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, fabric, prefix=ndi.prefix)} for fabric in fabrics],
             "objectSelectorA": get_object_selector_payload(from_object_selector),
             "objectSelectorB": get_object_selector_payload(to_object_selector),
         }
