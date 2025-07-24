@@ -45,12 +45,14 @@ options:
     aliases: [ fabric_name, site_name, site ]
   file:
     description:
-    - Optional parameter if creating new Pre-change Analysis job from a file.
+    - The path to the file used to create a new Pre-change Analysis job.
     - XML and JSON files are supported. If no file extension is provided, the file is assumed to be JSON.
+    - This option or O(manual) is required to create a new Pre-change Analysis job.
     type: str
   manual:
     description:
-    - Optional parameter if creating new Pre-change Analysis job from a manual change list.
+    - The manual change list used to create new Pre-change Analysis job.
+    - This option or O(file) is required to create a new Pre-change Analysis job.
     type: str
   job_wait_delay:
     description:
@@ -63,7 +65,7 @@ options:
     description:
     - The total time in seconds to wait for a Pre-change Analysis job to complete before failing the module.
     - This option is only used when O(state=wait_and_query).
-    - When a timeout is not provided the module will wait indefinitely.
+    - When the timeout is C(0), not provided or a negative value the module will wait indefinitely.
     type: int
     aliases: [ wait_timeout ]
   state:
@@ -167,9 +169,13 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        mutually_exclusive=[
+            ["file", "manual"],
+        ],
         required_if=[
             ["state", "absent", ["name", "fabric"]],
             ["state", "present", ["name", "fabric"]],
+            ["state", "present", ["file", "manual"], True],
             ["state", "wait_and_query", ["name", "fabric"]],
         ],
     )
@@ -186,6 +192,8 @@ def main():
     manual = nd.params.get("manual")
     wait_delay = nd.params.get("job_wait_delay")
     wait_timeout = nd.params.get("job_wait_timeout")
+    if wait_timeout is None or wait_timeout < 0:
+        wait_timeout = 0
 
     path = "config/insightsGroup"
     if name is None:
@@ -245,7 +253,7 @@ def main():
             "name": name,
             "assuranceEntityName": fabric,
         }
-        if file:
+        if file is not None:
             if not os.path.exists(file):
                 nd.fail_json(msg="File not found : {0}".format(file))
             # Check whether the file is a valid XML file. If it's not, check if it's a valid JSON or else process it as a file from cisco.aci modules.
@@ -272,14 +280,12 @@ def main():
             file_resp = nd.request(create_pcv_path, method="POST", file=os.path.abspath(file), file_ext=file_ext, data=data, prefix=ndi.prefix)
             if file_resp.get("success") is True:
                 nd.existing = file_resp.get("value")["data"]
-        elif manual:
+        elif manual is not None:
             data["imdata"] = json.loads(manual)
             create_pcv_path = "{0}/{1}/fabric/{2}/prechangeAnalysis/manualChanges?action=RUN".format(path, insights_group, fabric)
             manual_resp = nd.request(create_pcv_path, method="POST", data=data, prefix=ndi.prefix)
             if manual_resp.get("success") is True:
                 nd.existing = manual_resp.get("value")["data"]
-        else:
-            nd.fail_json(msg="Either file or manual is required to create a PCV job")
     nd.exit_json()
 
 
