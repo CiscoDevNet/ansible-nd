@@ -30,14 +30,14 @@ options:
     aliases: [ fab_name, ig_name ]
   fabric:
     description:
-    - The names of the fabric.
+    - The name of the fabric.
     type: str
     required: true
     aliases: [site, site_name, fabric_name ]
   snapshot_id:
     description:
-    - The snapshot ID.
-    - When the O(snapshot_id) is not provided it will retrieve the latest known snapshot ID.
+    - The snapshot/epoch ID.
+    - When the O(snapshot_id) is not provided it will retrieve the latest known snapshot/epoch ID.
     type: str
     aliases: [ epoch_id ]
 extends_documentation_fragment:
@@ -73,7 +73,7 @@ def main():
     argument_spec.update(
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
         fabric=dict(type="str", required=True, aliases=["site", "site_name", "fabric_name"]),
-        snapshot_id=dict(type="str", alaises=["epoch_id"]),
+        snapshot_id=dict(type="str", aliases=["epoch_id"]),
     )
 
     module = AnsibleModule(

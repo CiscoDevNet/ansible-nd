@@ -28,8 +28,8 @@ options:
     aliases: [ site, site_name, baseline_site, fabric, fabric_name ]
   snapshot_id:
     description:
-    - The snapshot ID.
-    - When O(snapshot_id) is not provided it will retrieve the latest known snapshot ID.
+    - The snapshot/epoch ID.
+    - When O(snapshot_id) is not provided it will retrieve the latest known snapshot/epoch ID.
     type: str
     aliases: [ epoch_id ]
   allow_new_configuration_objects:
@@ -62,8 +62,8 @@ EXAMPLES = r"""
     insights_group: igName
     name: complianceRequirementName
     fabrics:
-      - siteName1
-      - siteName2
+      - fabricName1
+      - fabricName2
     enabled: false
     snapshot_id: 0e5604f9-373a123c-b535-33fc-8d11-672d08f65fd1
     state: present
