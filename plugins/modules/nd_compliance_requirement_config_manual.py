@@ -171,8 +171,8 @@ EXAMPLES = r"""
     insights_group: igName
     name: complianceRequirementName
     fabrics:
-      - siteName1
-      - siteName2
+      - fabricName1
+      - fabricName2
     enabled: false
     object:
       type: epg
