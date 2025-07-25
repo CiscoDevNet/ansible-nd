@@ -67,4 +67,4 @@
   ansible.builtin.assert:
     that:
     - query_non_existing is not changed
-    - query_non_existing.msg == "Pre-change validation non_existing is not completed"
+    - query_non_existing.msg == "Pre-change validation non_existing is not completed or does not exist."

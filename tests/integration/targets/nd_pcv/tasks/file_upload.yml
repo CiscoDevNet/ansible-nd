@@ -50,7 +50,7 @@
   ansible.builtin.assert:
     that:
       - pcv_xml_timeout is failed
-      - pcv_xml_timeout.msg == "Timeout occured after 10 seconds while waiting for Pre-change Analysis ansible_xml to complete"
+      - pcv_xml_timeout.msg == "Timeout occurred after 10 seconds while waiting for Pre-change Analysis ansible_xml to complete"
 
 - name: Query Pre-Change analysis job pcv ansible_xml
   cisco.nd.nd_pcv:
