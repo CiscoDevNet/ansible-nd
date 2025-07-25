@@ -76,6 +76,9 @@ options:
     type: str
     choices: [ absent, present, query, wait_and_query ]
     default: query
+seealso:
+- module: cisco.nd.nd_pcv_compliance
+- module: cisco.nd.nd_pcv_delta_analysis
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -214,7 +217,7 @@ def main():
             except BaseException:
                 nd.existing = {}
             if wait_timeout and time.time() - start_time >= wait_timeout:
-                nd.fail_json(msg="Timeout occured after {0} seconds while waiting for Pre-change Analysis {1} to complete".format(wait_timeout, name))
+                nd.fail_json(msg="Timeout occurred after {0} seconds while waiting for Pre-change Analysis {1} to complete".format(wait_timeout, name))
             time.sleep(wait_delay)
 
     elif state == "absent":
