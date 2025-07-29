@@ -205,21 +205,7 @@ def main():
         nd.existing = ndi.query_pcv(insights_group, fabric, name)
 
     if state == "wait_and_query" and nd.existing:
-        status = nd.existing.get("analysisStatus")
-        start_time = time.time()
-        while status != "COMPLETED":
-            try:
-                verified_pcv = ndi.query_pcv(insights_group, fabric, name)
-                status = verified_pcv.get("analysisStatus")
-                if status == "COMPLETED" or status == "FAILED":
-                    nd.existing = verified_pcv
-                    break
-            except BaseException:
-                nd.existing = {}
-            if wait_timeout and time.time() - start_time >= wait_timeout:
-                nd.fail_json(msg="Timeout occurred after {0} seconds while waiting for Pre-change Analysis {1} to complete".format(wait_timeout, name))
-            time.sleep(wait_delay)
-
+        nd.existing = ndi.wait_for_pcv_completion(insights_group, fabric, name, nd.existing, wait_timeout, wait_delay, False)
     elif state == "absent":
         nd.previous = nd.existing
         job_id = nd.existing.get("jobId")

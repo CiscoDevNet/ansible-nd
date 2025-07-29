@@ -1,5 +1,6 @@
 # Test code for the nd modules
 # Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
+# Copyright: (c) 2025, Samita Bhattacharjee (@samiib) <samitab@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -59,7 +60,7 @@
 - name: Verify validate_pcv_by_file_delta_analysis
   ansible.builtin.assert:
     that:
-    - validate_pcv_by_file_delta_analysis.msg.startswith("Pre-change analysis failed.")
+    - validate_pcv_by_file_delta_analysis.msg.startswith("Pre-change Analysis failed.")
 
 - name: Validate another pre_change analysis
   cisco.nd.nd_pcv_delta_analysis:
@@ -72,7 +73,7 @@
 - name: Verify validate_pcv_add_contract_delta_analysis
   ansible.builtin.assert:
     that:
-    - validate_pcv_add_contract_delta_analysis.msg.startswith("Pre-change analysis failed.")
+    - validate_pcv_add_contract_delta_analysis.msg.startswith("Pre-change Analysis failed.")
 
 - name: Query non_existing pre_change validation delta analysis result
   cisco.nd.nd_pcv_delta_analysis:
@@ -85,7 +86,7 @@
   ansible.builtin.assert:
     that:
     - query_non_existing is not changed
-    - query_non_existing.msg == "Pre-change validation non_existing not found"
+    - query_non_existing.msg == "Pre-change Analysis non_existing not found"
 
 # Delete pre-change job
 - name: Delete a pre_change analysis to recreate
@@ -106,18 +107,30 @@
     <<: *nd_query
     name: vrf_with_overlapping_subnets
   ignore_errors: true
-  register: query_pcv_update_epg_while_running
+  register: query_pcv_overlapping_subnets_while_running
 
-- name: Validate a pre_change analysis while running
+- name: Validate a pre_change analysis while running, with timeout
   cisco.nd.nd_pcv_delta_analysis:
     <<: *nd_query
     name: vrf_with_overlapping_subnets
     state: validate
+    wait_timeout: 10
+    wait_delay: 5
   ignore_errors: true
-  register: validate_pcv_update_epg_while_running
+  register: validate_pcv_overlapping_subnets_timeout
 
-- name: Verify query_pcv_update_epg_while_running and validate_pcv_update_epg_while_running
+- name: Validate a pre_change analysis while running, no timeout
+  cisco.nd.nd_pcv_delta_analysis:
+    <<: *nd_query
+    name: vrf_with_overlapping_subnets
+    state: validate
+    wait_delay: 5
+  ignore_errors: true
+  register: validate_pcv_overlapping_subnet_while_running
+
+- name: Verify query_pcv_overlapping_subnets_while_running, validate_pcv_overlapping_subnets_timeout and validate_pcv_overlapping_subnet_while_running
   ansible.builtin.assert:
     that:
-    - query_pcv_update_epg_while_running.msg == "Pre-change validation vrf_with_overlapping_subnets is not completed"
-    - validate_pcv_update_epg_while_running.msg.startswith("Pre-change analysis failed.")
+    - query_pcv_overlapping_subnets_while_running.msg == "Pre-change Analysis vrf_with_overlapping_subnets is not completed"
+    - validate_pcv_overlapping_subnets_timeout.msg == "Timeout occurred after 10 seconds while waiting for Pre-change Analysis vrf_with_overlapping_subnets to complete"
+    - validate_pcv_overlapping_subnet_while_running.msg.startswith("Pre-change Analysis failed.")

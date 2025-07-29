@@ -8,6 +8,7 @@
 
 from __future__ import absolute_import, division, print_function
 import json
+import time
 
 try:
     from jsonpath_ng import parse
@@ -292,6 +293,28 @@ class NDI:
         else:
             self.nd.fail_json(msg="site name and prechange validation job name are required")
         return pcv_result
+
+    def wait_for_pcv_completion(self, ig_name, fabric, pcv_name, pcv_results, wait_timeout, wait_delay, fail_module):
+        status = pcv_results.get("analysisStatus")
+        start_time = time.time()
+        while status != "COMPLETED":
+            try:
+                pcv = self.query_pcv(ig_name, fabric, pcv_name)
+                status = pcv.get("analysisStatus")
+                if status == "COMPLETED" or status == "FAILED":
+                    if fail_module and status == "FAILED":
+                        self.nd.fail_json(msg="Pre-change Analysis {0} is failed".format(pcv_name))
+                    return pcv
+            except BaseException:
+                if fail_module:
+                    self.nd.fail_json(msg="Pre-change Analysis {0} not found".format(pcv_name))
+                return {}
+            if wait_timeout and time.time() - start_time >= wait_timeout:
+                self.nd.fail_json(
+                    msg="Timeout occurred after {0} seconds while waiting for Pre-change Analysis {1} to complete".format(wait_timeout, pcv_name)
+                )
+            time.sleep(wait_delay)
+        return pcv_results
 
     def query_requirements(self, ig_name):
         requirements_path = "{0}/list".format(self.requirements_path.format(ig_name))
