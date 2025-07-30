@@ -49,6 +49,7 @@ options:
     aliases: [ scheduler_start_time, start_time, time ]
   backup_type:
     description:
+    - This parameter specifies the kind of snapshot created for the Nexus Dashboard.
     - The O(backup_type=config_only) option creates a snapshot that specifically captures the configuration settings of the Nexus Dashboard.
     - The O(backup_type=full) option creates a complete snapshot of the entire Nexus Dashboard.
     type: str
@@ -156,35 +157,29 @@ def main():
         )
 
     path = "/api/v1/infra/backups/schedules"
-    schedules = nd.query_obj(path)
-    if name:
-        for schedule in schedules.get("schedules"):
-            if name == schedule.get("name"):
-                nd.previous = nd.existing = schedule
-                path = "{0}/{1}".format(path, name)
-                break
+
+    schedules = nd.get_object_by_nested_key_value(path, "name", name, data_key="schedules")
+
+    if name and schedules:
+        nd.previous = nd.existing = schedules
+        path = "{0}/{1}".format(path, name)
     else:
         nd.existing = schedules
 
     if state == "present":
+        payload = {
+            "encryptionKey": encryption_key,
+            "name": name,
+            "type": backup_type,
+            "frequency": frequency,
+            "remoteLocation": remote_location,
+            "startTime": start_date_time,
+        }
+
         if nd.existing and nd.existing.get("name") == name:
-            payload = {
-                "encryptionKey": encryption_key,
-                "frequency": frequency or nd.existing.get("frequency"),
-                "name": name,
-                "remoteLocation": remote_location or nd.existing.get("remoteLocation"),
-                "startTime": start_date_time or nd.existing.get("startTime"),
-                "type": backup_type,
-            }
-        else:
-            payload = {
-                "encryptionKey": encryption_key,
-                "frequency": frequency,
-                "name": name,
-                "remoteLocation": remote_location,
-                "startTime": start_date_time,
-                "type": backup_type,
-            }
+            payload["frequency"] = frequency or nd.existing.get("frequency")
+            payload["remoteLocation"] = remote_location or nd.existing.get("remoteLocation")
+            payload["startTime"] = start_date_time or nd.existing.get("startTime")
 
         nd.sanitize(payload, collate=True)
 
