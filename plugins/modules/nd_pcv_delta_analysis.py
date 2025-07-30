@@ -40,18 +40,19 @@ options:
     type: str
     required: true
     aliases: [ site, site_name, fabric_name ]
-  epoch_choice:
+  snapshot_choice:
     description:
-    - Choice of which Epoch to report when querying for anomalies.
-    - Use epoch2 to choose anomalies present only in epoch2.
-    - Use epoch1 to choose anomalies present only in epoch1.
-    - Use both_epoch to choose anomalies common for both epoch1 and epoch2.
+    - Choice of which Snapshot/Epoch to report when querying for anomalies.
+    - Use later_snapshot/epoch2 to choose anomalies present only in the later_snapshot or epoch2.
+    - Use earlier_snapshot/epoch1 to choose anomalies present only in the erlier_snapshot or epoch1.
+    - Use both_snapshots/both_epoch to choose anomalies common for both epoch1 and epoch2.
     type: str
-    default: epoch2
-    choices: [ epoch2, epoch1, both_epoch, all ]
+    default: later_snapshot
+    aliases: [ epoch_choice ]
+    choices: [ later_snapshot, earlier_snapshot, both_snapshots, epoch2, epoch1, both_epoch, all ]
   exclude_ack_anomalies:
     description:
-    - Option to exclude anomalies which is acknowledged
+    - Option to exclude acknowledged anomalies.
     type: bool
     default: false
   job_wait_delay:
@@ -100,7 +101,7 @@ EXAMPLES = r"""
     name: exampleName
     state: validate
     exclude_ack_anomalies: true
-    epoch_choice: epoch2
+    snapshot_choice: later_snapshot
     job_wait_delay: 2
     job_wait_timeout: 600
   register: pcv_result
@@ -123,7 +124,10 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 
-epoch_map = {
+snapshot_choice_map = {
+    "later_snapshot": "EPOCH2_ONLY",
+    "earlier_snapshot": "EPOCH1_ONLY",
+    "both_snapshots": "BOTH_EPOCHS",
     "epoch2": "EPOCH2_ONLY",
     "epoch1": "EPOCH1_ONLY",
     "both_epoch": "BOTH_EPOCHS",
@@ -139,7 +143,7 @@ def main():
         fabric=dict(type="str", required=True, aliases=["site", "site_name", "fabric_name"]),
         state=dict(type="str", default="query", choices=["query", "validate"]),
         exclude_ack_anomalies=dict(type="bool", default=False),
-        epoch_choice=dict(type="str", default="epoch2", choices=["epoch2", "epoch1", "both_epoch", "all"]),
+        snapshot_choice=dict(type="str", default="later_snapshot", choices=list(snapshot_choice_map), aliases=["epoch_choice"]),
         job_wait_delay=dict(type="int", default=1, aliases=["wait_delay"]),
         job_wait_timeout=dict(type="int", aliases=["wait_timeout"]),
     )
@@ -155,7 +159,7 @@ def main():
     name = nd.params.get("name")
     fabric = nd.params.get("fabric")
     insights_group = nd.params.get("insights_group")
-    epoch_choice = nd.params.get("epoch_choice")
+    snapshot_choice = nd.params.get("snapshot_choice")
     state = nd.params.get("state")
     exclude_ack_anomalies = nd.params.get("exclude_ack_anomalies")
     wait_delay = nd.params.get("job_wait_delay")
@@ -173,7 +177,7 @@ def main():
             nd.fail_json(msg="Pre-change Analysis {0} is not completed".format(name))
     epoch_delta_job_id = pcv_result.get("epochDeltaJobId")
     nd.existing["anomaly_count"] = ndi.query_event_severity(insights_group, fabric, epoch_delta_job_id)
-    anomalies = ndi.query_anomalies(insights_group, fabric, epoch_delta_job_id, epoch_map[epoch_choice], exclude_ack_anomalies)
+    anomalies = ndi.query_anomalies(insights_group, fabric, epoch_delta_job_id, snapshot_choice_map[snapshot_choice], exclude_ack_anomalies)
     nd.existing["anomalies"] = anomalies
     if state == "validate" and anomalies:
         anomalies_count = {"minor": 0, "major": 0, "critical": 0, "warning": 0}
