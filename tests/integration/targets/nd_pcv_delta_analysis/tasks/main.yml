@@ -54,6 +54,7 @@
     <<: *nd_query
     name: pcv_by_file
     state: validate
+    snapshot_choice: both_snapshots
   ignore_errors: true
   register: validate_pcv_by_file_delta_analysis
 
