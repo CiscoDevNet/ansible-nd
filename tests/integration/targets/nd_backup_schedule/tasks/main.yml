@@ -1,0 +1,282 @@
+# Test code for the ND modules
+# Copyright: (c) 2025, Sabari Jaganathan (@sajagana) <sajagana@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# CLEAN TEST ENVIRONMENT
+- name: Query all backup schedules
+  cisco.nd.nd_backup_schedule:
+    output_level: debug
+    state: query
+  register: query_all
+
+- name: Delete all backup schedules
+  cisco.nd.nd_backup_schedule:
+    output_level: debug
+    name: "{{ item.name }}"
+    state: absent
+  loop: "{{ query_all.current.schedules | list }}"
+
+# CREATE
+- name: Create a backup schedule 1 (check_mode)
+  cisco.nd.nd_backup_schedule: &cm_add_backup_schedule
+    output_level: debug
+    name: backupschedule1
+    encryption_key: testtest1
+    frequency: 1
+    scheduler_date: "2025-01-02"
+    scheduler_time: "15:04:05"
+    remote_location: test
+    state: present
+  check_mode: true
+  register: cm_add_backup_schedule
+
+- name: Create a backup schedule 1
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_add_backup_schedule
+  register: add_backup_schedule
+
+- name: Create a backup schedule 1 again
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_add_backup_schedule
+  register: add_backup_schedule_again
+
+- name: Create a backup schedule 2
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_add_backup_schedule
+    name: backupschedule2
+    frequency: 30
+    scheduler_date: "2025-01-03"
+    scheduler_time: "19:04:05"
+  register: add_backup_schedule_2
+
+- name: Assertion check for create a backup schedules
+  ansible.builtin.assert:
+    that:
+      - cm_add_backup_schedule is changed
+      - cm_add_backup_schedule.current.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_add_backup_schedule.current.frequency == 1
+      - cm_add_backup_schedule.current.name == "backupschedule1"
+      - cm_add_backup_schedule.current.remoteLocation == "test"
+      - cm_add_backup_schedule.current.startTime == "2025-01-02T15:04:05Z"
+      - cm_add_backup_schedule.current.type == "configOnly"
+      - cm_add_backup_schedule.previous == {}
+      - cm_add_backup_schedule.proposed.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_add_backup_schedule.proposed.frequency == 1
+      - cm_add_backup_schedule.proposed.name == "backupschedule1"
+      - cm_add_backup_schedule.proposed.remoteLocation == "test"
+      - cm_add_backup_schedule.proposed.startTime == "2025-01-02T15:04:05Z"
+      - cm_add_backup_schedule.proposed.type == "configOnly"
+      - add_backup_schedule is changed
+      - add_backup_schedule.current.frequency == 1
+      - add_backup_schedule.current.name == "backupschedule1"
+      - add_backup_schedule.current.remoteLocation == "test"
+      - add_backup_schedule.current.startTime == "2025-01-02T15:04:05Z"
+      - add_backup_schedule.current.type == "configOnly"
+      - add_backup_schedule.current.user == "admin"
+      - add_backup_schedule.previous == {}
+      - add_backup_schedule_again is not changed
+      - add_backup_schedule_again.current.frequency == 1
+      - add_backup_schedule_again.current.name == "backupschedule1"
+      - add_backup_schedule_again.current.remoteLocation == "test"
+      - add_backup_schedule_again.current.startTime == "2025-01-02T15:04:05Z"
+      - add_backup_schedule_again.current.type == "configOnly"
+      - add_backup_schedule_again.current.user == "admin"
+      - add_backup_schedule_again.current == add_backup_schedule_again.previous
+      - add_backup_schedule_2 is changed
+      - add_backup_schedule_2.current.frequency == 30
+      - add_backup_schedule_2.current.name == "backupschedule2"
+      - add_backup_schedule_2.current.remoteLocation == "test"
+      - add_backup_schedule_2.current.startTime == "2025-01-03T19:04:05Z"
+      - add_backup_schedule_2.current.type == "configOnly"
+      - add_backup_schedule_2.current.user == "admin"
+      - add_backup_schedule_2.previous == {}
+
+# UPDATE
+- name: Update a backup schedule 1 (check_mode)
+  cisco.nd.nd_backup_schedule: &cm_update_backup_schedule
+    output_level: debug
+    name: backupschedule1
+    encryption_key: testtest1
+    frequency: 7
+    remote_location: test
+    state: present
+  check_mode: true
+  register: cm_update_backup_schedule
+
+- name: Update a backup schedule 1
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_update_backup_schedule
+  register: update_backup_schedule
+
+- name: Update a backup schedule 1 again
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_update_backup_schedule
+  register: update_backup_schedule_again
+
+- name: Assertion check for update a backup schedule 1 (check_mode)
+  ansible.builtin.assert:
+    that:
+      - cm_update_backup_schedule is changed
+      - cm_update_backup_schedule.current.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_backup_schedule.current.frequency == 7
+      - cm_update_backup_schedule.current.name == "backupschedule1"
+      - cm_update_backup_schedule.current.remoteLocation == "test"
+      - cm_update_backup_schedule.current.startTime == "2025-01-02T15:04:05Z"
+      - cm_update_backup_schedule.current.type == "configOnly"
+      - cm_update_backup_schedule.previous.frequency == 1
+      - cm_update_backup_schedule.previous.name == "backupschedule1"
+      - cm_update_backup_schedule.previous.remoteLocation == "test"
+      - cm_update_backup_schedule.previous.startTime == "2025-01-02T15:04:05Z"
+      - cm_update_backup_schedule.previous.type == "configOnly"
+      - cm_update_backup_schedule.previous.user == "admin"
+      - cm_update_backup_schedule.proposed.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_backup_schedule.proposed.frequency == 7
+      - cm_update_backup_schedule.proposed.name == "backupschedule1"
+      - cm_update_backup_schedule.proposed.remoteLocation == "test"
+      - cm_update_backup_schedule.proposed.startTime == "2025-01-02T15:04:05Z"
+      - cm_update_backup_schedule.proposed.type == "configOnly"
+      - cm_update_backup_schedule.proposed.user == "admin"
+      - update_backup_schedule is changed
+      - update_backup_schedule.current.frequency == 7
+      - update_backup_schedule.current.name == "backupschedule1"
+      - update_backup_schedule.current.remoteLocation == "test"
+      - update_backup_schedule.current.startTime == "2025-01-02T15:04:05Z"
+      - update_backup_schedule.current.type == "configOnly"
+      - update_backup_schedule.current.user == "admin"
+      - update_backup_schedule.previous.frequency == 1
+      - update_backup_schedule.previous.name == "backupschedule1"
+      - update_backup_schedule.previous.remoteLocation == "test"
+      - update_backup_schedule.previous.startTime == "2025-01-02T15:04:05Z"
+      - update_backup_schedule.previous.type == "configOnly"
+      - update_backup_schedule_again is not changed
+      - update_backup_schedule_again.current.frequency == 7
+      - update_backup_schedule_again.current.name == "backupschedule1"
+      - update_backup_schedule_again.current.remoteLocation == "test"
+      - update_backup_schedule_again.current.startTime == "2025-01-02T15:04:05Z"
+      - update_backup_schedule_again.current.type == "configOnly"
+      - update_backup_schedule_again.current == update_backup_schedule_again.previous
+
+# ERROR
+- name: Negative test create a backup schedule 3
+  cisco.nd.nd_backup_schedule: &add_nt_backup_schedule
+    output_level: debug
+    name: backupschedule3
+    encryption_key: testtest1
+    frequency: 30
+    scheduler_date: "2025-01-03"
+    scheduler_time: "19:04:05"
+    remote_location: test
+    state: present
+  register: nt_add_backup_schedule_3
+  ignore_errors: true
+
+- name: Negative test create a backup schedule 4 with invalid name
+  cisco.nd.nd_backup_schedule:
+    <<: *add_nt_backup_schedule
+    name: BackupSchedule4
+  register: nt_add_backup_schedule_4
+  ignore_errors: true
+
+- name: Negative test create a backup schedule 5 with invalid encryption key
+  cisco.nd.nd_backup_schedule:
+    <<: *add_nt_backup_schedule
+    name: backupschedule5
+    encryption_key: testtest
+  register: nt_add_backup_schedule_5
+  ignore_errors: true
+
+- name: Assertion check for negative test create a backup schedule 3
+  ansible.builtin.assert:
+    that:
+      - nt_add_backup_schedule_3 is not changed
+      - nt_add_backup_schedule_3.msg == "ND Error 400{{':'}} The maximum number of backup schedules is 2"
+      - nt_add_backup_schedule_4 is not changed
+      - nt_add_backup_schedule_4.msg == "ND Error 400{{':'}} Name must consist of lower case alphanumeric characters, '-' or '.', and must start and end with an alphanumeric character, with a maximum length of 63 characters. '-' and '.' must follow an alphanumeric character."
+      - nt_add_backup_schedule_5 is not changed
+      - nt_add_backup_schedule_5.msg == "ND Error 400{{':'}} field 'encryptionKey' is invalid. It must contain at least one letter and one number, and have a minimum length of 8 characters"
+
+# QUERY
+- name: Query a backup schedule 1
+  cisco.nd.nd_backup_schedule:
+    output_level: debug
+    name: backupschedule1
+    state: query
+  register: query_one
+
+- name: Query all backup schedules
+  cisco.nd.nd_backup_schedule:
+    output_level: debug
+    state: query
+  register: query_all_1
+
+- name: Assertion check for query a backup schedule
+  ansible.builtin.assert:
+    that:
+      - query_one is not changed
+      - query_one.current.frequency == 7
+      - query_one.current.name == "backupschedule1"
+      - query_one.current.remoteLocation == "test"
+      - query_one.current.startTime == "2025-01-02T15:04:05Z"
+      - query_one.current.type == "configOnly"
+      - query_one.current.user == "admin"
+      - query_all_1 is not changed
+      - query_all_1.current.schedules.0.frequency == 7
+      - query_all_1.current.schedules.0.name == "backupschedule1"
+      - query_all_1.current.schedules.0.remoteLocation == "test"
+      - query_all_1.current.schedules.0.startTime == "2025-01-02T15:04:05Z"
+      - query_all_1.current.schedules.0.type == "configOnly"
+      - query_all_1.current.schedules.0.user == "admin"
+      - query_all_1.current.schedules.1.frequency == 30
+      - query_all_1.current.schedules.1.name == "backupschedule2"
+      - query_all_1.current.schedules.1.remoteLocation == "test"
+      - query_all_1.current.schedules.1.startTime == "2025-01-03T19:04:05Z"
+      - query_all_1.current.schedules.1.type == "configOnly"
+      - query_all_1.current.schedules.1.user == "admin"
+
+# DELETE
+- name: Delete a backup schedule 1 (check_mode)
+  cisco.nd.nd_backup_schedule: &cm_rm_backup_schedule
+    output_level: debug
+    name: backupschedule1
+    state: absent
+  check_mode: true
+  register: cm_rm_backup_schedule
+
+- name: Delete a backup schedule 1
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_rm_backup_schedule
+  register: rm_backup_schedule
+
+- name: Delete a backup schedule 1 again
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_rm_backup_schedule
+  register: rm_backup_schedule_again
+
+- name: Delete a backup schedule 2
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_rm_backup_schedule
+    name: backupschedule2
+
+- name: Assertion check for delete a backup schedule
+  ansible.builtin.assert:
+    that:
+      - cm_rm_backup_schedule is changed
+      - cm_rm_backup_schedule.current == {}
+      - cm_rm_backup_schedule.previous.frequency == 7
+      - cm_rm_backup_schedule.previous.name == "backupschedule1"
+      - cm_rm_backup_schedule.previous.remoteLocation == "test"
+      - cm_rm_backup_schedule.previous.startTime == "2025-01-02T15:04:05Z"
+      - cm_rm_backup_schedule.previous.type == "configOnly"
+      - cm_rm_backup_schedule.previous.user == "admin"
+      - rm_backup_schedule is changed
+      - rm_backup_schedule.current == {}
+      - rm_backup_schedule.previous.frequency == 7
+      - rm_backup_schedule.previous.name == "backupschedule1"
+      - rm_backup_schedule.previous.remoteLocation == "test"
+      - rm_backup_schedule.previous.startTime == "2025-01-02T15:04:05Z"
+      - rm_backup_schedule.previous.type == "configOnly"
+      - rm_backup_schedule.previous.user == "admin"
+      - rm_backup_schedule_again is not changed
+      - rm_backup_schedule_again.current == {}
+      - rm_backup_schedule_again.previous == {}
