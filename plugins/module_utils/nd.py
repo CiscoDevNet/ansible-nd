@@ -536,3 +536,35 @@ class NDModule(object):
 
     def set_to_empty_string_when_none(self, val):
         return val if val is not None else ""
+
+    def get_object_by_nested_key_value(self, path, nested_key_path, value, data_key=None):
+        response_data = self.request(path, method="GET")
+
+        if not value and response_data and data_key and data_key in response_data:
+            return response_data.get(data_key)
+        elif not response_data:
+            return None
+
+        object_list = []
+        if isinstance(response_data, list):
+            object_list = response_data
+        elif data_key and data_key in response_data:
+            object_list = response_data.get(data_key)
+        else:
+            return None
+
+        keys = nested_key_path.split(".")
+
+        for object in object_list:
+            current_object = object
+            for key in keys:
+                if isinstance(current_object, dict):
+                    current_object = current_object.get(key)
+                else:
+                    current_object = None
+                    break
+
+            if current_object == value:
+                return object
+
+        return None

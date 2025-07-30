@@ -15,7 +15,7 @@
     output_level: debug
     name: "{{ item.name }}"
     state: absent
-  loop: "{{ query_all.current.schedules | list }}"
+  loop: "{{ query_all.current | list }}"
 
 # CREATE
 - name: Create a backup schedule 1 (check_mode)
@@ -189,11 +189,11 @@
 - name: Assertion check for negative test create a backup schedule 3
   ansible.builtin.assert:
     that:
-      - nt_add_backup_schedule_3 is not changed
+      - nt_add_backup_schedule_3 is failed
       - nt_add_backup_schedule_3.msg == "ND Error 400{{':'}} The maximum number of backup schedules is 2"
-      - nt_add_backup_schedule_4 is not changed
+      - nt_add_backup_schedule_4 is failed
       - nt_add_backup_schedule_4.msg == "ND Error 400{{':'}} Name must consist of lower case alphanumeric characters, '-' or '.', and must start and end with an alphanumeric character, with a maximum length of 63 characters. '-' and '.' must follow an alphanumeric character."
-      - nt_add_backup_schedule_5 is not changed
+      - nt_add_backup_schedule_5 is failed
       - nt_add_backup_schedule_5.msg == "ND Error 400{{':'}} field 'encryptionKey' is invalid. It must contain at least one letter and one number, and have a minimum length of 8 characters"
 
 # QUERY
@@ -221,18 +221,18 @@
       - query_one.current.type == "configOnly"
       - query_one.current.user == "admin"
       - query_all_1 is not changed
-      - query_all_1.current.schedules.0.frequency == 7
-      - query_all_1.current.schedules.0.name == "backupschedule1"
-      - query_all_1.current.schedules.0.remoteLocation == "test"
-      - query_all_1.current.schedules.0.startTime == "2025-01-02T15:04:05Z"
-      - query_all_1.current.schedules.0.type == "configOnly"
-      - query_all_1.current.schedules.0.user == "admin"
-      - query_all_1.current.schedules.1.frequency == 30
-      - query_all_1.current.schedules.1.name == "backupschedule2"
-      - query_all_1.current.schedules.1.remoteLocation == "test"
-      - query_all_1.current.schedules.1.startTime == "2025-01-03T19:04:05Z"
-      - query_all_1.current.schedules.1.type == "configOnly"
-      - query_all_1.current.schedules.1.user == "admin"
+      - query_all_1.current.0.frequency == 7
+      - query_all_1.current.0.name == "backupschedule1"
+      - query_all_1.current.0.remoteLocation == "test"
+      - query_all_1.current.0.startTime == "2025-01-02T15:04:05Z"
+      - query_all_1.current.0.type == "configOnly"
+      - query_all_1.current.0.user == "admin"
+      - query_all_1.current.1.frequency == 30
+      - query_all_1.current.1.name == "backupschedule2"
+      - query_all_1.current.1.remoteLocation == "test"
+      - query_all_1.current.1.startTime == "2025-01-03T19:04:05Z"
+      - query_all_1.current.1.type == "configOnly"
+      - query_all_1.current.1.user == "admin"
 
 # DELETE
 - name: Delete a backup schedule 1 (check_mode)
