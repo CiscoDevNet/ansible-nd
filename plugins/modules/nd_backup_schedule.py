@@ -14,9 +14,9 @@ DOCUMENTATION = r"""
 ---
 module: nd_backup_schedule
 version_added: "0.5.0"
-short_description: Manages backup schedule on Cisco Nexus Dashboard.
+short_description: Manages backup schedules on Cisco Nexus Dashboard.
 description:
-- Manage backup schedule on Cisco Nexus Dashboard.
+- Manage backup schedules on Cisco Nexus Dashboard.
 - This module is only supported on ND v4.1 and later.
 author:
 - Sabari Jaganathan (@sajagana)
@@ -27,7 +27,7 @@ options:
     type: str
   encryption_key:
     description:
-    - The encryption_key for a backup file.
+    - The encryption key for a backup file.
     type: str
   remote_location:
     description:
@@ -158,13 +158,17 @@ def main():
 
     path = "/api/v1/infra/backups/schedules"
 
-    schedules = nd.get_object_by_nested_key_value(path, "name", name, data_key="schedules")
-
-    if name and schedules:
-        nd.previous = nd.existing = schedules
-        path = "{0}/{1}".format(path, name)
-    else:
-        nd.existing = schedules
+    # Query a specific backup schedule
+    nd.existing = nd.get_object_by_nested_key_value(path, "name", name, data_key="schedules")
+    if state != "query":
+        if nd.existing:
+            nd.previous = nd.existing
+            path = "{0}/{1}".format(path, name)
+    elif not name:
+        # Query all backup schedules
+        schedules = nd.request(path, method="GET")
+        if schedules:
+            nd.existing = schedules.get("schedules")
 
     if state == "present":
         payload = {
