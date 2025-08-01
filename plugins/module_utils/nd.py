@@ -538,11 +538,10 @@ class NDModule(object):
         return val if val is not None else ""
 
     def get_object_by_nested_key_value(self, path, nested_key_path, value, data_key=None):
+
         response_data = self.request(path, method="GET")
 
-        if not value and response_data and data_key and data_key in response_data:
-            return response_data.get(data_key)
-        elif not response_data:
+        if not response_data:
             return None
 
         object_list = []
@@ -555,16 +554,16 @@ class NDModule(object):
 
         keys = nested_key_path.split(".")
 
-        for object in object_list:
-            current_object = object
+        for obj in object_list:
+            current_level = obj
             for key in keys:
-                if isinstance(current_object, dict):
-                    current_object = current_object.get(key)
+                if isinstance(current_level, dict):
+                    current_level = current_level.get(key)
                 else:
-                    current_object = None
+                    current_level = None
                     break
 
-            if current_object == value:
-                return object
+            if current_level == value:
+                return obj
 
         return None
