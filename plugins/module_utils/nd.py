@@ -223,10 +223,27 @@ class NDModule(object):
         self.status = None
         self.url = None
         self.httpapi_logs = list()
+        self.connection = None
+        self.version = None
+
+        # Set Connection plugin
+        self.set_connection()
+
+        # Set ND version
+        self.set_version()
 
         if self.module._debug:
             self.module.warn("Enable debug output because ANSIBLE_DEBUG was set.")
             self.params["output_level"] = "debug"
+
+    def set_version(self):
+        if self.version is None:
+            self.version = self.connection.get_version("nd")
+
+    def set_connection(self):
+        if self.connection is None:
+            self.connection = Connection(self.module._socket_path)
+            self.connection.set_params(self.params)
 
     def request(
         self, path, method=None, data=None, file=None, qs=None, prefix="", file_key="file", output_format="json", ignore_not_found_error=False, file_ext=None
@@ -241,8 +258,6 @@ class NDModule(object):
         if method == "PATCH" and not data:
             return {}
 
-        conn = Connection(self.module._socket_path)
-        conn.set_params(self.params)
         uri = self.path
         if prefix != "":
             uri = "{0}/{1}".format(prefix, self.path)
@@ -250,16 +265,16 @@ class NDModule(object):
             uri = uri + update_qs(qs)
         try:
             if file is not None:
-                info = conn.send_file_request(method, uri, file, data, None, file_key, file_ext)
+                info = self.connection.send_file_request(method, uri, file, data, None, file_key, file_ext)
             else:
                 if data:
-                    info = conn.send_request(method, uri, json.dumps(data))
+                    info = self.connection.send_request(method, uri, json.dumps(data))
                 else:
-                    info = conn.send_request(method, uri)
+                    info = self.connection.send_request(method, uri)
             self.result["data"] = data
 
             self.url = info.get("url")
-            self.httpapi_logs.extend(conn.pop_messages())
+            self.httpapi_logs.extend(self.connection.pop_messages())
             info.pop("date", None)
         except Exception as e:
             try:
