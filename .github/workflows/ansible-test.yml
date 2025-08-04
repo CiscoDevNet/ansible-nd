@@ -98,14 +98,15 @@ jobs:
       - name: Check warnings and errors
         shell: python
         run: |
-          err_count = 0
+          # Check warnings and errors
+          err = 0
           with open('.cache/collection-tarballs/log.txt', 'r', encoding='utf-8') as f:
               for line in f:
                   if line.startswith('ERROR:') or line.startswith('WARNING:'):
                       print(line)
                       if 'Ignore files skip ansible-test sanity tests, found ignore' not in line:
-                          err_count += 1
-          exit(err_count)
+                          err = 1
+          exit(err)
 
       - name: Store galaxy_importer check log file
         uses: actions/upload-artifact@v4
