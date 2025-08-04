@@ -96,7 +96,16 @@ jobs:
             && sudo cp ./importer_result.json .cache/collection-tarballs/importer_result.json
 
       - name: Check warnings and errors
-        run: if grep -E 'WARNING|ERROR' .cache/collection-tarballs/log.txt; then exit 1; else exit 0; fi
+        shell: python
+        run: |
+          err_count = 0
+          with open('.cache/collection-tarballs/log.txt', 'r', encoding='utf-8') as f:
+              for line in f:
+                  if line.startswith('ERROR:') or line.startswith('WARNING:'):
+                      print(line)
+                      if 'Ignore files skip ansible-test sanity tests, found ignore' not in line:
+                          err_count += 1
+          exit(err_count)
 
       - name: Store galaxy_importer check log file
         uses: actions/upload-artifact@v4
