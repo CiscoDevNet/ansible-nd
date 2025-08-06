@@ -27,6 +27,7 @@
     scheduler_date: "2025-01-02"
     scheduler_time: "15:04:05"
     remote_location: test
+    backup_type: config_only
     state: present
   check_mode: true
   register: cm_add_backup_schedule
@@ -48,6 +49,7 @@
     frequency: 30
     scheduler_date: "2025-01-03"
     scheduler_time: "19:04:05"
+    backup_type: full
   register: add_backup_schedule_2
 
 - name: Assertion check for create a backup schedules
@@ -88,7 +90,7 @@
       - add_backup_schedule_2.current.name == "backupschedule2"
       - add_backup_schedule_2.current.remoteLocation == "test"
       - add_backup_schedule_2.current.startTime == "2025-01-03T19:04:05Z"
-      - add_backup_schedule_2.current.type == "configOnly"
+      - add_backup_schedule_2.current.type == "full"
       - add_backup_schedule_2.current.user == "admin"
       - add_backup_schedule_2.previous == {}
 
@@ -231,7 +233,7 @@
       - query_all_1.current.1.name == "backupschedule2"
       - query_all_1.current.1.remoteLocation == "test"
       - query_all_1.current.1.startTime == "2025-01-03T19:04:05Z"
-      - query_all_1.current.1.type == "configOnly"
+      - query_all_1.current.1.type == "full"
       - query_all_1.current.1.user == "admin"
 
 # DELETE
