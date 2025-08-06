@@ -17,7 +17,7 @@ def compliance_base_spec():
         name=dict(type="str"),
         description=dict(type="str", aliases=["descr"]),
         enabled=dict(type="bool"),
-        sites=dict(type="list", elements="str"),
+        fabrics=dict(type="list", elements="str", aliases=["sites"]),
         state=dict(type="str", default="query", choices=["query", "absent", "present"]),
     )
 

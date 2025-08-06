@@ -126,7 +126,7 @@
   ansible.builtin.assert:
     that:
       - '"hitcountByEpgPairTenantPairLeaf?" in statistics_epgs_tenants_leafs.url'
-      - '"{{ period_latest.current.epochId }}" in statistics_epgs_tenants_leafs.url'
+      - period_latest.current.epochId in statistics_epgs_tenants_leafs.url
       - '"hitcountByEpgpairTenantPair?" in statistics_epgs_tenants.url'
       - '"hitcountByEpgPairContractFilterLeaf?" in statistics_epgs_leafs_contracts_filters.url'
       - '"hitcountByEpgPairContractLeaf?" in statistics_epgs_leafs_contracts.url'
@@ -136,7 +136,7 @@
       - '"hitcountByEpgPair?" in statistics_epg.url'
       - '"hitcountByTenantPairLeaf?" in statistics_tenants_leafs.url'
       - '"hitcountByTenantPair?" in statistics_tenants.url'
-      - '"{{ period_last_week.current.epochId }}" in statistics_tenants_epoch.url'
+      - period_last_week.current.epochId in statistics_tenants_epoch.url
       - '"filter=providerEpgName%3Alog_epg%2CconsumerEpgName%3Aapp_epg" in statistics_contract_filters_filter_by_attributes.url'
 
 # OUTPUT TEST

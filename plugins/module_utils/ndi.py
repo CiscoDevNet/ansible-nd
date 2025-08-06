@@ -8,6 +8,7 @@
 
 from __future__ import absolute_import, division, print_function
 import json
+import time
 
 try:
     from jsonpath_ng import parse
@@ -272,9 +273,16 @@ class NDI:
         return result
 
     def query_pcvs(self, ig_name):
-        pcvs_path = "{0}/{1}/prechangeAnalysis?$sort=-analysisSubmissionTime".format(self.config_ig_path, ig_name)
-        obj = self.nd.query_obj(pcvs_path, prefix=self.prefix)
-        return obj["value"]["data"]
+        page = 0
+        pcvs_data = []
+        has_more_data = True
+        while has_more_data:
+            pcvs_path = "{0}/{1}/prechangeAnalysis?$size=50&$page={2}&$sort=-analysisSubmissionTime".format(self.config_ig_path, ig_name, page)
+            obj = self.nd.query_obj(pcvs_path, prefix=self.prefix)
+            has_more_data = obj.get("value", {}).get("dataSummary", {}).get("hasMoreData", False)
+            pcvs_data = pcvs_data + obj.get("value", {}).get("data", [])
+            page = page + 1
+        return pcvs_data
 
     def query_pcv(self, ig_name, site_name, pcv_name):
         pcv_results = self.query_pcvs(ig_name)
@@ -285,6 +293,28 @@ class NDI:
         else:
             self.nd.fail_json(msg="site name and prechange validation job name are required")
         return pcv_result
+
+    def wait_for_pcv_completion(self, ig_name, fabric, pcv_name, pcv_results, wait_timeout, wait_delay, fail_module):
+        status = pcv_results.get("analysisStatus")
+        start_time = time.time()
+        while status != "COMPLETED":
+            try:
+                pcv = self.query_pcv(ig_name, fabric, pcv_name)
+                status = pcv.get("analysisStatus")
+                if status == "COMPLETED" or status == "FAILED":
+                    if fail_module and status == "FAILED":
+                        self.nd.fail_json(msg="Pre-change Analysis {0} is failed".format(pcv_name))
+                    return pcv
+            except BaseException:
+                if fail_module:
+                    self.nd.fail_json(msg="Pre-change Analysis {0} not found".format(pcv_name))
+                return {}
+            if wait_timeout and time.time() - start_time >= wait_timeout:
+                self.nd.fail_json(
+                    msg="Timeout occurred after {0} seconds while waiting for Pre-change Analysis {1} to complete".format(wait_timeout, pcv_name)
+                )
+            time.sleep(wait_delay)
+        return pcv_results
 
     def query_requirements(self, ig_name):
         requirements_path = "{0}/list".format(self.requirements_path.format(ig_name))
@@ -420,6 +450,26 @@ class NDI:
             return "spanSpanLbl"
         elif prefix == "ctx":
             return "fvCtx"
+        elif prefix == "lnodep":
+            return "l3extLNodeP"
+        elif prefix == "rsnodeL3OutAtt":
+            return "l3extRsNodeL3OutAtt"
+        elif prefix == "rspathL3OutAtt":
+            return "l3extRsPathL3OutAtt"
+        elif prefix == "mem":
+            return "l3extMember"
+        elif prefix == "rt":
+            return "ipRouteP"
+        elif prefix == "nh":
+            return "ipNexthopP"
+        elif prefix == "lifp":
+            return "l3extLIfP"
+        elif prefix == "vlifp":
+            return "l3extVirtualLIfP"
+        elif prefix == "rsdynPathAtt":
+            return "l3extRsDynPathAtt"
+        elif prefix == "addr":
+            return "l3extIp"
         else:
             return False
 
@@ -563,7 +613,7 @@ class NDI:
 
     def create_structured_data(self, tree, file):
         if tree is False:
-            self.module.fail_json(msg="Error parsing input file, unsupported object found in hierarchy.", **self.result)
+            self.nd.fail_json(msg="Error parsing input file, unsupported object found in hierarchy.", **self.result)
         tree_roots = self.find_tree_roots(tree)
         ansible_ds = {}
         for root in tree_roots:

@@ -170,9 +170,9 @@ EXAMPLES = r"""
   cisco.nd.nd_compliance_requirement_config_manual:
     insights_group: igName
     name: complianceRequirementName
-    sites:
-      - siteName1
-      - siteName2
+    fabrics:
+      - fabricName1
+      - fabricName2
     enabled: false
     object:
       type: epg
@@ -242,7 +242,7 @@ def main():
         supports_check_mode=True,
         required_if=[
             ["state", "absent", ["name"]],
-            ["state", "present", ["name", "sites", "enabled", "object", "config_rules"]],
+            ["state", "present", ["name", "fabrics", "enabled", "object", "config_rules"]],
         ],
     )
 
@@ -253,7 +253,7 @@ def main():
     name = nd.params.get("name")
     description = nd.params.get("description")
     enabled = nd.params.get("enabled")
-    sites = nd.params.get("sites")
+    fabrics = nd.params.get("fabrics")
     state = nd.params.get("state")
     object_selector = nd.params.get("object")
     config_rules = nd.params.get("config_rules")
@@ -279,7 +279,7 @@ def main():
             "enabled": enabled,
             "configurationType": "MANUAL_CONFIGURATION_COMPLIANCE",
             "requirementType": "CONFIGURATION_COMPLIANCE",
-            "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, site, prefix=ndi.prefix)} for site in sites],
+            "associatedSites": [{"enabled": True, "uuid": ndi.get_site_id(insights_group, fabric, prefix=ndi.prefix)} for fabric in fabrics],
             "objectSelectorA": get_object_selector_payload(object_selector),
             "configComplianceParameter": {
                 "andParameters": [

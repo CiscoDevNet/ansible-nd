@@ -1,0 +1,281 @@
+# Test code for the ND modules
+# Copyright: (c) 2025, Dev Sinha (@DevSinha13) <devsinh@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+- name: Ensure API keys do not exist before test starts
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: "{{ item }}"
+    state: absent
+  loop:
+    - test_api_key_1
+    - test_api_key_2
+    - test_api_key_annotations
+    - test_api_key_updated       
+    - test_api_key_with_much_more_than_32_characters_in_name
+
+#CREATE
+- name: Create API key (check mode)
+  cisco.nd.nd_api_key: &create_api_key
+    <<: *nd_info
+    api_key_name: test_api_key_1
+    state: present
+  check_mode: true
+  register: cm_create_api_key
+
+- name: Create API key (normal mode)
+  cisco.nd.nd_api_key:
+    <<: *create_api_key
+  register: nm_create_api_key
+
+- name: Create API key again (idempotency)
+  cisco.nd.nd_api_key:
+    <<: *create_api_key
+  register: create_api_key_again      
+
+- name: Create API key with annotations
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: test_api_key_annotations
+    annotations:
+      purpose: "testing"
+      environment: "dev"
+      owner: "ansible-test"
+    state: present
+  register: create_api_key_with_annotations
+
+- name: Verify API key creation tasks
+  ansible.builtin.assert:
+    that:
+      - nm_create_api_key is changed
+      - nm_create_api_key.current is defined
+      - nm_create_api_key.current.apiKeyName == "test_api_key_1"
+      - nm_create_api_key.current.id is defined
+      - cm_create_api_key is changed
+      - cm_create_api_key.proposed.apiKeyName == "test_api_key_1"
+      - cm_create_api_key.sent.apiKeyName == "test_api_key_1"
+      - create_api_key_again is not changed
+      - create_api_key_again.current.apiKeyName == "test_api_key_1"
+      - create_api_key_with_annotations is changed
+      - create_api_key_with_annotations.current.apiKeyName == "test_api_key_annotations"
+      - create_api_key_with_annotations.current.annotations is defined
+      - create_api_key_with_annotations.current.annotations.purpose == "testing"
+      - create_api_key_with_annotations.current.annotations.environment == "dev"
+      - create_api_key_with_annotations.current.annotations.owner == "ansible-test"
+
+#UPDATE
+- name: Update API key name (check mode)
+  cisco.nd.nd_api_key: &update_api_key
+    <<: *nd_info
+    api_key_id: "{{ nm_create_api_key.current.id }}"
+    api_key_name: test_api_key_updated
+    state: present
+  check_mode: true
+  register: cm_update_api_key
+
+- name: Update API key name (normal mode)
+  cisco.nd.nd_api_key:
+    <<: *update_api_key
+  register: nm_update_api_key
+
+- name: Update API key with same name (idempotency)
+  cisco.nd.nd_api_key:
+    <<: *update_api_key
+  register: update_api_key_idempotent
+
+- name: Verify API key update tasks
+  ansible.builtin.assert:
+    that:
+      - cm_update_api_key is changed
+      - cm_update_api_key.proposed.apiKeyName == "test_api_key_updated"
+      - nm_update_api_key is changed
+      - nm_update_api_key.current.apiKeyName == "test_api_key_updated"
+      - nm_update_api_key.current.id == nm_create_api_key.current.id
+      - update_api_key_idempotent is not changed
+      - update_api_key_idempotent.current.apiKeyName == "test_api_key_updated"
+
+#QUERY
+- name: Create second API key for testing
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: test_api_key_2
+    state: present
+  register: create_api_key_2
+
+- name: Query all API keys
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    state: query
+  register: query_all_api_keys     
+
+- name: Query specific API key by name
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: test_api_key_updated
+    state: query
+  register: query_api_key_by_name
+
+- name: Query specific API key by ID
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_id: "{{ create_api_key_2.current.id }}"
+    state: query
+  register: query_api_key_by_id
+
+- name: Test query non-existent API key by name
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: non_existent_api_key
+    state: query
+  register: query_non_existent
+
+- name: Verify query API key
+  ansible.builtin.assert:
+    that:
+      - query_all_api_keys is not changed
+      - query_all_api_keys.current is defined
+      - query_all_api_keys.current | length >= 2
+      - query_api_key_by_name is not changed
+      - query_api_key_by_name.current is defined
+      - query_api_key_by_name.current.apiKeyName == "test_api_key_updated"
+      - query_api_key_by_id is not changed
+      - query_api_key_by_id.current is defined
+      - query_api_key_by_id.current.id == create_api_key_2.current.id
+      - query_api_key_by_id.current.apiKeyName == "test_api_key_2"
+      - query_non_existent is not changed
+      - query_non_existent.current == {}
+
+#DELETE
+- name: Delete API key by name (check mode)
+  cisco.nd.nd_api_key: &delete_api_key
+    <<: *nd_info
+    api_key_name: test_api_key_updated
+    state: absent
+  check_mode: true
+  register: cm_delete_api_key
+
+- name: Delete API key by name (normal mode)
+  cisco.nd.nd_api_key:
+    <<: *delete_api_key
+  register: nm_delete_api_key
+
+- name: Delete API key by ID
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_id: "{{ create_api_key_2.current.id }}"
+    state: absent
+  register: delete_api_key_by_id
+
+- name: Delete API key again (idempotency test)
+  cisco.nd.nd_api_key:
+    <<: *delete_api_key
+  register: delete_api_key_again
+
+
+- name: Test delete non-existent API key
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: non_existent_api_key
+    state: absent
+  register: delete_non_existent
+
+- name: Verify delete for API key
+  ansible.builtin.assert:
+    that:
+      - nm_delete_api_key is changed
+      - nm_delete_api_key.current == {}
+      - cm_delete_api_key is changed
+      - cm_delete_api_key.current == {}
+      - delete_api_key_again is not changed
+      - delete_non_existent is not changed
+
+#NEGATIVE
+- name: Test missing required parameter (api_key_name for present)
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    state: present
+  register: missing_api_key_name
+  ignore_errors: true
+
+- name: Test missing required parameter for absent (both api_key_name and api_key_id)
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    state: absent
+  register: missing_delete_params
+  ignore_errors: true
+
+- name: Test with invalid api_key_id
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_id: "invalid-id-12345"
+    state: query
+  register: invalid_api_key_id
+  ignore_errors: true
+
+- name: Test API key name with invalid length
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: "test_api_key_with_much_more_than_32_characters_in_name"
+    state: present
+  register: api_key_name_too_long
+  ignore_errors: true
+
+- name: Test API key name with invalid characters
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: "test@key#with$symbols"
+    state: present
+  register: api_key_name_invalid_chars
+  ignore_errors: true
+
+- name: Verify API key negative tests
+  ansible.builtin.assert:
+    that:
+      - missing_api_key_name is failed
+      - "'state is present but all of the following are missing: api_key_name' in missing_api_key_name.msg"
+      - invalid_api_key_id is failed
+      - "'ND Error: Unknown error no error code in decoded payload' in invalid_api_key_id.msg or 'Resource not found' in invalid_api_key_id.msg"
+      - missing_delete_params is failed
+      - "'state is absent but any of the following are missing: api_key_name, api_key_id' in missing_delete_params.msg"
+      - api_key_name_too_long is failed
+      - "'A length of 1 to 32 characters is allowed.' in api_key_name_too_long.msg"
+      - api_key_name_invalid_chars is failed
+      - api_key_name_invalid_chars.msg | to_json | regex_search("API Key name contains invalid characters\. Valid characters include letters, digits, '_', '\.', and '-'\.")
+  
+#CLEANUP
+- name: Final cleanup - Delete all test API keys
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    api_key_name: "{{ item }}"
+    state: absent
+  ignore_errors: true
+  loop:
+    - test_api_key_1
+    - test_api_key_2
+    - test_api_key_annotations
+    - test_api_key_updated       
+    - test_api_key_with_much_more_than_32_characters_in_name
+
+- name: Summary - Verify no test API keys remain
+  cisco.nd.nd_api_key:
+    <<: *nd_info
+    state: query
+  register: final_query
+
+- name: Verify cleanup was successful
+  ansible.builtin.assert:
+    that:
+      - final_query.current | selectattr('apiKeyName', 'match', 'test.*') | list | length == 0
+    fail_msg: "Some test API keys were not properly cleaned up"
+    success_msg: "All test API keys have been successfully cleaned up"

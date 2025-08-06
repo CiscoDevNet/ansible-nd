@@ -31,11 +31,12 @@ options:
     description:
     - Enable the compliance requirement.
     type: bool
-  sites:
+  fabrics:
     description:
-    - The names of the sites.
+    - The names of the fabrics.
     type: list
     elements: str
+    aliases: [ sites ]
   state:
     description:
     - Use C(present) or C(absent) for adding or removing.

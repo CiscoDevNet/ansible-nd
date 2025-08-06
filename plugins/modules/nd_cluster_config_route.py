@@ -137,7 +137,8 @@ def main():
 
         if not module.check_mode:
             if nd.existing and payload != nd.previous:
-                nd.request(destination_path, "PUT", data=payload)
+                nd.request(destination_path, method="DELETE")
+                nd.request(path, "POST", data=payload)
             elif nd.existing == {}:
                 nd.request(path, "POST", data=payload)
         nd.existing = nd.proposed

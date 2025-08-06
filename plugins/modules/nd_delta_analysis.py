@@ -27,39 +27,41 @@ options:
     type: str
     default: default
     aliases: [ fab_name, ig_name ]
-  site_name:
+  fabric:
     description:
-    - Name of the Assurance Entity.
+    - Name of the fabric.
     type: str
     required: true
-    aliases: [ site ]
+    aliases: [ site, site_name, fabric_name ]
   name:
     description:
     - The name of the delta analysis job
     type: str
-    aliases: [ job_name, delta_name ]
-  earlier_epoch_id:
+    aliases: [ job_name, delta_name, delta_analysis_name ]
+  earlier_snapshot:
     description:
-    - Epoch UUID for the earlier epoch
+    - Snapshot/Epoch UUID for the earlier snapshot/epoch
     - Ignored if state is C(query) or C(absent)
     type: str
-    aliases: [ earlier_epoch_uuid, earlier_epoch ]
-  later_epoch_id:
+    aliases: [ earlier_epoch_uuid, earlier_epoch, earlier_epoch_id ]
+  later_snapshot:
     description:
-    - Epoch UUID for the later epoch
+    - Snapshot/Epoch UUID for the later snapshot/epoch
     - Ignored if state is C(query) or C(absent)
     type: str
-    aliases: [ later_epoch_uuid, later_epoch ]
-  earlier_epoch_time:
+    aliases: [ later_epoch_uuid, later_epoch, later_epoch_id ]
+  earlier_snapshot_time:
     description:
-    - Epoch collection time, in ISO format, for the earlier epoch
+    - Snapshot/Epoch collection time, in ISO format, for the earlier snapshot/epoch
     - Ignored if state is C(query) or C(absent)
     type: str
-  later_epoch_time:
+    aliases: [ earlier_epoch_time ]
+  later_snapshot_time:
     description:
-    - Epoch collection time, in ISO format, for the later epoch
+    - Snapshot/Epoch collection time, in ISO format, for the later snapshot/epoch
     - Ignored if state is C(query) or C(absent)
     type: str
+    aliases: [ later_epoch_time ]
   state:
     description:
     - Use C(present) or C(absent) for creating or deleting a delta analysis job.
@@ -74,44 +76,49 @@ extends_documentation_fragment:
 """
 
 EXAMPLES = r"""
-- name: Creates a new delta analysis job using epoch UUIDs
+- name: Creates a new delta analysis job using snapshot
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     name: testDeltaAnalysis
-    earlier_epoch_id: 0e5604f9-53b9c234-03dc-3997-9850-501b925f7d65
-    later_epoch_id: 0e5604f9-ad5b12ae-9834-348b-aed1-8ca124e32e9b
+    earlier_snapshot: 0e5604f9-53b9c234-03dc-3997-9850-501b925f7d65
+    later_snapshot: 0e5604f9-ad5b12ae-9834-348b-aed1-8ca124e32e9b
     state: present
-- name: Creates a new delta analysis job using epoch time
+
+- name: Creates a new delta analysis job using snapshot time
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     name: testDeltaAnalysis
-    earlier_epoch_time: 2023-01-15T12:24:34Z
-    later_epoch_time: 2023-01-17T18:27:34Z
+    earlier_snapshot_time: 2023-01-15T12:24:34Z
+    later_snapshot_time: 2023-01-17T18:27:34Z
     state: present
+
 - name: Validates a running delta analysis job
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     name: testDeltaAnalysis
     state: validate
+
 - name: Delete an existing delta analysis
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     name: testDeltaAnalysis
     state: absent
-- name: Queries existing delta analysis jobs
+
+- name: Queries all existing delta analysis jobs
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     state: query
   register: query_results
-- name: Queries an specific delta analysis job
+
+- name: Queries a specific delta analysis job
   cisco.nd.nd_delta_analysis:
     insights_group: exampleIG
-    site_name: siteName
+    fabric: fabricName
     name: testDeltaAnalysis
     state: query
   register: query_results
@@ -137,12 +144,12 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
-        site_name=dict(type="str", required=True, aliases=["site"]),
-        name=dict(type="str", aliases=["job_name", "delta_name"]),
-        earlier_epoch_id=dict(type="str", aliases=["earlier_epoch_uuid", "earlier_epoch"]),
-        later_epoch_id=dict(type="str", aliases=["later_epoch_uuid", "later_epoch"]),
-        earlier_epoch_time=dict(type="str"),
-        later_epoch_time=dict(type="str"),
+        fabric=dict(type="str", required=True, aliases=["site", "site_name", "fabric_name"]),
+        name=dict(type="str", aliases=["job_name", "delta_name", "delta_analysis_name"]),
+        earlier_snapshot=dict(type="str", aliases=["earlier_epoch_uuid", "earlier_epoch", "earlier_epoch_id"]),
+        later_snapshot=dict(type="str", aliases=["later_epoch_uuid", "later_epoch", "later_epoch_id"]),
+        earlier_snapshot_time=dict(type="str", aliases=["earlier_epoch_time"]),
+        later_snapshot_time=dict(type="str", aliases=["later_epoch_time"]),
         state=dict(type="str", default="query", choices=["query", "absent", "present", "validate"]),
     )
 
@@ -153,11 +160,11 @@ def main():
             ["state", "validate", ["name"]],
             ["state", "absent", ["name"]],
             ["state", "present", ["name"]],
-            ["state", "present", ("earlier_epoch_id", "earlier_epoch_time"), True],
-            ["state", "present", ("later_epoch_id", "later_epoch_time"), True],
+            ["state", "present", ("earlier_snapshot", "earlier_snapshot_time"), True],
+            ["state", "present", ("later_snapshot", "later_snapshot_time"), True],
         ],
-        mutually_exclusive=[("earlier_epoch_id", "earlier_epoch_time"), ("later_epoch_id", "later_epoch_time")],
-        required_together=[("earlier_epoch_id", "later_epoch_id"), ("earlier_epoch_time", "later_epoch_time")],
+        mutually_exclusive=[("earlier_snapshot", "earlier_snapshot_time"), ("later_snapshot", "later_snapshot_time")],
+        required_together=[("earlier_snapshot", "later_snapshot"), ("earlier_snapshot_time", "later_snapshot_time")],
     )
 
     nd = NDModule(module)
@@ -165,29 +172,29 @@ def main():
 
     state = nd.params.get("state")
     insights_group = nd.params.get("insights_group")
-    site_name = nd.params.get("site_name")
+    fabric = nd.params.get("fabric")
     name = nd.params.get("name")
-    earlier_epoch_id = nd.params.get("earlier_epoch_id")
-    later_epoch_id = nd.params.get("later_epoch_id")
-    earlier_epoch_time = nd.params.get("earlier_epoch_time")
-    later_epoch_time = nd.params.get("later_epoch_time")
+    earlier_snapshot = nd.params.get("earlier_snapshot")
+    later_snapshot = nd.params.get("later_snapshot")
+    earlier_snapshot_time = nd.params.get("earlier_snapshot_time")
+    later_snapshot_time = nd.params.get("later_snapshot_time")
 
     if name:
-        nd.existing = ndi.query_delta_analysis(insights_group, site_name, jobName=name)
+        nd.existing = ndi.query_delta_analysis(insights_group, fabric, jobName=name)
     else:
         nd.existing = {}
 
     if state == "query":
         if name is None:
-            delta_job_list = ndi.query_delta_analysis(insights_group, site_name)
+            delta_job_list = ndi.query_delta_analysis(insights_group, fabric)
             nd.existing = delta_job_list
 
     elif state == "present":
-        if earlier_epoch_id and later_epoch_id:
-            data = {"jobName": name, "priorEpochUuid": earlier_epoch_id, "laterEpochUuid": later_epoch_id}
-        elif earlier_epoch_time and later_epoch_time:
-            earlier_epoch_dt = datetime.datetime.fromisoformat(earlier_epoch_time.replace("Z", ""))
-            later_epoch_dt = datetime.datetime.fromisoformat(later_epoch_time.replace("Z", ""))
+        if earlier_snapshot and later_snapshot:
+            data = {"jobName": name, "priorEpochUuid": earlier_snapshot, "laterEpochUuid": later_snapshot}
+        elif earlier_snapshot_time and later_snapshot_time:
+            earlier_epoch_dt = datetime.datetime.fromisoformat(earlier_snapshot_time.replace("Z", ""))
+            later_epoch_dt = datetime.datetime.fromisoformat(later_snapshot_time.replace("Z", ""))
             data = {
                 "jobName": name,
                 "priorEpochTime": round(earlier_epoch_dt.timestamp() * 1000),
@@ -202,12 +209,12 @@ def main():
         if nd.existing:
             nd.exit_json()
 
-        trigger_path = ndi.config_ig_path + "/" + ndi.run_epoch_delta_ig_path.format(insights_group, site_name)
+        trigger_path = ndi.config_ig_path + "/" + ndi.run_epoch_delta_ig_path.format(insights_group, fabric)
         resp = nd.request(trigger_path, method="POST", data=data, prefix=ndi.prefix)
 
         if resp["success"] is True:
             job_id = resp["value"]["data"]["configId"]
-            delta_job_info = ndi.query_delta_analysis(insights_group, site_name, jobId=job_id)
+            delta_job_info = ndi.query_delta_analysis(insights_group, fabric, jobId=job_id)
             nd.existing = delta_job_info
         else:
             nd.fail_json(msg="Creating delta analysis job failed")
@@ -218,7 +225,7 @@ def main():
         # Wait for Epoch Delta Analysis to complete
         while nd.existing.get("operSt") not in ["COMPLETE", "FAILED"]:
             try:
-                nd.existing = ndi.query_delta_analysis(insights_group, site_name, jobName=name)
+                nd.existing = ndi.query_delta_analysis(insights_group, fabric, jobName=name)
                 if nd.existing.get("operSt") == "FAILED":
                     nd.fail_json(msg="Epoch Delta Analysis {0} has failed".format(name))
                 if nd.existing.get("operSt") == "COMPLETE":
@@ -230,11 +237,11 @@ def main():
             nd.fail_json(msg="Epoch Delta Analysis {0} has failed".format(name))
 
         job_id = nd.existing.get("jobId")
-        nd.existing["anomaly_count"] = ndi.query_event_severity(insights_group, site_name, job_id)
-        anomalies = ndi.query_anomalies(insights_group, site_name, job_id, epoch_map[epoch_choice], exclude_ack_anomalies)
+        nd.existing["anomaly_count"] = ndi.query_event_severity(insights_group, fabric, job_id)
+        anomalies = ndi.query_anomalies(insights_group, fabric, job_id, epoch_map[epoch_choice], exclude_ack_anomalies)
         nd.existing["anomalies"] = anomalies
         # nd.existing["unhealthy_resources"] = ndi.query_impacted_resource(
-        #     insights_group, site_name, job_id)
+        #     insights_group, fabric, job_id)
         if anomalies:
             anomalies_count = {"minor": 0, "major": 0, "critical": 0, "warning": 0}
             for anomaly in anomalies:
@@ -254,7 +261,7 @@ def main():
             if module.check_mode:
                 nd.existing = {}
             else:
-                rm_path = ndi.config_ig_path + "/" + "{0}/fabric/{1}/deleteEpochDelta".format(insights_group, site_name)
+                rm_path = ndi.config_ig_path + "/" + "{0}/fabric/{1}/deleteEpochDelta".format(insights_group, fabric)
                 rm_payload = [job_id]
 
                 rm_resp = nd.request(rm_path, method="POST", data=rm_payload, prefix=ndi.prefix)

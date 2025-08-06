@@ -27,12 +27,12 @@ options:
     type: str
     default: default
     aliases: [ fab_name, ig_name ]
-  site:
+  fabric:
     description:
-    - The name of the Assurance Entity.
+    - Name of the fabric.
     type: str
     required: true
-    aliases: [ site_name ]
+    aliases: [ fabric_name, site, site_name ]
   flow_rule:
     description:
     - The name of the Interface Flow Rule.
@@ -118,7 +118,7 @@ EXAMPLES = r"""
 - name: Create a Physical Interface Flow Rule with subnet
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     flow_rule_type: physical
     flow_rule_status: enabled
@@ -139,7 +139,7 @@ EXAMPLES = r"""
 - name: Update a Physical Interface Flow Rule by adding the node my_node_3
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     nodes:
       - node_id: 1
@@ -160,7 +160,7 @@ EXAMPLES = r"""
 - name: Update a Physical Interface Flow Rule by removing the node my_node_2
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     nodes:
       - node_id: 1
@@ -177,7 +177,7 @@ EXAMPLES = r"""
 - name: Update a Physical Interface Flow Rule by adding port eth1/2 to my_node_3 and removing port eth1/1 from my_node_1
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     nodes:
       - node_id: 1
@@ -194,7 +194,7 @@ EXAMPLES = r"""
 - name: Update a Physical Interface Flow Rule by removing all ports from my_node_3
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     nodes:
       - node_id: 1
@@ -209,7 +209,7 @@ EXAMPLES = r"""
 - name: Update a Physical Interface Flow Rule by removing all nodes
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     nodes: []
     state: present
@@ -217,7 +217,7 @@ EXAMPLES = r"""
 - name: Update a Physical Interface Flow Rule by adding subnet 10.10.1.0/24
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     subnets:
       - 10.10.0.0/24
@@ -227,7 +227,7 @@ EXAMPLES = r"""
 - name: Update a Physical Interface Flow Rule by deleting subnet 10.10.0.0/24
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     subnets:
       - 10.10.1.0/24
@@ -236,7 +236,7 @@ EXAMPLES = r"""
 - name: Update a Physical Interface Flow Rule by deleting all subnets
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     subnets: []
     state: present
@@ -244,27 +244,27 @@ EXAMPLES = r"""
 - name: Query a specific Physical Interface Flow Rule
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     state: query
 
 - name: Query all Physical Interface Flow Rules
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule_type: physical
     state: query
 
 - name: Query all Interface Flow Rules
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     state: query
 
 - name: Delete a Physical Interface Flow Rule
   cisco.nd.nd_interface_flow_rules:
     insights_group: my_ig
-    site_name: my_site
+    fabric: my_fabric
     flow_rule: my_FlowRule
     state: absent
 """
@@ -344,7 +344,7 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         insights_group=dict(type="str", default="default", aliases=["fab_name", "ig_name"]),
-        site=dict(type="str", required=True, aliases=["site_name"]),
+        fabric=dict(type="str", required=True, aliases=["fabric_name", "site", "site_name"]),
         flow_rule=dict(type="str", aliases=["interface_flow_rule", "flow_rule_name", "name"]),  # Not required to query all objects
         flow_rule_status=dict(type="str", default="enabled", choices=["enabled", "disabled"], aliases=["status"]),
         flow_rule_type=dict(type="str", choices=["port_channel", "physical", "l3out_sub_interface", "l3out_svi"], aliases=["type"]),
@@ -378,7 +378,7 @@ def main():
 
     state = nd.params.get("state")
     insights_group = nd.params.get("insights_group")
-    site = nd.params.get("site")
+    fabric = nd.params.get("fabric")
     flow_rule = nd.params.get("flow_rule")
     flow_rule_status = INTERFACE_FLOW_RULES_STATUS_MAPPING.get(nd.params.get("flow_rule_status"))
     flow_rule_type = INTERFACE_FLOW_RULES_TYPES_MAPPING.get(nd.params.get("flow_rule_type"))
@@ -394,7 +394,7 @@ def main():
         "flowPortUuid",
     ]
 
-    path = "{0}/{1}".format(ndi.config_ig_path, ndi.interface_flow_rules_path.format(insights_group, site))
+    path = "{0}/{1}".format(ndi.config_ig_path, ndi.interface_flow_rules_path.format(insights_group, fabric))
     flow_rules_history = ndi.query_data(path)
     uuid = None
     existing_subnets = []

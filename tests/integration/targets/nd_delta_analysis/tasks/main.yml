@@ -40,8 +40,8 @@
     that:
       - delta_analysis_w_uuid is changed
       - delta_analysis_w_uuid.current.jobName == "testDeltaAnalysis-uuid"
-      - '"priorEpochUuid={{ period_last_week.current.1.epochId }}" in delta_analysis_w_uuid.current.configData'
-      - '"laterEpochUuid={{ period_last_week.current.0.epochId }}" in delta_analysis_w_uuid.current.configData'
+      - ('priorEpochUuid=' + period_last_week.current.1.epochId) in delta_analysis_w_uuid.current.configData
+      - ('laterEpochUuid=' + period_last_week.current.0.epochId) in delta_analysis_w_uuid.current.configData
 
 - name: Trigger same delta analysis again, and verify idempotency
   cisco.nd.nd_delta_analysis:
