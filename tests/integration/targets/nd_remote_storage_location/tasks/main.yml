@@ -1,0 +1,680 @@
+# Test code for the ND modules
+# Copyright: (c) 2025, Sabari Jaganathan (@sajagana) <sajagana@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# CLEAN TEST ENVIRONMENT
+- name: Ensure remote storage location does not exists
+  cisco.nd.nd_remote_storage_location:
+    name: "{{ item }}"
+    state: absent
+  loop:
+    - ansible-test-remote-storage-sftp
+    - ansible-test-remote-storage-scp
+    - ansible-test-remote-storage-sftp-ssh
+  ignore_errors: true
+
+- name: Ensure nas remote storage location does not exists
+  cisco.nd.nd_remote_storage_location:
+    name: ansible-test-remote-storage-nas
+    state: absent
+  register: rm_nas_remote_location
+  until:
+    - rm_nas_remote_location.current is defined
+    - rm_nas_remote_location.current == {}
+  retries: 10
+  delay: 10
+  ignore_errors: true
+
+# CREATE
+- name: Create an sftp remote storage location (check_mode)
+  cisco.nd.nd_remote_storage_location: &cm_add_sftp_remote_location
+    output_level: debug
+    name: ansible-test-remote-storage-sftp
+    description: sftp
+    server_port: 22
+    server_name: remote-stor-01.dmz.sjc19.dcn.pm
+    path: "/tmp"
+    sftp_scp:
+      password: FAV0edp!whk2uqk6hap
+      protocol: sftp
+      username: backup
+    state: present
+  check_mode: true
+  register: cm_add_sftp_remote_location
+
+- name: Create an sftp remote storage location
+  cisco.nd.nd_remote_storage_location:
+    <<: *cm_add_sftp_remote_location
+    output_level: info
+  register: nm_add_sftp_remote_location
+
+- name: Create an sftp remote storage location again
+  cisco.nd.nd_remote_storage_location:
+    <<: *cm_add_sftp_remote_location
+    output_level: info
+  register: nm_add_sftp_remote_location_again
+
+- name: Create an scp remote storage location (check_mode)
+  cisco.nd.nd_remote_storage_location: &cm_add_scp_remote_location
+    output_level: debug
+    name: ansible-test-remote-storage-scp
+    description: scp
+    server_port: 22
+    server_name: remote-stor-01.dmz.sjc19.dcn.pm
+    path: "/tmp"
+    sftp_scp:
+      password: FAV0edp!whk2uqk6hap
+      protocol: scp
+      username: backup
+    state: present
+  check_mode: true
+  register: cm_add_scp_remote_location
+
+- name: Create an scp remote storage location
+  cisco.nd.nd_remote_storage_location:
+    <<: *cm_add_scp_remote_location
+    output_level: info
+  register: nm_add_scp_remote_location
+
+- name: Create an scp remote storage location again
+  cisco.nd.nd_remote_storage_location:
+    <<: *cm_add_scp_remote_location
+    output_level: info
+  register: nm_add_scp_remote_location_again
+
+- name: Query nas remote storage location to ensure it does not exists
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    name: ansible-test-remote-storage-nas
+    state: query
+  register: query_nas_remote_location
+  until:
+    - query_nas_remote_location.current is defined
+    - query_nas_remote_location.current == {}
+  retries: 10
+  delay: 10
+  ignore_errors: true
+
+- name: Create an nas remote storage location (check_mode)
+  cisco.nd.nd_remote_storage_location: &cm_add_nas_remote_location
+    output_level: debug
+    name: ansible-test-remote-storage-nas
+    description: nas
+    server_port: 22
+    server_name: remote-stor-01.dmz.sjc19.dcn.pm
+    path: "/tmp"
+    nas:
+      alert_threshold: 15
+      limit: 10MB
+      read_write: false
+    state: present
+  check_mode: true
+  register: cm_add_nas_remote_location
+  when: query_nas_remote_location.current == {}
+  ignore_errors: true
+
+- name: Create an nas remote storage location
+  cisco.nd.nd_remote_storage_location:
+    <<: *cm_add_nas_remote_location
+    output_level: debug
+  register: nm_add_nas_remote_location
+  when:
+    - query_nas_remote_location.current == {}
+    - cm_add_nas_remote_location is not failed
+  ignore_errors: true
+  until:
+    - nm_add_nas_remote_location is changed
+    - nm_add_nas_remote_location.current is defined
+    - nm_add_nas_remote_location.previous is defined
+    - nm_add_nas_remote_location.previous == {}
+    - nm_add_nas_remote_location.current.limit == "10MB"
+    - nm_add_nas_remote_location.current.readWrite is not defined
+    - nm_add_nas_remote_location.current.description == "nas"
+    - nm_add_nas_remote_location.current.alertThreshold == "15"
+    - nm_add_nas_remote_location.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+    - nm_add_nas_remote_location.current.name == "ansible-test-remote-storage-nas"
+    - nm_add_nas_remote_location.current.path == "/tmp"
+    - nm_add_nas_remote_location.current.port == 22
+    - nm_add_nas_remote_location.current.type == "nfs"
+  retries: 10
+  delay: 10
+
+- name: Create an nas remote storage location again
+  cisco.nd.nd_remote_storage_location:
+    <<: *cm_add_nas_remote_location
+    output_level: debug
+  register: nm_add_nas_remote_location_again
+  when: nm_add_nas_remote_location is not failed
+  ignore_errors: true
+  until:
+    - nm_add_nas_remote_location_again is not changed
+    - nm_add_nas_remote_location_again.current is defined
+    - nm_add_nas_remote_location_again.previous is defined
+    - nm_add_nas_remote_location_again.current.readWrite is not defined
+    - nm_add_nas_remote_location_again.current.limit == nm_add_nas_remote_location_again.previous.limit == "10MB"
+    - nm_add_nas_remote_location_again.current.description == nm_add_nas_remote_location_again.previous.description == "nas"
+    - nm_add_nas_remote_location_again.current.alertThreshold == nm_add_nas_remote_location_again.previous.alertThreshold == "15"
+    - nm_add_nas_remote_location_again.current.hostname == nm_add_nas_remote_location_again.previous.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+    - nm_add_nas_remote_location_again.current.name == nm_add_nas_remote_location_again.previous.name == "ansible-test-remote-storage-nas"
+    - nm_add_nas_remote_location_again.current.path == nm_add_nas_remote_location_again.previous.path == "/tmp"
+    - nm_add_nas_remote_location_again.current.port == nm_add_nas_remote_location_again.previous.port == 22
+    - nm_add_nas_remote_location_again.current.type == nm_add_nas_remote_location_again.previous.type == "nfs"
+  retries: 10
+  delay: 10
+
+- name: Create an sftp remote storage location with auth type ssh key
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    name: ansible-test-remote-storage-sftp-ssh
+    description: sftp-ssh
+    server_port: 22
+    server_name: remote-stor-01.dmz.sjc19.dcn.pm
+    path: "/home/backup/173_36_219_50"
+    sftp_scp:
+      ssh_key: "{{ lookup('file', 'pki/openssh_rsa.key') }}"
+      passphrase: FAV0edp!whk2uqk6hap
+      protocol: sftp
+      username: backup
+    state: present
+  register: add_sftp_remote_location_ssh_key
+
+- name: Assertion check for create an sftp remote storage location
+  ansible.builtin.assert:
+    that:
+      - cm_add_sftp_remote_location is changed
+      - cm_add_sftp_remote_location.current.authentication.password is defined
+      - cm_add_sftp_remote_location.current.authentication.type == "password"
+      - cm_add_sftp_remote_location.current.authentication.username == "backup"
+      - cm_add_sftp_remote_location.current.description == "sftp"
+      - cm_add_sftp_remote_location.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - cm_add_sftp_remote_location.current.name == "ansible-test-remote-storage-sftp"
+      - cm_add_sftp_remote_location.current.path == "/tmp"
+      - cm_add_sftp_remote_location.current.port == 22
+      - cm_add_sftp_remote_location.current.type == "sftp"
+      - cm_add_sftp_remote_location.previous == {}
+      - cm_add_sftp_remote_location.proposed.authentication.password is defined
+      - cm_add_sftp_remote_location.proposed.authentication.type == "password"
+      - cm_add_sftp_remote_location.proposed.authentication.username == "backup"
+      - cm_add_sftp_remote_location.proposed.description == "sftp"
+      - cm_add_sftp_remote_location.proposed.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - cm_add_sftp_remote_location.proposed.name == "ansible-test-remote-storage-sftp"
+      - cm_add_sftp_remote_location.proposed.path == "/tmp"
+      - cm_add_sftp_remote_location.proposed.port == 22
+      - cm_add_sftp_remote_location.proposed.type == "sftp"
+      - nm_add_sftp_remote_location is changed
+      - nm_add_sftp_remote_location.current.authentication.hostKey == ""
+      - nm_add_sftp_remote_location.current.authentication.password is defined
+      - nm_add_sftp_remote_location.current.authentication.type == "password"
+      - nm_add_sftp_remote_location.current.authentication.username == "backup"
+      - nm_add_sftp_remote_location.current.description == "sftp"
+      - nm_add_sftp_remote_location.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - nm_add_sftp_remote_location.current.name == "ansible-test-remote-storage-sftp"
+      - nm_add_sftp_remote_location.current.path == "/tmp"
+      - nm_add_sftp_remote_location.current.port == 22
+      - nm_add_sftp_remote_location.current.type == "sftp"
+      - nm_add_sftp_remote_location.previous == {}
+      - nm_add_sftp_remote_location_again is not changed
+      - nm_add_sftp_remote_location_again.current.authentication.hostKey == ""
+      - nm_add_sftp_remote_location_again.current.authentication.password is defined
+      - nm_add_sftp_remote_location_again.current.authentication.type == "password"
+      - nm_add_sftp_remote_location_again.current.authentication.username == "backup"
+      - nm_add_sftp_remote_location_again.current.description == "sftp"
+      - nm_add_sftp_remote_location_again.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - nm_add_sftp_remote_location_again.current.name == "ansible-test-remote-storage-sftp"
+      - nm_add_sftp_remote_location_again.current.path == "/tmp"
+      - nm_add_sftp_remote_location_again.current.port == 22
+      - nm_add_sftp_remote_location_again.current.type == "sftp"
+      - nm_add_sftp_remote_location_again.previous.authentication.hostKey == ""
+      - nm_add_sftp_remote_location_again.previous.authentication.password is defined
+      - nm_add_sftp_remote_location_again.previous.authentication.type == "password"
+      - nm_add_sftp_remote_location_again.previous.authentication.username == "backup"
+      - nm_add_sftp_remote_location_again.previous.description == "sftp"
+      - nm_add_sftp_remote_location_again.previous.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - nm_add_sftp_remote_location_again.previous.name == "ansible-test-remote-storage-sftp"
+      - nm_add_sftp_remote_location_again.previous.path == "/tmp"
+      - nm_add_sftp_remote_location_again.previous.port == 22
+      - nm_add_sftp_remote_location_again.previous.type == "sftp"
+
+- name: Assertion check for create an scp remote storage location
+  ansible.builtin.assert:
+    that:
+      - cm_add_scp_remote_location is changed
+      - cm_add_scp_remote_location.current.authentication.password is defined
+      - cm_add_scp_remote_location.current.authentication.type == "password"
+      - cm_add_scp_remote_location.current.authentication.username == "backup"
+      - cm_add_scp_remote_location.current.description == "scp"
+      - cm_add_scp_remote_location.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - cm_add_scp_remote_location.current.name == "ansible-test-remote-storage-scp"
+      - cm_add_scp_remote_location.current.path == "/tmp"
+      - cm_add_scp_remote_location.current.port == 22
+      - cm_add_scp_remote_location.current.type == "scp"
+      - cm_add_scp_remote_location.previous == {}
+      - cm_add_scp_remote_location.proposed.authentication.password is defined
+      - cm_add_scp_remote_location.proposed.authentication.type == "password"
+      - cm_add_scp_remote_location.proposed.authentication.username == "backup"
+      - cm_add_scp_remote_location.proposed.description == "scp"
+      - cm_add_scp_remote_location.proposed.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - cm_add_scp_remote_location.proposed.name == "ansible-test-remote-storage-scp"
+      - cm_add_scp_remote_location.proposed.path == "/tmp"
+      - cm_add_scp_remote_location.proposed.port == 22
+      - cm_add_scp_remote_location.proposed.type == "scp"
+      - nm_add_scp_remote_location is changed
+      - nm_add_scp_remote_location.current.authentication.hostKey == ""
+      - nm_add_scp_remote_location.current.authentication.password is defined
+      - nm_add_scp_remote_location.current.authentication.type == "password"
+      - nm_add_scp_remote_location.current.authentication.username == "backup"
+      - nm_add_scp_remote_location.current.description == "scp"
+      - nm_add_scp_remote_location.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - nm_add_scp_remote_location.current.name == "ansible-test-remote-storage-scp"
+      - nm_add_scp_remote_location.current.path == "/tmp"
+      - nm_add_scp_remote_location.current.port == 22
+      - nm_add_scp_remote_location.current.type == "scp"
+      - nm_add_scp_remote_location.previous == {}
+      - nm_add_scp_remote_location_again is not changed
+      - nm_add_scp_remote_location_again.current.authentication.hostKey == ""
+      - nm_add_scp_remote_location_again.current.authentication.password is defined
+      - nm_add_scp_remote_location_again.current.authentication.type == "password"
+      - nm_add_scp_remote_location_again.current.authentication.username == "backup"
+      - nm_add_scp_remote_location_again.current.description == "scp"
+      - nm_add_scp_remote_location_again.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - nm_add_scp_remote_location_again.current.name == "ansible-test-remote-storage-scp"
+      - nm_add_scp_remote_location_again.current.path == "/tmp"
+      - nm_add_scp_remote_location_again.current.port == 22
+      - nm_add_scp_remote_location_again.current.type == "scp"
+      - nm_add_scp_remote_location_again.previous.authentication.hostKey == ""
+      - nm_add_scp_remote_location_again.previous.authentication.password is defined
+      - nm_add_scp_remote_location_again.previous.authentication.type == "password"
+      - nm_add_scp_remote_location_again.previous.authentication.username == "backup"
+      - nm_add_scp_remote_location_again.previous.description == "scp"
+      - nm_add_scp_remote_location_again.previous.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - nm_add_scp_remote_location_again.previous.name == "ansible-test-remote-storage-scp"
+      - nm_add_scp_remote_location_again.previous.path == "/tmp"
+      - nm_add_scp_remote_location_again.previous.port == 22
+      - nm_add_scp_remote_location_again.previous.type == "scp"
+      - add_sftp_remote_location_ssh_key is changed
+      - add_sftp_remote_location_ssh_key.current.authentication.hostKey == ""
+      - add_sftp_remote_location_ssh_key.current.authentication.passphrase is defined
+      - add_sftp_remote_location_ssh_key.current.authentication.sshKey is defined
+      - add_sftp_remote_location_ssh_key.current.authentication.type == "key"
+      - add_sftp_remote_location_ssh_key.current.authentication.username == "backup"
+      - add_sftp_remote_location_ssh_key.current.description == "sftp-ssh"
+      - add_sftp_remote_location_ssh_key.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - add_sftp_remote_location_ssh_key.current.name == "ansible-test-remote-storage-sftp-ssh"
+      - add_sftp_remote_location_ssh_key.current.path == "/home/backup/173_36_219_50"
+      - add_sftp_remote_location_ssh_key.current.port == 22
+      - add_sftp_remote_location_ssh_key.current.type == "sftp"
+      - add_sftp_remote_location_ssh_key.previous == {}
+
+# UPDATE
+- name: Change the protocol from sftp to scp and update other attribute values (check_mode)
+  cisco.nd.nd_remote_storage_location: &cm_update_sftp_remote_location
+    output_level: debug
+    name: ansible-test-remote-storage-sftp
+    description: scp
+    server_port: 22
+    server_name: remote-stor-01.dmz.sjc19.dcn.pm
+    path: "/tmp"
+    sftp_scp:
+      password: FAV0edp!whk2uqk6hap
+      protocol: scp
+      username: backup
+    state: present
+  check_mode: true
+  register: cm_update_sftp_remote_location
+
+- name: Change the protocol from sftp to scp and update other attribute values
+  cisco.nd.nd_remote_storage_location:
+    <<: *cm_update_sftp_remote_location
+    output_level: info
+  register: nm_update_sftp_remote_location
+
+- name: Change the protocol from sftp to scp and update other attribute values again
+  cisco.nd.nd_remote_storage_location:
+    <<: *cm_update_sftp_remote_location
+    output_level: info
+  register: nm_update_sftp_remote_location_again
+
+- name: Change the protocol from scp to sftp and update other attribute values
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    name: ansible-test-remote-storage-scp
+    description: sftp
+    server_port: 22
+    server_name: remote-stor-01.dmz.sjc19.dcn.pm
+    path: "/tmp"
+    sftp_scp:
+      ssh_key: "{{ lookup('file', 'pki/openssh_rsa.key') }}"
+      passphrase: FAV0edp!whk2uqk6hap
+      protocol: sftp
+      username: backup
+    state: present
+  register: update_scp_remote_location
+
+- name: Change the auth type from ssh key to password
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    name: ansible-test-remote-storage-scp
+    description: sftp
+    server_port: 22
+    server_name: remote-stor-01.dmz.sjc19.dcn.pm
+    path: "/tmp"
+    sftp_scp:
+      password: FAV0edp!whk2uqk6hap
+      username: backup
+    state: present
+  register: change_auth_type
+
+- name: Update an nas remote storage location attribute values
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    name: ansible-test-remote-storage-nas
+    description: nas-updated
+    server_port: 22
+    server_name: remote-stor-01.dmz.sjc19.dcn.pm
+    path: "/tmp"
+    nas:
+      limit: 20MB
+      read_write: true
+    state: present
+  register: update_nas_remote_location
+  when: nm_add_nas_remote_location_again is not failed
+  until:
+    - update_nas_remote_location is changed
+    - update_nas_remote_location.current is defined
+    - update_nas_remote_location.current.limit == "20MB"
+    - update_nas_remote_location.current.readWrite == true
+  retries: 10
+  delay: 10
+  ignore_errors: true
+
+- name: Assertion check for update remote storage location properties
+  ansible.builtin.assert:
+    that:
+      - cm_update_sftp_remote_location is changed
+      - cm_update_sftp_remote_location.current.authentication.hostKey == ""
+      - cm_update_sftp_remote_location.current.authentication.password is defined
+      - cm_update_sftp_remote_location.current.authentication.type == "password"
+      - cm_update_sftp_remote_location.current.authentication.username == "backup"
+      - cm_update_sftp_remote_location.current.description == "scp"
+      - cm_update_sftp_remote_location.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - cm_update_sftp_remote_location.current.name == "ansible-test-remote-storage-sftp"
+      - cm_update_sftp_remote_location.current.path == "/tmp"
+      - cm_update_sftp_remote_location.current.port == 22
+      - cm_update_sftp_remote_location.current.type == "scp"
+      - cm_update_sftp_remote_location.previous.authentication.hostKey == ""
+      - cm_update_sftp_remote_location.previous.authentication.password is defined
+      - cm_update_sftp_remote_location.previous.authentication.type == "password"
+      - cm_update_sftp_remote_location.previous.authentication.username == "backup"
+      - cm_update_sftp_remote_location.previous.description == "sftp"
+      - cm_update_sftp_remote_location.previous.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - cm_update_sftp_remote_location.previous.name == "ansible-test-remote-storage-sftp"
+      - cm_update_sftp_remote_location.previous.path == "/tmp"
+      - cm_update_sftp_remote_location.previous.port == 22
+      - cm_update_sftp_remote_location.previous.type == "sftp"
+      - cm_update_sftp_remote_location.proposed.authentication.hostKey == ""
+      - cm_update_sftp_remote_location.proposed.authentication.password is defined
+      - cm_update_sftp_remote_location.proposed.authentication.type == "password"
+      - cm_update_sftp_remote_location.proposed.authentication.username == "backup"
+      - cm_update_sftp_remote_location.proposed.description == "scp"
+      - cm_update_sftp_remote_location.proposed.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - cm_update_sftp_remote_location.proposed.name == "ansible-test-remote-storage-sftp"
+      - cm_update_sftp_remote_location.proposed.path == "/tmp"
+      - cm_update_sftp_remote_location.proposed.port == 22
+      - cm_update_sftp_remote_location.proposed.type == "scp"
+      - nm_update_sftp_remote_location is changed
+      - nm_update_sftp_remote_location.current.authentication.hostKey == ""
+      - nm_update_sftp_remote_location.current.authentication.password is defined
+      - nm_update_sftp_remote_location.current.authentication.type == "password"
+      - nm_update_sftp_remote_location.current.authentication.username == "backup"
+      - nm_update_sftp_remote_location.current.description == "scp"
+      - nm_update_sftp_remote_location.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - nm_update_sftp_remote_location.current.name == "ansible-test-remote-storage-sftp"
+      - nm_update_sftp_remote_location.current.path == "/tmp"
+      - nm_update_sftp_remote_location.current.port == 22
+      - nm_update_sftp_remote_location.current.type == "scp"
+      - nm_update_sftp_remote_location.previous.authentication.hostKey == ""
+      - nm_update_sftp_remote_location.previous.authentication.password is defined
+      - nm_update_sftp_remote_location.previous.authentication.type == "password"
+      - nm_update_sftp_remote_location.previous.authentication.username == "backup"
+      - nm_update_sftp_remote_location.previous.description == "sftp"
+      - nm_update_sftp_remote_location.previous.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - nm_update_sftp_remote_location.previous.name == "ansible-test-remote-storage-sftp"
+      - nm_update_sftp_remote_location.previous.path == "/tmp"
+      - nm_update_sftp_remote_location.previous.port == 22
+      - nm_update_sftp_remote_location.previous.type == "sftp"
+      - nm_update_sftp_remote_location_again is not changed
+      - nm_update_sftp_remote_location_again.current.authentication.hostKey == ""
+      - nm_update_sftp_remote_location_again.current.authentication.password is defined
+      - nm_update_sftp_remote_location_again.current.authentication.type == "password"
+      - nm_update_sftp_remote_location_again.current.authentication.username == "backup"
+      - nm_update_sftp_remote_location_again.current.description == "scp"
+      - nm_update_sftp_remote_location_again.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - nm_update_sftp_remote_location_again.current.name == "ansible-test-remote-storage-sftp"
+      - nm_update_sftp_remote_location_again.current.path == "/tmp"
+      - nm_update_sftp_remote_location_again.current.port == 22
+      - nm_update_sftp_remote_location_again.current.type == "scp"
+      - nm_update_sftp_remote_location_again.previous.authentication.hostKey == ""
+      - nm_update_sftp_remote_location_again.previous.authentication.password is defined
+      - nm_update_sftp_remote_location_again.previous.authentication.type == "password"
+      - nm_update_sftp_remote_location_again.previous.authentication.username == "backup"
+      - nm_update_sftp_remote_location_again.previous.description == "scp"
+      - nm_update_sftp_remote_location_again.previous.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - nm_update_sftp_remote_location_again.previous.name == "ansible-test-remote-storage-sftp"
+      - nm_update_sftp_remote_location_again.previous.path == "/tmp"
+      - nm_update_sftp_remote_location_again.previous.port == 22
+      - nm_update_sftp_remote_location_again.previous.type == "scp"
+      - update_scp_remote_location is changed
+      - update_scp_remote_location.current.authentication.hostKey == ""
+      - update_scp_remote_location.current.authentication.passphrase is defined
+      - update_scp_remote_location.current.authentication.sshKey is defined
+      - update_scp_remote_location.current.authentication.type == "key"
+      - update_scp_remote_location.current.authentication.username == "backup"
+      - update_scp_remote_location.current.description == "sftp"
+      - update_scp_remote_location.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - update_scp_remote_location.current.name == "ansible-test-remote-storage-scp"
+      - update_scp_remote_location.current.path == "/tmp"
+      - update_scp_remote_location.current.port == 22
+      - update_scp_remote_location.current.type == "sftp"
+      - update_scp_remote_location.previous.authentication.hostKey == ""
+      - update_scp_remote_location.previous.authentication.password is defined
+      - update_scp_remote_location.previous.authentication.type == "password"
+      - update_scp_remote_location.previous.authentication.username == "backup"
+      - update_scp_remote_location.previous.description == "scp"
+      - update_scp_remote_location.previous.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - update_scp_remote_location.previous.name == "ansible-test-remote-storage-scp"
+      - update_scp_remote_location.previous.path == "/tmp"
+      - update_scp_remote_location.previous.port == 22
+      - update_scp_remote_location.previous.type == "scp"
+      - change_auth_type is changed
+      - change_auth_type.current.authentication.hostKey == ""
+      - change_auth_type.current.authentication.password is defined
+      - change_auth_type.current.authentication.type == "password"
+      - change_auth_type.current.authentication.username == "backup"
+      - change_auth_type.current.description == "sftp"
+      - change_auth_type.current.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - change_auth_type.current.name == "ansible-test-remote-storage-scp"
+      - change_auth_type.current.path == "/tmp"
+      - change_auth_type.current.port == 22
+      - change_auth_type.current.type == "sftp"
+      - change_auth_type.previous.authentication.hostKey == ""
+      - change_auth_type.previous.authentication.passphrase is defined
+      - change_auth_type.previous.authentication.sshKey is defined
+      - change_auth_type.previous.authentication.type == "key"
+      - change_auth_type.previous.authentication.username == "backup"
+      - change_auth_type.previous.description == "sftp"
+      - change_auth_type.previous.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - change_auth_type.previous.name == "ansible-test-remote-storage-scp"
+      - change_auth_type.previous.path == "/tmp"
+      - change_auth_type.previous.port == 22
+      - change_auth_type.previous.type == "sftp"
+
+# QUERY
+- name: Query an remote storage location
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    name: ansible-test-remote-storage-scp
+    state: query
+  register: query_one
+
+- name: Query all remote storage locations
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    state: query
+  register: query_all
+
+- name: Assertion check for query remote storage location
+  ansible.builtin.assert:
+    that:
+      - query_one is not changed
+      - query_one.current.spec.authentication.hostKey == ""
+      - query_one.current.spec.authentication.password is defined
+      - query_one.current.spec.authentication.type == "password"
+      - query_one.current.spec.authentication.username == "backup"
+      - query_one.current.spec.description == "sftp"
+      - query_one.current.spec.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - query_one.current.spec.name == "ansible-test-remote-storage-scp"
+      - query_one.current.spec.path == "/tmp"
+      - query_one.current.spec.port == 22
+      - query_one.current.spec.type == "sftp"
+      - query_all is not changed
+      - query_all.current | length >= 4
+      - "'ansible-test-remote-storage-nas' in query_all.current | map(attribute='spec.name') | list"
+      - "'ansible-test-remote-storage-scp' in query_all.current | map(attribute='spec.name') | list"
+      - "'ansible-test-remote-storage-sftp' in query_all.current | map(attribute='spec.name') | list"
+      - "'ansible-test-remote-storage-sftp-ssh' in query_all.current | map(attribute='spec.name') | list"
+
+# ERROR
+- name: Negative test add SFTP/SCP remote storage location with ssh_key and password
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    name: nt-auth-ssh-key-password
+    server_port: 22
+    server_name: remote-stor-01.dmz.sjc19.dcn.pm
+    path: "/home/backup/173_36_219_50"
+    sftp_scp:
+      ssh_key: "{{ lookup('file', 'pki/openssh_rsa.key') }}"
+      password: FAV0edp!whk2uqk6hap
+      passphrase: FAV0edp!whk2uqk6hap
+      protocol: sftp
+      username: backup
+    state: present
+  register: nt_auth_ssh_key_password
+  ignore_errors: true
+
+- name: Negative test add SFTP/SCP remote storage location without ssh_key and password
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    name: nt-auth-without-ssh-key-password
+    server_port: 22
+    server_name: remote-stor-01.dmz.sjc19.dcn.pm
+    path: "/home/backup/173_36_219_50"
+    sftp_scp:
+      passphrase: FAV0edp!whk2uqk6hap
+      protocol: sftp
+      username: backup
+    state: present
+  register: nt_auth_without_ssh_key_password
+  ignore_errors: true
+
+- name: Negative test add SFTP/SCP and NAS remote storage location
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    name: nt-auth-without-ssh-key-password
+    server_port: 22
+    server_name: remote-stor-01.dmz.sjc19.dcn.pm
+    path: "/home/backup/173_36_219_50"
+    sftp_scp:
+      password: FAV0edp!whk2uqk6hap
+      protocol: sftp
+      username: backup
+    nas:
+      alert_threshold: 15
+      limit: 10MB
+      read_write: false
+    state: present
+  register: nt_add_nas_sftp
+  ignore_errors: true
+
+- name: Assertion check for negative tests add remote storage locations
+  ansible.builtin.assert:
+    that:
+      - nt_auth_ssh_key_password is failed
+      - nt_auth_ssh_key_password.msg == "parameters are mutually exclusive{{':'}} password|ssh_key, password|passphrase found in sftp_scp"
+      - nt_auth_without_ssh_key_password is failed
+      - nt_auth_without_ssh_key_password.msg == "parameters are required together{{':'}} ssh_key, passphrase found in sftp_scp"
+      - nt_add_nas_sftp is failed
+      - nt_add_nas_sftp.msg == "parameters are mutually exclusive{{':'}} nas|sftp_scp"
+
+# DELETE
+- name: Delete an remote storage location (check_mode)
+  cisco.nd.nd_remote_storage_location: &cm_rm_remote_location
+    output_level: debug
+    name: ansible-test-remote-storage-scp
+    state: absent
+  check_mode: true
+  register: cm_rm_remote_location
+
+- name: Delete an remote storage location
+  cisco.nd.nd_remote_storage_location:
+    <<: *cm_rm_remote_location
+    output_level: info
+  register: nm_rm_remote_location
+
+- name: Delete an remote storage location again
+  cisco.nd.nd_remote_storage_location:
+    <<: *cm_rm_remote_location
+    output_level: info
+  register: nm_rm_remote_location_again
+
+- name: Delete an nas remote storage location
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    name: ansible-test-remote-storage-nas
+    state: absent
+  when: update_nas_remote_location is not failed
+  register: rm_nas_remote_location_again
+  until:
+    - rm_nas_remote_location_again.current is defined
+    - rm_nas_remote_location_again.current == {}
+  retries: 10
+  delay: 10
+  ignore_errors: true
+
+- name: Delete an sftp remote storage location
+  cisco.nd.nd_remote_storage_location:
+    output_level: info
+    name: ansible-test-remote-storage-sftp
+    state: absent
+
+- name: Assertion check for delete remote storage location
+  ansible.builtin.assert:
+    that:
+      - cm_rm_remote_location is changed
+      - cm_rm_remote_location.current == {}
+      - cm_rm_remote_location.previous.authentication.hostKey == ""
+      - cm_rm_remote_location.previous.authentication.password is defined
+      - cm_rm_remote_location.previous.authentication.type == "password"
+      - cm_rm_remote_location.previous.authentication.username == "backup"
+      - cm_rm_remote_location.previous.description == "sftp"
+      - cm_rm_remote_location.previous.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - cm_rm_remote_location.previous.name == "ansible-test-remote-storage-scp"
+      - cm_rm_remote_location.previous.path == "/tmp"
+      - cm_rm_remote_location.previous.port == 22
+      - cm_rm_remote_location.previous.type == "sftp"
+      - cm_rm_remote_location.proposed == {}
+      - nm_rm_remote_location is changed
+      - nm_rm_remote_location.current == {}
+      - nm_rm_remote_location.previous.authentication.hostKey == ""
+      - nm_rm_remote_location.previous.authentication.password is defined
+      - nm_rm_remote_location.previous.authentication.type == "password"
+      - nm_rm_remote_location.previous.authentication.username == "backup"
+      - nm_rm_remote_location.previous.description == "sftp"
+      - nm_rm_remote_location.previous.hostname == "remote-stor-01.dmz.sjc19.dcn.pm"
+      - nm_rm_remote_location.previous.name == "ansible-test-remote-storage-scp"
+      - nm_rm_remote_location.previous.path == "/tmp"
+      - nm_rm_remote_location.previous.port == 22
+      - nm_rm_remote_location.previous.type == "sftp"
+      - nm_rm_remote_location_again is not changed
+      - nm_rm_remote_location_again.current == {}
+      - nm_rm_remote_location_again.previous == {}
