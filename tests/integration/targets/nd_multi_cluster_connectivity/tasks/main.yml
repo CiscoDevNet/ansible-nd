@@ -1,0 +1,159 @@
+# Test code for the ND modules
+# Copyright: (c) 2025, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Connect ND cluster in check mode
+  cisco.nd.nd_multi_cluster_connectivity: &cm_add_nd_cluster
+    output_level: debug
+    cluster_type: nd
+    cluster_hostname: "{{ nd_cluster_host }}"
+    cluster_username: "{{ nd_cluster_username }}"
+    cluster_password: "{{ nd_cluster_password }}"
+    state: present
+  check_mode: true
+  register: cm_add_nd_cluster
+    
+- name: Connect ND cluster in normal mode
+  cisco.nd.nd_multi_cluster_connectivity:
+    <<: *cm_add_nd_cluster
+  register: nm_add_nd_cluster
+
+- name: Connect ND cluster again
+  cisco.nd.nd_multi_cluster_connectivity:
+    <<: *cm_add_nd_cluster
+  register: nm_add_nd_cluster_again
+
+- name: Connect an ACI cluster in check mode
+  cisco.nd.nd_multi_cluster_connectivity: &cm_add_aci_cluster
+    output_level: debug
+    cluster_type: apic
+    fabric_name: test_aci
+    cluster_hostname: "{{ aci_cluster_host }}"
+    cluster_username: "{{ aci_cluster_username }}"
+    cluster_password: "{{ aci_cluster_password }}"
+    license_tier: premier
+    #features:
+      #- telemetry
+      #- orchestration
+    inband_epg: ansible-inband
+    state: present
+  check_mode: true
+  register: cm_add_aci_cluster
+
+- name: Connect an ACI cluster in normal mode
+  cisco.nd.nd_multi_cluster_connectivity:
+    <<: *cm_add_aci_cluster
+  register: nm_add_aci_cluster
+
+- name: Connect an ACI cluster again
+  cisco.nd.nd_multi_cluster_connectivity:
+    <<: *cm_add_aci_cluster
+  register: nm_add_aci_cluster_again
+
+- name: Update an ACI cluster by adding validate_peer_certificate
+  cisco.nd.nd_multi_cluster_connectivity:
+    <<: *cm_add_aci_cluster
+    validate_peer_certificate: false
+    state: present
+  register: nm_update_aci_cluster
+
+- name: Assertion check for create
+  ansible.builtin.assert:
+    that:
+      - cm_add_nd_cluster is changed
+      - cm_add_nd_cluster.proposed.spec.clusterType == "ND"
+      - cm_add_nd_cluster.proposed.spec.onboardUrl == "173.36.219.50"
+      - nm_add_nd_cluster is changed
+      - nm_add_nd_cluster.previous == {}
+      - nm_add_nd_cluster.current.spec.clusterType == "ND"
+      - nm_add_nd_cluster.current.spec.onboardUrl == "173.36.219.50"
+      - nm_add_nd_cluster_again is not changed
+      - nm_add_nd_cluster_again.current.spec.clusterType == "ND"
+      - nm_add_nd_cluster_again.current.spec.onboardUrl == "173.36.219.50"
+      - nm_add_nd_cluster_again.previous == nm_add_nd_cluster_again.current
+      - cm_add_aci_cluster is changed
+      - cm_add_aci_cluster.proposed.spec.clusterType == "APIC"
+      - cm_add_aci_cluster.proposed.spec.onboardUrl == "173.36.219.69"
+      # - cm_add_aci_cluster.proposed.spec.licenseTier == "premier"
+      - cm_add_aci_cluster.proposed.spec.aci.name == "test_aci"
+      - nm_add_aci_cluster is changed
+      - nm_add_aci_cluster.current.spec.clusterType == "APIC"
+      - nm_add_aci_cluster.current.spec.onboardUrl == "173.36.219.69"
+      # - nm_add_aci_cluster.current.spec.licenseTier == "premier"
+      - nm_add_aci_cluster.current.spec.aci.name == "test_aci"
+      - nm_add_aci_cluster.previous == {}
+      - nm_add_aci_cluster_again is not changed
+      - nm_add_aci_cluster_again.current.spec.clusterType == "APIC"
+      - nm_add_aci_cluster_again.current.spec.onboardUrl == "173.36.219.69"
+      # - nm_add_aci_cluster_again.current.spec.licenseTier == "premier"
+      - nm_add_aci_cluster_again.current.spec.name == "test_aci"
+      - nm_add_aci_cluster_again.previous == nm_add_aci_cluster_again.current
+      - nm_update_aci_cluster is changed
+      - nm_update_aci_cluster.current.spec.clusterType == "APIC"
+      - nm_update_aci_cluster.current.spec.onboardUrl == "173.36.219.69"
+      # - nm_update_aci_cluster.current.spec.licenseTier == "premier"
+      - nm_update_aci_cluster.previous.spec.aci.verifyCA is not defined
+      - nm_update_aci_cluster.sent.spec.aci.verifyCA == false
+
+- name: Query ND cluster
+  cisco.nd.nd_multi_cluster_connectivity:
+    cluster_type: nd
+    cluster_hostname: "{{ nd_cluster_host }}"
+    state: query
+  register: query_nd_cluster
+
+- name: Query all
+  cisco.nd.nd_multi_cluster_connectivity:
+    output_level: debug
+    state: query
+  register: query_all
+
+- name: Assertion check for query
+  ansible.builtin.assert:
+    that:
+      - query_nd_cluster is not changed
+      - query_nd_cluster.current.spec.clusterType == "ND"
+      - query_nd_cluster.current.spec.onboardUrl == "173.36.219.50"
+      - query_all is not changed
+      - query_all.current | length >= 2
+
+- name: Delete ND cluster in check mode
+  cisco.nd.nd_multi_cluster_connectivity: &remove_nd_cluster
+    output_level: info
+    cluster_type: nd
+    cluster_hostname: "{{ nd_cluster_host }}"
+    state: absent
+  check_mode: true
+  register: cm_remove_nd_cluster
+
+- name: Delete ND cluster in normal mode
+  cisco.nd.nd_multi_cluster_connectivity:
+    <<: *remove_nd_cluster
+  register: nm_remove_nd_cluster
+
+- name: Delete ND cluster again
+  cisco.nd.nd_multi_cluster_connectivity:
+    <<: *remove_nd_cluster
+  register: nm_remove_nd_cluster_again
+
+- name: Delete aci cluster
+  cisco.nd.nd_multi_cluster_connectivity:
+    fabric_name: test_aci
+    cluster_type: apic
+    cluster_username: "{{ aci_cluster_username }}"
+    cluster_password: "{{ aci_cluster_password }}"
+    state: absent
+  register: nm_remove_aci_cluster
+
+- name: Assertion check for delete
+  ansible.builtin.assert:
+    that:
+      - cm_remove_nd_cluster is changed
+      - nm_remove_nd_cluster is changed
+      - nm_remove_nd_cluster.current == {}
+      - nm_remove_nd_cluster.previous == query_nd_cluster.current
+      - nm_remove_nd_cluster_again is not changed
+      - nm_remove_nd_cluster_again.current == nm_remove_nd_cluster_again.previous == {}
+      - nm_remove_aci_cluster.current == {}
+      
