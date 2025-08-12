@@ -78,7 +78,7 @@ options:
         type: str
   nas:
     description:
-    - The Network-attached storage (NAS) configuration for the remote storage location.
+    - The Network Attached Storage (NAS) configuration for the remote storage location.
     - This parameter and O(sftp_scp) are mutually exclusive.
     type: dict
     aliases: [ nas_storage ]
