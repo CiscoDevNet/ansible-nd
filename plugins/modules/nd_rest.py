@@ -48,6 +48,10 @@ options:
     - The file path containing the body of the HTTP request.
     type: path
     aliases: [ config_file ]
+  ignore_previous_state:
+    description:
+    - This parameter ignores the object's previous state.
+    type: bool
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -212,6 +216,7 @@ def main():
         ),
         content=dict(type="raw", aliases=["payload"]),
         file_path=dict(type="path", aliases=["config_file"]),
+        ignore_previous_state=dict(type="bool"),
     )
 
     module = AnsibleModule(
@@ -222,6 +227,7 @@ def main():
     content = module.params.get("content")
     path = module.params.get("path")
     file_path = module.params.get("config_file")
+    ignore_previous_state = module.params.get("ignore_previous_state")
 
     nd = NDModule(module)
 
@@ -251,7 +257,8 @@ def main():
 
     # Append previous state of the object
     if method in ("PUT", "DELETE", "PATCH"):
-        nd.existing = nd.previous = sanitize(nd.query_obj(path, ignore_not_found_error=True), ND_REST_KEYS_TO_SANITIZE)
+        if not ignore_previous_state:
+            nd.existing = nd.previous = sanitize(nd.query_obj(path, ignore_not_found_error=True), ND_REST_KEYS_TO_SANITIZE)
     nd.result["previous"] = nd.previous
 
     # Perform request
