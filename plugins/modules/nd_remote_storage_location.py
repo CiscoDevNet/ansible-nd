@@ -311,11 +311,19 @@ def main():
         nd.sanitize(payload, collate=True)
 
         if not module.check_mode:
-            if nd.existing:
-                nd.request(path, method="PUT", data=payload)
-            else:
+
+            if not nd.existing:
                 nd.request("{0}?acceptHostKey=true".format(path), method="POST", data=payload)
                 path = "{0}/{1}".format(path, name)
+            elif nd.get_diff(
+                unwanted=[
+                    ["authentication", "hostKey"],
+                    ["authentication", "password"],
+                    ["authentication", "passphrase"],
+                    ["authentication", "sshKey"],
+                ]
+            ):
+                nd.request(path, method="PUT", data=payload)
 
             nd.existing = nd.request(path, method="GET").get("spec")
         else:

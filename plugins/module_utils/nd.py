@@ -3,6 +3,7 @@
 # Copyright: (c) 2021, Lionel Hercot (@lhercot) <lhercot@cisco.com>
 # Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
 # Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+# Copyright: (c) 2025, Shreyas Srish (@shrsr) <ssrish@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -18,7 +19,6 @@ import tempfile
 from ansible.module_utils.basic import json
 from ansible.module_utils.basic import env_fallback
 from ansible.module_utils.six import PY3
-from ansible.module_utils.six.moves import filterfalse
 from ansible.module_utils.six.moves.urllib.parse import urlencode
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import Connection
@@ -73,53 +73,27 @@ if PY3:
 
 
 def issubset(subset, superset):
-    """Recurse through nested dictionary and compare entries"""
+    """Recurse through a nested dictionary and check if it is a subset of another."""
 
-    # Both objects are the same object
-    if subset is superset:
-        return True
-
-    # Both objects are identical
-    if subset == superset:
-        return True
-
-    # Both objects have a different type
-    if isinstance(subset) is not isinstance(superset):
+    if type(subset) is not type(superset):
         return False
 
-    for key, value in subset.items():
-        # Ignore empty values
-        if value is None:
-            return True
+    if not isinstance(subset, dict):
+        if isinstance(subset, list):
+            return all(item in superset for item in subset)
+        return subset == superset
 
-        # Item from subset is missing from superset
+    for key, value in subset.items():
+        if value is None:
+            continue
+
         if key not in superset:
             return False
 
-        # Item has different types in subset and superset
-        if isinstance(superset.get(key)) is not isinstance(value):
-            return False
+        superset_value = superset.get(key)
 
-        # Compare if item values are subset
-        if isinstance(value, dict):
-            if not issubset(superset.get(key), value):
-                return False
-        elif isinstance(value, list):
-            try:
-                # NOTE: Fails for lists of dicts
-                if not set(value) <= set(superset.get(key)):
-                    return False
-            except TypeError:
-                # Fall back to exact comparison for lists of dicts
-                diff = list(filterfalse(lambda i: i in value, superset.get(key))) + list(filterfalse(lambda j: j in superset.get(key), value))
-                if diff:
-                    return False
-        elif isinstance(value, set):
-            if not value <= superset.get(key):
-                return False
-        else:
-            if not value == superset.get(key):
-                return False
+        if not issubset(value, superset_value):
+            return False
 
     return True
 
@@ -252,7 +226,7 @@ class NDModule(object):
             if file is not None:
                 info = conn.send_file_request(method, uri, file, data, None, file_key, file_ext)
             else:
-                if data:
+                if data is not None:
                     info = conn.send_request(method, uri, json.dumps(data))
                 else:
                     info = conn.send_request(method, uri)
@@ -310,6 +284,8 @@ class NDModule(object):
                     self.fail_json(msg="ND Error: {0}".format(self.error.get("message")), data=data, info=info)
                 self.error = payload
                 if "code" in payload:
+                    if self.status == 404 and ignore_not_found_error:
+                        return {}
                     self.fail_json(msg="ND Error {code}: {message}".format(**payload), data=data, info=info, payload=payload)
                 elif "messages" in payload and len(payload.get("messages")) > 0:
                     self.fail_json(msg="ND Error {code} ({severity}): {message}".format(**payload["messages"][0]), data=data, info=info, payload=payload)
@@ -374,6 +350,37 @@ class NDModule(object):
         if len(objs) > 1:
             self.fail_json(msg="More than one object matches unique filter: {0}".format(kwargs))
         return objs[0]
+
+    def get_object_by_nested_key_value(self, path, nested_key_path, value, data_key=None):
+
+        response_data = self.request(path, method="GET")
+
+        if not response_data:
+            return None
+
+        object_list = []
+        if isinstance(response_data, list):
+            object_list = response_data
+        elif data_key and data_key in response_data:
+            object_list = response_data.get(data_key)
+        else:
+            return None
+
+        keys = nested_key_path.split(".")
+
+        for obj in object_list:
+            current_level = obj
+            for key in keys:
+                if isinstance(current_level, dict):
+                    current_level = current_level.get(key)
+                else:
+                    current_level = None
+                    break
+
+            if current_level == value:
+                return obj
+
+        return None
 
     def sanitize(self, updates, collate=False, required=None, unwanted=None):
         """Clean up unset keys from a request payload"""
@@ -506,8 +513,8 @@ class NDModule(object):
         if not self.existing and self.sent:
             return True
 
-        existing = self.existing
-        sent = self.sent
+        existing = deepcopy(self.existing)
+        sent = deepcopy(self.sent)
 
         for key in unwanted:
             if isinstance(key, str):
@@ -516,6 +523,7 @@ class NDModule(object):
                         del existing[key]
                     except KeyError:
                         pass
+                if key in sent:
                     try:
                         del sent[key]
                     except KeyError:
@@ -524,46 +532,17 @@ class NDModule(object):
                 key_path, last = key[:-1], key[-1]
                 try:
                     existing_parent = reduce(dict.get, key_path, existing)
-                    del existing_parent[last]
+                    if existing_parent is not None:
+                        del existing_parent[last]
                 except KeyError:
                     pass
                 try:
                     sent_parent = reduce(dict.get, key_path, sent)
-                    del sent_parent[last]
+                    if sent_parent is not None:
+                        del sent_parent[last]
                 except KeyError:
                     pass
         return not issubset(sent, existing)
 
     def set_to_empty_string_when_none(self, val):
         return val if val is not None else ""
-
-    def get_object_by_nested_key_value(self, path, nested_key_path, value, data_key=None):
-
-        response_data = self.request(path, method="GET")
-
-        if not response_data:
-            return None
-
-        object_list = []
-        if isinstance(response_data, list):
-            object_list = response_data
-        elif data_key and data_key in response_data:
-            object_list = response_data.get(data_key)
-        else:
-            return None
-
-        keys = nested_key_path.split(".")
-
-        for obj in object_list:
-            current_level = obj
-            for key in keys:
-                if isinstance(current_level, dict):
-                    current_level = current_level.get(key)
-                else:
-                    current_level = None
-                    break
-
-            if current_level == value:
-                return obj
-
-        return None
