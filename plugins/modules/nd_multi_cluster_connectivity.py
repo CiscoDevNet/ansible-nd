@@ -120,8 +120,13 @@ EXAMPLES = r"""
 
 - name: Query ND cluster
   cisco.nd.nd_multi_cluster_connectivity:
-    cluster_type: nd
     cluster_hostname: cluster-IP
+    state: query
+  register: query_result
+
+- name: Query an ACI cluster
+  cisco.nd.nd_multi_cluster_connectivity:
+    fabric_name: test_aci
     state: query
   register: query_result
 
@@ -132,13 +137,11 @@ EXAMPLES = r"""
 
 - name: Delete ND cluster
   cisco.nd.nd_multi_cluster_connectivity:
-    cluster_type: nd
     cluster_hostname: cluster-IP
     state: absent
 
 - name: Delete an ACI cluster
   cisco.nd.nd_multi_cluster_connectivity:
-    cluster_type: apic
     fabric_name: test_aci
     cluster_username: admin
     cluster_password: cluster-password
@@ -176,6 +179,9 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        required_if=[
+            ["state", "present", ["cluster_hostname", "cluster_username", "cluster_password", "cluster_type"]],
+        ],
     )
 
     nd = NDModule(module)
@@ -262,7 +268,6 @@ def main():
                     ["spec", "aci", "licenseTier"],
                 ]
             ):
-                # nd.stdout = "sent:" + str(nd.sent) + "\n exist:" + str(nd.existing)
                 payload["spec"]["name"] = fabric_name
                 update_path = "{0}/{1}".format(path, fabric_name)
                 nd.request(update_path, method="PUT", data=payload)
