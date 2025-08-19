@@ -317,6 +317,10 @@ class NDModule(object):
                     if ignore_not_found_error:
                         return {}
                     self.fail_json(msg="ND Error: {0}".format(payload["errors"][0]), data=data, info=info, payload=payload)
+                elif "error" in payload and len(payload.get("error")) > 0:
+                    if ignore_not_found_error:
+                        return {}
+                    self.fail_json(msg="ND Error: {0}".format(payload["error"]), data=data, info=info, payload=payload)
                 else:
                     if ignore_not_found_error:
                         return {}

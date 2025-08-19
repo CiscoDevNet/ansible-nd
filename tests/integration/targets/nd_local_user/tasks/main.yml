@@ -1,0 +1,276 @@
+# Test code for the ND modules
+# Copyright: (c) 2025, Gaspard Micol (@gmicol) <gmicol@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+- name: Ensure local users do not exist before test starts
+  cisco.nd.nd_local_user:
+    <<: *nd_info
+    login_id: "{{ item }}"
+    state: absent
+  loop:
+    - ansible_local_user
+    - ansible_local_user_2
+
+#CREATE
+- name: Create local user (check mode)
+  cisco.nd.nd_local_user: &create_local_user
+    <<: *nd_info
+    email: ansibleuser@example.com
+    login_id: ansible_local_user
+    first_name: Ansible first name
+    last_name: Ansible last name
+    user_password: ansibleLocalUserPassword1%
+    reuse_limitation: 20
+    time_interval_limitation: 10
+    security_domains:
+      - name: all
+        roles:
+          - observer
+          - support_engineer
+    remote_id_claim: ansible_remote_user
+    remote_user_authorization: true
+    state: present
+  check_mode: true
+  register: cm_create_local_user
+
+- name: Create local user (normal mode)
+  cisco.nd.nd_local_user:
+    <<: *create_local_user
+  register: nm_create_local_user
+
+- name: Create a second local user with minimum configuration
+  cisco.nd.nd_local_user:
+    <<: *nd_info
+    login_id: ansible_local_user_2
+    user_password: ansibleLocalUser2Password1%
+    security_domains:
+      - name: all
+    state: present
+  register: nm_create_local_user_2
+
+- name: Verify local user creation tasks
+  ansible.builtin.assert:
+    that:
+      - cm_create_local_user is changed
+      - cm_create_local_user.previous == {}
+      - cm_create_local_user.current == cm_create_local_user.proposed
+      - cm_create_local_user.current.email == "ansibleuser@example.com"
+      - cm_create_local_user.current.firstName == "Ansible first name"
+      - cm_create_local_user.current.lastName == "Ansible last name"
+      - cm_create_local_user.current.loginID == "ansible_local_user"
+      - cm_create_local_user.current.passwordPolicy.reuseLimitation == 20
+      - cm_create_local_user.current.passwordPolicy.timeIntervalLimitation == 10
+      - cm_create_local_user.current.rbac.domains.all.roles.0 == "observer"
+      - cm_create_local_user.current.rbac.domains.all.roles.1 == "support-engineer"
+      - cm_create_local_user.current.remoteIDClaim == "ansible_remote_user"
+      - cm_create_local_user.current.xLaunch == true
+      - nm_create_local_user is changed
+      - nm_create_local_user.previous == {}
+      - nm_create_local_user.proposed.email == "ansibleuser@example.com"
+      - nm_create_local_user.proposed.firstName == "Ansible first name"
+      - nm_create_local_user.proposed.lastName == "Ansible last name"
+      - nm_create_local_user.proposed.loginID == "ansible_local_user"
+      - nm_create_local_user.proposed.passwordPolicy.reuseLimitation == 20
+      - nm_create_local_user.proposed.passwordPolicy.timeIntervalLimitation == 10
+      - nm_create_local_user.proposed.rbac.domains.all.roles.0 == "observer"
+      - nm_create_local_user.proposed.rbac.domains.all.roles.1 == "support-engineer"
+      - nm_create_local_user.proposed.remoteIDClaim == "ansible_remote_user"
+      - nm_create_local_user.proposed.xLaunch == true
+      - nm_create_local_user.current.email == "ansibleuser@example.com"
+      - nm_create_local_user.current.firstName == "Ansible first name"
+      - nm_create_local_user.current.lastName == "Ansible last name"
+      - nm_create_local_user.current.loginID == "ansible_local_user"
+      - nm_create_local_user.current.passwordPolicy.reuseLimitation == 20
+      - nm_create_local_user.current.passwordPolicy.timeIntervalLimitation == 10
+      - nm_create_local_user.current.rbac.domains.all.roles.0 == "observer"
+      - nm_create_local_user.current.rbac.domains.all.roles.1 == "support-engineer"
+      - nm_create_local_user.current.remoteIDClaim == "ansible_remote_user"
+      - nm_create_local_user.current.xLaunch == true
+      - nm_create_local_user_2 is changed
+      - nm_create_local_user_2.previous == {}
+      - nm_create_local_user_2.proposed.loginID == "ansible_local_user_2"
+      - nm_create_local_user_2.proposed.rbac.domains.all.roles == []
+      - nm_create_local_user_2.current.loginID == "ansible_local_user_2"
+      - nm_create_local_user_2.current.rbac.domains.all.roles == []
+
+#UPDATE
+- name: Update local user name (check mode)
+  cisco.nd.nd_local_user: &update_local_user
+    <<: *create_local_user
+    email: updatedansibleuser@example.com
+    first_name: Updated Ansible first name
+    last_name: Updated Ansible last name
+    user_password: updatedAnsibleLocalUserPassword1%
+    reuse_limitation: 25
+    time_interval_limitation: 15
+    security_domains:
+      - name: all
+        roles: super_admin
+    remote_id_claim: ""
+    remote_user_authorization: false
+    state: present
+  check_mode: true
+  register: cm_update_local_user
+
+- name: Update local user name (normal mode)
+  cisco.nd.nd_local_user:
+    <<: *update_local_user
+  register: nm_update_local_user
+
+- name: Verify local user update tasks
+  ansible.builtin.assert:
+    that:
+      - cm_update_local_user is changed
+      - cm_update_local_user.previous.email == "ansibleuser@example.com"
+      - cm_update_local_user.previous.firstName == "Ansible first name"
+      - cm_update_local_user.previous.lastName == "Ansible last name"
+      - cm_update_local_user.previous.loginID == "ansible_local_user"
+      - cm_update_local_user.previous.passwordPolicy.reuseLimitation == 20
+      - cm_update_local_user.previous.passwordPolicy.timeIntervalLimitation == 10
+      - cm_update_local_user.previous.rbac.domains.all.roles.0 == "observer"
+      - cm_update_local_user.previous.rbac.domains.all.roles.1 == "support-engineer"
+      - cm_update_local_user.previous.remoteIDClaim == "ansible_remote_user"
+      - cm_update_local_user.previous.xLaunch == true
+      - cm_update_local_user.current == cm_update_local_user.proposed 
+      - cm_update_local_user.current.email == "updatedansibleuser@example.com"
+      - cm_update_local_user.current.firstName == "Updated Ansible first name"
+      - cm_update_local_user.current.lastName == "Updated Ansible last name"
+      - cm_update_local_user.current.loginID == "ansible_local_user"
+      - cm_update_local_user.current.passwordPolicy.reuseLimitation == 25
+      - cm_update_local_user.current.passwordPolicy.timeIntervalLimitation == 15
+      - cm_update_local_user.current.rbac.domains.all.roles.0 == "super-admin"
+      - cm_update_local_user.current.remoteIDClaim == ""
+      - cm_update_local_user.current.xLaunch == false
+      - nm_update_local_user is changed
+      - nm_update_local_user.previous.email == "ansibleuser@example.com"
+      - nm_update_local_user.previous.firstName == "Ansible first name"
+      - nm_update_local_user.previous.lastName == "Ansible last name"
+      - nm_update_local_user.previous.loginID == "ansible_local_user"
+      - nm_update_local_user.previous.passwordPolicy.reuseLimitation == 20
+      - nm_update_local_user.previous.passwordPolicy.timeIntervalLimitation == 10
+      - nm_update_local_user.previous.rbac.domains.all.roles.0 == "observer"
+      - nm_update_local_user.previous.rbac.domains.all.roles.1 == "support-engineer"
+      - nm_update_local_user.previous.remoteIDClaim == "ansible_remote_user"
+      - nm_update_local_user.previous.xLaunch == true
+      - nm_update_local_user.proposed.email == "updatedansibleuser@example.com"
+      - nm_update_local_user.proposed.firstName == "Updated Ansible first name"
+      - nm_update_local_user.proposed.lastName == "Updated Ansible last name"
+      - nm_update_local_user.proposed.loginID == "ansible_local_user"
+      - nm_update_local_user.proposed.passwordPolicy.reuseLimitation == 25
+      - nm_update_local_user.proposed.passwordPolicy.timeIntervalLimitation == 15
+      - nm_update_local_user.proposed.rbac.domains.all.roles.0 == "super-admin"
+      - nm_update_local_user.proposed.remoteIDClaim == ""
+      - nm_update_local_user.proposed.xLaunch == false
+      - nm_update_local_user.current.email == "updatedansibleuser@example.com"
+      - nm_update_local_user.current.firstName == "Updated Ansible first name"
+      - nm_update_local_user.current.lastName == "Updated Ansible last name"
+      - nm_update_local_user.current.loginID == "ansible_local_user"
+      - nm_update_local_user.current.passwordPolicy.reuseLimitation == 25
+      - nm_update_local_user.current.passwordPolicy.timeIntervalLimitation == 15
+      - nm_update_local_user.current.rbac.domains.all.roles.0 == "super-admin"
+      - nm_update_local_user.current.remoteIDClaim == ""
+      - nm_update_local_user.current.xLaunch == false
+
+#QUERY
+- name: Query all local users
+  cisco.nd.nd_local_user:
+    <<: *nd_info
+    state: query
+  register: query_all_local_users     
+
+- name: Query specific local user
+  cisco.nd.nd_local_user:
+    <<: *nd_info
+    login_id: ansible_local_user
+    state: query
+  register: query_local_user
+
+- name: query non-existent local user
+  cisco.nd.nd_local_user:
+    <<: *nd_info
+    login_id: non_existent_local_user
+    state: query
+  register: query_non_existent
+
+- name: Verify local user query tasks
+  ansible.builtin.assert:
+    that:
+      - query_all_local_users is not changed
+      - query_all_local_users.current.localusers | length >= 2
+      - query_local_user is not changed
+      - query_local_user.current.email == "updatedansibleuser@example.com"
+      - query_local_user.current.firstName == "Updated Ansible first name"
+      - query_local_user.current.lastName == "Updated Ansible last name"
+      - query_local_user.current.loginID == "ansible_local_user"
+      - query_local_user.current.passwordPolicy.reuseLimitation == 25
+      - query_local_user.current.passwordPolicy.timeIntervalLimitation == 15
+      - query_local_user.current.rbac.domains.all.roles.0 == "super-admin"
+      - query_local_user.current.xLaunch == false
+      - query_non_existent is not changed
+      - query_non_existent.current == {}
+
+#DELETE
+- name: Delete local user by name (check mode)
+  cisco.nd.nd_local_user: &delete_local_user
+    <<: *nd_info
+    login_id: ansible_local_user
+    state: absent
+  check_mode: true
+  register: cm_delete_local_user
+
+- name: Delete local user by name (normal mode)
+  cisco.nd.nd_local_user:
+    <<: *delete_local_user
+  register: nm_delete_local_user
+
+- name: Delete local user again (idempotency test)
+  cisco.nd.nd_local_user:
+    <<: *delete_local_user
+  register: nm_delete_local_user_again
+
+- name: Verify local user deletion tasks
+  ansible.builtin.assert:
+    that:
+      - cm_delete_local_user is changed
+      - cm_delete_local_user.previous.email == "updatedansibleuser@example.com"
+      - cm_delete_local_user.previous.firstName == "Updated Ansible first name"
+      - cm_delete_local_user.previous.lastName == "Updated Ansible last name"
+      - cm_delete_local_user.previous.loginID == "ansible_local_user"
+      - cm_delete_local_user.previous.passwordPolicy.reuseLimitation == 25
+      - cm_delete_local_user.previous.passwordPolicy.timeIntervalLimitation == 15
+      - cm_delete_local_user.previous.rbac.domains.all.roles.0 == "super-admin"
+      - cm_delete_local_user.previous.xLaunch == false
+      - cm_delete_local_user.current == cm_delete_local_user.proposed == {}
+      - nm_delete_local_user is changed
+      - nm_delete_local_user.previous.email == "updatedansibleuser@example.com"
+      - nm_delete_local_user.previous.firstName == "Updated Ansible first name"
+      - nm_delete_local_user.previous.lastName == "Updated Ansible last name"
+      - nm_delete_local_user.previous.loginID == "ansible_local_user"
+      - nm_delete_local_user.previous.passwordPolicy.reuseLimitation == 25
+      - nm_delete_local_user.previous.passwordPolicy.timeIntervalLimitation == 15
+      - nm_delete_local_user.previous.rbac.domains.all.roles.0 == "super-admin"
+      - nm_delete_local_user.previous.xLaunch == false
+      - nm_delete_local_user.current == nm_delete_local_user.proposed == {}
+      - nm_delete_local_user_again is not changed
+      - nm_delete_local_user_again.current == nm_delete_local_user_again.proposed == nm_delete_local_user_again.previous == {}
+
+#CLEAN UP
+- name: Ensure local users do not exist
+  cisco.nd.nd_local_user:
+    <<: *nd_info
+    login_id: "{{ item }}"
+    state: absent
+  loop:
+    - ansible_local_user
+    - ansible_local_user_2
