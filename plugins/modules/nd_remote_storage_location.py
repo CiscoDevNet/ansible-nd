@@ -29,24 +29,27 @@ options:
     description:
     - The description of the remote storage location.
     type: str
-  server_port:
+  remote_port:
     description:
     - The port number of the remote server.
+    - This parameter is required during creation and cannot be modified after the object is created.
     type: int
-  server_name:
+  hostname_ip:
     description:
     - The IP address or hostname of the remote server.
+    - This parameter is required during creation and cannot be modified after the object is created.
     type: str
-    aliases: [ ip ]
   path:
     description:
     - The export path of the remote storage location.
+    - This parameter is required during creation and cannot be modified after the object is created as a Network Attached Storage (NAS).
     type: str
     aliases: [ default_path, export_path ]
   sftp_scp:
     description:
-    - The SFTP/SCP configuration for the remote storage location.
+    - The Secure File Transfer Protocol (SFTP) or Secure Copy Protocol (SCP) configuration for the remote storage location.
     - This parameter and O(nas) are mutually exclusive.
+    - The type of the remote storage location cannot be modified after the object is created.
     type: dict
     suboptions:
       protocol:
@@ -59,7 +62,7 @@ options:
       username:
         description:
         - The username of the remote storage location.
-        - This parameter is required when the O(sftp_scp.password) or O(sftp_scp.ssh_key) is set.
+        - This parameter is required when the O(sftp_scp.password) or O(sftp_scp.ssh_key) is set and cannot be modified after the object is created.
         type: str
       password:
         description:
@@ -80,6 +83,7 @@ options:
     description:
     - The Network Attached Storage (NAS) configuration for the remote storage location.
     - This parameter and O(sftp_scp) are mutually exclusive.
+    - The type of the remote storage location cannot be modified after the object is created.
     type: dict
     aliases: [ nas_storage ]
     suboptions:
@@ -94,6 +98,7 @@ options:
         - Threshold (percentage) to trigger notification or warning for the remote storage location.
         - The value must be in the range 1 - 100.
         - Defaults to 80 when unset during creation.
+        - This parameter is required during creation and cannot be modified after the object is created.
         type: int
       read_write:
         description:
@@ -117,8 +122,8 @@ EXAMPLES = r"""
   cisco.nd.nd_remote_storage_location:
     name: ansible-test-remote-storage-sftp
     description: sftp
-    server_port: 22
-    server_name: remote-storage.com
+    remote_port: 22
+    hostname_ip: remote-storage.com
     path: /tmp
     sftp_scp:
       password: pass123
@@ -130,8 +135,8 @@ EXAMPLES = r"""
   cisco.nd.nd_remote_storage_location:
     name: ansible-test-remote-storage-nas
     description: nas
-    server_port: 22
-    server_name: remote-storage.com
+    remote_port: 22
+    hostname_ip: remote-storage.com
     path: /tmp
     nas:
       alert_threshold: 15
@@ -143,8 +148,8 @@ EXAMPLES = r"""
   cisco.nd.nd_remote_storage_location:
     name: ansible-test-remote-storage-sftp
     description: scp
-    server_port: 22
-    server_name: remote-storage.com
+    remote_port: 22
+    hostname_ip: remote-storage.com
     path: /tmp
     sftp_scp:
       ssh_key: "{{ lookup('file', 'openssh_rsa.key') }}"
@@ -185,8 +190,8 @@ def main():
     argument_spec.update(
         name=dict(type="str"),
         description=dict(type="str"),
-        server_port=dict(type="int"),
-        server_name=dict(type="str", aliases=["ip"]),
+        remote_port=dict(type="int"),
+        hostname_ip=dict(type="str"),
         path=dict(type="str", aliases=["default_path", "export_path"]),
         sftp_scp=dict(
             type="dict",
@@ -231,8 +236,8 @@ def main():
 
     name = nd.params.get("name")
     description = nd.params.get("description")
-    server_port = nd.params.get("server_port")
-    server_name = nd.params.get("server_name")
+    remote_port = nd.params.get("remote_port")
+    hostname_ip = nd.params.get("hostname_ip")
     remote_path = nd.params.get("path")
     sftp_scp = nd.params.get("sftp_scp")
     nas = nd.params.get("nas")
@@ -258,8 +263,8 @@ def main():
             payload = {
                 "name": name,
                 "description": description,
-                "port": server_port,
-                "hostname": server_name,
+                "port": remote_port,
+                "hostname": hostname_ip,
                 "path": remote_path,
             }
 
