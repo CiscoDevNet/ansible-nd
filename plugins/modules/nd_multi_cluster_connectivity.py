@@ -66,15 +66,8 @@ options:
   inband_epg:
     description:
     - The in-band EPG (Endpoint Group) for the cluster.
+    - This option is only used when C(telemetry) is enabled in O(features).
     type: str
-  outband:
-    description:
-    - The out-of-band management configuration for the cluster.
-    type: str
-  orchestration:
-    description:
-    - Enable or disable orchestration for the cluster.
-    type: bool
   security_domain:
     description:
     - The security domain for the cluster.
@@ -97,7 +90,7 @@ extends_documentation_fragment:
 """
 
 EXAMPLES = r"""
-- name: Create ND cluster
+- name: Connect ND cluster
   cisco.nd.nd_multi_cluster_connectivity:
     cluster_type: nd
     cluster_hostname: cluster-IP
@@ -169,7 +162,6 @@ def main():
         license_tier=dict(type="str", choices=["advantage", "essentials", "premier"]),
         features=dict(type="list", elements="str", choices=["telemetry", "orchestration"]),
         inband_epg=dict(type="str"),
-        outband=dict(type="str"),
         orchestration=dict(type="bool"),
         security_domain=dict(type="str"),
         validate_peer_certificate=dict(type="bool"),

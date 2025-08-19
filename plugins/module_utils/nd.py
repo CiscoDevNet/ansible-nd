@@ -519,15 +519,9 @@ class NDModule(object):
         for key in unwanted:
             if isinstance(key, str):
                 if key in existing:
-                    try:
-                        del existing[key]
-                    except KeyError:
-                        pass
+                    del existing[key]
                 if key in sent:
-                    try:
-                        del sent[key]
-                    except KeyError:
-                        pass
+                    del sent[key]
             elif isinstance(key, list):
                 key_path, last = key[:-1], key[-1]
                 try:
