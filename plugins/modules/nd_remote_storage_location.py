@@ -181,7 +181,7 @@ RETURN = r"""
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.utils import check_if_all_elements_are_none, delete_none_values
+from ansible_collections.cisco.nd.plugins.module_utils.utils import check_if_all_elements_are_none
 import copy
 
 
@@ -312,7 +312,6 @@ def main():
                 payload["limit"] = nas.get("limit") or payload.get("limit")
                 payload["readWrite"] = nas.get("read_write") if nas.get("read_write") is not None else payload.get("readWrite")
 
-        delete_none_values(payload, recursive=True)
         nd.sanitize(payload, collate=True)
 
         if not module.check_mode:
