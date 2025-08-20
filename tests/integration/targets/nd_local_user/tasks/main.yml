@@ -22,7 +22,7 @@
     - ansible_local_user
     - ansible_local_user_2
 
-#CREATE
+# CREATE
 - name: Create local user (check mode)
   cisco.nd.nd_local_user: &create_local_user
     <<: *nd_info
@@ -104,7 +104,7 @@
       - nm_create_local_user_2.current.loginID == "ansible_local_user_2"
       - nm_create_local_user_2.current.rbac.domains.all.roles == []
 
-#UPDATE
+# UPDATE
 - name: Update local user name (check mode)
   cisco.nd.nd_local_user: &update_local_user
     <<: *create_local_user
@@ -182,7 +182,7 @@
       - nm_update_local_user.current.remoteIDClaim == ""
       - nm_update_local_user.current.xLaunch == false
 
-#QUERY
+# QUERY
 - name: Query all local users
   cisco.nd.nd_local_user:
     <<: *nd_info
@@ -220,7 +220,7 @@
       - query_non_existent is not changed
       - query_non_existent.current == {}
 
-#DELETE
+# DELETE
 - name: Delete local user by name (check mode)
   cisco.nd.nd_local_user: &delete_local_user
     <<: *nd_info
@@ -265,7 +265,7 @@
       - nm_delete_local_user_again is not changed
       - nm_delete_local_user_again.current == nm_delete_local_user_again.proposed == nm_delete_local_user_again.previous == {}
 
-#CLEAN UP
+# CLEAN UP
 - name: Ensure local users do not exist
   cisco.nd.nd_local_user:
     <<: *nd_info

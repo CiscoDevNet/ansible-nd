@@ -15,7 +15,7 @@ DOCUMENTATION = r"""
 ---
 module: nd_local_user
 version_added: "1.4.0"
-short_description: Manage local users on Nexus Dashboard
+short_description: Manage local users on Cisco Nexus Dashboard
 description:
 - Manage local users on Cisco Nexus Dashboard (ND).
 - It supports creating, updating, querying, and deleting local users.
@@ -152,7 +152,7 @@ EXAMPLES = r"""
 - name: Query all local users
   cisco.nd.nd_local_user:
     state: query
-  register: all_keys
+  register: query_all
 
 - name: Delete an local user
   cisco.nd.nd_local_user:
@@ -264,7 +264,7 @@ def main():
     elif state == "absent":
         if nd.existing:
             if not module.check_mode:
-                nd.request(path="{0}/{1}".format(path, login_id), method="DELETE")
+                nd.request(path=updated_path, method="DELETE")
             nd.existing = {}
 
     nd.exit_json()
