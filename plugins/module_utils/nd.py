@@ -18,7 +18,6 @@ import tempfile
 from ansible.module_utils.basic import json
 from ansible.module_utils.basic import env_fallback
 from ansible.module_utils.six import PY3
-from ansible.module_utils.six.moves import filterfalse
 from ansible.module_utils.six.moves.urllib.parse import urlencode
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import Connection
@@ -73,53 +72,27 @@ if PY3:
 
 
 def issubset(subset, superset):
-    """Recurse through nested dictionary and compare entries"""
+    """Recurse through a nested dictionary and check if it is a subset of another."""
 
-    # Both objects are the same object
-    if subset is superset:
-        return True
-
-    # Both objects are identical
-    if subset == superset:
-        return True
-
-    # Both objects have a different type
-    if isinstance(subset) is not isinstance(superset):
+    if type(subset) is not type(superset):
         return False
 
-    for key, value in subset.items():
-        # Ignore empty values
-        if value is None:
-            return True
+    if not isinstance(subset, dict):
+        if isinstance(subset, list):
+            return all(item in superset for item in subset)
+        return subset == superset
 
-        # Item from subset is missing from superset
+    for key, value in subset.items():
+        if value is None:
+            continue
+
         if key not in superset:
             return False
 
-        # Item has different types in subset and superset
-        if isinstance(superset.get(key)) is not isinstance(value):
-            return False
+        superset_value = superset.get(key)
 
-        # Compare if item values are subset
-        if isinstance(value, dict):
-            if not issubset(superset.get(key), value):
-                return False
-        elif isinstance(value, list):
-            try:
-                # NOTE: Fails for lists of dicts
-                if not set(value) <= set(superset.get(key)):
-                    return False
-            except TypeError:
-                # Fall back to exact comparison for lists of dicts
-                diff = list(filterfalse(lambda i: i in value, superset.get(key))) + list(filterfalse(lambda j: j in superset.get(key), value))
-                if diff:
-                    return False
-        elif isinstance(value, set):
-            if not value <= superset.get(key):
-                return False
-        else:
-            if not value == superset.get(key):
-                return False
+        if not issubset(value, superset_value):
+            return False
 
     return True
 
@@ -210,6 +183,9 @@ class NDModule(object):
 
         # info output
         self.previous = dict()
+        self.before = []
+        self.commands = []
+        self.after = []
         self.proposed = dict()
         self.sent = dict()
         self.stdout = None
@@ -433,6 +409,7 @@ class NDModule(object):
         if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
             if self.params.get("output_level") in ("debug", "info"):
                 self.result["previous"] = self.previous
+                self.result["before"] = self.before
             # FIXME: Modified header only works for PATCH
             if not self.has_modified and self.previous != self.existing:
                 self.result["changed"] = True
@@ -450,8 +427,10 @@ class NDModule(object):
             if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
                 self.result["sent"] = self.sent
                 self.result["proposed"] = self.proposed
+                self.result["commands"] = self.commands
 
         self.result["current"] = self.existing
+        self.result["after"] = self.after
 
         if self.module._diff and self.result.get("changed") is True:
             self.result["diff"] = dict(
@@ -468,6 +447,7 @@ class NDModule(object):
         if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
             if self.params.get("output_level") in ("debug", "info"):
                 self.result["previous"] = self.previous
+                self.result["before"] = self.before
             # FIXME: Modified header only works for PATCH
             if not self.has_modified and self.previous != self.existing:
                 self.result["changed"] = True
@@ -486,8 +466,10 @@ class NDModule(object):
             if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
                 self.result["sent"] = self.sent
                 self.result["proposed"] = self.proposed
+                self.result["commands"] = self.commands
 
         self.result["current"] = self.existing
+        self.result["after"] = self.after
 
         self.result.update(**kwargs)
         self.module.fail_json(msg=msg, **self.result)
@@ -499,15 +481,21 @@ class NDModule(object):
             existing["password"] = self.sent.get("password")
         return not issubset(self.sent, existing)
 
-    def get_diff(self, unwanted=None):
+    def get_diff(self, unwanted=None, previous=None, payload=None):
         """Check if existing payload and sent payload and removing keys that are not required"""
         if unwanted is None:
             unwanted = []
-        if not self.existing and self.sent:
-            return True
+
+        if previous is None and payload is None:
+            if not self.existing and self.sent:
+                return True
 
         existing = self.existing
         sent = self.sent
+
+        if previous and payload:
+            existing = previous
+            sent = payload
 
         for key in unwanted:
             if isinstance(key, str):
@@ -516,6 +504,7 @@ class NDModule(object):
                         del existing[key]
                     except KeyError:
                         pass
+                if key in sent:
                     try:
                         del sent[key]
                     except KeyError:
@@ -524,12 +513,14 @@ class NDModule(object):
                 key_path, last = key[:-1], key[-1]
                 try:
                     existing_parent = reduce(dict.get, key_path, existing)
-                    del existing_parent[last]
+                    if existing_parent is not None:
+                        del existing_parent[last]
                 except KeyError:
                     pass
                 try:
                     sent_parent = reduce(dict.get, key_path, sent)
-                    del sent_parent[last]
+                    if sent_parent is not None:
+                        del sent_parent[last]
                 except KeyError:
                     pass
         return not issubset(sent, existing)
@@ -567,3 +558,8 @@ class NDModule(object):
                 return obj
 
         return None
+
+    def delete(self, check_mode, path):
+        if not check_mode:
+            self.request(path, method="DELETE")
+        return {"path": path, "method": "DELETE"}

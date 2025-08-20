@@ -156,7 +156,11 @@ ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED = (
     "disable",
     "restart",
     "delete",
+    "deleted",
     "update",
+    "merged",
+    "replaced",
+    "overridden",
 )
 
 INTERFACE_FLOW_RULES_TYPES_MAPPING = {"port_channel": "PORTCHANNEL", "physical": "PHYSICAL", "l3out_sub_interface": "L3_SUBIF", "l3out_svi": "SVI"}
