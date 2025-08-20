@@ -162,7 +162,6 @@ def main():
         license_tier=dict(type="str", choices=["advantage", "essentials", "premier"]),
         features=dict(type="list", elements="str", choices=["telemetry", "orchestration"]),
         inband_epg=dict(type="str"),
-        orchestration=dict(type="bool"),
         security_domain=dict(type="str"),
         validate_peer_certificate=dict(type="bool"),
         state=dict(type="str", default="present", choices=["absent", "present", "query"]),
