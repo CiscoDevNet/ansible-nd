@@ -29,6 +29,7 @@ options:
   login_id:
     description:
     - The login ID of the local user.
+    - The O(login_id) must be defined when creating, updating or deleting a local user.
     type: str
   first_name:
     description:
@@ -43,24 +44,28 @@ options:
     - The password of the local user.
     - Password must have a minimum of 8 characters to a maximum of 64 characters.
     - Password must have three of the following; one number, one lower case character, one upper case character, one special character.
+    - The O(user_password) must be defined when creating a new local_user.
     type: str
   reuse_limitation:
     description:
     - The number of different passwords a user must use before they can reuse a previous one.
+    - It defaults to C(0) when unset during creation.
     type: int
   time_interval_limitation:
     description:
     - The minimum time period that must pass before a previous password can be reused.
+    - It defaults to C(0) when unset during creation.
     type: int
   security_domains:
     description:
     - The list of Security Domains and Roles for the local user.
+    - At least, one Security Domain must be defined when creating a new local user.
     type: list
     elements: dict
     suboptions:
       name:
         description:
-        - The name of the Security Domain to which give the local user access.
+        - The name of the Security Domain to which the local user is given access.
         type: str
         required: true
         aliases: [ security_domain_name, domain_name ]
@@ -80,6 +85,7 @@ options:
     - To enable/disable the Remote User Authorization of the local user.
     - Remote User Authorization is used for signing into Nexus Dashboard when using identity providers that cannot provide authorization claims.
       Once this attribute is enabled, the local user ID cannot be used to directly login to Nexus Dashboard.
+    - It defaults to C(false) when unset during creation.
     type: bool
   state:
     description:
@@ -94,7 +100,7 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
-- This module is not idempotent when creating or updating a local user object.
+- This module is not idempotent when creating or updating a local user object when O(user_password) is used.
 """
 
 EXAMPLES = r"""
@@ -154,7 +160,7 @@ EXAMPLES = r"""
     state: query
   register: query_all
 
-- name: Delete an local user
+- name: Delete a local user
   cisco.nd.nd_local_user:
     login_id: local_user
     state: absent
@@ -253,13 +259,13 @@ def main():
 
         nd.sanitize(payload)
 
-        if not module.check_mode:
-            if nd.existing:
-                nd.existing = nd.request(path=updated_path, method="PUT", data=payload)
-            else:
-                nd.existing = nd.request(path=path, method="POST", data=payload)
-        else:
+        if module.check_mode:
             nd.existing = nd.proposed
+        else:
+            if not nd.existing:
+                nd.existing = nd.request(path=path, method="POST", data=payload)
+            elif nd.get_diff(unwanted=[["passwordPolicy", "passwordChangeTime"], ["userID"]]):
+                nd.existing = nd.request(path=updated_path, method="PUT", data=payload)
 
     elif state == "absent":
         if nd.existing:

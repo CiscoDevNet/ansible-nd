@@ -105,8 +105,8 @@
       - nm_create_local_user_2.current.rbac.domains.all.roles == []
 
 # UPDATE
-- name: Update local user name (check mode)
-  cisco.nd.nd_local_user: &update_local_user
+- name: Update all ansible_local_user's attributes (check mode)
+  cisco.nd.nd_local_user: &update_first_local_user
     <<: *create_local_user
     email: updatedansibleuser@example.com
     first_name: Updated Ansible first name
@@ -123,10 +123,32 @@
   check_mode: true
   register: cm_update_local_user
 
-- name: Update local user name (normal mode)
+- name: Update local user (normal mode)
   cisco.nd.nd_local_user:
-    <<: *update_local_user
+    <<: *update_first_local_user
   register: nm_update_local_user
+
+- name: Update all ansible_local_user_2's attributes except password
+  cisco.nd.nd_local_user: &update_second_local_user
+    <<: *nd_info
+    email: secondansibleuser@example.com
+    login_id: ansible_local_user_2
+    first_name: Second Ansible first name
+    last_name: Second Ansible last name
+    reuse_limitation: 20
+    time_interval_limitation: 10
+    security_domains:
+      - name: all
+        roles: fabric_admin
+    remote_id_claim: ansible_remote_user_2
+    remote_user_authorization: true
+    state: present
+  register: nm_update_local_user_2
+
+- name: Update all ansible_local_user_2's attributes except password again (idempotency)
+  cisco.nd.nd_local_user:
+    <<: *update_second_local_user
+  register: nm_update_local_user_2_again
 
 - name: Verify local user update tasks
   ansible.builtin.assert:
@@ -181,6 +203,58 @@
       - nm_update_local_user.current.rbac.domains.all.roles.0 == "super-admin"
       - nm_update_local_user.current.remoteIDClaim == ""
       - nm_update_local_user.current.xLaunch == false
+      - nm_update_local_user_2 is changed
+      - nm_update_local_user_2.previous.loginID == "ansible_local_user_2"
+      - nm_update_local_user_2.previous.passwordPolicy.reuseLimitation == 0
+      - nm_update_local_user_2.previous.passwordPolicy.timeIntervalLimitation == 0
+      - nm_update_local_user_2.previous.rbac.domains.all.roles == []
+      - nm_update_local_user_2.previous.xLaunch == false
+      - nm_update_local_user_2.proposed.email == "secondansibleuser@example.com"
+      - nm_update_local_user_2.proposed.firstName == "Second Ansible first name"
+      - nm_update_local_user_2.proposed.lastName == "Second Ansible last name"
+      - nm_update_local_user_2.proposed.loginID == "ansible_local_user_2"
+      - nm_update_local_user_2.proposed.passwordPolicy.reuseLimitation == 20
+      - nm_update_local_user_2.proposed.passwordPolicy.timeIntervalLimitation == 10
+      - nm_update_local_user_2.proposed.rbac.domains.all.roles.0 == "fabric-admin"
+      - nm_update_local_user_2.proposed.remoteIDClaim == "ansible_remote_user_2"
+      - nm_update_local_user_2.proposed.xLaunch == true
+      - nm_update_local_user_2.current.email == "secondansibleuser@example.com"
+      - nm_update_local_user_2.current.firstName == "Second Ansible first name"
+      - nm_update_local_user_2.current.lastName == "Second Ansible last name"
+      - nm_update_local_user_2.current.loginID == "ansible_local_user_2"
+      - nm_update_local_user_2.current.passwordPolicy.reuseLimitation == 20
+      - nm_update_local_user_2.current.passwordPolicy.timeIntervalLimitation == 10
+      - nm_update_local_user_2.current.rbac.domains.all.roles.0 == "fabric-admin"
+      - nm_update_local_user_2.current.remoteIDClaim == "ansible_remote_user_2"
+      - nm_update_local_user_2.current.xLaunch == true
+      - nm_update_local_user_2_again.previous.email == "secondansibleuser@example.com"
+      - nm_update_local_user_2_again.previous.firstName == "Second Ansible first name"
+      - nm_update_local_user_2_again.previous.lastName == "Second Ansible last name"
+      - nm_update_local_user_2_again.previous.loginID == "ansible_local_user_2"
+      - nm_update_local_user_2_again.previous.passwordPolicy.reuseLimitation == 20
+      - nm_update_local_user_2_again.previous.passwordPolicy.timeIntervalLimitation == 10
+      - nm_update_local_user_2_again.previous.rbac.domains.all.roles.0 == "fabric-admin"
+      - nm_update_local_user_2_again.previous.remoteIDClaim == "ansible_remote_user_2"
+      - nm_update_local_user_2_again.previous.xLaunch == true
+      - nm_update_local_user_2_again.proposed.email == "secondansibleuser@example.com"
+      - nm_update_local_user_2_again.proposed.firstName == "Second Ansible first name"
+      - nm_update_local_user_2_again.proposed.lastName == "Second Ansible last name"
+      - nm_update_local_user_2_again.proposed.loginID == "ansible_local_user_2"
+      - nm_update_local_user_2_again.proposed.passwordPolicy.reuseLimitation == 20
+      - nm_update_local_user_2_again.proposed.passwordPolicy.timeIntervalLimitation == 10
+      - nm_update_local_user_2_again.proposed.rbac.domains.all.roles.0 == "fabric-admin"
+      - nm_update_local_user_2_again.proposed.remoteIDClaim == "ansible_remote_user_2"
+      - nm_update_local_user_2_again.proposed.xLaunch == true
+      - nm_update_local_user_2_again.current.email == "secondansibleuser@example.com"
+      - nm_update_local_user_2_again.current.firstName == "Second Ansible first name"
+      - nm_update_local_user_2_again.current.lastName == "Second Ansible last name"
+      - nm_update_local_user_2_again.current.loginID == "ansible_local_user_2"
+      - nm_update_local_user_2_again.current.passwordPolicy.reuseLimitation == 20
+      - nm_update_local_user_2_again.current.passwordPolicy.timeIntervalLimitation == 10
+      - nm_update_local_user_2_again.current.rbac.domains.all.roles.0 == "fabric-admin"
+      - nm_update_local_user_2_again.current.remoteIDClaim == "ansible_remote_user_2"
+      - nm_update_local_user_2_again.current.xLaunch == true
+
 
 # QUERY
 - name: Query all local users
