@@ -223,8 +223,8 @@ def main():
 
     path = "/api/v1/infra/aaa/localUsers"
     if login_id:
-        updated_path = "{0}/{1}".format(path, login_id)
-        nd.existing = nd.previous = nd.query_obj(path=updated_path, ignore_not_found_error=True)
+        login_id_path = "{0}/{1}".format(path, login_id)
+        nd.existing = nd.previous = nd.query_obj(path=login_id_path, ignore_not_found_error=True)
     else:
         nd.existing = nd.query_obj(path=path, ignore_not_found_error=True)
 
@@ -265,12 +265,12 @@ def main():
             if not nd.existing:
                 nd.existing = nd.request(path=path, method="POST", data=payload)
             elif nd.get_diff(unwanted=[["passwordPolicy", "passwordChangeTime"], ["userID"]]):
-                nd.existing = nd.request(path=updated_path, method="PUT", data=payload)
+                nd.existing = nd.request(path=login_id_path, method="PUT", data=payload)
 
     elif state == "absent":
         if nd.existing:
             if not module.check_mode:
-                nd.request(path=updated_path, method="DELETE")
+                nd.request(path=login_id_path, method="DELETE")
             nd.existing = {}
 
     nd.exit_json()
