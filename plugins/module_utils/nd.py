@@ -581,9 +581,7 @@ class NDModule(object):
                     continue
 
                 if recursive and isinstance(item_value, (dict, list)):
-                    sanitized_dict[item_key] = self.delete_none_values(
-                        item_value, None, recursive, is_recursive_call=True
-                    )
+                    sanitized_dict[item_key] = self.delete_none_values(item_value, None, recursive, is_recursive_call=True)
                 else:
                     sanitized_dict[item_key] = item_value
             sanitized_obj = sanitized_dict
@@ -595,9 +593,7 @@ class NDModule(object):
                     continue
 
                 if recursive and isinstance(item, (dict, list)):
-                    sanitized_list.append(
-                        self.delete_none_values(item, None, recursive, is_recursive_call=True)
-                    )
+                    sanitized_list.append(self.delete_none_values(item, None, recursive, is_recursive_call=True))
                 else:
                     sanitized_list.append(item)
             sanitized_obj = sanitized_list
@@ -618,7 +614,7 @@ class NDModule(object):
             "status": status,
             "before": deepcopy(before_data) if before_data is not None else {},
             "after": deepcopy(after_data) if after_data is not None else {},
-            "sent_payload": deepcopy(sent_payload_data) if sent_payload_data is not None else {}
+            "sent_payload": deepcopy(sent_payload_data) if sent_payload_data is not None else {},
         }
         self.nd_logs.append(item_result)
 
@@ -635,10 +631,7 @@ class NDModule(object):
                     self.before_data[identifier] = existing_payload
                     delete_data = delete_callback(self)
                     self.after_data[identifier] = delete_data
-                    self.add_logs(
-                        identifier=identifier, status="deleted",
-                        before_data=existing_payload, after_data=delete_data
-                    )
+                    self.add_logs(identifier=identifier, status="deleted", before_data=existing_payload, after_data=delete_data)
                     item_changed = True
 
             if item_changed:
@@ -657,24 +650,19 @@ class NDModule(object):
                         update_data = update_callback(self)
                         self.after_data[identifier] = update_data
                         self.add_log(
-                            identifier=identifier, status="updated",
-                            before_data=existing_payload, after_data=update_data, sent_payload_data=self.sent
+                            identifier=identifier, status="updated", before_data=existing_payload, after_data=update_data, sent_payload_data=self.sent
                         )
                         item_changed = True
                     else:
                         self.after_data[identifier] = existing_payload or {}
                         self.add_log(
-                            identifier=identifier, status="no_change",
-                            before_data=existing_payload, after_data=existing_payload, sent_payload_data=None
+                            identifier=identifier, status="no_change", before_data=existing_payload, after_data=existing_payload, sent_payload_data=None
                         )
                 else:
                     self.sanitize(desired_payload, existing={})
                     create_data = create_callback(self)
                     self.after_data[identifier] = create_data
-                    self.add_log(
-                        identifier=identifier, status="created",
-                        before_data={}, after_data=create_data, sent_payload_data=self.sent
-                    )
+                    self.add_log(identifier=identifier, status="created", before_data={}, after_data=create_data, sent_payload_data=self.sent)
                     item_changed = True
 
             if item_changed:
@@ -688,16 +676,10 @@ class NDModule(object):
                     self.before_data[identifier] = existing_payload
                     delete_data = delete_callback(self)
                     self.after_data[identifier] = delete_data
-                    self.add_log(
-                        identifier=identifier, status="deleted",
-                        before_data=existing_payload, after_data=delete_data
-                    )
+                    self.add_log(identifier=identifier, status="deleted", before_data=existing_payload, after_data=delete_data)
                     item_changed = True
                 else:
                     self.before_data = {}
-                    self.add_log(
-                        identifier=identifier, status="not_found_for_deletion",
-                        before_data={}, after_data={}
-                    )
+                    self.add_log(identifier=identifier, status="not_found_for_deletion", before_data={}, after_data={})
             if item_changed:
                 self.changed = True
