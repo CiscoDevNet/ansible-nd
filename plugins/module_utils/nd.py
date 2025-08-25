@@ -600,7 +600,7 @@ class NDModule(object):
 
         else:
             if not is_recursive_call:
-                self.module.warn(f"Object to sanitize must be of type list or dict. Got {type(obj_to_sanitize)}")
+                self.module.warn("Object to sanitize must be of type list or dict. Got {0}".format(type(obj_to_sanitize)))
             sanitized_obj = deepcopy(obj_to_sanitize)
 
         if not is_recursive_call:
