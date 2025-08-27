@@ -18,7 +18,8 @@ version_added: "1.4.0"
 short_description: Manage local users on Cisco Nexus Dashboard
 description:
 - Manage local users on Cisco Nexus Dashboard (ND).
-- It supports creating, updating, querying, and deleting local users.
+- This module supports creating, updating, querying, and deleting local users.
+- This module is only supported on ND v4.1.0 and later.
 author:
 - Gaspard Micol (@gmicol)
 options:
@@ -99,7 +100,6 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
 - This module is not idempotent when creating or updating a local user object when O(user_password) is used.
 """
 
@@ -126,7 +126,7 @@ EXAMPLES = r"""
 - name: Create local user with minimal configuration
   cisco.nd.nd_local_user:
     login_id: local_user_min
-    user_password: localUserMinuser_password
+    user_password: localUserMinPassword1%
     security_domain: all
     state: present
 
