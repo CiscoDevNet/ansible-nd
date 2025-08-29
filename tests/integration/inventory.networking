@@ -29,3 +29,6 @@ external_data_service_ip=<TODO>
 data_ip=<TODO>
 data_gateway=<TODO>
 service_package_host=173.36.219.254
+storage_server_host=173.36.219.25
+storage_server_username=backup
+storage_server_password=FAV0edp!whk2uqk6hap

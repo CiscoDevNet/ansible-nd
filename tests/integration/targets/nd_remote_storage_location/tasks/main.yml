@@ -34,12 +34,12 @@
     name: ansible-test-remote-storage-sftp
     description: sftp
     remote_port: 22
-    hostname_ip: remote-stor-01.dmz.sjc19.dcn.pm
+    hostname_ip: "{{ storage_server_host }}"
     path: "/tmp"
     sftp_scp:
-      password: FAV0edp!whk2uqk6hap
+      password: "{{ storage_server_password }}"
       protocol: sftp
-      username: backup
+      username: "{{ storage_server_username }}"
     state: present
   check_mode: true
   register: cm_add_sftp_remote_location
@@ -62,12 +62,12 @@
     name: ansible-test-remote-storage-scp
     description: scp
     remote_port: 22
-    hostname_ip: remote-stor-01.dmz.sjc19.dcn.pm
+    hostname_ip: "{{ storage_server_host }}"
     path: "/tmp"
     sftp_scp:
-      password: FAV0edp!whk2uqk6hap
+      password: "{{ storage_server_password }}"
       protocol: scp
-      username: backup
+      username: "{{ storage_server_username }}"
     state: present
   check_mode: true
   register: cm_add_scp_remote_location
@@ -105,7 +105,7 @@
     name: ansible-test-remote-storage-nas
     description: nas
     remote_port: 22
-    hostname_ip: remote-stor-01.dmz.sjc19.dcn.pm
+    hostname_ip: "{{ storage_server_host }}"
     path: "/tmp"
     nas:
       alert_threshold: 15
@@ -174,13 +174,13 @@
     name: ansible-test-remote-storage-sftp-ssh
     description: sftp-ssh
     remote_port: 22
-    hostname_ip: remote-stor-01.dmz.sjc19.dcn.pm
+    hostname_ip: "{{ storage_server_host }}"
     path: "/home/backup/173_36_219_50"
     sftp_scp:
       ssh_key: "{{ lookup('file', 'pki/openssh_rsa.key') }}"
-      passphrase: FAV0edp!whk2uqk6hap
+      passphrase: "{{ storage_server_password }}"
       protocol: sftp
-      username: backup
+      username: "{{ storage_server_username }}"
     state: present
   register: add_sftp_remote_location_ssh_key
 
@@ -318,12 +318,12 @@
     name: ansible-test-remote-storage-sftp
     description: scp
     remote_port: 22
-    hostname_ip: remote-stor-01.dmz.sjc19.dcn.pm
+    hostname_ip: "{{ storage_server_host }}"
     path: "/tmp"
     sftp_scp:
-      password: FAV0edp!whk2uqk6hap
+      password: "{{ storage_server_password }}"
       protocol: scp
-      username: backup
+      username: "{{ storage_server_username }}"
     state: present
   check_mode: true
   register: cm_update_sftp_remote_location
@@ -346,13 +346,13 @@
     name: ansible-test-remote-storage-scp
     description: sftp
     remote_port: 22
-    hostname_ip: remote-stor-01.dmz.sjc19.dcn.pm
+    hostname_ip: "{{ storage_server_host }}"
     path: "/tmp"
     sftp_scp:
       ssh_key: "{{ lookup('file', 'pki/openssh_rsa.key') }}"
-      passphrase: FAV0edp!whk2uqk6hap
+      passphrase: "{{ storage_server_password }}"
       protocol: sftp
-      username: backup
+      username: "{{ storage_server_username }}"
     state: present
   register: update_scp_remote_location
 
@@ -362,11 +362,11 @@
     name: ansible-test-remote-storage-scp
     description: sftp
     remote_port: 22
-    hostname_ip: remote-stor-01.dmz.sjc19.dcn.pm
+    hostname_ip: "{{ storage_server_host }}"
     path: "/tmp"
     sftp_scp:
-      password: FAV0edp!whk2uqk6hap
-      username: backup
+      password: "{{ storage_server_password }}"
+      username: "{{ storage_server_username }}"
     state: present
   register: change_auth_type
 
@@ -377,7 +377,7 @@
     name: ansible-test-remote-storage-nas
     description: nas-updated
     remote_port: 22
-    hostname_ip: remote-stor-01.dmz.sjc19.dcn.pm
+    hostname_ip: "{{ storage_server_host }}"
     path: "/tmp"
     nas:
       limit: 20MB
@@ -556,14 +556,14 @@
     output_level: info
     name: nt-auth-ssh-key-password
     remote_port: 22
-    hostname_ip: remote-stor-01.dmz.sjc19.dcn.pm
+    hostname_ip: "{{ storage_server_host }}"
     path: "/home/backup/173_36_219_50"
     sftp_scp:
       ssh_key: "{{ lookup('file', 'pki/openssh_rsa.key') }}"
-      password: FAV0edp!whk2uqk6hap
-      passphrase: FAV0edp!whk2uqk6hap
+      password: "{{ storage_server_password }}"
+      passphrase: "{{ storage_server_password }}"
       protocol: sftp
-      username: backup
+      username: "{{ storage_server_username }}"
     state: present
   register: nt_auth_ssh_key_password
   ignore_errors: true
@@ -573,12 +573,12 @@
     output_level: info
     name: nt-auth-without-ssh-key-password
     remote_port: 22
-    hostname_ip: remote-stor-01.dmz.sjc19.dcn.pm
+    hostname_ip: "{{ storage_server_host }}"
     path: "/home/backup/173_36_219_50"
     sftp_scp:
-      passphrase: FAV0edp!whk2uqk6hap
+      passphrase: "{{ storage_server_password }}"
       protocol: sftp
-      username: backup
+      username: "{{ storage_server_username }}"
     state: present
   register: nt_auth_without_ssh_key_password
   ignore_errors: true
@@ -588,12 +588,12 @@
     output_level: info
     name: nt-auth-without-ssh-key-password
     remote_port: 22
-    hostname_ip: remote-stor-01.dmz.sjc19.dcn.pm
+    hostname_ip: "{{ storage_server_host }}"
     path: "/home/backup/173_36_219_50"
     sftp_scp:
-      password: FAV0edp!whk2uqk6hap
+      password: "{{ storage_server_password }}"
       protocol: sftp
-      username: backup
+      username: "{{ storage_server_username }}"
     nas:
       alert_threshold: 15
       limit: 10MB
