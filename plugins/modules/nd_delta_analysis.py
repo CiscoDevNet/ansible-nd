@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2023, Alejandro de Alda (@adealdag) <adealdag@cisco.com>
+# Copyright: (c) 2025, Samita Bhattacharjee (@samiib) <samitab@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
@@ -19,6 +20,7 @@ description:
 - Manage delta analysis jobs on Cisco Nexus Dashboard Insights (NDI).
 author:
 - Alejandro de Alda (@adealdag)
+- Samita Bhattacharjee (@samiib)
 options:
   insights_group:
     description:
@@ -62,6 +64,20 @@ options:
     - Ignored if state is C(query) or C(absent)
     type: str
     aliases: [ later_epoch_time ]
+  job_wait_delay:
+    description:
+    - The time to wait in seconds between queries to check for delta analysis job completion.
+    - This option is only used when O(state=validate).
+    type: int
+    default: 1
+    aliases: [ wait_delay ]
+  job_wait_timeout:
+    description:
+    - The total time in seconds to wait for the delta analysis job to complete before validating.
+    - This option is only used when O(state=validate).
+    - When the timeout is C(0), not provided or a negative value the module will wait indefinitely.
+    type: int
+    aliases: [ wait_timeout ]
   state:
     description:
     - Use C(present) or C(absent) for creating or deleting a delta analysis job.
@@ -127,7 +143,7 @@ EXAMPLES = r"""
 RETURN = r"""
 """
 
-import datetime
+import datetime, time
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
 from ansible.module_utils.basic import AnsibleModule
@@ -150,6 +166,8 @@ def main():
         later_snapshot=dict(type="str", aliases=["later_epoch_uuid", "later_epoch", "later_epoch_id"]),
         earlier_snapshot_time=dict(type="str", aliases=["earlier_epoch_time"]),
         later_snapshot_time=dict(type="str", aliases=["later_epoch_time"]),
+        job_wait_delay=dict(type="int", default=1, aliases=["wait_delay"]),
+        job_wait_timeout=dict(type="int", aliases=["wait_timeout"]),
         state=dict(type="str", default="query", choices=["query", "absent", "present", "validate"]),
     )
 
@@ -178,6 +196,10 @@ def main():
     later_snapshot = nd.params.get("later_snapshot")
     earlier_snapshot_time = nd.params.get("earlier_snapshot_time")
     later_snapshot_time = nd.params.get("later_snapshot_time")
+    wait_delay = nd.params.get("job_wait_delay")
+    wait_timeout = nd.params.get("job_wait_timeout")
+    if wait_timeout is None or wait_timeout < 0:
+        wait_timeout = 0
 
     if name:
         nd.existing = ndi.query_delta_analysis(insights_group, fabric, jobName=name)
@@ -222,6 +244,7 @@ def main():
     elif state == "validate":
         epoch_choice = "epoch2"
         exclude_ack_anomalies = True
+        start_time = time.time()
         # Wait for Epoch Delta Analysis to complete
         while nd.existing.get("operSt") not in ["COMPLETE", "FAILED"]:
             try:
@@ -232,6 +255,10 @@ def main():
                     break
             except BaseException:
                 nd.fail_json(msg="Epoch Delta Analysis {0} not found".format(name))
+            if wait_timeout and time.time() - start_time >= wait_timeout:
+                nd.fail_json(msg="Timeout occurred after {0} seconds while waiting for Epoch Delta Analysis {1} to complete".format(wait_timeout, name))
+            time.sleep(wait_delay)
+
         # Evaluate Epoch Delta Analysis
         if nd.existing.get("operSt") == "FAILED":
             nd.fail_json(msg="Epoch Delta Analysis {0} has failed".format(name))
