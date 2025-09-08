@@ -368,11 +368,13 @@ class HttpApi(HttpApiBase):
         """Process the return code and response object from ND"""
         response_data = None
         response_code = -1
+        response_msg = None
         self.info.update(dict(url=path))
         if data is not None:
             response_data = self._response_to_json(data)
         if response is not None:
             response_code = response.getcode()
+            response_msg = response.msg
             path = response.geturl()
             self.info.update(self._get_formated_info(response))
 
@@ -394,7 +396,7 @@ class HttpApi(HttpApiBase):
         self.info["METHOD"] = method
         self.info["REQUEST_PATH"] = path
         self.info["DATA"] = response_data
-        self.info["MESSAGE"] = response.msg
+        self.info["MESSAGE"] = response_msg
 
         return self.info
 
