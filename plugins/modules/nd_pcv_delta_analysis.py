@@ -60,7 +60,7 @@ options:
     - The time to wait in seconds between queries to check for Pre-change Analysis job completion.
     - This option is only used when O(state=validate).
     type: int
-    default: 1
+    default: 5
     aliases: [ wait_delay ]
   job_wait_timeout:
     description:
@@ -102,7 +102,7 @@ EXAMPLES = r"""
     state: validate
     exclude_ack_anomalies: true
     snapshot_choice: later_snapshot
-    job_wait_delay: 2
+    job_wait_delay: 5
     job_wait_timeout: 600
   register: pcv_result
 
@@ -144,7 +144,7 @@ def main():
         state=dict(type="str", default="query", choices=["query", "validate"]),
         exclude_ack_anomalies=dict(type="bool", default=False),
         snapshot_choice=dict(type="str", default="later_snapshot", choices=list(snapshot_choice_map), aliases=["epoch_choice"]),
-        job_wait_delay=dict(type="int", default=1, aliases=["wait_delay"]),
+        job_wait_delay=dict(type="int", default=5, aliases=["wait_delay"]),
         job_wait_timeout=dict(type="int", aliases=["wait_timeout"]),
     )
 
