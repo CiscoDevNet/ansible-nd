@@ -155,8 +155,8 @@ class NDI:
         if jobId:
             delta_job_path = (
                 self.jobs_ig_path
-                + "?jobType=EPOCH-DELTA-ANALYSIS&insightsGroupName={0}&fabricName={1}&filter=(!configData:pcvJobId%20AND%20jobId:{2})".format(
-                    ig_name, site_name, jobId
+                + "?jobType=EPOCH-DELTA-ANALYSIS&insightsGroupName={0}&fabricName={1}&filter=(!configData:pcvJobId%20AND%20jobId:{2})&startTs={3}".format(
+                    ig_name, site_name, jobId, 0
                 )
             )
             entries = self.query_entry(delta_job_path, 1)
@@ -167,8 +167,8 @@ class NDI:
         elif jobName:
             delta_job_path = (
                 self.jobs_ig_path
-                + "?jobType=EPOCH-DELTA-ANALYSIS&insightsGroupName={0}&fabricName={1}&filter=(!configData:pcvJobId%20AND%20jobName:{2})".format(
-                    ig_name, site_name, jobName
+                + "?jobType=EPOCH-DELTA-ANALYSIS&insightsGroupName={0}&fabricName={1}&filter=(!configData:pcvJobId%20AND%20jobName:{2})&startTs={3}".format(
+                    ig_name, site_name, jobName, 0
                 )
             )
             entries = self.query_entry(delta_job_path, 1)
