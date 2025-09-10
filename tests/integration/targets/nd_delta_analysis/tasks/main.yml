@@ -58,6 +58,23 @@
     that:
       - delta_analysis_w_uuid is not changed
 
+- name: Validate delta_analysis_w_uuid job with 10 second timeout
+  cisco.nd.nd_delta_analysis:
+    <<: *ndi_info
+    <<: *ndi_site
+    name: testDeltaAnalysis-uuid
+    state: validate
+    wait_timeout: 10
+    wait_delay: 2
+  ignore_errors: true
+  register: delta_analysis_w_uuid_timeout
+
+- name: Verify delta_analysis_w_uuid_timeout
+  ansible.builtin.assert:
+    that:
+      - delta_analysis_w_uuid_timeout is failed
+      - delta_analysis_w_uuid_timeout.msg == "Timeout occurred after 10 seconds while waiting for Epoch Delta Analysis testDeltaAnalysis-uuid to complete"
+
 # WAIT AND LOOP UNTIL INSTANT ANALYSIS IS COMPLETED
 - name: Wait until delta analysis is completed
   cisco.nd.nd_delta_analysis:
