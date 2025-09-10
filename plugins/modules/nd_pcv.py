@@ -59,7 +59,7 @@ options:
     - The time to wait in seconds between queries to check for Pre-change Analysis job completion.
     - This option is only used when O(state=wait_and_query).
     type: int
-    default: 1
+    default: 5
     aliases: [ wait_delay ]
   job_wait_timeout:
     description:
@@ -132,7 +132,7 @@ EXAMPLES = r"""
     insights_group: igName
     fabric: fabricName
     name: demoName
-    job_wait_delay: 2
+    job_wait_delay: 5
     job_wait_timeout: 600
     state: wait_and_query
 
@@ -164,7 +164,7 @@ def main():
         fabric=dict(type="str", aliases=["site", "site_name", "fabric_name"]),
         file=dict(type="str"),
         manual=dict(type="str"),
-        job_wait_delay=dict(type="int", default=1, aliases=["wait_delay"]),
+        job_wait_delay=dict(type="int", default=5, aliases=["wait_delay"]),
         job_wait_timeout=dict(type="int", aliases=["wait_timeout"]),
         state=dict(type="str", default="query", choices=["query", "absent", "present", "wait_and_query"]),
     )

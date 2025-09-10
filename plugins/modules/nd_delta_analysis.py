@@ -69,7 +69,7 @@ options:
     - The time to wait in seconds between queries to check for delta analysis job completion.
     - This option is only used when O(state=validate).
     type: int
-    default: 1
+    default: 5
     aliases: [ wait_delay ]
   job_wait_timeout:
     description:
@@ -115,6 +115,8 @@ EXAMPLES = r"""
     insights_group: exampleIG
     fabric: fabricName
     name: testDeltaAnalysis
+    job_wait_delay: 5
+    job_wait_timeout: 600
     state: validate
 
 - name: Delete an existing delta analysis
@@ -166,7 +168,7 @@ def main():
         later_snapshot=dict(type="str", aliases=["later_epoch_uuid", "later_epoch", "later_epoch_id"]),
         earlier_snapshot_time=dict(type="str", aliases=["earlier_epoch_time"]),
         later_snapshot_time=dict(type="str", aliases=["later_epoch_time"]),
-        job_wait_delay=dict(type="int", default=1, aliases=["wait_delay"]),
+        job_wait_delay=dict(type="int", default=5, aliases=["wait_delay"]),
         job_wait_timeout=dict(type="int", aliases=["wait_timeout"]),
         state=dict(type="str", default="query", choices=["query", "absent", "present", "validate"]),
     )
