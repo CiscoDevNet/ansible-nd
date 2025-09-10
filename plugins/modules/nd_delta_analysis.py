@@ -145,7 +145,8 @@ EXAMPLES = r"""
 RETURN = r"""
 """
 
-import datetime, time
+import time
+import datetime
 from ansible_collections.cisco.nd.plugins.module_utils.ndi import NDI
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
 from ansible.module_utils.basic import AnsibleModule
