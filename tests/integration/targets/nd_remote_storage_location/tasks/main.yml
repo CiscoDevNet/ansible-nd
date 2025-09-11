@@ -14,7 +14,7 @@
     - ansible-test-remote-storage-sftp-ssh
   ignore_errors: true
 
-# To manage the NAS storage inconsistent 'There was a problem proxying the request' errors message, added ignore_errors and until statements.
+# To address the inconsistent 'There was a problem proxying the request' errors with NAS storage, 'ignore_errors' and 'until' statements were added.
 - name: Ensure nas remote storage location does not exists
   cisco.nd.nd_remote_storage_location:
     name: ansible-test-remote-storage-nas
@@ -84,7 +84,7 @@
     output_level: info
   register: nm_add_scp_remote_location_again
 
-# To manage the NAS storage inconsistent 'There was a problem proxying the request' errors message, added ignore_errors and until statements.
+# To address the inconsistent 'There was a problem proxying the request' errors with NAS storage, 'ignore_errors' and 'until' statements were added.
 - name: Query nas remote storage location to ensure it does not exists
   cisco.nd.nd_remote_storage_location:
     output_level: info
@@ -98,7 +98,7 @@
   delay: 10
   ignore_errors: true
 
-# To manage the NAS storage inconsistent 'There was a problem proxying the request' errors message, added ignore_errors and until statements.
+# To address the inconsistent 'There was a problem proxying the request' errors with NAS storage, 'ignore_errors' and 'until' statements were added.
 - name: Create an nas remote storage location (check_mode)
   cisco.nd.nd_remote_storage_location: &cm_add_nas_remote_location
     output_level: debug
@@ -117,7 +117,7 @@
   when: query_nas_remote_location.current == {}
   ignore_errors: true
 
-# To manage the NAS storage inconsistent 'There was a problem proxying the request' errors message, added ignore_errors and until statements.
+# To address the inconsistent 'There was a problem proxying the request' errors with NAS storage, 'ignore_errors' and 'until' statements were added.
 - name: Create an nas remote storage location
   cisco.nd.nd_remote_storage_location:
     <<: *cm_add_nas_remote_location
@@ -144,7 +144,7 @@
   retries: 10
   delay: 10
 
-# To manage the NAS storage inconsistent 'There was a problem proxying the request' errors message, added ignore_errors and until statements.
+# To address the inconsistent 'There was a problem proxying the request' errors with NAS storage, 'ignore_errors' and 'until' statements were added.
 - name: Create an nas remote storage location again
   cisco.nd.nd_remote_storage_location:
     <<: *cm_add_nas_remote_location
@@ -370,7 +370,7 @@
     state: present
   register: change_auth_type
 
-# To manage the NAS storage inconsistent 'There was a problem proxying the request' errors message, added ignore_errors and until statements.
+# To address the inconsistent 'There was a problem proxying the request' errors with NAS storage, 'ignore_errors' and 'until' statements were added.
 - name: Update an nas remote storage location attribute values
   cisco.nd.nd_remote_storage_location:
     output_level: info
@@ -633,7 +633,7 @@
     output_level: info
   register: nm_rm_remote_location_again
 
-# To manage the NAS storage inconsistent 'There was a problem proxying the request' errors message, added ignore_errors and until statements.
+# To address the inconsistent 'There was a problem proxying the request' errors with NAS storage, 'ignore_errors' and 'until' statements were added.
 - name: Delete an nas remote storage location
   cisco.nd.nd_remote_storage_location:
     output_level: info
