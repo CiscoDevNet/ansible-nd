@@ -1,0 +1,177 @@
+# Test code for the ND modules
+# Copyright: (c) 2025, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Configure clusters in check mode
+  cisco.nd.nd_multi_cluster_connectivity: &cm_add_clusters
+    output_level: debug
+    config:
+      # - cluster_type: nd
+      #   cluster_hostname: "{{ nd_cluster_host }}"
+      #   cluster_username: "{{ nd_cluster_username }}"
+      #   cluster_password: "{{ nd_cluster_password }}"
+      - cluster_type: apic
+        fabric_name: ansible_test_2
+        cluster_hostname: "{{ aci_cluster_host }}"
+        cluster_username: "{{ aci_cluster_username }}"
+        cluster_password: "{{ aci_cluster_password }}"
+        license_tier: advantage
+        # features:
+        #   - orchestration
+        # inband_epg: ansible-inband
+      - cluster_type: apic
+        fabric_name: ansible_test
+        cluster_hostname: "{{ aci_cluster_host2 }}"
+        cluster_username: "{{ aci_cluster_username }}"
+        cluster_password: "{{ aci_cluster_password }}"
+        license_tier: advantage
+        # features:
+        #   - orchestration
+        # inband_epg: ansible-inband
+    state: merged
+  check_mode: true
+  register: cm_connect_cluster_merged
+    
+- name: Connect clusters in normal mode
+  cisco.nd.nd_multi_cluster_connectivity:
+    <<: *cm_add_clusters
+  register: nm_connect_cluster_merged
+
+- name: Connect clusters again
+  cisco.nd.nd_multi_cluster_connectivity:
+    <<: *cm_add_clusters
+  register: nm_connect_cluster_merged_again
+
+- name: Assert merged connect cluster
+  ansible.builtin.assert:
+    that:
+      - cm_connect_cluster_merged is changed
+      - cm_connect_cluster_merged.before["173.36.219.189"] == {}
+      - cm_connect_cluster_merged.before["173.36.219.190"] == {}
+      - cm_connect_cluster_merged.after["173.36.219.189"]["spec"]["clusterType"] == "APIC"
+      - cm_connect_cluster_merged.after["173.36.219.189"]["spec"]["aci"]["licenseTier"] == "advantage"
+      - cm_connect_cluster_merged.after["173.36.219.189"]["spec"]["aci"]["name"] == "ansible_test_2"
+      - cm_connect_cluster_merged.after["173.36.219.189"]["spec"]["aci"]["orchestration"]["status"] == "disabled"
+      - cm_connect_cluster_merged.after["173.36.219.189"]["spec"]["aci"]["telemetry"]["status"] == "disabled"
+      - cm_connect_cluster_merged.after["173.36.219.189"]["spec"]["onboardUrl"] == "173.36.219.189"
+      - cm_connect_cluster_merged.after["173.36.219.190"]["spec"]["clusterType"] == "APIC"
+      - cm_connect_cluster_merged.after["173.36.219.190"]["spec"]["aci"]["licenseTier"] == "advantage"
+      - cm_connect_cluster_merged.after["173.36.219.190"]["spec"]["aci"]["name"] == "ansible_test"
+      - cm_connect_cluster_merged.after["173.36.219.190"]["spec"]["aci"]['orchestration']["status"] == "disabled"
+      - cm_connect_cluster_merged.after["173.36.219.190"]["spec"]["aci"]["telemetry"]["status"] == "disabled"
+      - cm_connect_cluster_merged.after["173.36.219.190"]["spec"]["onboardUrl"] == "173.36.219.190"
+      - nm_connect_cluster_merged is changed
+      - nm_connect_cluster_merged.before["173.36.219.189"] == {}
+      - nm_connect_cluster_merged.before["173.36.219.190"] == {}
+      - nm_connect_cluster_merged.after["173.36.219.189"]["spec"]["clusterType"] == "APIC"
+      - nm_connect_cluster_merged.after["173.36.219.189"]["spec"]["aci"]["licenseTier"] == "advantage"
+      - nm_connect_cluster_merged.after["173.36.219.189"]["spec"]["aci"]["name"] == "ansible_test_2"
+      - nm_connect_cluster_merged.after["173.36.219.189"]["spec"]["aci"]["orchestration"]["status"] == "disabled"
+      - nm_connect_cluster_merged.after["173.36.219.189"]["spec"]["aci"]["telemetry"]["status"] == "disabled"
+      - nm_connect_cluster_merged.after["173.36.219.189"]["spec"]["onboardUrl"] == "173.36.219.189"
+      - nm_connect_cluster_merged.after["173.36.219.190"]["spec"]["clusterType"] == "APIC"
+      - nm_connect_cluster_merged.after["173.36.219.190"]["spec"]["aci"]["licenseTier"] == "advantage"
+      - nm_connect_cluster_merged.after["173.36.219.190"]["spec"]["aci"]["name"] == "ansible_test"
+      - nm_connect_cluster_merged.after["173.36.219.190"]["spec"]["aci"]["orchestration"]["status"] == "disabled"
+      - nm_connect_cluster_merged.after["173.36.219.190"]["spec"]["aci"]["telemetry"]["status"] == "disabled"
+      - nm_connect_cluster_merged.after["173.36.219.190"]["spec"]["onboardUrl"] == "173.36.219.190"
+      - nm_connect_cluster_merged_again is not changed
+      - nm_connect_cluster_merged_again.before == nm_connect_cluster_merged_again.after
+      - nm_connect_cluster_merged_again.before["173.36.219.189"]["spec"]["clusterType"] == "APIC"
+      - nm_connect_cluster_merged_again.before["173.36.219.189"]["spec"]["aci"]["licenseTier"] == "advantage"
+      - nm_connect_cluster_merged_again.before["173.36.219.189"]["spec"]["name"] == "ansible_test_2"
+      - nm_connect_cluster_merged_again.before["173.36.219.189"]["spec"]["aci"]["orchestration"]["status"] == "disabled"
+      - nm_connect_cluster_merged_again.before["173.36.219.189"]["spec"]["aci"]["telemetry"]["status"] == "disabled"
+      - nm_connect_cluster_merged_again.before["173.36.219.189"]["spec"]["onboardUrl"] == "173.36.219.189"
+      - nm_connect_cluster_merged_again.before["173.36.219.190"]["spec"]["clusterType"] == "APIC"
+      - nm_connect_cluster_merged_again.before["173.36.219.190"]["spec"]["aci"]["licenseTier"] == "advantage"
+      - nm_connect_cluster_merged_again.before["173.36.219.190"]["spec"]["name"] == "ansible_test"
+      - nm_connect_cluster_merged_again.before["173.36.219.190"]["spec"]["aci"]["orchestration"]["status"] == "disabled"
+      - nm_connect_cluster_merged_again.before["173.36.219.190"]["spec"]["aci"]["telemetry"]["status"] == "disabled"
+      - nm_connect_cluster_merged_again.before["173.36.219.190"]["spec"]["onboardUrl"] == "173.36.219.190"
+
+- name: Replace clusters in normal mode
+  cisco.nd.nd_multi_cluster_connectivity:
+    output_level: debug
+    config:
+      # - cluster_type: nd
+      #   cluster_hostname: "{{ nd_cluster_host }}"
+      #   cluster_username: "{{ nd_cluster_username }}"
+      #   cluster_password: "{{ nd_cluster_password }}"
+      - cluster_type: apic
+        fabric_name: ansible_test_2
+        cluster_hostname: "{{ aci_cluster_host }}"
+        cluster_username: "{{ aci_cluster_username }}"
+        cluster_password: "{{ aci_cluster_password }}"
+        license_tier: essentials
+        # features:
+        #   - orchestration
+        #inband_epg: ansible-inband
+      - cluster_type: apic
+        fabric_name: ansible_test
+        cluster_hostname: "{{ aci_cluster_host2 }}"
+        cluster_username: "{{ aci_cluster_username }}"
+        cluster_password: "{{ aci_cluster_password }}"
+        license_tier: essentials
+        # features:
+        #   - orchestration
+        #inband_epg: ansible-inband
+    state: replaced
+  register: nm_connect_cluster_replaced
+
+- name: Assert replaced connect cluster
+  ansible.builtin.assert:
+    that:
+      - nm_connect_cluster_replaced is not changed
+      - nm_connect_cluster_replaced.before == nm_connect_cluster_replaced.after
+
+- name: Delete clusters in check mode
+  cisco.nd.nd_multi_cluster_connectivity: &cm_remove_clusters
+    output_level: debug
+    config:
+      # - cluster_hostname: "{{ nd_cluster_host }}"
+      - cluster_hostname: "{{ aci_cluster_host }}"
+        cluster_username: "{{ aci_cluster_username }}"
+        cluster_password: "{{ aci_cluster_password }}"
+      - cluster_hostname: "{{ aci_cluster_host2 }}"
+        cluster_username: "{{ aci_cluster_username }}"
+        cluster_password: "{{ aci_cluster_password }}"
+    state: deleted
+  check_mode: true
+  register: cm_remove_clusters
+
+- name: Delete clusters in normal mode
+  cisco.nd.nd_multi_cluster_connectivity:
+    <<: *cm_remove_clusters
+  register: nm_remove_clusters
+
+- name: Delete clusters in normal mode again
+  cisco.nd.nd_multi_cluster_connectivity:
+    <<: *cm_remove_clusters
+  register: nm_remove_clusters_again
+
+- name: Assert deletion of connected clusters
+  ansible.builtin.assert:
+    that:
+      - cm_remove_clusters is changed
+      - cm_remove_clusters.after["173.36.219.189"] == {}
+      - cm_remove_clusters.after["173.36.219.190"] == {}
+      - cm_remove_clusters.before["173.36.219.189"]["spec"]["clusterType"] == "APIC"
+      - cm_remove_clusters.before["173.36.219.189"]["spec"]["aci"]["licenseTier"] == "advantage"
+      - cm_remove_clusters.before["173.36.219.189"]["spec"]["name"] == "ansible_test_2"
+      - cm_remove_clusters.before["173.36.219.189"]["spec"]["aci"]["orchestration"]["status"] == "disabled"
+      - cm_remove_clusters.before["173.36.219.189"]["spec"]["aci"]["telemetry"]["status"] == "disabled"
+      - cm_remove_clusters.before["173.36.219.189"]["spec"]["onboardUrl"] == "173.36.219.189"
+      - cm_remove_clusters.before["173.36.219.190"]["spec"]["clusterType"] == "APIC"
+      - cm_remove_clusters.before["173.36.219.190"]["spec"]["aci"]["licenseTier"] == "advantage"
+      - cm_remove_clusters.before["173.36.219.190"]["spec"]["name"] == "ansible_test"
+      - cm_remove_clusters.before["173.36.219.190"]["spec"]["aci"]["orchestration"]["status"] == "disabled"
+      - cm_remove_clusters.before["173.36.219.190"]["spec"]["aci"]["telemetry"]["status"] == "disabled"
+      - cm_remove_clusters.before["173.36.219.190"]["spec"]["onboardUrl"] == "173.36.219.190"
+      - nm_remove_clusters is changed
+      - cm_remove_clusters.before == nm_remove_clusters.before
+      - nm_remove_clusters.after["173.36.219.189"] == {}
+      - nm_remove_clusters.after["173.36.219.190"] == {}
+      - nm_remove_clusters_again is not changed
+      - nm_remove_clusters_again.before == nm_remove_clusters_again.after == {}
