@@ -4,6 +4,49 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 
 .. contents:: Topics
 
+v1.4.0
+======
+
+Release Summary
+---------------
+
+Release v1.4.0 of the ``ansible-nd`` collection on 2025-09-16.
+This changelog describes all changes made to the modules and plugins included in this collection since v1.3.0.
+
+Minor Changes
+-------------
+
+- Add deployment_type to nodes configuration for nd_setup module.
+- Add nd_api_key module
+- Add san_vendor to nd_setup module for ND v4.1 and later.
+- Add support for l3extRsPathL3OutAtt and l3extMember classes
+- Added fabric as an alias to nd_flow_rules and nd_interface_flow_rules
+- Added support for authentication with User API Keys.
+- Added testing support for Ansible Core 2.19
+- Added wait_delay and wait_timeout options to nd_delta_analysis module.
+- Added wait_delay and wait_timeout options to nd_pcv module.
+- Changed site to fabric and added aliases for nd_delta_analysis and nd_policy_cam_statistics_hit_counts
+- Changed the update logic of the nd_cluster_config_route to support ND4.x API endpoints
+- Modify nd_setup module to be compatible with ND version 4.1.0 and later. Modify Documentation to be clearer.
+- Rename nd_epoch module to nd_snapshot, modify the name of the attributes and their description to better reflect the latest ND versions.
+- Replace site and epoch attributes with fabric and snapshot. Add site and epoch as their aliases for nd_compliance modules.
+- Update nd_pcv_compliance to align with ND 4.1.
+- Update nd_pcv_delta_analysis to align with ND 4.1 and added delay and timeout options for validate state.
+- Updated the `cisco.nd.nd` HTTPAPI plugin to be compatible with the `cisco.dcnm` collection.
+
+Bugfixes
+--------
+
+- Fix error handling message for unsupported objects
+- Fixed a bug when ND request returns an error with no response.
+- Fixed an issue when querying for Pre Change Validation results when more than 50 exist in NDI.
+- Fixed issue with nd_delta_analysis unable to query/validate jobs.
+
+New Modules
+-----------
+
+- cisco.nd.nd_api_key - Manage API keys in Nexus Dashboard
+
 v1.3.0
 ======
 
