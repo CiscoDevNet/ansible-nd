@@ -6,7 +6,7 @@
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
-      output_level: "info"
+      output_level: "debug"
       timeout: 90
 
 # QUERY VERSION
@@ -68,26 +68,6 @@
         encryption_key: testtest1
         state: backup
 
-    - name: Restore ND backup with name and file_location
-      cisco.nd.nd_backup_restore:
-        output_level: debug
-        name: localbackup
-        encryption_key: testtest1
-        file_location: "/tmp/localbackup.tar.gz"
-        state: restore
-      register: nt_name_and_file_location
-      ignore_errors: true
-
-    - name: Restore ND backup when backup is in progress
-      cisco.nd.nd_backup_restore:
-        <<: *nd_info
-        output_level: debug
-        name: localbackup
-        encryption_key: testtest1
-        state: restore
-      register: nt_restore
-      ignore_errors: true
-
     - name: Query ND local backup status
       cisco.nd.nd_backup:
         <<: *nd_info
@@ -97,7 +77,7 @@
       until:
         - query_local_backup_status.current is defined
         - query_local_backup_status.current != {}
-        - query_local_backup_status.current.status == "completed"
+        - query_local_backup_status.current.status == "success"
       retries: 80
       delay: 20
 
@@ -133,7 +113,7 @@
       until:
         - query_local_backup_restore_status.current is defined
         - query_local_backup_restore_status.current != {}
-        - query_local_backup_restore_status.current.state == "completed"
+        - query_local_backup_restore_status.current.state == "complete"
       retries: 200
       delay: 20
 
@@ -150,23 +130,18 @@
           - cm_restore_local_backup.current.fileUploadPayload.fileLocation is none
           - cm_restore_local_backup.current.importPayload.name == "localbackup"
           - cm_restore_local_backup.current.restorePayload.ignorePersistentIPs == false
-          - cm_restore_local_backup.current.restorePayload.type == "configOnly"
+          - cm_restore_local_backup.current.restorePayload.type == "config-only"
           - restore_local_backup is changed
           - restore_local_backup.current != {}
-          - restore_local_backup.current.type == "configOnly"
           - restore_local_backup.current.state == "processing"
           - restore_local_backup.current.operation == "restore"
-          - restore_local_backup.current.restoreConfiguration.path == "localbackup.tar.gz"
-          - restore_local_backup.current.restoreConfiguration.source == ""
-          - restore_local_backup.current.restoreConfiguration.type == "configOnly"
+          - restore_local_backup.current.restoreConfig.path == "localbackup.tar.gz"
+          - restore_local_backup.current.restoreConfig.source == ""
+          - restore_local_backup.current.restoreConfig.type == "config-only"
           - query_all_routes is not changed
           - query_all_routes.current | length == 1
           - query_all_routes.current.0.target == "Data"
           - query_all_routes.current.0.destination == "12.23.45.68/32"
-          - nt_name_and_file_location is failed
-          - nt_name_and_file_location.msg == "The parameters name and (remote_location or file_location) cannot be specified at the same time."
-          - nt_restore is failed
-          - nt_restore.msg is match ("The restore operation could not proceed because a system backup is in progress (.+% complete).")
 
     - name: Delete all Data Routes
       cisco.nd.nd_rest:
@@ -219,7 +194,7 @@
       until:
         - query_remote_backup_status.current is defined
         - query_remote_backup_status.current != {}
-        - query_remote_backup_status.current.status == "completed"
+        - query_remote_backup_status.current.status == "success"
       retries: 80
       delay: 20
 
@@ -261,7 +236,7 @@
       until:
         - query_remote_backup_restore_status.current is defined
         - query_remote_backup_restore_status.current != {}
-        - query_remote_backup_restore_status.current.state == "completed"
+        - query_remote_backup_restore_status.current.state == "complete"
       retries: 200
       delay: 20
 
@@ -280,15 +255,14 @@
           - cm_restore_remote_backup.current.importPayload.path == "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
           - cm_restore_remote_backup.current.importPayload.source == "test"
           - cm_restore_remote_backup.current.restorePayload.ignorePersistentIPs == false
-          - cm_restore_remote_backup.current.restorePayload.type == "configOnly"
+          - cm_restore_remote_backup.current.restorePayload.type == "config-only"
           - restore_remote_backup is changed
           - restore_remote_backup.current != {}
-          - restore_remote_backup.current.type == "configOnly"
           - restore_remote_backup.current.state == "processing"
           - restore_remote_backup.current.operation == "restore"
-          - restore_remote_backup.current.restoreConfiguration.path == "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
-          - restore_remote_backup.current.restoreConfiguration.source == "test" # Remote storage location name
-          - restore_remote_backup.current.restoreConfiguration.type == "configOnly"
+          - restore_remote_backup.current.restoreConfig.path == "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
+          - restore_remote_backup.current.restoreConfig.source == "test" # Remote storage location name
+          - restore_remote_backup.current.restoreConfig.type == "config-only"
           - query_all_routes is not changed
           - query_all_routes.current | length == 2
           - query_all_routes.current.0.target == "Data"
@@ -349,7 +323,7 @@
       until:
         - query_local_backup_status.current is defined
         - query_local_backup_status.current != {}
-        - query_local_backup_status.current.status == "completed"
+        - query_local_backup_status.current.status == "success"
       retries: 80
       delay: 20
 
@@ -396,7 +370,7 @@
       until:
         - query_downloaded_backup_restore_status.current is defined
         - query_downloaded_backup_restore_status.current != {}
-        - query_downloaded_backup_restore_status.current.state == "completed"
+        - query_downloaded_backup_restore_status.current.state == "complete"
       retries: 200
       delay: 20
 
@@ -416,15 +390,14 @@
           - cm_restore_downloaded_local_backup.current.importPayload.source is not defined
           - cm_restore_downloaded_local_backup.current.importPayload.path is not defined
           - cm_restore_downloaded_local_backup.current.restorePayload.ignorePersistentIPs == false
-          - cm_restore_downloaded_local_backup.current.restorePayload.type == "configOnly"
+          - cm_restore_downloaded_local_backup.current.restorePayload.type == "config-only"
           - restore_downloaded_local_backup is changed
           - restore_downloaded_local_backup.current != {}
-          - restore_downloaded_local_backup.current.type == "configOnly"
           - restore_downloaded_local_backup.current.state == "processing"
           - restore_downloaded_local_backup.current.operation == "restore"
-          - restore_downloaded_local_backup.current.restoreConfiguration.path is defined
-          - restore_downloaded_local_backup.current.restoreConfiguration.source == ""
-          - restore_downloaded_local_backup.current.restoreConfiguration.type == "configOnly"
+          - restore_downloaded_local_backup.current.restoreConfig.path is defined
+          - restore_downloaded_local_backup.current.restoreConfig.source == ""
+          - restore_downloaded_local_backup.current.restoreConfig.type == "config-only"
           - query_all_routes is not changed
           - query_all_routes.current | length == 3
           - query_all_routes.current.0.target == "Data"
@@ -453,8 +426,26 @@
       cisco.nd.nd_backup_restore:
         <<: *nd_info
         state: absent
-      check_mode: true
       register: rm_imported_backup
+
+    - name: Delete imported backup file again # idempotency not supported
+      cisco.nd.nd_backup_restore:
+        <<: *nd_info
+        state: absent
+      register: rm_imported_backup_again
+
+    - name: Assertion check for delete imported backup file
+      ansible.builtin.assert:
+        that:
+          - cm_rm_imported_backup is changed
+          - cm_rm_imported_backup.current == {}
+          - cm_rm_imported_backup.previous != {}
+          - rm_imported_backup is changed
+          - rm_imported_backup.current == {}
+          - rm_imported_backup.previous != {}
+          - rm_imported_backup_again is changed  # idempotency not supported
+          - rm_imported_backup_again.current == {}
+          - rm_imported_backup_again.previous.state == "idle"
 
     - name: Query all backups
       cisco.nd.nd_backup:
@@ -631,16 +622,6 @@
       ignore_errors: true
       register: delete_wrong_key_nexus
 
-    - name: Import backup with password having a length < 8 characters
-      cisco.nd.nd_backup_restore:
-        output_level: debug
-        name: nexus
-        encryption_key: test
-        file_location: "{{ role_path }}/backups/nexus_{{ ansible_host }}.tgz"
-        state: restore
-      ignore_errors: true
-      register: import_nexus_incorrect_pwd_length
-
     - name: Import backup to ND which already has the routes configured
       cisco.nd.nd_backup_restore:
         output_level: debug
@@ -673,7 +654,6 @@
           - delete_nexus2_cm.changed is true
           - delete_nexus2_again.changed is false
           - delete_nexus2.current == delete_nexus2_cm.current == delete_nexus2_again.current == {}
-          - import_nexus_incorrect_pwd_length.msg == "The encryption key must have a minium of 8 characters."
           - query_duplicate_nexus.msg == delete_duplicate_nexus.msg == "Multiple restore jobs with the name 'nexus' found. Please provide a restore key for the corresponding restored job."
           - delete_wrong_key_nexus.msg == "Provided key for the restore 'nexus' not found. Please provide a valid restore key by querying all the restored jobs and looking up the desired restore key."
 

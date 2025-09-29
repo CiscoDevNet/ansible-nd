@@ -6,7 +6,7 @@
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
-      output_level: "info"
+      output_level: "debug"
       timeout: 90
 
 - name: Create a directory if it does not exist
@@ -64,7 +64,7 @@
       until:
         - query_local_backup_status.current is defined
         - query_local_backup_status.current != {}
-        - query_local_backup_status.current.status == "completed"
+        - query_local_backup_status.current.status == "success"
       retries: 40
       delay: 20
 
@@ -74,6 +74,7 @@
         encryption_key: localbackup1
         file_location: "{{ role_path }}/backups/localbackup0_{{ ansible_host }}.tgz"
         state: backup
+        output_level: debug
       register: add_local_backup_again
 
     - name: Assertion check for create local ND backup
@@ -83,47 +84,44 @@
           - cm_add_local_backup.current.destination == ""
           - cm_add_local_backup.current.encryptionKey == "localbackup1"
           - cm_add_local_backup.current.name == "localbackup"
-          - cm_add_local_backup.current.type == "configOnly"
+          - cm_add_local_backup.current.type == "config-only"
           - cm_add_local_backup.previous == {}
           - cm_add_local_backup.proposed.destination == ""
           - cm_add_local_backup.proposed.encryptionKey == "localbackup1"
           - cm_add_local_backup.proposed.name == "localbackup"
-          - cm_add_local_backup.proposed.type == "configOnly"
+          - cm_add_local_backup.proposed.type == "config-only"
           - add_local_backup is changed
           - add_local_backup.current.name == "localbackup"
           - add_local_backup.current.path == "localbackup.tar.gz"
           - add_local_backup.current.schedule == ""
-          - add_local_backup.current.size == 0
           - add_local_backup.current.endTime == "0001-01-01T00:00:00Z"
           - add_local_backup.current.startTime is defined
-          - add_local_backup.current.status == "inProgress"
-          - add_local_backup.current.type == "configOnly"
+          - add_local_backup.current.status == "in-progress"
+          - add_local_backup.current.type == "config-only"
           - add_local_backup.current.user is defined
           - add_local_backup.previous == {}
           - add_local_backup.proposed.destination == ""
           - add_local_backup.proposed.encryptionKey == "localbackup1"
           - add_local_backup.proposed.name == "localbackup"
-          - add_local_backup.proposed.type == "configOnly"
+          - add_local_backup.proposed.type == "config-only"
           - add_local_backup_again is not changed
           - add_local_backup_again.current.destination == ""
           - add_local_backup_again.current.details.progress == 100
           - add_local_backup_again.current.name == "localbackup"
           - add_local_backup_again.current.path == "localbackup.tar.gz"
           - add_local_backup_again.current.schedule == ""
-          - add_local_backup_again.current.size is defined
           - add_local_backup_again.current.startTime is defined
-          - add_local_backup_again.current.status == "completed"
-          - add_local_backup_again.current.type == "configOnly"
+          - add_local_backup_again.current.status == "success"
+          - add_local_backup_again.current.type == "config-only"
           - add_local_backup_again.current.user is defined
           - add_local_backup_again.previous.destination == ""
           - add_local_backup_again.previous.details.progress == 100
           - add_local_backup_again.previous.name == "localbackup"
           - add_local_backup_again.previous.path == "localbackup.tar.gz"
           - add_local_backup_again.previous.schedule == ""
-          - add_local_backup_again.previous.size is defined
           - add_local_backup_again.previous.startTime is defined
-          - add_local_backup_again.previous.status == "completed"
-          - add_local_backup_again.previous.type == "configOnly"
+          - add_local_backup_again.previous.status == "success"
+          - add_local_backup_again.previous.type == "config-only"
           - add_local_backup_again.previous.user is defined
 
     - name: Query local ND backup
@@ -167,7 +165,7 @@
       until:
         - query_remote_backup_status.current is defined
         - query_remote_backup_status.current != {}
-        - query_remote_backup_status.current.status == "completed"
+        - query_remote_backup_status.current.status == "success"
       retries: 40
       delay: 20
 
@@ -177,6 +175,7 @@
         encryption_key: remotebackup1
         remote_location: test
         state: backup
+        output_level: debug
       register: add_remote_backup_again
 
     - name: Assertion check for create remote ND backup
@@ -186,47 +185,44 @@
           - cm_add_remote_backup.current.destination == "test"
           - cm_add_remote_backup.current.encryptionKey == "remotebackup1"
           - cm_add_remote_backup.current.name == "remotebackup"
-          - cm_add_remote_backup.current.type == "configOnly"
+          - cm_add_remote_backup.current.type == "config-only"
           - cm_add_remote_backup.previous == {}
           - cm_add_remote_backup.proposed.destination == "test"
           - cm_add_remote_backup.proposed.encryptionKey == "remotebackup1"
           - cm_add_remote_backup.proposed.name == "remotebackup"
-          - cm_add_remote_backup.proposed.type == "configOnly"
+          - cm_add_remote_backup.proposed.type == "config-only"
           - add_remote_backup is changed
           - add_remote_backup.current.destination == "test"
           - add_remote_backup.current.name == "remotebackup"
           - add_remote_backup.current.path is defined
           - add_remote_backup.current.schedule == ""
-          - add_remote_backup.current.size is defined
           - add_remote_backup.current.startTime is defined
-          - add_remote_backup.current.status == "inProgress"
-          - add_remote_backup.current.type == "configOnly"
+          - add_remote_backup.current.status == "in-progress"
+          - add_remote_backup.current.type == "config-only"
           - add_remote_backup.current.user is defined
           - add_remote_backup.previous == {}
           - add_remote_backup.proposed.destination == "test"
           - add_remote_backup.proposed.encryptionKey == "remotebackup1"
           - add_remote_backup.proposed.name == "remotebackup"
-          - add_remote_backup.proposed.type == "configOnly"
+          - add_remote_backup.proposed.type == "config-only"
           - add_remote_backup_again is not changed
           - add_remote_backup_again.current.destination == "test"
           - add_remote_backup_again.current.details.progress == 100
           - add_remote_backup_again.current.name == "remotebackup"
           - add_remote_backup_again.current.path is defined
           - add_remote_backup_again.current.schedule == ""
-          - add_remote_backup_again.current.size is defined
           - add_remote_backup_again.current.startTime is defined
-          - add_remote_backup_again.current.status == "completed"
-          - add_remote_backup_again.current.type == "configOnly"
+          - add_remote_backup_again.current.status == "success"
+          - add_remote_backup_again.current.type == "config-only"
           - add_remote_backup_again.current.user is defined
           - add_remote_backup_again.previous.destination == "test"
           - add_remote_backup_again.previous.details.progress == 100
           - add_remote_backup_again.previous.name == "remotebackup"
           - add_remote_backup_again.previous.path is defined
           - add_remote_backup_again.previous.schedule == ""
-          - add_remote_backup_again.previous.size is defined
           - add_remote_backup_again.previous.startTime is defined
-          - add_remote_backup_again.previous.status == "completed"
-          - add_remote_backup_again.previous.type == "configOnly"
+          - add_remote_backup_again.previous.status == "success"
+          - add_remote_backup_again.previous.type == "config-only"
           - add_remote_backup_again.previous.user is defined
 
     - name: Query remote ND backup
@@ -249,11 +245,10 @@
           - query_local_backup.current.name == "localbackup"
           - query_local_backup.current.path == "localbackup.tar.gz"
           - query_local_backup.current.schedule == ""
-          - query_local_backup.current.size is defined
           - query_local_backup.current.startTime is defined
           - query_local_backup.current.endTime is defined
-          - query_local_backup.current.status == "completed"
-          - query_local_backup.current.type == "configOnly"
+          - query_local_backup.current.status == "success"
+          - query_local_backup.current.type == "config-only"
           - query_local_backup.current.user is defined
           - query_remote_backup is not changed
           - query_remote_backup.current.destination == "test"
@@ -261,11 +256,10 @@
           - query_remote_backup.current.name == "remotebackup"
           - query_remote_backup.current.path is defined
           - query_remote_backup.current.schedule == ""
-          - query_remote_backup.current.size is defined
           - query_remote_backup.current.startTime is defined
           - query_remote_backup.current.endTime is defined
-          - query_remote_backup.current.status == "completed"
-          - query_remote_backup.current.type == "configOnly"
+          - query_remote_backup.current.status == "success"
+          - query_remote_backup.current.type == "config-only"
           - query_remote_backup.current.user is defined
           - query_all_backups is not changed
           - query_all_backups.current | length >= 2
@@ -288,11 +282,10 @@
           - download_local_backup.current.name == "localbackup"
           - download_local_backup.current.path == "localbackup.tar.gz"
           - download_local_backup.current.schedule == ""
-          - download_local_backup.current.size is defined
           - download_local_backup.current.startTime is defined
           - download_local_backup.current.endTime is defined
-          - download_local_backup.current.status == "completed"
-          - download_local_backup.current.type == "configOnly"
+          - download_local_backup.current.status == "success"
+          - download_local_backup.current.type == "config-only"
           - download_local_backup.current.user == "admin"
           - download_remote_backup is changed
           - download_remote_backup.current.destination == "test"
@@ -300,8 +293,8 @@
           - download_remote_backup.current.name == "remotebackup"
           - download_remote_backup.current.path is defined
           - download_remote_backup.current.schedule == ""
-          - download_remote_backup.current.status == "completed"
-          - download_remote_backup.current.type == "configOnly"
+          - download_remote_backup.current.status == "success"
+          - download_remote_backup.current.type == "config-only"
 
     - name: Find local backup to ensure that it was downloaded
       ansible.builtin.find:
@@ -336,31 +329,6 @@
           - find_remote_backup.examined == 3
           - find_remote_backup.files.0.path is match (".+/tests/integration/targets/nd_backup/backups/remotebackup_.+.tgz")
           - find_remote_backup.matched == 1
-
-    # ERROR
-    - name: Negative test for create ND backup with encryption_key < 8 characters
-      cisco.nd.nd_backup:
-        name: ntlocalbackup
-        encryption_key: local
-        state: backup
-      register: nt_add_backup_with_invalid_encryption_key1
-      ignore_errors: true
-
-    - name: Negative test for create ND backup with string only encryption_key
-      cisco.nd.nd_backup:
-        name: ntlocalbackup
-        encryption_key: localbackup
-        state: backup
-      register: nt_add_backup_with_invalid_encryption_key2
-      ignore_errors: true
-
-    - name: Assertion check for negative test for create ND backup with string only encryption_key
-      ansible.builtin.assert:
-        that:
-          - nt_add_backup_with_invalid_encryption_key1 is not changed
-          - nt_add_backup_with_invalid_encryption_key1.msg == "Please provide a minimum of 8 alphanumeric characters for the encryption key."
-          - nt_add_backup_with_invalid_encryption_key2 is not changed
-          - nt_add_backup_with_invalid_encryption_key2.msg == "The encryption_key must contain at least one letter and one number, and have a minimum length of 8 characters."
 
     - name: Ensure local ND backup does not exist (check_mode)
       cisco.nd.nd_backup:
@@ -416,8 +384,8 @@
           - cm_rm_local_backup.previous.name == "localbackup"
           - cm_rm_local_backup.previous.path == "localbackup.tar.gz"
           - cm_rm_local_backup.previous.schedule == ""
-          - cm_rm_local_backup.previous.status == "completed"
-          - cm_rm_local_backup.previous.type == "configOnly"
+          - cm_rm_local_backup.previous.status == "success"
+          - cm_rm_local_backup.previous.type == "config-only"
           - cm_rm_remote_backup is changed
           - cm_rm_remote_backup.current == {}
           - cm_rm_remote_backup.previous.destination == "test"
@@ -425,8 +393,8 @@
           - cm_rm_remote_backup.previous.name == "remotebackup"
           - cm_rm_remote_backup.previous.path is defined
           - cm_rm_remote_backup.previous.schedule == ""
-          - cm_rm_remote_backup.previous.status == "completed"
-          - cm_rm_remote_backup.previous.type == "configOnly"
+          - cm_rm_remote_backup.previous.status == "success"
+          - cm_rm_remote_backup.previous.type == "config-only"
           - rm_local_backup is changed
           - rm_local_backup.current == {}
           - rm_local_backup.previous.destination == ""
@@ -434,8 +402,8 @@
           - rm_local_backup.previous.name == "localbackup"
           - rm_local_backup.previous.path == "localbackup.tar.gz"
           - rm_local_backup.previous.schedule == ""
-          - rm_local_backup.previous.status == "completed"
-          - rm_local_backup.previous.type == "configOnly"
+          - rm_local_backup.previous.status == "success"
+          - rm_local_backup.previous.type == "config-only"
           - rm_remote_backup is changed
           - rm_remote_backup.current == {}
           - rm_remote_backup.previous.destination == "test"
@@ -443,8 +411,8 @@
           - rm_remote_backup.previous.name == "remotebackup"
           - rm_remote_backup.previous.path is defined
           - rm_remote_backup.previous.schedule == ""
-          - rm_remote_backup.previous.status == "completed"
-          - rm_remote_backup.previous.type == "configOnly"
+          - rm_remote_backup.previous.status == "success"
+          - rm_remote_backup.previous.type == "config-only"
           - rm_local_backup_again is not changed
           - rm_local_backup_again.current == {}
           - rm_local_backup_again.previous == {}

@@ -44,20 +44,21 @@ options:
     - This key can be obtained by querying the backup.
     - This parameter is not supported on ND v3.2.1 and later.
     type: str
-  remote_location:
-    description:
-    - The name of the remote storage location. This parameter is only supported on ND v3.2.1 and later.
-    - If the O(remote_location) parameter is not specified or O(remote_location="") during backup creation, a local backup will be created.
-    type: str
   backup_type:
     description:
     - This parameter is only supported on ND v3.2.1 and later.
     - The O(backup_type=config_only) option creates a snapshot that specifically captures the configuration settings of the Nexus Dashboard.
     - The O(backup_type=full) option creates a complete snapshot of the entire Nexus Dashboard.
+    - When unspecified, the parameter defaults to O(backup_type=config_only).
     type: str
     choices: [ config_only, full ]
-    default: config_only
     aliases: [ type ]
+  remote_location:
+    description:
+    - This parameter is only supported on ND v3.2.1 and later.
+    - The name of the remote storage location.
+    - If the O(remote_location) parameter is not specified or O(remote_location="") during backup creation, a local backup will be created.
+    type: str
   state:
     description:
     - Use O(state=backup) for creating and downloading a backup of the cluster config for the ND versions < 3.2.1.
@@ -131,7 +132,7 @@ RETURN = r"""
 from ansible.module_utils._text import to_bytes
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec, write_file
-from ansible_collections.cisco.nd.plugins.module_utils.utils import snake_to_camel
+from ansible_collections.cisco.nd.plugins.module_utils.constants import BACKUP_TYPE
 
 
 def main():
@@ -142,7 +143,7 @@ def main():
         file_location=dict(type="str"),
         backup_key=dict(type="str", no_log=False),
         remote_location=dict(type="str"),
-        backup_type=dict(type="str", default="config_only", choices=["config_only", "full"], aliases=["type"]),
+        backup_type=dict(type="str", choices=["config_only", "full"], aliases=["type"]),
         state=dict(type="str", default="backup", choices=["backup", "download", "query", "absent"]),
     )
 
@@ -162,120 +163,94 @@ def main():
     encryption_key = nd.params.get("encryption_key")
     backup_key = nd.params.get("backup_key")
     file_location = nd.params.get("file_location")
-    remote_location = nd.params.get("remote_location")
-    backup_type = nd.params.get("backup_type")
+    remote_location = nd.params.get("remote_location") or ""
+    backup_type = BACKUP_TYPE.get(nd.params.get("backup_type"))
     state = nd.params.get("state")
+
+    path = "/nexus/infra/api/platform/v1/exports" if nd.version < "3.2.1" else "/api/action/class/backuprestore/backup"
+    backups = nd.query_obj("/api/config/class/exports") if nd.version < "3.2.1" else nd.query_obj(path)
 
     if nd.version < "3.2.1":
         if not file_location and state in ["backup", "download"]:
             nd.fail_json("Parameter 'file_location' is required when state is 'backup|download' for ND versions < 3.2.1.")
-        nd_backup_before_3_2_1(module, nd, name, encryption_key, file_location, backup_key, state)
-    elif nd.version >= "3.2.1":
-        nd_backup_from_3_2_1(module, nd, name, encryption_key, file_location, remote_location, backup_type, state)
 
-    nd.exit_json()
+        if encryption_key is not None and len(encryption_key) < 8:
+            nd.fail_json("Please provide a minimum of 8 characters for the encryption key.")
 
-
-def nd_backup_from_3_2_1(module, nd, name, encryption_key, file_location, remote_location, backup_type, state):
-    if encryption_key is not None:
-        if len(encryption_key) < 8:
-            nd.fail_json("Please provide a minimum of 8 alphanumeric characters for the encryption key.")
-        elif not (any(char.isalpha() for char in encryption_key) and any(char.isdigit() for char in encryption_key) and encryption_key.isalnum()):
-            nd.fail_json("The encryption_key must contain at least one letter and one number, and have a minimum length of 8 characters.")
-
-    path = "/api/v1/infra/backups"
-    backups = nd.query_obj(path)
-    if name and backups:
-        for backup in backups.get("backups", []):
-            if backup.get("name") == name:
-                nd.existing = backup
-                break
-    else:
-        nd.existing = backups.get("backups", [])
-
-    if state == "absent" and nd.existing:
+        if name:
+            backups_info = [file_dict for file_dict in backups if file_dict.get("description") == name]
+            if len(backups_info) > 1 and backup_key is None and encryption_key is None:
+                nd.fail_json("Multiple backups with the name '{0}' found. Please provide a backup key for the corresponding backup.".format(name))
+            elif len(backups_info) == 1:
+                backup_key = backups_info[0].get("key")
+            elif backup_key is not None and backup_key not in [file_dict.get("key") for file_dict in backups_info]:
+                nd.fail_json(
+                    "Provided key for the backup '{0}' not found."
+                    " Please provide a valid backup key by querying all the backups and looking up the desired backup key.".format(name)
+                )
+            nd.existing = next((file_dict for file_dict in backups_info if file_dict.get("key") == backup_key), {})
+        else:
+            nd.existing = backups
         nd.previous = nd.existing
+    else:
+        if name and backups:
+            for backup in backups:
+                if backup.get("name") == name:
+                    nd.existing = backup
+                    break
+        elif backups:
+            nd.previous = nd.existing = backups
+
+    if state == "absent":
         if not module.check_mode:
-            nd.request("{0}/{1}".format(path, name), method="DELETE")
+            absent_path = "{0}/{1}".format(path, backup_key) if nd.version < "3.2.1" else "{0}/{1}".format(path, name)
+            nd.request(absent_path, method="DELETE")
         nd.existing = {}
 
     elif state == "backup":
+        # The imported backup must be cleared before creating a new backup
+        if not module.check_mode:
+            nd.request("/api/action/class/backuprestore/restore/file-import", method="DELETE")
+
         if not nd.existing:
-            payload = {
-                "name": name,
-                "type": snake_to_camel(backup_type),
-                "destination": remote_location if remote_location else "",
-                "encryptionKey": encryption_key,
-            }
+            if nd.version < "3.2.1":
+                payload = {
+                    "spec": {
+                        "description": name,
+                        "password": encryption_key,
+                    },
+                }
+            else:
+                payload = {
+                    "name": name,
+                    "type": backup_type,
+                    "destination": remote_location,
+                    "encryptionKey": encryption_key,
+                }
+
             nd.sanitize(payload, collate=True)
 
             if not module.check_mode:
-                # Creates backup file and returns None
-                nd.request(path, method="POST", data=payload)
-
-                # Fetching the backup object details to set module current value
-                nd.existing = nd.request("{0}/{1}".format(path, name), method="GET")
+                response = None
+                if nd.version < "3.2.1":
+                    response = nd.request(path, method="POST", data=payload, output_format="raw")
+                else:
+                    nd.request(path, method="POST", data=payload)
+                    nd.existing = nd.request("{0}/{1}".format(path, name), method="GET")
 
                 if file_location:
-                    response = nd.request("{0}/{1}/actions/download".format(path, name), method="GET", data=None, output_format="raw")
+                    if not response and nd.version >= "3.2.1":
+                        response = nd.request("{0}/{1}?action=download".format(path, name), method="GET", data=None, output_format="raw")
                     write_file(module, file_location, to_bytes(response))
             elif module.check_mode:
                 nd.existing = nd.proposed
-        else:
-            nd.previous = nd.existing
 
-    elif state == "download" and file_location and nd.existing:
+    elif state == "download" and file_location and nd.existing and nd.version >= "3.2.1":
         if not module.check_mode:
-            response = nd.request("{0}/{1}/actions/download".format(path, name), method="GET", data=None, output_format="raw")
+            response = nd.request("{0}/{1}?action=download".format(path, name), method="GET", data=None, output_format="raw")
             write_file(module, file_location, to_bytes(response))
 
-
-def nd_backup_before_3_2_1(module, nd, name, encryption_key, file_location, backup_key, state):
-    if encryption_key is not None and len(encryption_key) < 8:
-        nd.fail_json("Please provide a minimum of 8 characters for the encryption key.")
-
-    path = "/nexus/infra/api/platform/v1/exports"
-    # The below path for GET operation is to be replaced by an official documented API endpoint once it becomes available.
-    backup_objs = nd.query_obj("/api/config/class/exports")
-
-    if name:
-        backups_info = [file_dict for file_dict in backup_objs if file_dict.get("description") == name]
-        if len(backups_info) > 1 and backup_key is None and encryption_key is None:
-            nd.fail_json("Multiple backups with the name '{0}' found. Please provide a backup key for the corresponding backup.".format(name))
-        elif len(backups_info) == 1:
-            backup_key = backups_info[0].get("key")
-        elif backup_key is not None and backup_key not in [file_dict.get("key") for file_dict in backups_info]:
-            nd.fail_json(
-                "Provided key for the backup '{0}' not found."
-                " Please provide a valid backup key by querying all the backups and looking up the desired backup key.".format(name)
-            )
-        nd.existing = next((file_dict for file_dict in backups_info if file_dict.get("key") == backup_key), {})
-    else:
-        nd.existing = backup_objs
-
-    nd.previous = nd.existing
-
-    if state == "absent":
-        if nd.existing:
-            if not module.check_mode:
-                nd.request("{0}/{1}".format(path, backup_key), method="DELETE")
-            nd.existing = {}
-    elif state == "backup":
-        nd.previous = nd.existing = {}
-
-        payload = {
-            "spec": {
-                "description": name,
-                "password": encryption_key,
-            },
-        }
-
-        nd.sanitize(payload, collate=True)
-
-        if not module.check_mode:
-            response = nd.request(path, method="POST", data=payload, output_format="raw")
-            write_file(module, file_location, to_bytes(response))
-        nd.existing = nd.proposed
+    nd.exit_json()
 
 
 if __name__ == "__main__":
