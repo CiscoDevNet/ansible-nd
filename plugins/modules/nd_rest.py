@@ -256,9 +256,8 @@ def main():
     method = nd.params.get("method").upper()
 
     # Append previous state of the object
-    if method in ("PUT", "DELETE", "PATCH"):
-        if not ignore_previous_state:
-            nd.existing = nd.previous = sanitize(nd.query_obj(path, ignore_not_found_error=True), ND_REST_KEYS_TO_SANITIZE)
+    if method in ("PUT", "DELETE", "PATCH") and not ignore_previous_state:
+        nd.existing = nd.previous = sanitize(nd.query_obj(path, ignore_not_found_error=True), ND_REST_KEYS_TO_SANITIZE)
     nd.result["previous"] = nd.previous
 
     # Perform request
