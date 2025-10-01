@@ -67,6 +67,13 @@ options:
     - The name of the remote storage location.
     - This parameter is required only when restoring the backup file from a remote location.
     type: str
+  import_validation_delay:
+    description:
+    - This parameter is only supported on ND v3.2.1 and later.
+    - This parameter is required only when restoring the backup file.
+    - When unspecified, the parameter defaults to O(import_validation_delay=10) seconds.
+    type: int
+    aliases: [ delay ]
   state:
     description:
     - Use C(restore) for importing a backup of the cluster config.
@@ -125,6 +132,7 @@ def main():
         ignore_persistent_ips=dict(type="bool", aliases=["ignore_external_service_ip_configuration"]),
         restore_type=dict(type="str", choices=["config_only", "full"], aliases=["type"]),
         remote_location=dict(type="str"),
+        import_validation_delay=dict(type="int", aliases=["delay"]),
     )
 
     module = AnsibleModule(
@@ -145,6 +153,7 @@ def main():
     ignore_persistent_ips = nd.params.get("ignore_persistent_ips") or False
     restore_type = BACKUP_TYPE.get(nd.params.get("restore_type"))
     remote_location = nd.params.get("remote_location")
+    import_validation_delay = nd.params.get("import_validation_delay") or 10
 
     backup_status_path = "/api/config/class/imports" if nd.version < "3.2.1" else "/api/action/class/backuprestore/status"
     nd.existing = nd.query_obj(backup_status_path)
@@ -225,7 +234,7 @@ def main():
             if not module.check_mode:
                 nd.request(import_path, method="POST", data=import_payload)
                 # The file upload and validation process takes a few seconds
-                time.sleep(10)
+                time.sleep(import_validation_delay)
                 nd.request("/api/action/class/backuprestore/restore", method="POST", data=restore_payload)
                 nd.existing = nd.query_obj(backup_status_path)
             else:
