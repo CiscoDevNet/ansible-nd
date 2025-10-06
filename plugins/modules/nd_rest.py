@@ -256,6 +256,10 @@ def main():
     method = nd.params.get("method").upper()
 
     # Append previous state of the object
+    # Purpose of ignore_previous_state:
+    # The ignore_previous_state was introduced because querying existing objects via the GET method on the /api/config/routes endpoint is not supported.
+    # To avoid the /api/config/routes GET call ignore_previous_state was introduced.
+    # Additionally, POST and DELETE methods return None for the /api/config/routes.
     if method in ("PUT", "DELETE", "PATCH") and not ignore_previous_state:
         nd.existing = nd.previous = sanitize(nd.query_obj(path, ignore_not_found_error=True), ND_REST_KEYS_TO_SANITIZE)
     nd.result["previous"] = nd.previous
