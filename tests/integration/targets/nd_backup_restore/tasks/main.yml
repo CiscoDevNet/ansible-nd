@@ -6,8 +6,8 @@
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
-      output_level: "debug"
-      timeout: 90
+      output_level: '{{ mso_output_level | default("debug") }}'
+      timeout: 90 # Increased to 90 to extend the task timeout, as backup restore tasks commonly require 10-15 minutes or more.
 
 # QUERY VERSION
 - name: Query ND version
@@ -85,6 +85,7 @@
       cisco.nd.nd_rest:
         ignore_previous_state: true
         method: delete
+        output_level: debug
         path: /api/config/routes/12.23.45.68%2f32
 
     - name: Restore ND local backup from the ND backup list (check_mode)

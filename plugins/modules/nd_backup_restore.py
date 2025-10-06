@@ -38,6 +38,7 @@ options:
     description:
     - The path and file name of the backup file to be restored.
     - This parameter is required only when restoring the backup file from either a remote or local machine.
+    aliases: [ remote_path, path ]
     type: str
   restore_key:
     description:
@@ -49,8 +50,8 @@ options:
     description:
     - This parameter is only supported on ND v3.2.1 and later.
     - When O(ignore_persistent_ips=true), the existing external service IP addresses configured on the Nexus Dashboard will be overwritten.
-    - When unspecified, the parameter defaults to O(ignore_persistent_ips=false).
     type: bool
+    default: false
     aliases: [ ignore_external_service_ip_configuration ]
   restore_type:
     description:
@@ -69,10 +70,10 @@ options:
     type: str
   import_validation_delay:
     description:
-    - This parameter is only supported on ND v3.2.1 and later.
-    - This parameter is required only when restoring the backup file.
-    - When unspecified, the parameter defaults to O(import_validation_delay=10) seconds.
+    - This parameter is only supported on ND v3.2.1 and later. Required only when restoring a backup file.
+    - This parameter allows setting the delay time between the imported backup file validation and the restore process.
     type: int
+    default: 10
     aliases: [ delay ]
   state:
     description:
@@ -125,14 +126,14 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         name=dict(type="str", aliases=["restore_name"]),
-        encryption_key=dict(type="str", no_log=False),
-        file_location=dict(type="str"),
-        restore_key=dict(type="str", no_log=False),
+        encryption_key=dict(type="str", no_log=True),
+        file_location=dict(type="str", aliases=["remote_path", "path"]),
+        restore_key=dict(type="str", no_log=True),
         state=dict(type="str", default="restore", choices=["restore", "query", "absent"]),
-        ignore_persistent_ips=dict(type="bool", aliases=["ignore_external_service_ip_configuration"]),
+        ignore_persistent_ips=dict(type="bool", default=False, aliases=["ignore_external_service_ip_configuration"]),
         restore_type=dict(type="str", choices=["config_only", "full"], aliases=["type"]),
         remote_location=dict(type="str"),
-        import_validation_delay=dict(type="int", aliases=["delay"]),
+        import_validation_delay=dict(type="int", default=10, aliases=["delay"]),
     )
 
     module = AnsibleModule(
@@ -150,10 +151,10 @@ def main():
     restore_key = nd.params.get("restore_key")
     file_location = nd.params.get("file_location")
     state = nd.params.get("state")
-    ignore_persistent_ips = nd.params.get("ignore_persistent_ips") or False
+    ignore_persistent_ips = nd.params.get("ignore_persistent_ips")
     restore_type = BACKUP_TYPE.get(nd.params.get("restore_type"))
     remote_location = nd.params.get("remote_location")
-    import_validation_delay = nd.params.get("import_validation_delay") or 10
+    import_validation_delay = nd.params.get("import_validation_delay")
 
     backup_status_path = "/api/config/class/imports" if nd.version < "3.2.1" else "/api/action/class/backuprestore/status"
     nd.existing = nd.query_obj(backup_status_path)
@@ -204,26 +205,29 @@ def main():
 
             import_payload = {"encryptionKey": encryption_key}
 
+            # Used to restore backup from remote location
             if remote_location and file_location:
+
                 import_payload.update({"source": remote_location, "path": file_location})
 
+            # Used to restore backup from a downloaded backup file
             elif file_location:
-                # Local file upload
                 if not module.check_mode:
                     import_payload["path"] = nd.request(
                         "/api/action/class/backuprestore/file-upload", method="POST", data=None, file=file_location, file_key="files", output_format="raw"
                     )
 
+            # Used to restore backup from
             elif name:
-                # The restore operation requires only the backup file name.
                 import_payload["name"] = name.split(".")[0]
-
-            nd.sanitize(import_payload, collate=True)
 
             restore_payload = {
                 "ignorePersistentIPs": ignore_persistent_ips,
                 "type": restore_type,
             }
+
+            # The backup status API returns the current or most recent backup activity status.
+            # Because of this, a custom value is used to display the API input values in the console.
             nd_payload = {
                 "fileUploadPayload": {"fileLocation": file_location},
                 "importPayload": import_payload,

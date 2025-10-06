@@ -36,6 +36,7 @@ options:
     description:
     - The download path and file name for a backup.
     - When O(file_location) is specified, the backup will be created and automatically downloaded to the local machine at the designated path.
+    aliases: [ local_path, path ]
     type: str
   backup_key:
     description:
@@ -57,7 +58,8 @@ options:
     description:
     - This parameter is only supported on ND v3.2.1 and later.
     - The name of the remote storage location.
-    - If the O(remote_location) parameter is not specified or O(remote_location="") during backup creation, a local backup will be created.
+    - Use O(remote_location="") to create local backup.
+    default: ""
     type: str
   state:
     description:
@@ -139,10 +141,10 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         name=dict(type="str", aliases=["backup_name"]),
-        encryption_key=dict(type="str", no_log=False),
-        file_location=dict(type="str"),
-        backup_key=dict(type="str", no_log=False),
-        remote_location=dict(type="str"),
+        encryption_key=dict(type="str", no_log=True),
+        file_location=dict(type="str", aliases=["local_path", "path"]),
+        backup_key=dict(type="str", no_log=True),
+        remote_location=dict(type="str", default=""),
         backup_type=dict(type="str", choices=["config_only", "full"], aliases=["type"]),
         state=dict(type="str", default="backup", choices=["backup", "download", "query", "absent"]),
     )
@@ -163,7 +165,7 @@ def main():
     encryption_key = nd.params.get("encryption_key")
     backup_key = nd.params.get("backup_key")
     file_location = nd.params.get("file_location")
-    remote_location = nd.params.get("remote_location") or ""
+    remote_location = nd.params.get("remote_location")
     backup_type = BACKUP_TYPE.get(nd.params.get("backup_type"))
     state = nd.params.get("state")
 
@@ -198,6 +200,7 @@ def main():
                 if backup.get("name") == name:
                     nd.existing = backup
                     break
+            nd.previous = nd.existing
         elif backups:
             nd.previous = nd.existing = backups
 
@@ -210,7 +213,9 @@ def main():
     elif state == "backup":
         # The imported backup must be cleared before creating a new backup
         if not module.check_mode:
-            nd.request("/api/action/class/backuprestore/restore/file-import", method="DELETE")
+            backup_status = nd.query_obj("/api/action/class/backuprestore/status")
+            if backup_status.get("operation") != "backup":
+                nd.request("/api/action/class/backuprestore/restore/file-import", method="DELETE")
 
         if not nd.existing:
             if nd.version < "3.2.1":

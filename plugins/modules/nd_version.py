@@ -61,7 +61,18 @@ def main():
 
     # Query for nd.existing object
     nd.existing = nd.query_obj(path)
-    nd.existing["platformVersion"] = "{0}.{1}.{2}".format(nd.existing.get("major"), nd.existing.get("minor"), nd.existing.get("maintenance"))
+    nd_version = []
+
+    if nd.existing.get("major"):
+        nd_version.append(str(nd.existing["major"]))
+
+    if nd.existing.get("minor"):
+        nd_version.append(str(nd.existing["minor"]))
+
+    if nd.existing.get("maintenance"):
+        nd_version.append(str(nd.existing["maintenance"]))
+
+    nd.existing["platformVersion"] = ".".join(nd_version)
     nd.exit_json()
 
 

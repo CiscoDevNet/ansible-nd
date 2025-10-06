@@ -237,7 +237,7 @@ class NDModule(object):
             self.params["output_level"] = "debug"
 
     def set_version(self):
-        if self.version is None:
+        if self.version is None and self.connection:
             self.version = self.connection.get_version("nd")
 
     def set_connection(self):

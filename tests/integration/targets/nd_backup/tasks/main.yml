@@ -6,8 +6,8 @@
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
-      output_level: "debug"
-      timeout: 90
+      output_level: '{{ mso_output_level | default("debug") }}'
+      timeout: 90 # Increased to 90 to extend the task timeout, as backup tasks commonly require 10-15 minutes or more.
 
 - name: Create a directory if it does not exist
   ansible.builtin.file:
@@ -82,12 +82,12 @@
         that:
           - cm_add_local_backup is changed
           - cm_add_local_backup.current.destination == ""
-          - cm_add_local_backup.current.encryptionKey == "localbackup1"
+          - cm_add_local_backup.current.encryptionKey is defined
           - cm_add_local_backup.current.name == "localbackup"
           - cm_add_local_backup.current.type == "config-only"
           - cm_add_local_backup.previous == {}
           - cm_add_local_backup.proposed.destination == ""
-          - cm_add_local_backup.proposed.encryptionKey == "localbackup1"
+          - cm_add_local_backup.proposed.encryptionKey is defined
           - cm_add_local_backup.proposed.name == "localbackup"
           - cm_add_local_backup.proposed.type == "config-only"
           - add_local_backup is changed
@@ -101,7 +101,7 @@
           - add_local_backup.current.user is defined
           - add_local_backup.previous == {}
           - add_local_backup.proposed.destination == ""
-          - add_local_backup.proposed.encryptionKey == "localbackup1"
+          - add_local_backup.proposed.encryptionKey is defined
           - add_local_backup.proposed.name == "localbackup"
           - add_local_backup.proposed.type == "config-only"
           - add_local_backup_again is not changed
@@ -135,6 +135,7 @@
         name: localbackup
         file_location: "{{ role_path }}/backups/localbackup1_{{ ansible_host }}.tgz"
         state: download
+        output_level: debug
       register: download_local_backup
 
     - name: Create remote ND backup (check mode)
@@ -183,12 +184,12 @@
         that:
           - cm_add_remote_backup is changed
           - cm_add_remote_backup.current.destination == "test"
-          - cm_add_remote_backup.current.encryptionKey == "remotebackup1"
+          - cm_add_remote_backup.current.encryptionKey is defined
           - cm_add_remote_backup.current.name == "remotebackup"
           - cm_add_remote_backup.current.type == "config-only"
           - cm_add_remote_backup.previous == {}
           - cm_add_remote_backup.proposed.destination == "test"
-          - cm_add_remote_backup.proposed.encryptionKey == "remotebackup1"
+          - cm_add_remote_backup.proposed.encryptionKey is defined
           - cm_add_remote_backup.proposed.name == "remotebackup"
           - cm_add_remote_backup.proposed.type == "config-only"
           - add_remote_backup is changed
@@ -202,7 +203,7 @@
           - add_remote_backup.current.user is defined
           - add_remote_backup.previous == {}
           - add_remote_backup.proposed.destination == "test"
-          - add_remote_backup.proposed.encryptionKey == "remotebackup1"
+          - add_remote_backup.proposed.encryptionKey is defined
           - add_remote_backup.proposed.name == "remotebackup"
           - add_remote_backup.proposed.type == "config-only"
           - add_remote_backup_again is not changed
@@ -271,12 +272,13 @@
         name: remotebackup
         file_location: "{{ role_path }}/backups/remotebackup_{{ ansible_host }}.tgz"
         state: download
+        output_level: debug
       register: download_remote_backup
 
     - name: Assertion check for download ND backup files
       ansible.builtin.assert:
         that:
-          - download_local_backup is changed
+          - download_local_backup is not changed
           - download_local_backup.current.destination == ""
           - download_local_backup.current.details.progress == 100
           - download_local_backup.current.name == "localbackup"
@@ -287,7 +289,7 @@
           - download_local_backup.current.status == "success"
           - download_local_backup.current.type == "config-only"
           - download_local_backup.current.user == "admin"
-          - download_remote_backup is changed
+          - download_remote_backup is not changed
           - download_remote_backup.current.destination == "test"
           - download_remote_backup.current.details.progress == 100
           - download_remote_backup.current.name == "remotebackup"
