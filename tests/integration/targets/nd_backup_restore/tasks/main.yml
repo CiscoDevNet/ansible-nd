@@ -29,27 +29,27 @@
       cisco.nd.nd_rest:
         method: get
         path: /api/config/class/routes/
-      register: query_all_routes
+      register: setup_query_all_routes
 
     - name: Delete all Data Routes
       cisco.nd.nd_rest:
         method: delete
         ignore_previous_state: true
         path: "/api/config/routes/{{ item.destination }}"
-      loop: "{{ query_all_routes.current | list }}"
+      loop: "{{ setup_query_all_routes.current | list }}"
 
     - name: Query all backups
       cisco.nd.nd_backup:
         output_level: debug
         state: query
-      register: query_all_backups
+      register: setup_query_all_backups
 
     - name: Delete all backups
       cisco.nd.nd_backup:
         output_level: debug
         name: "{{ item.name }}"
         state: absent
-      loop: "{{ query_all_backups.current | list }}"
+      loop: "{{ setup_query_all_backups.current | list }}"
       delay: 5
 
     # Local backup restore test
@@ -128,10 +128,10 @@
       ansible.builtin.assert:
         that:
           - cm_restore_local_backup is changed
-          - cm_restore_local_backup.current.fileUploadPayload.fileLocation is none
-          - cm_restore_local_backup.current.importPayload.name == "localbackup"
-          - cm_restore_local_backup.current.restorePayload.ignorePersistentIPs == false
-          - cm_restore_local_backup.current.restorePayload.type == "config-only"
+          - cm_restore_local_backup.current.filePath is none
+          - cm_restore_local_backup.current.name == "localbackup"
+          - cm_restore_local_backup.current.ignorePersistentIPs == false
+          - cm_restore_local_backup.current.type == "config-only"
           - restore_local_backup is changed
           - restore_local_backup.current != {}
           - restore_local_backup.current.state == "processing"
@@ -252,11 +252,11 @@
       ansible.builtin.assert:
         that:
           - cm_restore_remote_backup is changed
-          - cm_restore_remote_backup.current.fileUploadPayload.fileLocation == "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
-          - cm_restore_remote_backup.current.importPayload.path == "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
-          - cm_restore_remote_backup.current.importPayload.source == "test"
-          - cm_restore_remote_backup.current.restorePayload.ignorePersistentIPs == false
-          - cm_restore_remote_backup.current.restorePayload.type == "config-only"
+          - cm_restore_remote_backup.current.filePath == "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
+          - cm_restore_remote_backup.current.path == "/home/backup/{{ansible_host | replace('.', '_')}}/remotebackup.tar.gz"
+          - cm_restore_remote_backup.current.source == "test"
+          - cm_restore_remote_backup.current.ignorePersistentIPs == false
+          - cm_restore_remote_backup.current.type == "config-only"
           - restore_remote_backup is changed
           - restore_remote_backup.current != {}
           - restore_remote_backup.current.state == "processing"
@@ -375,23 +375,26 @@
       retries: 200
       delay: 20
 
-    - name: Query Data Route after ND downloaded local backup file restore # ND4.1 routes API is not published officially
+    - name: Query Data Route after ND downloaded local backup file restore
       cisco.nd.nd_rest:
         output_level: debug
         method: get
         path: /api/config/class/routes/
       register: query_all_routes
 
-    - name: Assertion check for ND remote backup restore
+    - name: Assertion check for ND downloaded local backup restore
       ansible.builtin.assert:
         that:
           - cm_restore_downloaded_local_backup is changed
-          - cm_restore_downloaded_local_backup.current.fileUploadPayload.fileLocation is match (".+/localbackupbownload.tar.gz")
-          - cm_restore_downloaded_local_backup.current.importPayload.name is not defined
-          - cm_restore_downloaded_local_backup.current.importPayload.source is not defined
-          - cm_restore_downloaded_local_backup.current.importPayload.path is not defined
-          - cm_restore_downloaded_local_backup.current.restorePayload.ignorePersistentIPs == false
-          - cm_restore_downloaded_local_backup.current.restorePayload.type == "config-only"
+          - cm_restore_downloaded_local_backup.current.filePath is match (".+/localbackupbownload.tar.gz")
+          - cm_restore_downloaded_local_backup.current.ignorePersistentIPs == false
+          - cm_restore_downloaded_local_backup.current.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+          - cm_restore_downloaded_local_backup.current.type == "config-only"
+          - cm_restore_downloaded_local_backup.previous == {}
+          - cm_restore_downloaded_local_backup.proposed.filePath is match (".+/localbackupbownload.tar.gz")
+          - cm_restore_downloaded_local_backup.proposed.ignorePersistentIPs == false
+          - cm_restore_downloaded_local_backup.proposed.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+          - cm_restore_downloaded_local_backup.proposed.type == "config-only"
           - restore_downloaded_local_backup is changed
           - restore_downloaded_local_backup.current != {}
           - restore_downloaded_local_backup.current.state == "processing"
@@ -429,7 +432,7 @@
         state: absent
       register: rm_imported_backup
 
-    - name: Delete imported backup file again # idempotency not supported
+    - name: Delete imported backup file again
       cisco.nd.nd_backup_restore:
         <<: *nd_info
         state: absent
@@ -440,14 +443,40 @@
         that:
           - cm_rm_imported_backup is changed
           - cm_rm_imported_backup.current == {}
-          - cm_rm_imported_backup.previous != {}
+          - cm_rm_imported_backup.previous.error == ""
+          - cm_rm_imported_backup.previous.operation == "restore"
+          - cm_rm_imported_backup.previous.restoreConfig.type == "config-only"
+          - cm_rm_imported_backup.previous.state == "complete"
+          - cm_rm_imported_backup.proposed == {}
           - rm_imported_backup is changed
           - rm_imported_backup.current == {}
-          - rm_imported_backup.previous != {}
-          - rm_imported_backup_again is changed  # idempotency not supported
+          - rm_imported_backup.previous.error == ""
+          - rm_imported_backup.previous.operation == "restore"
+          - rm_imported_backup.previous.restoreConfig.type == "config-only"
+          - rm_imported_backup.previous.state == "complete"
+          - rm_imported_backup_again is not changed
           - rm_imported_backup_again.current == {}
-          - rm_imported_backup_again.previous.state == "idle"
+          - rm_imported_backup_again.previous == {}
+          - rm_imported_backup_again.proposed == {}
 
+    # ERROR
+    - name: Negative test restore ND local downloaded backup from the local machine with wrong encryption_key
+      cisco.nd.nd_backup_restore:
+        <<: *nd_info
+        output_level: debug
+        encryption_key: testtest12
+        file_location: "{{ role_path }}/backups/localbackupbownload.tar.gz"
+        state: restore
+      register: nt_restore_downloaded_local_backup
+      ignore_errors: true
+
+    - name: Assertion check for negative test restore ND local downloaded backup from the local machine with wrong encryption_key
+      ansible.builtin.assert:
+        that:
+          - nt_restore_downloaded_local_backup is failed
+          - 'nt_restore_downloaded_local_backup.msg == "Backup file restore validation failed: error while reading header: Unable to read header (wrong encryption key?)."'
+
+    # CLEAN TEST ENVIRONMENT
     - name: Query all backups
       cisco.nd.nd_backup:
         output_level: debug

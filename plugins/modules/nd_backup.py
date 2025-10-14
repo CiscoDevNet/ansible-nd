@@ -143,7 +143,7 @@ def main():
         name=dict(type="str", aliases=["backup_name"]),
         encryption_key=dict(type="str", no_log=True),
         file_location=dict(type="str", aliases=["local_path", "path"]),
-        backup_key=dict(type="str", no_log=True),
+        backup_key=dict(type="str", no_log=False),
         remote_location=dict(type="str", default=""),
         backup_type=dict(type="str", choices=["config_only", "full"], aliases=["type"]),
         state=dict(type="str", default="backup", choices=["backup", "download", "query", "absent"]),

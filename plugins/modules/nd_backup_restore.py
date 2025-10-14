@@ -68,13 +68,6 @@ options:
     - The name of the remote storage location.
     - This parameter is required only when restoring the backup file from a remote location.
     type: str
-  import_validation_delay:
-    description:
-    - This parameter is only supported on ND v3.2.1 and later. Required only when restoring a backup file.
-    - This parameter allows setting the delay time between the imported backup file validation and the restore process.
-    type: int
-    default: 10
-    aliases: [ delay ]
   state:
     description:
     - Use C(restore) for importing a backup of the cluster config.
@@ -119,6 +112,7 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.constants import BACKUP_TYPE
+import copy
 import time
 
 
@@ -128,12 +122,11 @@ def main():
         name=dict(type="str", aliases=["restore_name"]),
         encryption_key=dict(type="str", no_log=True),
         file_location=dict(type="str", aliases=["remote_path", "path"]),
-        restore_key=dict(type="str", no_log=True),
+        restore_key=dict(type="str", no_log=False),
         state=dict(type="str", default="restore", choices=["restore", "query", "absent"]),
         ignore_persistent_ips=dict(type="bool", default=False, aliases=["ignore_external_service_ip_configuration"]),
         restore_type=dict(type="str", choices=["config_only", "full"], aliases=["type"]),
         remote_location=dict(type="str"),
-        import_validation_delay=dict(type="int", default=10, aliases=["delay"]),
     )
 
     module = AnsibleModule(
@@ -154,10 +147,12 @@ def main():
     ignore_persistent_ips = nd.params.get("ignore_persistent_ips")
     restore_type = BACKUP_TYPE.get(nd.params.get("restore_type"))
     remote_location = nd.params.get("remote_location")
-    import_validation_delay = nd.params.get("import_validation_delay")
 
     backup_status_path = "/api/config/class/imports" if nd.version < "3.2.1" else "/api/action/class/backuprestore/status"
-    nd.existing = nd.query_obj(backup_status_path)
+    backup_status = nd.query_obj(backup_status_path)
+
+    if backup_status.get("operation") == "restore":
+        nd.existing = backup_status
 
     import_path = "/nexus/infra/api/platform/v1/imports" if nd.version < "3.2.1" else "/api/action/class/backuprestore/restore/file-import"
 
@@ -175,7 +170,7 @@ def main():
                 )
             nd.existing = next((file_dict for file_dict in restored_info if file_dict.get("key") == restore_key), {})
 
-    nd.previous = nd.existing
+    nd.previous = copy.deepcopy(nd.existing)
 
     if state == "absent":
         if not module.check_mode:
@@ -185,60 +180,59 @@ def main():
     elif state == "restore":
         if nd.version < "3.2.1":
             nd.previous = nd.existing = {}
-
             payload = {
                 "description": name,
                 "password": encryption_key,
             }
-
             nd.sanitize(payload, collate=True)
-
             if not module.check_mode:
                 nd.request(import_path, method="POST", data=payload, file=file_location, file_key="importfile", output_format="raw")
             nd.existing = nd.proposed
-
         else:
-
             # The imported backup must be cleared before starting the restore process
             if not module.check_mode:
                 nd.request(import_path, method="DELETE")
 
             import_payload = {"encryptionKey": encryption_key}
-
             # Used to restore backup from remote location
             if remote_location and file_location:
-
                 import_payload.update({"source": remote_location, "path": file_location})
-
             # Used to restore backup from a downloaded backup file
             elif file_location:
                 if not module.check_mode:
                     import_payload["path"] = nd.request(
                         "/api/action/class/backuprestore/file-upload", method="POST", data=None, file=file_location, file_key="files", output_format="raw"
                     )
-
             # Used to restore backup from
             elif name:
-                import_payload["name"] = name.split(".")[0]
+                import_payload["name"] = name
 
             restore_payload = {
                 "ignorePersistentIPs": ignore_persistent_ips,
                 "type": restore_type,
             }
 
-            # The backup status API returns the current or most recent backup activity status.
-            # Because of this, a custom value is used to display the API input values in the console.
-            nd_payload = {
-                "fileUploadPayload": {"fileLocation": file_location},
-                "importPayload": import_payload,
-                "restorePayload": restore_payload,
-            }
-            nd.sanitize(nd_payload, collate=True)
+            nd.proposed = {"filePath": file_location}
+            nd.proposed.update(import_payload)
+            nd.proposed.update(restore_payload)
 
             if not module.check_mode:
                 nd.request(import_path, method="POST", data=import_payload)
                 # The file upload and validation process takes a few seconds
-                time.sleep(import_validation_delay)
+                # If the backup becomes stuck during validation, the module will eventually fail due to a timeout error
+                max_retries = 50
+                for counter in range(1, max_retries + 1):
+                    backup_status = nd.query_obj(backup_status_path)
+                    if backup_status.get("operation") == "restore":
+                        state = backup_status.get("state")
+                        if state == "validationError":
+                            nd.fail_json(msg="Backup file restore validation failed: {0}.".format(backup_status.get("error")))
+                        elif state == "ready":
+                            break
+                        elif counter == max_retries:  # This section is not included in the coverage report
+                            nd.fail_json(msg="Backup file restore validation is taking too long.")
+                    time.sleep(2)  # To avoid multiple API calls
+
                 nd.request("/api/action/class/backuprestore/restore", method="POST", data=restore_payload)
                 nd.existing = nd.query_obj(backup_status_path)
             else:
