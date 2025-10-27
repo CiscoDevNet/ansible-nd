@@ -36,6 +36,7 @@ options:
     description:
     - The download path and file name for a backup.
     - When O(file_location) is specified, the backup will be created and automatically downloaded to the local machine at the designated path.
+    - Automatic download is not supported for the ND versions 3.2.1 and later. Use a following task with O(state=download) to download the backup.
     aliases: [ local_path, path ]
     type: str
   backup_key:
@@ -47,24 +48,24 @@ options:
     type: str
   backup_type:
     description:
-    - This parameter is only supported on ND v3.2.1 and later.
     - The O(backup_type=config_only) option creates a snapshot that specifically captures the configuration settings of the Nexus Dashboard.
     - The O(backup_type=full) option creates a complete snapshot of the entire Nexus Dashboard.
     - When unspecified, the parameter defaults to O(backup_type=config_only).
+    - This parameter is only supported on ND v3.2.1 and later.
     type: str
     choices: [ config_only, full ]
     aliases: [ type ]
   remote_location:
     description:
-    - This parameter is only supported on ND v3.2.1 and later.
     - The name of the remote storage location.
     - Use O(remote_location="") to create local backup.
+    - This parameter is only supported on ND v3.2.1 and later.
     default: ""
     type: str
   state:
     description:
-    - Use O(state=backup) for creating and downloading a backup of the cluster config for the ND versions < 3.2.1.
-    - Use O(state=backup) to create a cluster configuration backup. Automatic download is not supported for the ND versions >= 3.2.1.
+    - Use O(state=backup) for creating and downloading a backup of the cluster config for the ND versions less than 3.2.1.
+    - Use O(state=backup) to create a cluster configuration backup. Automatic download is not supported for the ND versions 3.2.1 and later.
     - After creation, use O(state=download) to download the backup file.
     - Use O(state=download) downloading a backup to the local machine, the O(state=download) is only supported on ND v3.2.1 and later.
     - Use O(state=query) for listing all the backed up files.

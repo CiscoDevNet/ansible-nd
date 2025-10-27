@@ -91,7 +91,6 @@ class HttpApi(HttpApiBase):
     # Required for cisco.dcnm modules
     # The cisco.nd HTTPAPI provider only supports NDFC 12+
     # TODO Add support for more platforms.
-    # TODO Add support for dynamically returning platform versions.
     def get_version(self, platform="ndfc"):
         if platform == "ndfc":
             if self.version is None:
