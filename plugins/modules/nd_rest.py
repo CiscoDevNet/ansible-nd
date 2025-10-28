@@ -50,7 +50,8 @@ options:
     aliases: [ config_file ]
   ignore_previous_state:
     description:
-    - This parameter ignores the object's previous state.
+    - Certain ND API endpoints do not support the GET method for querying the current status of an object before updating or deleting it.
+    - Use O(ignore_previous_state=true) to avoid making unsupported GET requests to such ND API endpoints.
     type: bool
 extends_documentation_fragment:
 - cisco.nd.modules

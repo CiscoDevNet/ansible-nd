@@ -37,7 +37,7 @@ options:
   file_location:
     description:
     - The path and file name of the backup file to be restored.
-    - This parameter is required only when restoring the backup file from either a remote or local machine.
+    - This parameter is required only when restoring the backup file from a remote location.
     aliases: [ remote_path, path ]
     type: str
   restore_key:
@@ -45,28 +45,29 @@ options:
     - The key generated for a restored job by ND during import of a backup.
     - This key is required when querying or deleting a restored job among multiple restored jobs that have the same name.
     - This key can be obtained by querying a restored job.
+    - This parameter is not supported on ND v3.2.1 and later.
     type: str
   ignore_persistent_ips:
     description:
-    - This parameter is only supported on ND v3.2.1 and later.
     - When O(ignore_persistent_ips=true), the existing external service IP addresses configured on the Nexus Dashboard will be overwritten.
+    - This parameter is only supported on ND v3.2.1 and later.
     type: bool
     default: false
     aliases: [ ignore_external_service_ip_configuration ]
   restore_type:
     description:
-    - This parameter is only supported on ND v3.2.1 and later.
     - The O(restore_type=config_only) option restores only configuration settings of the Nexus Dashboard.
     - The O(restore_type=full) option restores the entire settings of the Nexus Dashboard.
     - When unspecified, the parameter defaults to O(restore_type=config_only).
+    - This parameter is only supported on ND v3.2.1 and later.
     type: str
     choices: [ config_only, full ]
     aliases: [ type ]
   remote_location:
     description:
-    - This parameter is only supported on ND v3.2.1 and later.
     - The name of the remote storage location.
     - This parameter is required only when restoring the backup file from a remote location.
+    - This parameter is only supported on ND v3.2.1 and later.
     type: str
   state:
     description:
@@ -122,7 +123,7 @@ def main():
         name=dict(type="str", aliases=["restore_name"]),
         encryption_key=dict(type="str", no_log=True),
         file_location=dict(type="str", aliases=["remote_path", "path"]),
-        restore_key=dict(type="str", no_log=False),
+        restore_key=dict(type="str", no_log=False), # Sensitive keyword "key" is part of the attribute name, so no_log flag is set to false
         state=dict(type="str", default="restore", choices=["restore", "query", "absent"]),
         ignore_persistent_ips=dict(type="bool", default=False, aliases=["ignore_external_service_ip_configuration"]),
         restore_type=dict(type="str", choices=["config_only", "full"], aliases=["type"]),
