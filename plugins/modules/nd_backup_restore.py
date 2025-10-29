@@ -123,7 +123,7 @@ def main():
         name=dict(type="str", aliases=["restore_name"]),
         encryption_key=dict(type="str", no_log=True),
         file_location=dict(type="str", aliases=["remote_path", "path"]),
-        restore_key=dict(type="str", no_log=False), # Sensitive keyword "key" is part of the attribute name, so no_log flag is set to false
+        restore_key=dict(type="str", no_log=False),  # Sensitive keyword "key" is part of the attribute name, so no_log flag is set to false
         state=dict(type="str", default="restore", choices=["restore", "query", "absent"]),
         ignore_persistent_ips=dict(type="bool", default=False, aliases=["ignore_external_service_ip_configuration"]),
         restore_type=dict(type="str", choices=["config_only", "full"], aliases=["type"]),
