@@ -34,7 +34,7 @@
     - name: Delete all Data Routes
       cisco.nd.nd_rest:
         method: delete
-        ignore_previous_state: true
+        suppress_previous: true
         path: "/api/config/routes/{{ item.destination }}"
       loop: "{{ setup_query_all_routes.current | list }}"
 
@@ -83,7 +83,7 @@
 
     - name: Delete Data Route after ND local backup
       cisco.nd.nd_rest:
-        ignore_previous_state: true
+        suppress_previous: true
         method: delete
         output_level: debug
         path: /api/config/routes/12.23.45.68%2f32
@@ -147,7 +147,7 @@
     - name: Delete all Data Routes
       cisco.nd.nd_rest:
         method: delete
-        ignore_previous_state: true
+        suppress_previous: true
         path: "/api/config/routes/{{ item.destination }}"
       loop: "{{ query_all_routes.current | list }}"
 
@@ -202,7 +202,7 @@
     - name: Delete Data Route after ND remote backup
       cisco.nd.nd_rest:
         output_level: debug
-        ignore_previous_state: true
+        suppress_previous: true
         method: delete
         path: "{{ item }}"
       loop:
@@ -275,7 +275,7 @@
       cisco.nd.nd_rest:
         output_level: debug
         method: delete
-        ignore_previous_state: true
+        suppress_previous: true
         path: "/api/config/routes/{{ item.destination }}"
       loop: "{{ query_all_routes.current | list }}"
 
@@ -338,7 +338,7 @@
       cisco.nd.nd_rest:
         output_level: debug
         method: delete
-        ignore_previous_state: true
+        suppress_previous: true
         path: "{{ item }}"
       loop:
         - /api/config/routes/12.23.45.68%2f32
@@ -415,7 +415,7 @@
       cisco.nd.nd_rest:
         output_level: debug
         method: delete
-        ignore_previous_state: true
+        suppress_previous: true
         path: "/api/config/routes/{{ item.destination }}"
       loop: "{{ query_all_routes.current | list }}"
 
@@ -669,6 +669,13 @@
         query_all_routes_restored2: "{{ query_all_routes_after_second_import.current | map(attribute='spec') | list | sort(attribute='destination') }}"
         query_all_routes_restored3: "{{ query_all_routes_after_third_import.current | map(attribute='spec') | list | sort(attribute='destination') }}"
 
+    - name: Delete restored job without name and restore key
+      cisco.nd.nd_backup_restore:
+        output_level: debug
+        state: absent
+      ignore_errors: true
+      register: delete_restored_job_without_restore_key_and_name
+
     - name: Verify all assertions
       ansible.builtin.assert:
         that:
@@ -686,6 +693,8 @@
           - delete_nexus2.current == delete_nexus2_cm.current == delete_nexus2_again.current == {}
           - query_duplicate_nexus.msg == delete_duplicate_nexus.msg == "Multiple restore jobs with the name 'nexus' found. Please provide a restore key for the corresponding restored job."
           - delete_wrong_key_nexus.msg == "Provided key for the restore 'nexus' not found. Please provide a valid restore key by querying all the restored jobs and looking up the desired restore key."
+          - delete_restored_job_without_restore_key_and_name is failed
+          - delete_restored_job_without_restore_key_and_name.msg == "Please provide a valid O(restore_key) or O(name) to delete a restored job."
 
     - name: Query all restored jobs for deleting them
       cisco.nd.nd_backup_restore:

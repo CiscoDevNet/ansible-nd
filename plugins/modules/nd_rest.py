@@ -48,11 +48,16 @@ options:
     - The file path containing the body of the HTTP request.
     type: path
     aliases: [ config_file ]
-  ignore_previous_state:
+  suppress_previous:
     description:
+    - If enabled, a GET call to check previous object state will not be sent before a PUT, PATCH and DELETE update to ND.
+    - This causes the previous return value to be empty.
+    - The previous state of the object will not be checked and PUT, PATCH and DELETE update calls to ND will contain all properties specified in the task.
     - Certain ND API endpoints do not support the GET method for querying the current status of an object before updating or deleting it.
-    - Use O(ignore_previous_state=true) to avoid making unsupported GET requests to such ND API endpoints.
+    - Use O(suppress_previous=true) to avoid making unsupported GET requests to such ND API endpoints.
     type: bool
+    aliases: [ no_previous, ignore_previous ]
+
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -217,7 +222,7 @@ def main():
         ),
         content=dict(type="raw", aliases=["payload"]),
         file_path=dict(type="path", aliases=["config_file"]),
-        ignore_previous_state=dict(type="bool"),
+        suppress_previous=dict(type="bool", aliases=["no_previous", "ignore_previous"]),
     )
 
     module = AnsibleModule(
@@ -228,7 +233,7 @@ def main():
     content = module.params.get("content")
     path = module.params.get("path")
     file_path = module.params.get("config_file")
-    ignore_previous_state = module.params.get("ignore_previous_state")
+    suppress_previous = module.params.get("suppress_previous")
 
     nd = NDModule(module)
 
@@ -257,11 +262,11 @@ def main():
     method = nd.params.get("method").upper()
 
     # Append previous state of the object
-    # Purpose of ignore_previous_state:
-    # The ignore_previous_state was introduced because querying existing objects via the GET method on the /api/config/routes endpoint is not supported.
-    # To avoid the /api/config/routes GET call ignore_previous_state was introduced.
+    # Purpose of suppress_previous:
+    # The suppress_previous was introduced because querying existing objects via the GET method on the /api/config/routes endpoint is not supported.
+    # To avoid the /api/config/routes GET call suppress_previous was introduced.
     # Additionally, POST and DELETE methods return None for the /api/config/routes.
-    if method in ("PUT", "DELETE", "PATCH") and not ignore_previous_state:
+    if method in ("PUT", "DELETE", "PATCH") and not suppress_previous:
         nd.existing = nd.previous = sanitize(nd.query_obj(path, ignore_not_found_error=True), ND_REST_KEYS_TO_SANITIZE)
     nd.result["previous"] = nd.previous
 

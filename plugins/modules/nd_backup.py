@@ -35,8 +35,7 @@ options:
   file_location:
     description:
     - The download path and file name for a backup.
-    - When O(file_location) is specified, the backup will be created and automatically downloaded to the local machine at the designated path.
-    - Automatic download is not supported for the ND versions 3.2.1 and later. Use a following task with O(state=download) to download the backup.
+    - When O(file_location) is specified, the backup will be created and automatically downloaded to the designated path.
     aliases: [ local_path, path ]
     type: str
   backup_key:
@@ -58,18 +57,18 @@ options:
   remote_location:
     description:
     - The name of the remote storage location.
-    - Use O(remote_location="") to create local backup.
+    - Use O(remote_location="") to create ND local backup.
     - This parameter is only supported on ND v3.2.1 and later.
     default: ""
     type: str
   state:
     description:
-    - Use O(state=backup) for creating and downloading a backup of the cluster config for the ND versions less than 3.2.1.
-    - Use O(state=backup) to create a cluster configuration backup. Automatic download is not supported for the ND versions 3.2.1 and later.
-    - After creation, use O(state=download) to download the backup file.
-    - Use O(state=download) downloading a backup to the local machine, the O(state=download) is only supported on ND v3.2.1 and later.
     - Use O(state=query) for listing all the backed up files.
     - Use O(state=absent) for deleting a backup job.
+    - For ND versions earlier than v3.2.1, use O(state=backup) for creating and automatically downloading a backup of the cluster config.
+    - For ND versions later than v3.2.1, use O(state=backup) for creating a cluster configuration backup,
+      use O(state=download) for downloading a backup to the designated path.
+    - O(state=download) is only supported on ND v3.2.1 and later.
     type: str
     choices: [ backup, download, query, absent ]
     default: backup
@@ -79,7 +78,7 @@ extends_documentation_fragment:
 """
 
 EXAMPLES = r"""
-- name: Create a backup for ND versions < 3.2.1
+- name: Create a backup and automatically download it to file_location for ND versions < 3.2.1
   cisco.nd.nd_backup:
     name: nexus
     encryption_key: testtest
@@ -93,20 +92,20 @@ EXAMPLES = r"""
     remote_location: remote_machine
     state: backup
 
-- name: Create a local backup for ND versions >= 3.2.1
+- name: Create a ND local backup for ND versions >= 3.2.1
   cisco.nd.nd_backup:
     name: nexus
     encryption_key: testtest1
     state: backup
 
-- name: Create a backup and download it to the local machine for ND versions >= 3.2.1
+- name: Create a backup and download it to the designated path for ND versions >= 3.2.1
   cisco.nd.nd_backup:
     name: nexus
     file_location: ./nexus.tgz
     encryption_key: testtest1
     state: backup
 
-- name: Download a local/remote backup for ND versions >= 3.2.1
+- name: Download an existing backup for ND versions >= 3.2.1
   cisco.nd.nd_backup:
     name: nexus
     state: download
@@ -174,8 +173,8 @@ def main():
     backups = nd.query_obj("/api/config/class/exports") if nd.version < "3.2.1" else nd.query_obj(path)
 
     if nd.version < "3.2.1":
-        if not file_location and state in ["backup", "download"]:
-            nd.fail_json("Parameter 'file_location' is required when state is 'backup|download' for ND versions < 3.2.1.")
+        if not file_location and state in ["backup"]:
+            nd.fail_json("Parameter 'file_location' is required when state is 'backup' for ND versions < 3.2.1.")
 
         if encryption_key is not None and len(encryption_key) < 8:
             nd.fail_json("Please provide a minimum of 8 characters for the encryption key.")
@@ -255,6 +254,8 @@ def main():
         if not module.check_mode:
             response = nd.request("{0}/{1}?action=download".format(path, name), method="GET", data=None, output_format="raw")
             write_file(module, file_location, to_bytes(response))
+    elif state == "download" and nd.version < "3.2.1":
+        nd.fail_json("The O(state=download) is only supported on ND v3.2.1 and later.")
 
     nd.exit_json()
 

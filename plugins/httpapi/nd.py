@@ -352,7 +352,7 @@ class HttpApi(HttpApiBase):
 
             mp_encoder = MultipartEncoder(fields=fields)
             multiheader = {"Content-Type": mp_encoder.content_type, "Accept": "*/*", "Accept-Encoding": "gzip, deflate, br"}
-            self.connection.queue_message("info", "send_file_request() - connection.send({0}, {1}, {2}, {3})".format(path, method, fields, multiheader))
+            self.connection.queue_message("debug", "send_file_request() - connection.send({0}, {1}, {2}, {3})".format(path, method, fields, multiheader))
             response, rdata = self.connection.send(path, mp_encoder.to_string(), method=method, headers=multiheader)
         except Exception as e:
             self.error = dict(code=self.status, message="ND HTTPAPI MultipartEncoder Exception: {0} - {1} ".format(e, traceback.format_exc()))
