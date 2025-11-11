@@ -94,7 +94,7 @@
           - add_local_backup.current.name == "localbackup"
           - add_local_backup.current.path == "localbackup.tar.gz"
           - add_local_backup.current.schedule == ""
-          - add_local_backup.current.endTime == "0001-01-01T00:00:00Z"
+          - add_local_backup.current.endTime is defined
           - add_local_backup.current.startTime is defined
           - add_local_backup.current.status == "in-progress"
           - add_local_backup.current.type == "config-only"
@@ -563,6 +563,16 @@
       ignore_errors: true
       register: delete_wrong_key_nexus
 
+    - name: Negative test download backup with state=download
+      cisco.nd.nd_backup:
+        output_level: debug
+        name: nexus
+        encryption_key: Testtest123
+        file_location: "{{ role_path }}/backups/nexus2_{{ ansible_host }}.tgz"
+        state: download
+      ignore_errors: true
+      register: nt_download_backup
+
     - name: Verify all assertions
       ansible.builtin.assert:
         that:
@@ -590,7 +600,9 @@
           - query_duplicate_nexus.msg == delete_duplicate_nexus.msg == "Multiple backups with the name 'nexus' found. Please provide a backup key for the corresponding backup."
           - delete_wrong_key_nexus.msg == "Provided key for the backup 'nexus' not found. Please provide a valid backup key by querying all the backups and looking up the desired backup key."
           - add_nexus_without_file_location is not changed
-          - add_nexus_without_file_location.msg == "Parameter 'file_location' is required when state is 'backup|download' for ND versions < 3.2.1."
+          - add_nexus_without_file_location.msg == "Parameter 'file_location' is required when state is 'backup' for ND versions < 3.2.1."
+          - nt_download_backup is failed
+          - nt_download_backup.msg == "The O(state=download) is only supported on ND v3.2.1 and later."
 
     - name: Query all backups for deleting them
       cisco.nd.nd_backup:

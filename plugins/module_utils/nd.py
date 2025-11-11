@@ -224,21 +224,20 @@ class NDModule(object):
         self.url = None
         self.httpapi_logs = list()
         self.connection = None
-        self.version = None
+        self._version = None
 
         # Set Connection plugin
         self.set_connection()
-
-        # Set ND version
-        self.set_version()
 
         if self.module._debug:
             self.module.warn("Enable debug output because ANSIBLE_DEBUG was set.")
             self.params["output_level"] = "debug"
 
-    def set_version(self):
-        if self.version is None and self.connection:
-            self.version = self.connection.get_version("nd")
+    @property
+    def version(self):
+        if self._version is None and self.connection:
+            self._version = self.connection.get_version("nd")
+        return self._version
 
     def set_connection(self):
         if self.connection is None:

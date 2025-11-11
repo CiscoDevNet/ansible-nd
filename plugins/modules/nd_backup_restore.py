@@ -175,7 +175,13 @@ def main():
 
     if state == "absent":
         if not module.check_mode:
-            nd.request("{0}/{1}".format(import_path, restore_key) if nd.version < "3.2.1" else import_path, method="DELETE")
+            if nd.version < "3.2.1":
+                if restore_key is None and name is None:
+                    nd.fail_json("Please provide a valid O(restore_key) or O(name) to delete a restored job.")
+                nd.request("{0}/{1}".format(import_path, restore_key), method="DELETE")
+            else:
+                nd.request(import_path, method="DELETE")
+
         nd.existing = {}
 
     elif state == "restore":
