@@ -2,6 +2,7 @@
 requires_ansible: '>=2.16.0'
 action_groups:
   all:
+    - nd_api_key
     - nd_backup
     - nd_backup_restore
     - nd_cluster_config_route
@@ -26,8 +27,8 @@ action_groups:
     - nd_service_instance
     - nd_setup
     - nd_site
+    - nd_snapshot
     - nd_version
-
 plugin_routing:
   modules:
     nd_epoch:

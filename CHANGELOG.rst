@@ -4,6 +4,38 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 
 .. contents:: Topics
 
+v1.4.0
+======
+
+Release Summary
+---------------
+
+Release v1.4.0 of the ``ansible-nd`` collection on 2025-09-16.
+This changelog describes all changes made to the modules and plugins included in this collection since v1.3.0.
+This release adds Nexus Dashboard (ND) version 4.x support to multiple modules. Modules that have been updated to support ND 4.x have had options changed to match new ND terminology, such as replacing "site" with "fabric" and "epoch" with "snapshot". These changes are backward compatible, and the previous option names are still supported as aliases.
+
+Minor Changes
+-------------
+
+- Add job_wait_delay and job_wait_timeout options to nd_pcv, nd_pcv_delta_analysis and nd_delta_analysis.
+- Add san_vendor option and deployment_type to nodes configuration in nd_setup.
+- Add support for ND 4.x to nd_setup, nd_cluster_config_route, nd_pcv, nd_pcv_delta_analysis nd_pcv_compliance, nd_flow_rules, nd_interface_flow_rules, nd_delta_analysis, nd_policy_cam_statistics_hit_counts, nd_compliance_analysis, nd_compliance_requirement_communication, nd_compliance_requirement_config_import, nd_compliance_requirement_config_manual, nd_compliance_requirement_config_snapshot and nd_compliance_requirement_config_template.
+- Add support for analysis of additional ACI classes in nd_pcv.
+- Add support for authentication with User API Keys in cisco.nd.nd HTTPAPI plugin.
+- Rename nd_epoch module to nd_snapshot and add support for ND 4.x.
+- Update cisco.nd.nd HTTPAPI plugin to be compatible with the cisco.dcnm collection.
+
+Bugfixes
+--------
+
+- Fix issue with nd_delta_analysis unable to query or validate jobs.
+- Fix issue with nd_pcv and nd_pcv_delta_analysis when more than 50 Pre-Change Analysis jobs exist.
+
+New Modules
+-----------
+
+- cisco.nd.nd_api_key - Manage API keys on Nexus Dashboard.
+
 v1.3.0
 ======
 
