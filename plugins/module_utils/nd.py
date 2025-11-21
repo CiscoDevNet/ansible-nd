@@ -3,6 +3,7 @@
 # Copyright: (c) 2021, Lionel Hercot (@lhercot) <lhercot@cisco.com>
 # Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
 # Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
+# Copyright: (c) 2025, Shreyas Srish (@shrsr) <ssrish@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -18,11 +19,10 @@ import tempfile
 from ansible.module_utils.basic import json
 from ansible.module_utils.basic import env_fallback
 from ansible.module_utils.six import PY3
-from ansible.module_utils.six.moves import filterfalse
 from ansible.module_utils.six.moves.urllib.parse import urlencode
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import Connection
-from ansible_collections.cisco.nd.plugins.module_utils.constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
+from ansible_collections.cisco.nd.plugins.module_utils.constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED, NETWORK_RESOURCE_MODULE_STATES
 
 
 def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
@@ -73,53 +73,27 @@ if PY3:
 
 
 def issubset(subset, superset):
-    """Recurse through nested dictionary and compare entries"""
+    """Recurse through a nested dictionary and check if it is a subset of another."""
 
-    # Both objects are the same object
-    if subset is superset:
-        return True
-
-    # Both objects are identical
-    if subset == superset:
-        return True
-
-    # Both objects have a different type
-    if isinstance(subset) is not isinstance(superset):
+    if type(subset) is not type(superset):
         return False
 
-    for key, value in subset.items():
-        # Ignore empty values
-        if value is None:
-            return True
+    if not isinstance(subset, dict):
+        if isinstance(subset, list):
+            return all(item in superset for item in subset)
+        return subset == superset
 
-        # Item from subset is missing from superset
+    for key, value in subset.items():
+        if value is None:
+            continue
+
         if key not in superset:
             return False
 
-        # Item has different types in subset and superset
-        if isinstance(superset.get(key)) is not isinstance(value):
-            return False
+        superset_value = superset.get(key)
 
-        # Compare if item values are subset
-        if isinstance(value, dict):
-            if not issubset(superset.get(key), value):
-                return False
-        elif isinstance(value, list):
-            try:
-                # NOTE: Fails for lists of dicts
-                if not set(value) <= set(superset.get(key)):
-                    return False
-            except TypeError:
-                # Fall back to exact comparison for lists of dicts
-                diff = list(filterfalse(lambda i: i in value, superset.get(key))) + list(filterfalse(lambda j: j in superset.get(key), value))
-                if diff:
-                    return False
-        elif isinstance(value, set):
-            if not value <= superset.get(key):
-                return False
-        else:
-            if not value == superset.get(key):
-                return False
+        if not issubset(value, superset_value):
+            return False
 
     return True
 
@@ -223,6 +197,10 @@ class NDModule(object):
         self.status = None
         self.url = None
         self.httpapi_logs = list()
+        self.nd_logs = list()
+        self.changed = False
+        self.before_data = {}
+        self.after_data = {}
 
         if self.module._debug:
             self.module.warn("Enable debug output because ANSIBLE_DEBUG was set.")
@@ -252,7 +230,7 @@ class NDModule(object):
             if file is not None:
                 info = conn.send_file_request(method, uri, file, data, None, file_key, file_ext)
             else:
-                if data:
+                if data is not None:
                     info = conn.send_request(method, uri, json.dumps(data))
                 else:
                     info = conn.send_request(method, uri)
@@ -310,6 +288,8 @@ class NDModule(object):
                     self.fail_json(msg="ND Error: {0}".format(self.error.get("message")), data=data, info=info)
                 self.error = payload
                 if "code" in payload:
+                    if self.status == 404 and ignore_not_found_error:
+                        return {}
                     self.fail_json(msg="ND Error {code}: {message}".format(**payload), data=data, info=info, payload=payload)
                 elif "messages" in payload and len(payload.get("messages")) > 0:
                     self.fail_json(msg="ND Error {code} ({severity}): {message}".format(**payload["messages"][0]), data=data, info=info, payload=payload)
@@ -375,12 +355,45 @@ class NDModule(object):
             self.fail_json(msg="More than one object matches unique filter: {0}".format(kwargs))
         return objs[0]
 
-    def sanitize(self, updates, collate=False, required=None, unwanted=None):
+    def get_object_by_nested_key_value(self, path, nested_key_path, value, data_key=None):
+
+        response_data = self.request(path, method="GET")
+
+        if not response_data:
+            return None
+
+        object_list = []
+        if isinstance(response_data, list):
+            object_list = response_data
+        elif data_key and data_key in response_data:
+            object_list = response_data.get(data_key)
+        else:
+            return None
+
+        keys = nested_key_path.split(".")
+
+        for obj in object_list:
+            current_level = obj
+            for key in keys:
+                if isinstance(current_level, dict):
+                    current_level = current_level.get(key)
+                else:
+                    current_level = None
+                    break
+
+            if current_level == value:
+                return obj
+
+        return None
+
+    def sanitize(self, updates, collate=False, required=None, unwanted=None, existing=None):
         """Clean up unset keys from a request payload"""
         if required is None:
             required = []
         if unwanted is None:
             unwanted = []
+        if existing:
+            self.existing = existing
         if isinstance(self.existing, dict):
             self.proposed = deepcopy(self.existing)
             self.sent = deepcopy(self.existing)
@@ -429,35 +442,45 @@ class NDModule(object):
 
     def exit_json(self, **kwargs):
         """Custom written method to exit from module."""
+        if self.params.get("state") in NETWORK_RESOURCE_MODULE_STATES:
+            self.result["changed"] = self.changed
+            self.result["before"] = self.before_data
+            self.result["after"] = self.after_data
 
-        if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
-            if self.params.get("output_level") in ("debug", "info"):
-                self.result["previous"] = self.previous
-            # FIXME: Modified header only works for PATCH
-            if not self.has_modified and self.previous != self.existing:
-                self.result["changed"] = True
-        if self.stdout:
-            self.result["stdout"] = self.stdout
-
-        # Return the gory details when we need it
-        if self.params.get("output_level") == "debug":
-            self.result["method"] = self.method
-            self.result["response"] = self.response
-            self.result["status"] = self.status
-            self.result["url"] = self.url
-            self.result["httpapi_logs"] = self.httpapi_logs
-
+            if self.params.get("output_level") == "debug":
+                self.result["nd_logs"] = self.nd_logs
+                self.result["httpapi_logs"] = self.httpapi_logs
+            if self.stdout:
+                self.result["stdout"] = self.stdout
+        else:
             if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
-                self.result["sent"] = self.sent
-                self.result["proposed"] = self.proposed
+                if self.params.get("output_level") in ("debug", "info"):
+                    self.result["previous"] = self.previous
+                # FIXME: Modified header only works for PATCH
+                if not self.has_modified and self.previous != self.existing:
+                    self.result["changed"] = True
+            if self.stdout:
+                self.result["stdout"] = self.stdout
 
-        self.result["current"] = self.existing
+            # Return the gory details when we need it
+            if self.params.get("output_level") == "debug":
+                self.result["method"] = self.method
+                self.result["response"] = self.response
+                self.result["status"] = self.status
+                self.result["url"] = self.url
+                self.result["httpapi_logs"] = self.httpapi_logs
 
-        if self.module._diff and self.result.get("changed") is True:
-            self.result["diff"] = dict(
-                before=self.previous,
-                after=self.existing,
-            )
+                if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
+                    self.result["sent"] = self.sent
+                    self.result["proposed"] = self.proposed
+
+            self.result["current"] = self.existing
+
+            if self.module._diff and self.result.get("changed") is True:
+                self.result["diff"] = dict(
+                    before=self.previous,
+                    after=self.existing,
+                )
 
         self.result.update(**kwargs)
         self.module.exit_json(**self.result)
@@ -465,29 +488,39 @@ class NDModule(object):
     def fail_json(self, msg, **kwargs):
         """Custom written method to return info on failure."""
 
-        if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
-            if self.params.get("output_level") in ("debug", "info"):
-                self.result["previous"] = self.previous
-            # FIXME: Modified header only works for PATCH
-            if not self.has_modified and self.previous != self.existing:
-                self.result["changed"] = True
-        if self.stdout:
-            self.result["stdout"] = self.stdout
+        if self.params.get("state") in NETWORK_RESOURCE_MODULE_STATES:
+            self.result["before"] = self.before_data
+            self.result["after"] = self.after_data
 
-        # Return the gory details when we need it
-        if self.params.get("output_level") == "debug":
-            if self.url is not None:
-                self.result["method"] = self.method
-                self.result["response"] = self.response
-                self.result["status"] = self.status
-                self.result["url"] = self.url
+            if self.params.get("output_level") == "debug":
+                self.result["nd_logs"] = self.nd_logs
                 self.result["httpapi_logs"] = self.httpapi_logs
-
+            if self.stdout:
+                self.result["stdout"] = self.stdout
+        else:
             if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
-                self.result["sent"] = self.sent
-                self.result["proposed"] = self.proposed
+                if self.params.get("output_level") in ("debug", "info"):
+                    self.result["previous"] = self.previous
+                # FIXME: Modified header only works for PATCH
+                if not self.has_modified and self.previous != self.existing:
+                    self.result["changed"] = True
+            if self.stdout:
+                self.result["stdout"] = self.stdout
 
-        self.result["current"] = self.existing
+            # Return the gory details when we need it
+            if self.params.get("output_level") == "debug":
+                if self.url is not None:
+                    self.result["method"] = self.method
+                    self.result["response"] = self.response
+                    self.result["status"] = self.status
+                    self.result["url"] = self.url
+                    self.result["httpapi_logs"] = self.httpapi_logs
+
+                if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
+                    self.result["sent"] = self.sent
+                    self.result["proposed"] = self.proposed
+
+            self.result["current"] = self.existing
 
         self.result.update(**kwargs)
         self.module.fail_json(msg=msg, **self.result)
@@ -499,40 +532,154 @@ class NDModule(object):
             existing["password"] = self.sent.get("password")
         return not issubset(self.sent, existing)
 
-    def get_diff(self, unwanted=None):
+    def get_diff(self, unwanted=None, existing=None):
         """Check if existing payload and sent payload and removing keys that are not required"""
         if unwanted is None:
             unwanted = []
+        if existing:
+            self.existing = existing
         if not self.existing and self.sent:
             return True
 
-        existing = self.existing
-        sent = self.sent
+        exists = deepcopy(self.existing)
+        sent = deepcopy(self.sent)
 
         for key in unwanted:
             if isinstance(key, str):
                 if key in existing:
-                    try:
-                        del existing[key]
-                    except KeyError:
-                        pass
-                    try:
-                        del sent[key]
-                    except KeyError:
-                        pass
+                    del existing[key]
+                if key in sent:
+                    del sent[key]
             elif isinstance(key, list):
                 key_path, last = key[:-1], key[-1]
                 try:
-                    existing_parent = reduce(dict.get, key_path, existing)
-                    del existing_parent[last]
+                    existing_parent = reduce(dict.get, key_path, exists)
+                    if existing_parent is not None:
+                        del existing_parent[last]
                 except KeyError:
                     pass
                 try:
                     sent_parent = reduce(dict.get, key_path, sent)
-                    del sent_parent[last]
+                    if sent_parent is not None:
+                        del sent_parent[last]
                 except KeyError:
                     pass
-        return not issubset(sent, existing)
+        return not issubset(sent, exists)
 
     def set_to_empty_string_when_none(self, val):
         return val if val is not None else ""
+
+    def delete_none_values(self, obj_to_sanitize, existing=None, recursive=True, is_recursive_call=False):
+        if not is_recursive_call and existing:
+            self.existing = existing
+
+        sanitized_obj = None
+        if isinstance(obj_to_sanitize, dict):
+            sanitized_dict = {}
+            for item_key, item_value in obj_to_sanitize.items():
+                if item_value is None:
+                    continue
+
+                if recursive and isinstance(item_value, (dict, list)):
+                    sanitized_dict[item_key] = self.delete_none_values(item_value, None, recursive, is_recursive_call=True)
+                else:
+                    sanitized_dict[item_key] = item_value
+            sanitized_obj = sanitized_dict
+
+        elif isinstance(obj_to_sanitize, list):
+            sanitized_list = []
+            for item in obj_to_sanitize:
+                if item is None:
+                    continue
+
+                if recursive and isinstance(item, (dict, list)):
+                    sanitized_list.append(self.delete_none_values(item, None, recursive, is_recursive_call=True))
+                else:
+                    sanitized_list.append(item)
+            sanitized_obj = sanitized_list
+
+        else:
+            if not is_recursive_call:
+                self.module.warn("Object to sanitize must be of type list or dict. Got {0}".format(type(obj_to_sanitize)))
+            sanitized_obj = deepcopy(obj_to_sanitize)
+
+        if not is_recursive_call:
+            self.proposed = self.sent = sanitized_obj
+
+        return sanitized_obj
+
+    def add_log(self, identifier, status, before_data, after_data, sent_payload_data=None):
+        item_result = {
+            "identifier": identifier,
+            "status": status,
+            "before": deepcopy(before_data) if before_data is not None else {},
+            "after": deepcopy(after_data) if after_data is not None else {},
+            "sent_payload": deepcopy(sent_payload_data) if sent_payload_data is not None else {},
+        }
+        self.nd_logs.append(item_result)
+
+    def manage_state(self, state, desired_map, existing_map, action_callbacks, unwanted_keys=None):
+        item_changed = False
+        update_callback = action_callbacks["update_callback"]
+        create_callback = action_callbacks["create_callback"]
+        delete_callback = action_callbacks["delete_callback"]
+        if state == "overridden":
+            for identifier, existing_payload in existing_map.items():
+                if identifier not in desired_map:
+                    existing_payload = existing_map[identifier]
+                    self.delete_none_values({}, existing=existing_payload)
+                    self.before_data[identifier] = existing_payload
+                    delete_data = delete_callback(self)
+                    self.after_data[identifier] = delete_data
+                    self.add_logs(identifier=identifier, status="deleted", before_data=existing_payload, after_data=delete_data)
+                    item_changed = True
+
+            if item_changed:
+                self.changed = True
+
+        if state in ["merged", "replaced", "overidden"]:
+            for identifier, desired_payload in desired_map.items():
+                existing_payload = existing_map.get(identifier)
+                self.before_data[identifier] = existing_payload or {}
+                if existing_payload:
+                    if state == "merged":
+                        self.sanitize(desired_payload, existing=existing_payload)
+                    else:
+                        self.delete_none_values(desired_payload, existing=existing_payload)
+                    if self.get_diff(unwanted=unwanted_keys, existing=existing_payload):
+                        update_data = update_callback(self)
+                        self.after_data[identifier] = update_data
+                        self.add_log(
+                            identifier=identifier, status="updated", before_data=existing_payload, after_data=update_data, sent_payload_data=self.sent
+                        )
+                        item_changed = True
+                    else:
+                        self.after_data[identifier] = existing_payload or {}
+                        self.add_log(
+                            identifier=identifier, status="no_change", before_data=existing_payload, after_data=existing_payload, sent_payload_data=None
+                        )
+                else:
+                    self.sanitize(desired_payload, existing={})
+                    create_data = create_callback(self)
+                    self.after_data[identifier] = create_data
+                    self.add_log(identifier=identifier, status="created", before_data={}, after_data=create_data, sent_payload_data=self.sent)
+                    item_changed = True
+
+            if item_changed:
+                self.changed = True
+
+        elif state == "deleted":
+            for identifier, desired_payload in desired_map.items():
+                if identifier in existing_map:
+                    existing_payload = existing_map[identifier]
+                    self.delete_none_values(desired_payload, existing=existing_payload)
+                    self.before_data[identifier] = existing_payload
+                    delete_data = delete_callback(self)
+                    self.after_data[identifier] = delete_data
+                    self.add_log(identifier=identifier, status="deleted", before_data=existing_payload, after_data=delete_data)
+                    item_changed = True
+                else:
+                    self.before_data = {}
+                    self.add_log(identifier=identifier, status="not_found_for_deletion", before_data={}, after_data={})
+            if item_changed:
+                self.changed = True
