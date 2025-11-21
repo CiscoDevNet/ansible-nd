@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2023, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# Copyright: (c) 2025, Sabari Jaganathan (@sajagana) <sajagana@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
@@ -19,6 +20,7 @@ description:
 - Manages importing the cluster configuration using a backup.
 author:
 - Shreyas Srish (@shrsr)
+- Sabari Jaganathan (@sajagana)
 options:
   name:
     description:
@@ -30,16 +32,42 @@ options:
   encryption_key:
     description:
     - The encryption_key of a backup file.
+    - The encryption key must contain at least 8 alphanumeric characters.
     type: str
   file_location:
     description:
     - The path and file name of the backup file to be restored.
+    - This parameter is required only when restoring the backup file from a remote location.
+    aliases: [ remote_path, path ]
     type: str
   restore_key:
     description:
     - The key generated for a restored job by ND during import of a backup.
     - This key is required when querying or deleting a restored job among multiple restored jobs that have the same name.
     - This key can be obtained by querying a restored job.
+    - This parameter is not supported on ND v3.2.1 and later.
+    type: str
+  ignore_persistent_ips:
+    description:
+    - When O(ignore_persistent_ips=true), the existing external service IP addresses configured on the Nexus Dashboard will be overwritten.
+    - This parameter is only supported on ND v3.2.1 and later.
+    type: bool
+    default: false
+    aliases: [ ignore_external_service_ip_configuration ]
+  restore_type:
+    description:
+    - The O(restore_type=config_only) option restores only configuration settings of the Nexus Dashboard.
+    - The O(restore_type=full) option restores the entire settings of the Nexus Dashboard.
+    - When unspecified, the parameter defaults to O(restore_type=config_only).
+    - This parameter is only supported on ND v3.2.1 and later.
+    type: str
+    choices: [ config_only, full ]
+    aliases: [ type ]
+  remote_location:
+    description:
+    - The name of the remote storage location.
+    - This parameter is required only when restoring the backup file from a remote location.
+    - This parameter is only supported on ND v3.2.1 and later.
     type: str
   state:
     description:
@@ -84,24 +112,29 @@ RETURN = r"""
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.constants import BACKUP_TYPE
+import copy
+import time
 
 
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         name=dict(type="str", aliases=["restore_name"]),
-        encryption_key=dict(type="str", no_log=False),
-        file_location=dict(type="str"),
-        restore_key=dict(type="str", no_log=False),
+        encryption_key=dict(type="str", no_log=True),
+        file_location=dict(type="str", aliases=["remote_path", "path"]),
+        restore_key=dict(type="str", no_log=False),  # Sensitive keyword "key" is part of the attribute name, so no_log flag is set to false
         state=dict(type="str", default="restore", choices=["restore", "query", "absent"]),
+        ignore_persistent_ips=dict(type="bool", default=False, aliases=["ignore_external_service_ip_configuration"]),
+        restore_type=dict(type="str", choices=["config_only", "full"], aliases=["type"]),
+        remote_location=dict(type="str"),
     )
 
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
         required_if=[
-            ["state", "restore", ["name", "encryption_key", "file_location"]],
-            ["state", "absent", ["name"]],
+            ["state", "restore", ["encryption_key"]],
         ],
     )
 
@@ -112,49 +145,105 @@ def main():
     restore_key = nd.params.get("restore_key")
     file_location = nd.params.get("file_location")
     state = nd.params.get("state")
+    ignore_persistent_ips = nd.params.get("ignore_persistent_ips")
+    restore_type = BACKUP_TYPE.get(nd.params.get("restore_type"))
+    remote_location = nd.params.get("remote_location")
 
-    if encryption_key is not None and len(encryption_key) < 8:
-        nd.fail_json("The encryption key must have a minium of 8 characters.")
+    backup_status_path = "/api/config/class/imports" if nd.version < "3.2.1" else "/api/action/class/backuprestore/status"
+    backup_status = nd.query_obj(backup_status_path)
 
-    path = "/nexus/infra/api/platform/v1/imports"
-    # The below path for GET operation is to be replaced by an official documented API endpoint once it becomes available.
-    restored_objs = nd.query_obj("/api/config/class/imports")
+    if backup_status.get("operation") == "restore":
+        nd.existing = backup_status
 
-    if name:
-        restored_info = [file_dict for file_dict in restored_objs if file_dict.get("description") == name]
-        if len(restored_info) > 1 and restore_key is None and encryption_key is None:
-            nd.fail_json("Multiple restore jobs with the name '{0}' found. Please provide a restore key for the corresponding restored job.".format(name))
-        elif len(restored_info) == 1:
-            restore_key = restored_info[0].get("key")
-        elif restore_key is not None and restore_key not in [file_dict.get("key") for file_dict in restored_info]:
-            nd.fail_json(
-                "Provided key for the restore '{0}' not found."
-                " Please provide a valid restore key by querying all the restored jobs and looking up the desired restore key.".format(name)
-            )
-        nd.existing = next((file_dict for file_dict in restored_info if file_dict.get("key") == restore_key), {})
-    else:
-        nd.existing = restored_objs
+    import_path = "/nexus/infra/api/platform/v1/imports" if nd.version < "3.2.1" else "/api/action/class/backuprestore/restore/file-import"
 
-    nd.previous = nd.existing
+    if nd.version < "3.2.1":
+        if name:
+            restored_info = [file_dict for file_dict in nd.existing if file_dict.get("description") == name]
+            if len(restored_info) > 1 and restore_key is None and encryption_key is None:
+                nd.fail_json("Multiple restore jobs with the name '{0}' found. Please provide a restore key for the corresponding restored job.".format(name))
+            elif len(restored_info) == 1:
+                restore_key = restored_info[0].get("key")
+            elif restore_key is not None and restore_key not in [file_dict.get("key") for file_dict in restored_info]:
+                nd.fail_json(
+                    "Provided key for the restore '{0}' not found."
+                    " Please provide a valid restore key by querying all the restored jobs and looking up the desired restore key.".format(name)
+                )
+            nd.existing = next((file_dict for file_dict in restored_info if file_dict.get("key") == restore_key), {})
+
+    nd.previous = copy.deepcopy(nd.existing)
 
     if state == "absent":
-        if nd.existing:
-            if not module.check_mode:
-                nd.request("{0}/{1}".format(path, restore_key), method="DELETE")
-            nd.existing = {}
-    elif state == "restore":
-        nd.previous = nd.existing = {}
-
-        payload = {
-            "description": name,
-            "password": encryption_key,
-        }
-
-        nd.sanitize(payload, collate=True)
-
         if not module.check_mode:
-            nd.request(path, method="POST", data=payload, file=file_location, file_key="importfile", output_format="raw")
-        nd.existing = nd.proposed
+            if nd.version < "3.2.1":
+                if restore_key is None and name is None:
+                    nd.fail_json("Please provide a valid O(restore_key) or O(name) to delete a restored job.")
+                nd.request("{0}/{1}".format(import_path, restore_key), method="DELETE")
+            else:
+                nd.request(import_path, method="DELETE")
+
+        nd.existing = {}
+
+    elif state == "restore":
+        if nd.version < "3.2.1":
+            nd.previous = nd.existing = {}
+            payload = {
+                "description": name,
+                "password": encryption_key,
+            }
+            nd.sanitize(payload, collate=True)
+            if not module.check_mode:
+                nd.request(import_path, method="POST", data=payload, file=file_location, file_key="importfile", output_format="raw")
+            nd.existing = nd.proposed
+        else:
+            # The imported backup must be cleared before starting the restore process
+            if not module.check_mode:
+                nd.request(import_path, method="DELETE")
+
+            import_payload = {"encryptionKey": encryption_key}
+            # Used to restore backup from remote location
+            if remote_location and file_location:
+                import_payload.update({"source": remote_location, "path": file_location})
+            # Used to restore backup from a downloaded backup file
+            elif file_location:
+                if not module.check_mode:
+                    import_payload["path"] = nd.request(
+                        "/api/action/class/backuprestore/file-upload", method="POST", data=None, file=file_location, file_key="files", output_format="raw"
+                    )
+            # Used to restore backup from
+            elif name:
+                import_payload["name"] = name
+
+            restore_payload = {
+                "ignorePersistentIPs": ignore_persistent_ips,
+                "type": restore_type,
+            }
+
+            nd.proposed = {"filePath": file_location}
+            nd.proposed.update(import_payload)
+            nd.proposed.update(restore_payload)
+
+            if not module.check_mode:
+                nd.request(import_path, method="POST", data=import_payload)
+                # The file upload and validation process takes a few seconds
+                # If the backup becomes stuck during validation, the module will eventually fail due to a timeout error
+                max_retries = 50
+                for counter in range(1, max_retries + 1):
+                    backup_status = nd.query_obj(backup_status_path)
+                    if backup_status.get("operation") == "restore":
+                        state = backup_status.get("state")
+                        if state == "validationError":
+                            nd.fail_json(msg="Backup file restore validation failed: {0}.".format(backup_status.get("error")))
+                        elif state == "ready":
+                            break
+                        elif counter == max_retries:  # This section is not included in the coverage report
+                            nd.fail_json(msg="Backup file restore validation is taking too long.")
+                    time.sleep(2)  # To avoid multiple API calls
+
+                nd.request("/api/action/class/backuprestore/restore", method="POST", data=restore_payload)
+                nd.existing = nd.query_obj(backup_status_path)
+            else:
+                nd.existing = nd.proposed
 
     nd.exit_json()
 

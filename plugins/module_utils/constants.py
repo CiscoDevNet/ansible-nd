@@ -168,3 +168,5 @@ ND_SETUP_NODE_ROLE_MAPPING = {"primary": "Master", "secondary": "Worker", "stand
 ND_REST_KEYS_TO_SANITIZE = ["metadata"]
 
 ND_SETUP_NODE_DEPLOYMENT_TYPE = {"physical": "cimc", "virtual": "vnode"}
+
+BACKUP_TYPE = {"config_only": "config-only", None: "config-only", "": "config-only", "full": "full"}

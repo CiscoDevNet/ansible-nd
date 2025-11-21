@@ -48,6 +48,13 @@ options:
     - The file path containing the body of the HTTP request.
     type: path
     aliases: [ config_file ]
+  suppress_previous:
+    description:
+    - When enabled the previous state of the object will not be checked if the O(method) used is PUT, PATCH or DELETE.
+    - This causes the previous return value to be empty.
+    type: bool
+    aliases: [ no_previous, ignore_previous ]
+    default: false
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -212,6 +219,7 @@ def main():
         ),
         content=dict(type="raw", aliases=["payload"]),
         file_path=dict(type="path", aliases=["config_file"]),
+        suppress_previous=dict(type="bool", default=False, aliases=["no_previous", "ignore_previous"]),
     )
 
     module = AnsibleModule(
@@ -222,6 +230,7 @@ def main():
     content = module.params.get("content")
     path = module.params.get("path")
     file_path = module.params.get("config_file")
+    suppress_previous = module.params.get("suppress_previous")
 
     nd = NDModule(module)
 
@@ -250,7 +259,11 @@ def main():
     method = nd.params.get("method").upper()
 
     # Append previous state of the object
-    if method in ("PUT", "DELETE", "PATCH"):
+    # Purpose of suppress_previous:
+    # The suppress_previous was introduced because querying existing objects via the GET method on the /api/config/routes endpoint is not supported.
+    # To avoid the /api/config/routes GET call suppress_previous was introduced.
+    # Additionally, POST and DELETE methods return None for the /api/config/routes.
+    if method in ("PUT", "DELETE", "PATCH") and not suppress_previous:
         nd.existing = nd.previous = sanitize(nd.query_obj(path, ignore_not_found_error=True), ND_REST_KEYS_TO_SANITIZE)
     nd.result["previous"] = nd.previous
 
