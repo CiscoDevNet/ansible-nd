@@ -50,14 +50,11 @@ options:
     aliases: [ config_file ]
   suppress_previous:
     description:
-    - If enabled, a GET call to check previous object state will not be sent before a PUT, PATCH and DELETE update to ND.
+    - When enabled the previous state of the object will not be checked if the O(method) used is PUT, PATCH or DELETE.
     - This causes the previous return value to be empty.
-    - The previous state of the object will not be checked and PUT, PATCH and DELETE update calls to ND will contain all properties specified in the task.
-    - Certain ND API endpoints do not support the GET method for querying the current status of an object before updating or deleting it.
-    - Use O(suppress_previous=true) to avoid making unsupported GET requests to such ND API endpoints.
     type: bool
     aliases: [ no_previous, ignore_previous ]
-
+    default: false
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
@@ -222,7 +219,7 @@ def main():
         ),
         content=dict(type="raw", aliases=["payload"]),
         file_path=dict(type="path", aliases=["config_file"]),
-        suppress_previous=dict(type="bool", aliases=["no_previous", "ignore_previous"]),
+        suppress_previous=dict(type="bool", default=False, aliases=["no_previous", "ignore_previous"]),
     )
 
     module = AnsibleModule(
