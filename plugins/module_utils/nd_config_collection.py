@@ -9,28 +9,8 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from copy import deepcopy
-
-
-# TODO: move it to utils.py
-def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
-    if keys is None:
-        keys = []
-    if values is None:
-        values = []
-
-    result = deepcopy(dict_to_sanitize)
-    for k, v in dict_to_sanitize.items():
-        if k in keys:
-            del result[k]
-        elif v in values or (v is None and remove_none_values):
-            del result[k]
-        elif isinstance(v, dict) and recursive:
-            result[k] = sanitize_dict(v, keys, values)
-        elif isinstance(v, list) and recursive:
-            for index, item in enumerate(v):
-                if isinstance(item, dict):
-                    result[k][index] = sanitize_dict(item, keys, values)
-    return result
+import logging
+from ansible_collections.cisco.nd.plugins.module_utils.utils import sanitize_dict
 
 
 # Custom NDConfigCollection Exceptions
@@ -57,7 +37,6 @@ class InvalidNDConfigError(NDConfigCollectionError, TypeError):
 # TODO: Add a get_diff_config function
 # TODO: Handle multiple identifiers
 # TODO: Add descriptions
-# TODO: Maybe leverage MutableMapping, MutableSequence from collections.abc
 # NOTE: New data structure for ND Network Resource Module
 class NDConfigCollection:
     def __init__(self, identifier_key, data=None):
