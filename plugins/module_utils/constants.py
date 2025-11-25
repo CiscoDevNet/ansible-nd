@@ -157,6 +157,11 @@ ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED = (
     "restart",
     "delete",
     "update",
+    "merged",
+    "replaced",
+    "overridden",
+    "deleted",
+    "gathered",
 )
 
 INTERFACE_FLOW_RULES_TYPES_MAPPING = {"port_channel": "PORTCHANNEL", "physical": "PHYSICAL", "l3out_sub_interface": "L3_SUBIF", "l3out_svi": "SVI"}
@@ -168,3 +173,12 @@ ND_SETUP_NODE_ROLE_MAPPING = {"primary": "Master", "secondary": "Worker", "stand
 ND_REST_KEYS_TO_SANITIZE = ["metadata"]
 
 ND_SETUP_NODE_DEPLOYMENT_TYPE = {"physical": "cimc", "virtual": "vnode"}
+
+USER_ROLES_MAPPING = {
+    "fabric_admin": "fabric-admin",
+    "observer": "observer",
+    "super_admin": "super-admin",
+    "support_engineer": "support-engineer",
+    "approver": "approver",
+    "designer": "designer",
+}
