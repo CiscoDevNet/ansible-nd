@@ -81,12 +81,12 @@
       ansible.builtin.assert:
         that:
           - cm_add_local_backup is changed
-          - cm_add_local_backup.current.destination == ""
+          - cm_add_local_backup.current.destination is not defined
           - cm_add_local_backup.current.encryptionKey is defined
           - cm_add_local_backup.current.name == "localbackup"
           - cm_add_local_backup.current.type == "config-only"
           - cm_add_local_backup.previous == {}
-          - cm_add_local_backup.proposed.destination == ""
+          - cm_add_local_backup.proposed.destination is not defined
           - cm_add_local_backup.proposed.encryptionKey is defined
           - cm_add_local_backup.proposed.name == "localbackup"
           - cm_add_local_backup.proposed.type == "config-only"
@@ -100,7 +100,7 @@
           - add_local_backup.current.type == "config-only"
           - add_local_backup.current.user is defined
           - add_local_backup.previous == {}
-          - add_local_backup.proposed.destination == ""
+          - add_local_backup.proposed.destination is not defined
           - add_local_backup.proposed.encryptionKey is defined
           - add_local_backup.proposed.name == "localbackup"
           - add_local_backup.proposed.type == "config-only"

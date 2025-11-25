@@ -57,9 +57,7 @@ options:
   remote_location:
     description:
     - The name of the remote storage location.
-    - Use O(remote_location="") to create ND local backup.
     - This parameter is only supported on ND v3.2.1 and later.
-    default: ""
     type: str
   state:
     description:
@@ -144,7 +142,7 @@ def main():
         encryption_key=dict(type="str", no_log=True),
         file_location=dict(type="str", aliases=["local_path", "path"]),
         backup_key=dict(type="str", no_log=False),
-        remote_location=dict(type="str", default=""),
+        remote_location=dict(type="str"),
         backup_type=dict(type="str", choices=["config_only", "full"], aliases=["type"]),
         state=dict(type="str", default="backup", choices=["backup", "download", "query", "absent"]),
     )
