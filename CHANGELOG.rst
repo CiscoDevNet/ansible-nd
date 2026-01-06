@@ -4,6 +4,20 @@ Cisco Nexus Dashboard Ansible Collection Release Notes
 
 .. contents:: Topics
 
+v1.5.0
+======
+
+Release Summary
+---------------
+
+Release v1.5.0 of the ``ansible-nd`` collection on 2026-01-06.
+This changelog describes all changes made to the modules and plugins included in this collection since v1.4.0.
+
+Minor Changes
+-------------
+
+- Added ND 4.1 version support to the nd_backup and nd_backup_restore module
+
 v1.4.0
 ======
 
