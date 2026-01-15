@@ -20,6 +20,7 @@ else:
     from collections import MutableMapping
     iteritems = lambda d: d.iteritems()
 
+# TODO: Adapt to Pydantic Models
 # NOTE: Single-Index Hybrid Collection for ND Network Resource Module
 class NDConfigCollection(MutableMapping):
 

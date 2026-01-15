@@ -181,10 +181,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.constants import USER_ROL
 
 
 # Actions overwrite functions
-def quey_all_local_users(nd):
+def query_all_local_users(nd):
     return nd.query_obj(nd.path).get("localusers")
 
 
+# TODO: Adapt to Pydantic Model
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
@@ -223,7 +224,7 @@ def main():
 
     path = "/api/v1/infra/aaa/localUsers"
     identifier_keys = ["loginID"]
-    actions_overwrite_map = {"query_all": quey_all_local_users}
+    actions_overwrite_map = {"query_all": query_all_local_users}
 
     nd = NDNetworkResourceModule(module, path, identifier_keys, actions_overwrite_map=actions_overwrite_map)
 
