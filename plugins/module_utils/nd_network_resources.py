@@ -14,6 +14,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection impo
 from ansible_collections.cisco.nd.plugins.module_utils.constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
 
 # TODO: Make further enhancement to logs and outputs
+# TODO: Adapt to Pydantic Models
 # NOTE: ONLY works for new API endpoints introduced in ND v4.1.0 and later
 class NDNetworkResourceModule(NDModule):
 
@@ -98,6 +99,7 @@ class NDNetworkResourceModule(NDModule):
         self.nd_logs.append(item_result)
 
     # Logs and Outputs formating Operations
+    # TODO: Move it to different file
     def add_logs_and_ouputs(self):
         if self.params.get("state") in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
             if self.params.get("output_level") in ("debug", "info"):
