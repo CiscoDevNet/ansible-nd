@@ -8,9 +8,10 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, SecretStr
 from types import MappingProxyType
 from typing import List, Dict, Any, Optional, ClassVar
+from typing_extensions import Self
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
@@ -20,7 +21,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 # TODO: Surclass BaseModel -> Priority
 # TODO: Look at ansible aliases
 
-# TODO: use constants.py file in the future
+# TODO: To be moved in constants.py file
 user_roles_mapping = MappingProxyType({})
 
 
@@ -39,15 +40,11 @@ class LocalUserSecurityDomainModel(NDBaseModel):
         }
 
     @classmethod
-    def from_response(cls, name: str, domain_config: List[str]) -> 'NDBaseModel':
-        internal_roles = [user_roles_mapping.get(role, role) for role in domain_config.get("roles", [])]
-        
-        domain_data = {
-            "name": name,
-            "roles": internal_roles
-        }
-
-        return cls(**domain_data)
+    def from_response(cls, name: str, domain_config: List[str]) -> Self:
+        return cls(
+            name=name,
+            roles=[user_roles_mapping.get(role, role) for role in domain_config.get("roles", [])]
+        )
 
 
 class LocalUserModel(NDBaseModel):
@@ -55,17 +52,17 @@ class LocalUserModel(NDBaseModel):
     # TODO: Define a way to generate it (look at NDBaseModel comments)
     identifiers: ClassVar[List[str]] = ["login_id"]
 
-    # TODO: Use Optinal to remove default values (get them from API response instead)
-    email: str = Field(default="", alias="email")
+    email: Optional[str] = Field(alias="email")
     login_id: str = Field(alias="loginID")
-    first_name: str = Field(default="", alias="firstName")
-    last_name: str = Field(default="", alias="lastName")
-    user_password: str = Field(alias="password")
-    reuse_limitation: int = Field(default=0, alias="reuseLimitation")
-    time_interval_limitation: int = Field(default=0, alias="timeIntervalLimitation")
-    security_domains: List[LocalUserSecurityDomainModel] = Field(default_factory=list, alias="domains")
-    remote_id_claim: str = Field(default="", alias="remoteIDClaim")
-    remote_user_authorization: bool = Field(default=False, alias="xLaunch")
+    first_name: Optional[str] = Field(default="", alias="firstName")
+    last_name: Optional[str] = Field(default="", alias="lastName")
+    # TODO: Check secrets manipulation when tracking changes while maintaining security
+    user_password: Optional[SecretStr] = Field(alias="password")
+    reuse_limitation: Optional[int] = Field(default=0, alias="reuseLimitation")
+    time_interval_limitation: Optional[int] = Field(default=0, alias="timeIntervalLimitation")
+    security_domains: Optional[List[LocalUserSecurityDomainModel]] = Field(alias="domains")
+    remote_id_claim: Optional[str] = Field(default="", alias="remoteIDClaim")
+    remote_user_authorization: Optional[bool] = Field(default=False, alias="xLaunch")
 
     def to_payload(self) -> Dict[str, Any]:
         """Convert the model to the specific API payload format required."""
@@ -86,31 +83,20 @@ class LocalUserModel(NDBaseModel):
         return payload
 
     @classmethod
-    def from_response(cls, payload: Dict[str, Any]) -> 'LocalUserModel':
+    def from_response(cls, response: Dict[str, Any]) -> Self:
         
-        if reverse_user_roles_mapping is None:
-            reverse_user_roles_mapping = {}
-
-        user_data = {
-            "email": payload.get("email"),
-            "loginID": payload.get("loginID"),
-            "firstName": payload.get("firstName"),
-            "lastName": payload.get("lastName"),
-            "password": payload.get("password"),
-            "remoteIDClaim": payload.get("remoteIDClaim"),
-            "xLaunch": payload.get("xLaunch"),
-        }
-
-        password_policy = payload.get("passwordPolicy", {})
-        user_data["reuseLimitation"] = password_policy.get("reuseLimitation", 0)
-        user_data["timeIntervalLimitation"] = password_policy.get("timeIntervalLimitation", 0)
-
-        domains_data = []
-        rbac = payload.get("rbac", {})
-        if rbac and "domains" in rbac:
-            for domain_name, domain_config in rbac["domains"].items():
-                domains_data.append(LocalUserSecurityDomainModel.from_api_response(domain_name, domain_config))
-
-        user_data["domains"] = domains_data
-
-        return cls(**user_data)
+        return cls(
+            email=response.get("email"),
+            login_id=response.get("loginID"),
+            first_name=response.get("firstName"),
+            last_name=response.get("lastName"),
+            user_password=response.get("password"),
+            reuse_limitation=response.get("passwordPolicy", {}).get("reuseLimitation"),
+            time_interval_limitation=response.get("passwordPolicy", {}).get("timeIntervalLimitation"),
+            security_domains=[
+                LocalUserSecurityDomainModel.from_response(name, domain_config)
+                for name, domain_config in response.get("rbac", {}).get("domains", {}).items()
+            ],
+            remote_id_claim=response.get("remoteIDClaim"),
+            remote_user_authorization=response.get("xLaunch"),
+        )
