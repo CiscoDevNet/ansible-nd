@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2025, Gaspard Micol (@gmicol) <gmicol@cisco.com>
+# Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -8,289 +8,306 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-import sys
+from typing import TypeVar, Generic, Optional, List, Dict, Any, Union, Tuple, Literal, Callable
 from copy import deepcopy
-from functools import reduce
 
-# Python 2 and 3 compatibility (To be removed in the future)
-if sys.version_info[0] >= 3:
-    from collections.abc import MutableMapping
-    iteritems = lambda d: d.items()
-else:
-    from collections import MutableMapping
-    iteritems = lambda d: d.iteritems()
+# TODO: To be replaced with: from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from models.base import NDBaseModel
 
-# TODO: Adapt to Pydantic Models
-# NOTE: Single-Index Hybrid Collection for ND Network Resource Module
-class NDConfigCollection(MutableMapping):
+# Type aliases
+# NOTE: Maybe add more type aliases in the future if needed
+ModelType = TypeVar('ModelType', bound=NDBaseModel)
+IdentifierKey = Union[str, int, Tuple[Any, ...]]
 
-    def __init__(self, identifier_keys, data=None, use_composite_keys=False):
-        self.identifier_keys = identifier_keys
-        self.use_composite_keys = use_composite_keys
+
+class NDConfigCollection(Generic[ModelType]):
+    """
+    Nexus Dashboard configuration collection for NDBaseModel instances.
+    """
+    
+    def __init__(self, model_class: type[ModelType], items: Optional[List[ModelType]] = None):
+        """
+        Initialize collection.
+        """
+        self._model_class = model_class
         
-        # Dual Storage
-        self._list = []
-        self._map = {}
-        
-        if data:
-            for item in data:
+        # Dual storage
+        self._items: List[ModelType] = []
+        self._index: Dict[IdentifierKey, int] = {}
+
+        if items:
+            for item in items:
                 self.add(item)
     
-    # TODO: add a method to get nested keys, ex: get("spec", {}).get("onboardUrl")
-    def _get_identifier_value(self, config):
-        """Generates the internal map key based on the selected mode."""
-        if self.use_composite_keys:
-            # Mode: Composite (Tuple of ALL keys)
-            values = []
-            for key in self.identifier_keys:
-                val = config.get(key)
-                if val is None:
-                    return None # Missing a required part
-                values.append(val)
-            return tuple(values)
-        else:
-            # Mode: Priority (First available key)
-            for key in self.identifier_keys:
-                if key in config:
-                    return config[key]
-            return None
-
-    # Magic Methods
-    def __getitem__(self, key):
-        return self._map[key]
-
-    def __setitem__(self, key, value):
-        if key in self._map:
-            old_ref = self._map[key]
-            try:
-                idx = self._list.index(old_ref)
-                self._list[idx] = value
-                self._map[key] = value
-            except ValueError:
-                pass 
-        else:
-            # Add new
-            self._list.append(value)
-            self._map[key] = value
-
-    def __delitem__(self, key):
-        if key in self._map:
-            obj_ref = self._map[key]
-            del self._map[key]
-            self._list.remove(obj_ref)
-        else:
-            raise KeyError(key)
-
-    def __iter__(self):
-        return iter(self._map)
-
-    def __len__(self):
-        return len(self._list)
+    def _extract_key(self, item: ModelType) -> IdentifierKey:
+        """
+        Extract identifier key from item.
+        """
+        try:
+            return item.get_identifier_value()
+        except Exception as e:
+            raise ValueError(f"Failed to extract identifier: {e}") from e
     
-    def __eq__(self, other):
-        if isinstance(other, NDConfigCollection):
-            return self._list == other._list
-        elif isinstance(other, list):
-            return self._list == other
-        elif isinstance(other, dict):
-            return self._map == other
+    def _rebuild_index(self) -> None:
+        """Rebuild index from scratch (O(n) operation)."""
+        self._index.clear()
+        for index, item in enumerate(self._items):
+            key = self._extract_key(item)
+            self._index[key] = index
+    
+    # Core CRUD Operations
+    
+    def add(self, item: ModelType) -> IdentifierKey:
+        """
+        Add item to collection (O(1) operation).
+        """
+        if not isinstance(item, self._model_class):
+            raise TypeError(
+                f"Item must be instance of {self._model_class.__name__}, "
+                f"got {type(item).__name__}"
+            )
+        
+        key = self._extract_key(item)
+        
+        if key in self._index:
+            raise ValueError(
+                f"Item with identifier {key} already exists. Use replace() to update"
+            )
+        
+        position = len(self._items)
+        self._items.append(item)
+        self._index[key] = position
+        
+        return key
+    
+    def get(self, key: IdentifierKey) -> Optional[ModelType]:
+        """
+        Get item by identifier key (O(1) operation).
+        """
+        index = self._index.get(key)
+        return self._items[index] if index is not None else None
+    
+    def replace(self, item: ModelType) -> bool:
+        """
+        Replace existing item with same identifier (O(1) operation).
+        """
+        if not isinstance(item, self._model_class):
+            raise TypeError(
+                f"Item must be instance of {self._model_class.__name__}, "
+                f"got {type(item).__name__}"
+            )
+        
+        key = self._extract_key(item)
+        index = self._index.get(key)
+        
+        if index is None:
+            return False
+        
+        self._items[index] = item
+        return True
+    
+    def merge(self, item: ModelType, custom_merge_function: Optional[Callable[[ModelType, ModelType], ModelType]] = None) -> ModelType:
+        """
+        Merge item with existing, or add if not present.
+        """
+        key = self._extract_key(item)
+        existing = self.get(key)
+        
+        if existing is None:
+            self.add(item)
+            return item
+        
+        # Custom or default merge
+        if custom_merge_function:
+            merged = custom_merge_function(existing, item)
+        else:
+            # Default merge
+            existing_data = existing.model_dump()
+            new_data = item.model_dump(exclude_unset=True)
+            merged_data = self._deep_merge(existing_data, new_data)
+            merged = self._model_class.model_validate(merged_data)
+        
+        self.replace(merged)
+        return merged
+    
+    def _deep_merge(self, base: Dict, update: Dict) -> Dict:
+        """Recursively merge dictionaries."""
+        result = base.copy()
+        
+        for key, value in update.items():
+            if value is None:
+                continue
+            
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._deep_merge(result[key], value)
+            else:
+                result[key] = value
+        
+        return result
+    
+    def delete(self, key: IdentifierKey) -> bool:
+        """
+        Delete item by identifier (O(n) operation due to index rebuild)
+        """
+        index = self._index.get(key)
+        
+        if index is None:
+            return False
+        
+        del self._items[index]
+        self._rebuild_index()
+        
+        return True
+    
+    # Diff Operations
+    
+    def get_diff_config(self, new_item: ModelType, unwanted_keys: Optional[List[Union[str, List[str]]]] = None) -> Literal["new", "no_diff", "changed"]:
+        """
+        Compare single item against collection.
+        """
+        try:
+            key = self._extract_key(new_item)
+        except ValueError:
+            return "new"
+        
+        existing = self.get(key)
+        
+        if existing is None:
+            return "new"
+
+        existing_data = existing.to_diff_dict()
+        new_data = new_item.to_diff_dict()
+        
+        if unwanted_keys:
+            existing_data = self._remove_unwanted_keys(existing_data, unwanted_keys)
+            new_data = self._remove_unwanted_keys(new_data, unwanted_keys)
+
+        is_subset = self._issubset(new_data, existing_data)
+        
+        return "no_diff" if is_subset else "changed"
+    
+    def get_diff_collection(self, other: "NDConfigCollection[ModelType]", unwanted_keys: Optional[List[Union[str, List[str]]]] = None) -> bool:
+        """
+        Check if two collections differ.
+        """
+        if not isinstance(other, NDConfigCollection):
+            raise TypeError("Argument must be NDConfigCollection")
+        
+        if len(self) != len(other):
+            return True
+
+        for item in other:
+            if self.get_diff_config(item, unwanted_keys) != "no_diff":
+                return True
+
+        for key in self.keys():
+            if other.get(key) is None:
+                return True
+        
         return False
+    
+    def get_diff_identifiers(self, other: "NDConfigCollection[ModelType]") -> List[IdentifierKey]:
+        """
+        Get identifiers in self but not in other.
+        """
+        current_keys = set(self.keys())
+        other_keys = set(other.keys())
+        return list(current_keys - other_keys)
 
-    def __ne__(self, other):
-        return not self.__eq__(other)
-
-    def __repr__(self):
-        return str(self._list)
-
-    # Helper Methods
-    def _filter_dict(self, data, ignore_keys):
-        return {k: v for k, v in iteritems(data) if k not in ignore_keys}
-
-    def _issubset(self, subset, superset):
+    def _issubset(self, subset: Any, superset: Any) -> bool:
+        """Check if subset is contained in superset."""
         if type(subset) is not type(superset):
             return False
-
+        
         if not isinstance(subset, dict):
             if isinstance(subset, list):
                 return all(item in superset for item in subset)
             return subset == superset
-
-        for key, value in iteritems(subset):
+        
+        for key, value in subset.items():
             if value is None:
                 continue
-
+            
             if key not in superset:
                 return False
-
-            superset_value = superset.get(key)
-
-            if not self._issubset(value, superset_value):
+            
+            if not self._issubset(value, superset[key]):
                 return False
+        
         return True
 
-    def _remove_unwanted_keys(self, data, unwanted_keys):
+    def _remove_unwanted_keys(self, data: Dict, unwanted_keys: List[Union[str, List[str]]]) -> Dict:
+        """Remove unwanted keys from dict (supports nested paths)."""
+        data = deepcopy(data)
+        
         for key in unwanted_keys:
             if isinstance(key, str):
                 if key in data:
                     del data[key]
+            
             elif isinstance(key, list) and len(key) > 0:
-                key_path, last = key[:-1], key[-1]
                 try:
-                    parent = reduce(lambda d, k: d.get(k) if isinstance(d, dict) else None, key_path, data)
-                    if isinstance(parent, dict) and last in parent:
-                        del parent[last]
-                except (KeyError, TypeError):
+                    parent = data
+                    for k in key[:-1]:
+                        if isinstance(parent, dict) and k in parent:
+                            parent = parent[k]
+                        else:
+                            break
+                    else:
+                        if isinstance(parent, dict) and key[-1] in parent:
+                            del parent[key[-1]]
+                except (KeyError, TypeError, IndexError):
                     pass
+        
         return data
-
-    # Core Operations
-    def to_list(self):
-        return self._list
+ 
+    # Collection Operations
     
-    def to_dict(self):
-        return self._map
+    def __len__(self) -> int:
+        """Return number of items."""
+        return len(self._items)
+    
+    def __iter__(self):
+        """Iterate over items."""
+        return iter(self._items)
 
-    def copy(self):
-        return NDConfigCollection(self.identifier_keys, deepcopy(self._list), self.use_composite_keys)
+    def keys(self) -> List[IdentifierKey]:
+        """Get all identifier keys."""
+        return list(self._index.keys())
 
-    def add(self, config):
-        ident = self._get_identifier_value(config)
-        if ident is None:
-            mode = "Composite" if self.use_composite_keys else "Priority"
-            raise ValueError("[{0} Mode] Config missing required keys: {1}".format(mode, self.identifier_keys))
-        
-        if ident in self._map:
-            self.__setitem__(ident, config)
-        else:
-            self._list.append(config)
-            self._map[ident] = config
+    def copy(self) -> "NDConfigCollection[ModelType]":
+        """Create deep copy of collection."""
+        return NDConfigCollection(
+            model_class=self._model_class,
+            items=deepcopy(self._items)
+        )
 
-    def merge(self, new_config):
-        ident = self._get_identifier_value(new_config)
-        if ident and ident in self._map:
-            self._map[ident].update(new_config)
-        else:
-            self.add(new_config)
-
-    def replace(self, new_config):
-        ident = self._get_identifier_value(new_config)
-        if ident:
-            self[ident] = new_config
-        else:
-            self.add(new_config)
-
-    def remove(self, identifiers):
-        # Try Map Removal
-        try:
-            target_key = self._get_identifier_value(identifiers)
-            if target_key and target_key in self._map:
-                self.__delitem__(target_key)
-                return
-        except Exception:
-            pass
-
-        # Fallback: Linear Removal
-        to_remove = []
-        for config in self._list:
-            match = True
-            for k, v in iteritems(identifiers):
-                if config.get(k) != v:
-                    match = False
-                    break
-            if match:
-                to_remove.append(self._get_identifier_value(config))
-        
-        for ident in to_remove:
-            if ident in self._map:
-                self.__delitem__(ident)
-
-    def get_by_key(self, key, default=None):
-        return self._map.get(key, default)
-
-    def get_by_idenfiers(self, identifiers, default=None):
-        # Try Map Lookup
-        target_key = self._get_identifier_value(identifiers)
-        if target_key and target_key in self._map:
-            return self._map[target_key]
-
-        # Fallback: Linear Lookup
-        valid_search_keys = [k for k in identifiers if k in self.identifier_keys]
-        if not valid_search_keys:
-            return default
-
-        for config in self._list:
-            match = True
-            for k in valid_search_keys:
-                if config.get(k) != identifiers[k]:
-                    match = False
-                    break
-            if match:
-                return config
-        return default
-
-    # Diff logic
-    def get_diff_config(self, new_config, unwanted_keys=None):
-        unwanted_keys = unwanted_keys or []
-
-        ident = self._get_identifier_value(new_config)
-        
-        if not ident or ident not in self._map:
-            return "new"
-
-        existing = deepcopy(self._map[ident])
-        sent = deepcopy(new_config)
-
-        self._remove_unwanted_keys(existing, unwanted_keys)
-        self._remove_unwanted_keys(sent, unwanted_keys)
-
-        is_subset = self._issubset(sent, existing)
-
-        if is_subset:
-            return "no_diff"
-        else:
-            return "changed"
-
-    def get_diff_collection(self, new_collection, unwanted_keys=None):
-        if not isinstance(new_collection, NDConfigCollection):
-            raise TypeError("Argument must be an NDConfigCollection")
-
-        if len(self) != len(new_collection):
-            return True
-
-        for item in new_collection.to_list():
-            if self.get_diff_config(item, unwanted_keys) != "no_diff":
-                return True
-
-        for ident in self._map:
-            if ident not in new_collection._map:
-                return True
-
-        return False
-
-    def get_diff_identifiers(self, new_collection):
-        current_identifiers = set(self.config_collection.keys())
-        other_identifiers = set(new_collection.config_collection.keys())
-
-        return list(current_identifiers - other_identifiers)
-
-    # Sanitize Operations
-    def sanitize(self, keys_to_remove=None, values_to_remove=None, remove_none_values=False):
-        keys_to_remove = keys_to_remove or []
-        values_to_remove = values_to_remove or []
-
-        def recursive_clean(obj):
-            if isinstance(obj, dict):
-                keys = list(obj.keys())
-                for k in keys:
-                    v = obj[k]
-                    if k in keys_to_remove or v in values_to_remove or (remove_none_values and v is None):
-                        del obj[k]
-                        continue
-                    if isinstance(v, (dict, list)):
-                        recursive_clean(v)
-            elif isinstance(obj, list):
-                for item in obj:
-                    recursive_clean(item)
-
-        for item in self._list:
-            recursive_clean(item)
+    # Serialization
+    
+    def to_list(self, **kwargs) -> List[Dict]:
+        """
+        Export as list of dicts (with aliases).
+        """
+        return [item.model_dump(by_alias=True, exclude_none=True, **kwargs) for item in self._items]
+    
+    def to_payload_list(self) -> List[Dict[str, Any]]:
+        """
+        Export as list of API payloads.
+        """
+        return [item.to_payload() for item in self._items]
+    
+    @classmethod
+    def from_list(cls, data: List[Dict], model_class: type[ModelType]) -> "NDConfigCollection[ModelType]":
+        """
+        Create collection from list of dicts.
+        """
+        items = [model_class.model_validate(item_data) for item_data in data]
+        return cls(model_class=model_class, items=items)
+    
+    @classmethod
+    def from_api_response(cls, response_data: List[Dict[str, Any]], model_class: type[ModelType]) -> "NDConfigCollection[ModelType]":
+        """
+        Create collection from API response.
+        """
+        items = [model_class.from_response(item_data) for item_data in response_data]
+        return cls(model_class=model_class, items=items)
