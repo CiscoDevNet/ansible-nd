@@ -175,23 +175,34 @@ RETURN = r"""
 """
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec, NDModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd_network_resources import NDNetworkResourceModule
-from ansible_collections.cisco.nd.plugins.module_utils.constants import USER_ROLES_MAPPING
+# TODO: To be replaced with:
+# from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+# from ansible_collections.cisco.nd.plugins.module_utils.nd_network_resource_module import NDNetworkResourceModule
+# from ansible_collections.cisco.nd.plugins.module_utils.models.local_user import LocalUserModel
+# from ansible_collections.cisco.nd.plugins.module_utils.constants import USER_ROLES_MAPPING
+from module_utils.nd import nd_argument_spec
+from module_utils.nd_network_resources import NDNetworkResourceModule
+from module_utils.models.local_user import LocalUserModel
+from module_utils.constants import USER_ROLES_MAPPING
 
 
-# Actions overwrite functions
-def query_all_local_users(nd):
-    return nd.query_obj(nd.path).get("localusers")
+# NOTE: Maybe Add the overwrite action in the LocalUserModel
+def query_all_local_users(nd_module):
+    """
+    Custom query_all action to extract 'localusers' from response.
+    """
+    response = nd_module.query_obj(nd_module.path)
+    return response.get("localusers", [])
 
 
-# TODO: Adapt to Pydantic Model
+# NOTE: Maybe Add More aliases like in the LocalUserModel / Revisit the argmument_spec
 def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(
         config=dict(
             type="list",
             elements="dict",
+            required=True,
             options=dict(
                 email=dict(type="str"),
                 login_id=dict(type="str", required=True),
@@ -221,49 +232,33 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
     )
-
-    path = "/api/v1/infra/aaa/localUsers"
-    identifier_keys = ["loginID"]
-    actions_overwrite_map = {"query_all": query_all_local_users}
-
-    nd = NDNetworkResourceModule(module, path, identifier_keys, actions_overwrite_map=actions_overwrite_map)
-
-    state = nd.params.get("state")
-    config = nd.params.get("config")
-    override_exceptions = nd.params.get("override_exceptions")
-    new_config = []
-    for object in config:
-        payload = {
-            "email": object.get("email"),
-            "firstName": object.get("first_name"),
-            "lastName": object.get("last_name"),
-            "loginID": object.get("login_id"),
-            "password": object.get("user_password"),
-            "remoteIDClaim": object.get("remote_id_claim"),
-            "xLaunch": object.get("remote_user_authorization"),
-        }
-
-        if object.get("security_domains"):
-            payload["rbac"] = {
-                "domains": {
-                    security_domain.get("name"): {
-                        "roles": (
-                            [USER_ROLES_MAPPING.get(role) for role in security_domain["roles"]] if isinstance(security_domain.get("roles"), list) else []
-                        )
-                    }
-                    for security_domain in object["security_domains"]
-                },
+    
+    try:
+        # Create NDNetworkResourceModule with LocalUserModel
+        nd_module = NDNetworkResourceModule(
+            module=module,
+            path="/api/v1/infra/aaa/localUsers",
+            model_class=LocalUserModel,
+            actions_overwrite_map={
+                "query_all": query_all_local_users
             }
-        if object.get("reuse_limitation") or object.get("time_interval_limitation"):
-            payload["passwordPolicy"] = {
-                "reuseLimitation": object.get("reuse_limitation"),
-                "timeIntervalLimitation": object.get("time_interval_limitation"),
-            }
-        new_config.append(payload)
+        )
+        
+        # Manage state
+        nd_module.manage_state(
+            state=module.params["state"],
+            new_configs=module.params["config"],
+            unwanted_keys=[
+                ["passwordPolicy", "passwordChangeTime"],  # Nested path
+                ["userID"]  # Simple key
+            ],
+            override_exceptions=module.params.get("override_exceptions")
+        )
 
-    nd.manage_state(state=state, new_configs=new_config, unwanted_keys=[["passwordPolicy", "passwordChangeTime"], ["userID"]], override_exceptions=override_exceptions)
-
-    nd.exit_json()
+        nd_module.exit_json()
+    
+    except Exception as e:
+        module.fail_json(msg=f"Module execution failed: {str(e)}")
 
 
 if __name__ == "__main__":
