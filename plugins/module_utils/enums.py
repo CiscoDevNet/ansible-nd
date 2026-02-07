@@ -20,6 +20,8 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 from enum import Enum
+# TODO: Python 3.8 compatibility. Review when we drop support for 3.8
+from typing import List
 
 
 class HttpVerbEnum(str, Enum):
@@ -44,7 +46,7 @@ class HttpVerbEnum(str, Enum):
     PATCH = "PATCH"
 
     @classmethod
-    def values(cls) -> list[str]:
+    def values(cls) -> List[str]:
         """
         # Summary
 

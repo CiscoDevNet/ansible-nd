@@ -18,8 +18,8 @@ Send REST requests to the controller with retries.
 """
 
 from __future__ import absolute_import, division, print_function
-
-from typing import Any, Optional
+# TODO: Python 3.8 compatibility. Review when we drop support for 3.8
+from typing import Any, Dict, List, Optional
 
 __metaclass__ = type  # pylint: disable=invalid-name
 __author__ = "Allen Robel"
@@ -29,19 +29,10 @@ import json
 import logging
 from time import sleep
 
-# pylint: disable=line-too-long
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
 from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_handler import ResponseHandlerProtocol  # type: ignore
 from ansible_collections.cisco.nd.plugins.module_utils.protocol_sender import SenderProtocol  # type: ignore
 from ansible_collections.cisco.nd.plugins.module_utils.results import Results  # type: ignore
-
-# pylint: enable=line-too-long
-
-# from enums import HttpVerbEnum
-# from protocol_response_handler import ResponseHandlerProtocol
-# from protocol_sender import SenderProtocol
-# Using only for its failed_result property
-# from results import Results
 
 
 class RestSend:
@@ -140,10 +131,10 @@ class RestSend:
         self._check_mode: bool = False
         self._path: Optional[str] = None
         self._payload: Optional[dict] = None
-        self._response: list[dict[str, Any]] = []
-        self._response_current: dict[str, Any] = {}
+        self._response: List[Dict[str, Any]] = []
+        self._response_current: Dict[str, Any] = {}
         self._response_handler: Optional[ResponseHandlerProtocol] = None
-        self._result: list[dict] = []
+        self._result: List[dict] = []
         self._result_current: dict = {}
         self._send_interval: int = 5
         self._sender: Optional[SenderProtocol] = None
@@ -554,7 +545,7 @@ class RestSend:
         self._response_current = value
 
     @property
-    def response(self) -> list[dict]:
+    def response(self) -> List[dict]:
         """
         # Summary
 
@@ -612,7 +603,7 @@ class RestSend:
         self._response_handler = value
 
     @property
-    def result(self) -> list[dict]:
+    def result(self) -> List[dict]:
         """
         # Summary
 

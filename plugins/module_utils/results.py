@@ -26,7 +26,8 @@ import copy
 import inspect
 import json
 import logging
-from typing import Any
+# TODO: Python 3.8 compatibility. Review when we drop support for 3.8
+from typing import Any, Dict, List, Set
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType  # type: ignore
 
@@ -244,14 +245,14 @@ class Results:
         self._operation_type: OperationType = OperationType.QUERY
         self._changed: set = set()
         self._check_mode: bool = False
-        self._diff: list[dict] = []
+        self._diff: List[dict] = []
         self._diff_current: dict = {}
         self._failed: set = set()
-        self._metadata: list[dict] = []
-        self._response: list[dict] = []
+        self._metadata: List[dict] = []
+        self._response: List[dict] = []
         self._response_current: dict = {}
-        self._response_data: list[dict] = []
-        self._result: list[dict] = []
+        self._response_data: List[dict] = []
+        self._result: List[dict] = []
         self._result_current: dict = {}
         self._state: str = ""
 
@@ -760,7 +761,7 @@ class Results:
         self._check_mode = value
 
     @property
-    def diff(self) -> list[dict]:
+    def diff(self) -> List[dict]:
         """
         # Summary
 
@@ -804,7 +805,7 @@ class Results:
         self._diff_current = value
 
     @property
-    def failed(self) -> set[bool]:
+    def failed(self) -> Set[bool]:
         """
         # Summary
 
@@ -824,7 +825,7 @@ class Results:
         return self._failed
 
     @property
-    def metadata(self) -> list[dict]:
+    def metadata(self) -> List[dict]:
         """
         # Summary
 
@@ -855,7 +856,7 @@ class Results:
 
         None
         """
-        value: dict[str, Any] = {}
+        value: Dict[str, Any] = {}
         value["action"] = self.action
         value["check_mode"] = self.check_mode
         value["sequence_number"] = self.task_sequence_number
@@ -892,7 +893,7 @@ class Results:
         self._response_current = value
 
     @property
-    def response(self) -> list[dict]:
+    def response(self) -> List[dict]:
         """
         # Summary
 
@@ -910,7 +911,7 @@ class Results:
         return self._response
 
     @property
-    def response_data(self) -> list[dict]:
+    def response_data(self) -> List[dict]:
         """
         # Summary
 
@@ -928,7 +929,7 @@ class Results:
         return self._response_data
 
     @property
-    def result(self) -> list[dict]:
+    def result(self) -> List[dict]:
         """
         # Summary
 
