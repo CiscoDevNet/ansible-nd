@@ -16,7 +16,9 @@
 """
 Send REST requests to the controller with retries.
 """
+
 from __future__ import absolute_import, division, print_function
+
 from typing import Any, Optional
 
 __metaclass__ = type  # pylint: disable=invalid-name
@@ -32,6 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_handler import ResponseHandlerProtocol  # type: ignore
 from ansible_collections.cisco.nd.plugins.module_utils.protocol_sender import SenderProtocol  # type: ignore
 from ansible_collections.cisco.nd.plugins.module_utils.results import Results  # type: ignore
+
 # pylint: enable=line-too-long
 
 # from enums import HttpVerbEnum
@@ -342,7 +345,7 @@ class RestSend:
             -   `ValueError` if:
                 -   HandleResponse() raises `ValueError`
                 -   Sender().commit() raises `ValueError`
-                -   `verb` is not a valid verb (GET, POST, PUT, DELETE) """
+                -   `verb` is not a valid verb (GET, POST, PUT, DELETE)"""
         method_name = "_commit_normal_mode"
 
         if self.path is None:

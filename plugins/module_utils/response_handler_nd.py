@@ -12,6 +12,7 @@ This handler processes responses from the ND HttpApi plugin which provides:
 
 TODO: Should response be converted to a Pydantic model by this class?
 """
+
 #
 # Copyright (c) 2026 Cisco and/or its affiliates.
 #
@@ -37,6 +38,7 @@ import logging
 from typing import Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
+
 # from enums import HttpVerbEnum
 
 

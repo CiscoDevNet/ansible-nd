@@ -15,6 +15,7 @@
 """
 Exposes public class Results to collect results across tasks.
 """
+
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
@@ -28,6 +29,7 @@ import logging
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType  # type: ignore
+
 # from enums import OperationType
 
 

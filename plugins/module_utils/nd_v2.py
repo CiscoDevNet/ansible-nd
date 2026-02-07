@@ -48,24 +48,14 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import logging
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, ConfigDict
-
 from ansible.module_utils.basic import env_fallback  # type: ignore
-
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.rest_send import RestSend  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import ResponseHandler  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.sender_nd import Sender  # type: ignore
 from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_handler import ResponseHandlerProtocol  # type: ignore
 from ansible_collections.cisco.nd.plugins.module_utils.protocol_sender import SenderProtocol  # type: ignore
-
-# Commented imports for standalone testing without Ansible
-# from enums import HttpVerbEnum
-# from rest_send import RestSend
-# from response_handler_nd import ResponseHandler
-# from sender_nd import Sender
-# from protocol_response_handler import ResponseHandlerProtocol
-# from protocol_sender import SenderProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import ResponseHandler  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.rest_send import RestSend  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.sender_nd import Sender  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
 
 
 class NDErrorData(BaseModel):

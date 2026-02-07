@@ -3,6 +3,7 @@ Sender module conforming to SenderProtocol.
 
 See plugins/module_utils/protocol_sender.py for the protocol definition.
 """
+
 #
 # Copyright (c) 2026 Cisco and/or its affiliates.
 #
@@ -25,14 +26,13 @@ __author__ = "Allen Robel"
 
 import copy
 import inspect
-from typing import Optional
 import json
 import logging
+from typing import Optional
 
 from ansible.module_utils.basic import AnsibleModule  # type: ignore
 from ansible.module_utils.connection import Connection  # type: ignore
 from ansible.module_utils.connection import ConnectionError as AnsibleConnectionError
-
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
 
 
@@ -73,11 +73,9 @@ class Sender:
     ```
     """
 
-    def __init__(self,
-                 ansible_module: Optional[AnsibleModule] = None,
-                 verb: Optional[HttpVerbEnum] = None,
-                 path: Optional[str] = None,
-                 payload: Optional[dict] = None):
+    def __init__(
+        self, ansible_module: Optional[AnsibleModule] = None, verb: Optional[HttpVerbEnum] = None, path: Optional[str] = None, payload: Optional[dict] = None
+    ):
         self.class_name = self.__class__.__name__
 
         self.log = logging.getLogger(f"nd.{self.class_name}")

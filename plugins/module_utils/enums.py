@@ -8,6 +8,7 @@ Enum definitions for Nexus Dashboard Ansible modules.
 - HttpVerbEnum: Enum for HTTP verb values used in endpoints.
 - OperationType: Enum for operation types used by ResultsV2 to determine if changes have occurred.
 """
+
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@allenrobel) <arobel@cisco.com>
@@ -19,6 +20,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 from enum import Enum
+
 
 class HttpVerbEnum(str, Enum):
     """
