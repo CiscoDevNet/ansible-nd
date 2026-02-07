@@ -50,6 +50,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (  # type: i
     nd_argument_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.log import Log
 
 
 def main():
@@ -61,6 +62,13 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
     )
+
+    # Initialize logging
+    try:
+        log = Log()
+        log.commit()
+    except ValueError as error:
+        module.fail_json(msg=str(error))
 
     # Initialize NDModule (uses RestSend infrastructure internally)
     nd = NDModule(module)
