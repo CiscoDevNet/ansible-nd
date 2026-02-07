@@ -1,0 +1,387 @@
+# -*- coding: utf-8 -*-
+
+# Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+# pylint: disable=line-too-long
+"""
+# nd_v2.py
+
+Simplified NDModule using RestSend infrastructure with exception-based error handling.
+
+This module provides a streamlined interface for interacting with Nexus Dashboard
+controllers. Unlike the original nd.py which uses Ansible's fail_json/exit_json,
+this module raises Python exceptions, making it:
+
+- Easier to unit test
+- Reusable with non-Ansible code (e.g., raw Python Requests)
+- More Pythonic in error handling
+
+## Usage Example
+
+```python
+from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
+    NDModule,
+    NDModuleError,
+    nd_argument_spec,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+
+def main():
+    argument_spec = nd_argument_spec()
+    module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
+
+    nd = NDModule(module)
+
+    try:
+        data = nd.request("/api/v1/some/endpoint", HttpVerbEnum.GET)
+        module.exit_json(changed=False, data=data)
+    except NDModuleError as e:
+        module.fail_json(msg=e.msg, status=e.status, payload=e.payload)
+```
+"""
+
+from __future__ import absolute_import, division, print_function
+
+__metaclass__ = type  # pylint: disable=invalid-name
+
+import logging
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel, ConfigDict
+
+from ansible.module_utils.basic import env_fallback  # type: ignore
+
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.rest_send import RestSend  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import ResponseHandler  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.sender_nd import Sender  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_handler import ResponseHandlerProtocol  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.protocol_sender import SenderProtocol  # type: ignore
+
+# Commented imports for standalone testing without Ansible
+# from enums import HttpVerbEnum
+# from rest_send import RestSend
+# from response_handler_nd import ResponseHandler
+# from sender_nd import Sender
+# from protocol_response_handler import ResponseHandlerProtocol
+# from protocol_sender import SenderProtocol
+
+
+class NDErrorData(BaseModel):
+    """
+    # Summary
+
+    Pydantic model for structured error data from NDModule requests.
+
+    This model provides type-safe error information that can be serialized
+    to a dict for use with Ansible's fail_json.
+
+    ## Attributes
+
+    - msg: Human-readable error message (required)
+    - status: HTTP status code as integer (optional)
+    - data: Request payload that was sent (optional)
+    - payload: Response payload from controller (optional)
+    - raw: Raw response content for non-JSON responses (optional)
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    msg: str
+    status: Optional[int] = None
+    data: Optional[Dict[str, Any]] = None
+    payload: Optional[Dict[str, Any]] = None
+    raw: Optional[Any] = None
+
+
+class NDModuleError(Exception):
+    """
+    # Summary
+
+    Exception raised by NDModule when a request fails.
+
+    This exception wraps an NDErrorData Pydantic model, providing structured
+    error information that can be used by callers to build appropriate error
+    responses (e.g., Ansible fail_json).
+
+    ## Usage Example
+
+    ```python
+    try:
+        data = nd.request("/api/v1/endpoint", HttpVerbEnum.POST, payload)
+    except NDModuleError as e:
+        print(f"Error: {e.msg}")
+        print(f"Status: {e.status}")
+        if e.payload:
+            print(f"Response: {e.payload}")
+        # Use to_dict() for fail_json
+        module.fail_json(**e.to_dict())
+    ```
+    """
+
+    def __init__(
+        self,
+        msg: str,
+        status: Optional[int] = None,
+        data: Optional[Dict[str, Any]] = None,
+        payload: Optional[Dict[str, Any]] = None,
+        raw: Optional[Any] = None,
+    ) -> None:
+        self.error_data = NDErrorData(
+            msg=msg,
+            status=status,
+            data=data,
+            payload=payload,
+            raw=raw,
+        )
+        super().__init__(msg)
+
+    @property
+    def msg(self) -> str:
+        """Human-readable error message."""
+        return self.error_data.msg
+
+    @property
+    def status(self) -> Optional[int]:
+        """HTTP status code."""
+        return self.error_data.status
+
+    @property
+    def data(self) -> Optional[Dict[str, Any]]:
+        """Request payload that was sent."""
+        return self.error_data.data
+
+    @property
+    def payload(self) -> Optional[Dict[str, Any]]:
+        """Response payload from controller."""
+        return self.error_data.payload
+
+    @property
+    def raw(self) -> Optional[Any]:
+        """Raw response content for non-JSON responses."""
+        return self.error_data.raw
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert exception attributes to a dict for use with fail_json.
+
+        Returns a dict containing only non-None attributes.
+        """
+        return self.error_data.model_dump(exclude_none=True)
+
+
+def nd_argument_spec() -> Dict[str, Any]:
+    """
+    Return the common argument spec for ND modules.
+
+    This function provides the standard arguments that all ND modules
+    should accept for connection and authentication.
+    """
+    return dict(
+        host=dict(type="str", required=False, aliases=["hostname"], fallback=(env_fallback, ["ND_HOST"])),
+        port=dict(type="int", required=False, fallback=(env_fallback, ["ND_PORT"])),
+        username=dict(type="str", fallback=(env_fallback, ["ND_USERNAME", "ANSIBLE_NET_USERNAME"])),
+        password=dict(type="str", required=False, no_log=True, fallback=(env_fallback, ["ND_PASSWORD", "ANSIBLE_NET_PASSWORD"])),
+        output_level=dict(type="str", default="normal", choices=["debug", "info", "normal"], fallback=(env_fallback, ["ND_OUTPUT_LEVEL"])),
+        timeout=dict(type="int", default=30, fallback=(env_fallback, ["ND_TIMEOUT"])),
+        use_proxy=dict(type="bool", fallback=(env_fallback, ["ND_USE_PROXY"])),
+        use_ssl=dict(type="bool", fallback=(env_fallback, ["ND_USE_SSL"])),
+        validate_certs=dict(type="bool", fallback=(env_fallback, ["ND_VALIDATE_CERTS"])),
+        login_domain=dict(type="str", fallback=(env_fallback, ["ND_LOGIN_DOMAIN"])),
+    )
+
+
+class NDModule:
+    """
+    # Summary
+
+    Simplified NDModule using RestSend infrastructure with exception-based error handling.
+
+    This class provides a clean interface for making REST API requests to Nexus Dashboard
+    controllers. It uses the RestSend/Sender/ResponseHandler infrastructure for
+    separation of concerns and testability.
+
+    ## Key Differences from nd.py NDModule
+
+    1. Uses exceptions (NDModuleError) instead of fail_json/exit_json
+    2. No Connection class dependency - uses Sender for HTTP operations
+    3. Minimal state - only tracks request/response metadata
+    4. No legacy request() method - only request() using RestSend
+
+    ## Usage Example
+
+    ```python
+    from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule, NDModuleError
+    from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+
+    nd = NDModule(module)
+
+    try:
+        # GET request
+        data = nd.request("/api/v1/endpoint")
+
+        # POST request with payload
+        result = nd.request("/api/v1/endpoint", HttpVerbEnum.POST, {"key": "value"})
+    except NDModuleError as e:
+        module.fail_json(**e.to_dict())
+    ```
+
+    ## Raises
+
+    - NDModuleError: When a request fails (replaces fail_json)
+    - ValueError: When RestSend encounters configuration errors
+    - TypeError: When invalid types are passed to RestSend
+    """
+
+    def __init__(self, module) -> None:
+        """
+        Initialize NDModule with an AnsibleModule instance.
+
+        Args:
+            module: AnsibleModule instance (or compatible mock for testing)
+        """
+        self.class_name = self.__class__.__name__
+        self.module = module
+        self.params: Dict[str, Any] = module.params
+
+        self.log = logging.getLogger(f"nd.{self.class_name}")
+
+        # Request/response state (for debugging and error reporting)
+        self.method: Optional[str] = None
+        self.path: Optional[str] = None
+        self.response: Optional[str] = None
+        self.status: Optional[int] = None
+        self.url: Optional[str] = None
+
+        # RestSend infrastructure (lazy initialized)
+        self._rest_send: Optional[RestSend] = None
+        self._sender: Optional[SenderProtocol] = None
+        self._response_handler: Optional[ResponseHandlerProtocol] = None
+
+        if self.module._debug:
+            self.module.warn("Enable debug output because ANSIBLE_DEBUG was set.")
+            self.params["output_level"] = "debug"
+
+    def _get_rest_send(self) -> RestSend:
+        """
+        # Summary
+
+        Lazy initialization of RestSend and its dependencies.
+
+        ## Returns
+
+        -   RestSend: Configured RestSend instance ready for use.
+        """
+        method_name = "_get_rest_send"
+        params = {}
+        if self._rest_send is None:
+            params = {
+                "check_mode": self.module.check_mode,
+                "state": self.params.get("state"),
+            }
+            self._sender = Sender()
+            self._sender.ansible_module = self.module
+            self._response_handler = ResponseHandler()
+            self._rest_send = RestSend(params)
+            self._rest_send.sender = self._sender
+            self._rest_send.response_handler = self._response_handler
+
+            msg = f"{self.class_name}.{method_name}: "
+            msg += "Initialized RestSend instance with params: "
+            msg += f"{params}"
+            self.log.debug(msg)
+        return self._rest_send
+
+    def request(
+        self,
+        path: str,
+        verb: HttpVerbEnum = HttpVerbEnum.GET,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        # Summary
+
+        Make a REST API request to the Nexus Dashboard controller.
+
+        This method uses the RestSend infrastructure for improved separation
+        of concerns and testability.
+
+        ## Args
+
+        - path: The fully-formed API endpoint path including query string
+                (e.g., "/appcenter/cisco/ndfc/api/v1/endpoint?param=value")
+        - verb: HTTP verb as HttpVerbEnum (default: HttpVerbEnum.GET)
+        - data: Optional request payload as a dict
+
+        ## Returns
+
+        The response DATA from the controller (parsed JSON body).
+
+        ## Raises
+
+        - NDModuleError: If the request fails (with status, payload, etc.)
+        - ValueError: If RestSend encounters configuration errors
+        - TypeError: If invalid types are passed
+        """
+        method_name = "request"
+        # If PATCH with empty data, return early (existing behavior)
+        if verb == HttpVerbEnum.PATCH and not data:
+            return {}
+
+        rest_send = self._get_rest_send()
+
+        # Send the request
+        try:
+            rest_send.path = path
+            rest_send.verb = verb  # type: ignore[assignment]
+            msg = f"{self.class_name}.{method_name}: "
+            msg += "Sending request "
+            msg += f"verb: {verb}, "
+            msg += f"path: {path}"
+            if data:
+                rest_send.payload = data
+                msg += f", data: {data}"
+            self.log.debug(msg)
+            rest_send.commit()
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"Error in request: {error}") from error
+
+        # Get response and result from RestSend
+        response = rest_send.response_current
+        result = rest_send.result_current
+
+        # Update state for debugging/error reporting
+        self.method = verb.value
+        self.path = path
+        self.response = response.get("MESSAGE")
+        self.status = response.get("RETURN_CODE", -1)
+        self.url = response.get("REQUEST_PATH")
+
+        # Handle errors based on result
+        if not result.get("success", False):
+            response_data = response.get("DATA")
+
+            # Get error message from ResponseHandler
+            error_msg = self._response_handler.error_message if self._response_handler else "Unknown error"
+
+            # Build exception with available context
+            raw = None
+            payload = None
+
+            if isinstance(response_data, dict):
+                if "raw_response" in response_data:
+                    raw = response_data["raw_response"]
+                else:
+                    payload = response_data
+
+            raise NDModuleError(
+                msg=error_msg if error_msg else "Unknown error",
+                status=self.status,
+                data=data,
+                payload=payload,
+                raw=raw,
+            )
+
+        # Return the response data on success
+        return response.get("DATA", {})
