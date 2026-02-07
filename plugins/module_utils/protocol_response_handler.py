@@ -1,6 +1,7 @@
 """
 Protocol definition for ResponseHandler classes.
 """
+# pylint: disable=unnecessary-ellipsis
 
 #
 # Copyright (c) 2026 Cisco and/or its affiliates.
@@ -61,7 +62,8 @@ class ResponseHandlerProtocol(Protocol):
         ...
 
     @response.setter
-    def response(self, value: dict) -> None: ...
+    def response(self, value: dict) -> None:
+        pass
 
     @property
     def result(self) -> dict:
@@ -84,7 +86,8 @@ class ResponseHandlerProtocol(Protocol):
         ...
 
     @verb.setter
-    def verb(self, value: HttpVerbEnum) -> None: ...
+    def verb(self, value: HttpVerbEnum) -> None:
+        pass
 
     def commit(self) -> None:
         """

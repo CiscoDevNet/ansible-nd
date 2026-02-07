@@ -1,6 +1,7 @@
 """
 Protocol definition for Sender classes.
 """
+# pylint: disable=unnecessary-ellipsis
 
 #
 # Copyright (c) 2026 Cisco and/or its affiliates.
