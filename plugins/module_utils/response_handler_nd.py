@@ -1,3 +1,8 @@
+# -*- coding: utf-8 -*-
+
+# Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """
 # response_handler_nd.py
 
@@ -13,21 +18,6 @@ This handler processes responses from the ND HttpApi plugin which provides:
 TODO: Should response be converted to a Pydantic model by this class?
 """
 
-#
-# Copyright (c) 2026 Cisco and/or its affiliates.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
@@ -35,11 +25,9 @@ __author__ = "Allen Robel"
 
 import copy
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
-
-# from enums import HttpVerbEnum
 
 
 class ResponseHandler:
@@ -93,7 +81,7 @@ class ResponseHandler:
 
     ```python
     # import and instantiate the class
-    from ansible_collections.cisco.nd.plugins.module_utils.response_handler import \
+    from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import \
         ResponseHandler
     response_handler = ResponseHandler()
 
@@ -355,26 +343,28 @@ class ResponseHandler:
         if response_data is None:
             request_path = self._response.get("REQUEST_PATH", "unknown") if self._response else "unknown"
             message = self._response.get("MESSAGE", "Unknown error") if self._response else "Unknown error"
-            return "Connection failed for {0}. {1}".format(request_path, message)
+            return f"Connection failed for {request_path}. {message}"
 
         # Dict response data - check various ND error formats
         if isinstance(response_data, dict):
+            # Type-narrow response_data to Dict[str, Any] for pylint
+            data_dict: Dict[str, Any] = response_data
             # Raw response (non-JSON)
-            if "raw_response" in response_data:
+            if "raw_response" in data_dict:
                 return "ND Error: Response could not be parsed as JSON"
             # code/message format
-            if "code" in response_data and "message" in response_data:
-                return "ND Error {code}: {message}".format(**response_data)
+            if "code" in data_dict and "message" in data_dict:
+                return f"ND Error {data_dict['code']}: {data_dict['message']}"
             # messages array format
-            if "messages" in response_data and len(response_data.get("messages", [])) > 0:
-                first_msg = response_data["messages"][0]
+            if "messages" in data_dict and len(data_dict.get("messages", [])) > 0:
+                first_msg = data_dict["messages"][0]
                 if all(k in first_msg for k in ("code", "severity", "message")):
-                    return "ND Error {code} ({severity}): {message}".format(**first_msg)
+                    return f"ND Error {first_msg['code']} ({first_msg['severity']}): {first_msg['message']}"
             # errors array format
-            if "errors" in response_data and len(response_data.get("errors", [])) > 0:
-                return "ND Error: {0}".format(response_data["errors"][0])
+            if "errors" in data_dict and len(data_dict.get("errors", [])) > 0:
+                return f"ND Error: {data_dict['errors'][0]}"
             # Unknown dict format - fallback
-            return "ND Error: Request failed with status {0}".format(return_code)
+            return f"ND Error: Request failed with status {return_code}"
 
         # Non-dict response data
-        return "ND Error: {0}".format(response_data)
+        return f"ND Error: {response_data}"
