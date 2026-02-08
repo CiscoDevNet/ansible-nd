@@ -14,12 +14,29 @@ DOCUMENTATION = r"""
 module: nd_rest_send_test
 short_description: Test module for RestSend infrastructure
 description:
-- A simple test module to validate RestSend, Sender, ResponseHandler, and Results classes.
-- This module performs a GET request to /api/v1/infra/clusterhealth/config.
+- A test module to validate RestSend, Sender, ResponseHandler, and Results classes.
+- Demonstrates state-based operations (query, present, absent).
 - Uses nd_v2.py with exception-based error handling.
 author:
 - Allen Robel (@arobel)
 options:
+  path:
+    description:
+    - The API endpoint path to test.
+    - If not specified, defaults to /api/v1/infra/clusterhealth/config for query state.
+    type: str
+  payload:
+    description:
+    - Optional payload for POST/PUT operations.
+    - Used with state present.
+    type: dict
+  state:
+    description:
+    - The desired state of the operation.
+    - C(query) performs a GET request.
+    type: str
+    choices: [ query ]
+    default: query
   output_level:
     description:
     - Influence the output of this module.
@@ -32,8 +49,19 @@ extends_documentation_fragment:
 """
 
 EXAMPLES = r"""
-- name: Test RestSend infrastructure
+- name: Query cluster health config (default)
   cisco.nd.nd_rest_send_test:
+    state: query
+
+- name: Query a specific endpoint
+  cisco.nd.nd_rest_send_test:
+    path: /api/v1/some/endpoint
+    state: query
+
+- name: Debug output
+  cisco.nd.nd_rest_send_test:
+    output_level: debug
+    state: query
 """
 
 RETURN = r"""
@@ -58,6 +86,12 @@ def main():
     Main entry point for the nd_rest_send_test module.
     """
     argument_spec = nd_argument_spec()
+    argument_spec.update(
+        path=dict(type="str"),
+        payload=dict(type="dict"),
+        state=dict(type="str", default="query", choices=["query"]),
+    )
+
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
@@ -70,25 +104,46 @@ def main():
     except ValueError as error:
         module.fail_json(msg=str(error))
 
+    # Get parameters
+    path = module.params.get("path")
+    payload = module.params.get("payload")
+    state = module.params.get("state")
+    output_level = module.params.get("output_level")
+
+    # Set default path for query if not specified
+    if path is None:
+        if state == "query":
+            path = "/api/v1/infra/clusterhealth/config"
+        else:
+            module.fail_json(msg=f"path is required for state={state}")
+
     # Initialize NDModule (uses RestSend infrastructure internally)
     nd = NDModule(module)
 
+    changed = False
+    data = {}
     try:
-        # Make the request - NDModule handles all the RestSend setup
-        data = nd.request("/api/v1/infra/clusterhealth/config", HttpVerbEnum.GET)
+        # Determine the HTTP verb based on state
+        if state == "query":
+            verb = HttpVerbEnum.GET
+            data = nd.request(path, verb)
+            changed = False
+        else:
+            module.fail_json(msg=f"Invalid state: {state}")
 
         # Prepare output
         output = {
-            "changed": False,
+            "changed": changed,
             "data": data,
         }
 
         # Add debug info if requested
-        if module.params.get("output_level") == "debug":
+        if output_level == "debug":
             output["method"] = nd.method
             output["path"] = nd.path
             output["status"] = nd.status
             output["url"] = nd.url
+            output["state"] = state
 
         module.exit_json(**output)
 
