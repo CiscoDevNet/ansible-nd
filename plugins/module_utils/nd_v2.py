@@ -3,7 +3,6 @@
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-# pylint: disable=line-too-long
 """
 # nd_v2.py
 
@@ -48,13 +47,13 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import logging
 from typing import Any, Dict, Optional
 
-from ansible.module_utils.basic import env_fallback  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_handler import ResponseHandlerProtocol  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.protocol_sender import SenderProtocol  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import ResponseHandler  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.rest_send import RestSend  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.sender_nd import Sender  # type: ignore
+from ansible.module_utils.basic import env_fallback
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_handler import ResponseHandlerProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.protocol_sender import SenderProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.sender_nd import Sender
 from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
 
 
@@ -197,7 +196,7 @@ class NDModule:
     1. Uses exceptions (NDModuleError) instead of fail_json/exit_json
     2. No Connection class dependency - uses Sender for HTTP operations
     3. Minimal state - only tracks request/response metadata
-    4. No legacy request() method - only request() using RestSend
+    4. request() leverages RestSend -> Sender -> ResponseHandler
 
     ## Usage Example
 
