@@ -7,6 +7,7 @@
 """
 Simple demo module for RestSend and Smart Endpoints.
 """
+
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
@@ -145,10 +146,7 @@ def main():
 
         # Populate Results with the response
         # For query operations, we create a simple result dict
-        result = {
-            "success": True,
-            "found": True
-        }
+        result = {"success": True, "found": True}
 
         # Add response information to Results
         # Note: nd_v2's RestSend infrastructure provides these via nd.response
