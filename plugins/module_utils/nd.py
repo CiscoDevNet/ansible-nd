@@ -316,7 +316,9 @@ class NDModule(object):
                 try:
                     if isinstance(body, dict):
                         payload = body
-                    else:
+                    elif isinstance(body, list):
+                        payload = {"errors": body}
+                    elif isinstance(body, str):
                         payload = json.loads(body)
                 except Exception as e:
                     self.error = dict(code=-1, message="Unable to parse output as JSON, see 'raw' output. {0}".format(e))
