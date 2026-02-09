@@ -4,7 +4,9 @@
 # Copyright: (c) 2026 Cisco and/or its affiliates.
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 # pylint: disable=wrong-import-position
-
+"""
+Simple demo module for RestSend and Smart Endpoints.
+"""
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
@@ -14,22 +16,11 @@ DOCUMENTATION = r"""
 module: nd_rest_send_test
 short_description: Test module for RestSend infrastructure
 description:
-- A test module to validate RestSend, Sender, ResponseHandler, and Results classes.
-- Demonstrates state-based operations (query, present, absent).
+- A test module to validate Smart Endpoint, RestSend, Sender, ResponseHandler, and Results classes.
 - Uses nd_v2.py with exception-based error handling.
 author:
 - Allen Robel (@arobel)
 options:
-  path:
-    description:
-    - The API endpoint path to test.
-    - If not specified, defaults to /api/v1/infra/clusterhealth/config for query state.
-    type: str
-  payload:
-    description:
-    - Optional payload for POST/PUT operations.
-    - Used with state present.
-    type: dict
   state:
     description:
     - The desired state of the operation.
@@ -53,11 +44,6 @@ EXAMPLES = r"""
   cisco.nd.nd_rest_send_test:
     state: query
 
-- name: Query a specific endpoint
-  cisco.nd.nd_rest_send_test:
-    path: /api/v1/some/endpoint
-    state: query
-
 - name: Debug output
   cisco.nd.nd_rest_send_test:
     output_level: debug
@@ -78,7 +64,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (  # type: i
     NDModuleError,
     nd_argument_spec,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
 from ansible_collections.cisco.nd.plugins.module_utils.log import Log
 
 
@@ -106,34 +91,18 @@ def main():
         module.fail_json(msg=str(error))
 
     # Get parameters
-    path = module.params.get("path")
-    payload = module.params.get("payload")
     state = module.params.get("state")
     output_level = module.params.get("output_level")
 
-    # Initialize default endpoint
+    # Initialize endpoint
     ep = EpApiV1InfraAaaLocalUsersGet()
-    # Set default path for query if not specified
-    if path is None:
-        if state == "query":
-            path = ep.path
-            # path = "/api/v1/infra/clusterhealth/config"
-        else:
-            module.fail_json(msg=f"path is required for state={state}")
 
     # Initialize NDModule (uses RestSend infrastructure internally)
     nd = NDModule(module)
 
-    changed = False
-    data = {}
     try:
-        # Determine the HTTP verb based on state
-        if state == "query":
-            verb = ep.verb
-            data = nd.request(path, verb)
-            changed = False
-        else:
-            module.fail_json(msg=f"Invalid state: {state}")
+        data = nd.request(ep.path, ep.verb)
+        changed = False
 
         # Prepare output
         output = {
