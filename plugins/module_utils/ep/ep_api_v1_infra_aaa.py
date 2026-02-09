@@ -18,7 +18,7 @@ __author__ = "Allen Robel"
 from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.ep.base_paths import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.ep.base_paths_infra import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.ep.endpoint_mixins import LoginIdMixin
 from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict, Field
 

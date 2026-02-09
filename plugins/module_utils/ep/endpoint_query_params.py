@@ -169,3 +169,53 @@ class VrfNamesQueryParams(EndpointQueryParams):
         if self.vrf_names:
             params.append(f"vrf-names={self.vrf_names}")
         return "&".join(params)
+
+
+class ClusterHealthConfigQueryParams(EndpointQueryParams):
+    """
+    # Summary
+
+    Query parameters for cluster health config endpoint.
+
+    ## Parameters
+
+    - cluster_name: Cluster name (optional)
+    """
+
+    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Cluster name")
+
+    def to_query_string(self) -> str:
+        """Build query string with clusterName parameter."""
+        params = []
+        if self.cluster_name:
+            params.append(f"clusterName={self.cluster_name}")
+        return "&".join(params)
+
+
+class ClusterHealthStatusQueryParams(EndpointQueryParams):
+    """
+    # Summary
+
+    Query parameters for cluster health status endpoint.
+
+    ## Parameters
+
+    - cluster_name: Cluster name (optional)
+    - health_category: Health category (optional)
+    - node_name: Node name (optional)
+    """
+
+    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Cluster name")
+    health_category: Optional[str] = Field(default=None, min_length=1, description="Health category")
+    node_name: Optional[str] = Field(default=None, min_length=1, description="Node name")
+
+    def to_query_string(self) -> str:
+        """Build query string with clusterName, healthCategory, and nodeName parameters."""
+        params = []
+        if self.cluster_name:
+            params.append(f"clusterName={self.cluster_name}")
+        if self.health_category:
+            params.append(f"healthCategory={self.health_category}")
+        if self.node_name:
+            params.append(f"nodeName={self.node_name}")
+        return "&".join(params)

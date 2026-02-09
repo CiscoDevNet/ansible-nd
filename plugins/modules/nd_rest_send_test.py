@@ -72,6 +72,7 @@ data:
 """
 
 from ansible.module_utils.basic import AnsibleModule  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.ep.ep_api_v1_infra_aaa import EpApiV1InfraAaaLocalUsersGet
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (  # type: ignore
     NDModule,
     NDModuleError,
@@ -110,10 +111,13 @@ def main():
     state = module.params.get("state")
     output_level = module.params.get("output_level")
 
+    # Initialize default endpoint
+    ep = EpApiV1InfraAaaLocalUsersGet()
     # Set default path for query if not specified
     if path is None:
         if state == "query":
-            path = "/api/v1/infra/clusterhealth/config"
+            path = ep.path
+            # path = "/api/v1/infra/clusterhealth/config"
         else:
             module.fail_json(msg=f"path is required for state={state}")
 
@@ -125,7 +129,7 @@ def main():
     try:
         # Determine the HTTP verb based on state
         if state == "query":
-            verb = HttpVerbEnum.GET
+            verb = ep.verb
             data = nd.request(path, verb)
             changed = False
         else:

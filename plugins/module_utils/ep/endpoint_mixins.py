@@ -67,3 +67,21 @@ class LoginIdMixin(BaseModel):
     """Mixin for endpoints that require login_id parameter."""
 
     login_id: Optional[str] = Field(default=None, min_length=1, description="Login ID")
+
+
+class ClusterNameMixin(BaseModel):
+    """Mixin for endpoints that require cluster_name parameter."""
+
+    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Cluster name")
+
+
+class HealthCategoryMixin(BaseModel):
+    """Mixin for endpoints that require health_category parameter."""
+
+    health_category: Optional[str] = Field(default=None, min_length=1, description="Health category")
+
+
+class NodeNameMixin(BaseModel):
+    """Mixin for endpoints that require node_name parameter."""
+
+    node_name: Optional[str] = Field(default=None, min_length=1, description="Node name")
