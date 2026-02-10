@@ -10,6 +10,7 @@ This module provides a single location for Pydantic imports with fallback
 implementations when Pydantic is not available. This ensures consistent
 behavior across all modules and follows the DRY principle.
 """
+
 # pylint: disable=too-few-public-methods
 
 from __future__ import absolute_import, division, print_function
@@ -22,13 +23,39 @@ from typing import TYPE_CHECKING, Any, Callable, Union
 
 if TYPE_CHECKING:
     # Type checkers always see the real Pydantic types
-    from pydantic import BaseModel, ConfigDict, Field, field_validator
+    from pydantic import (
+        AfterValidator,
+        BaseModel,
+        BeforeValidator,
+        ConfigDict,
+        Field,
+        PydanticExperimentalWarning,
+        StrictBool,
+        ValidationError,
+        field_serializer,
+        field_validator,
+        model_validator,
+        validator,
+    )
 else:
     # Runtime: try to import, with fallback
     try:
-        from pydantic import BaseModel, ConfigDict, Field, field_validator
+        from pydantic import (
+            AfterValidator,
+            BaseModel,
+            BeforeValidator,
+            ConfigDict,
+            Field,
+            PydanticExperimentalWarning,
+            StrictBool,
+            ValidationError,
+            field_serializer,
+            field_validator,
+            model_validator,
+            validator,
+        )
     except ImportError:
-        HAS_PYDANTIC = False
+        HAS_PYDANTIC = False  # pylint: disable=invalid-name
         PYDANTIC_IMPORT_ERROR: Union[str, None] = traceback.format_exc()  # pylint: disable=invalid-name
 
         # Fallback: Minimal BaseModel replacement
@@ -68,6 +95,15 @@ else:
                 return kwargs["default_factory"]()
             return kwargs.get("default")
 
+        # Fallback: field_serializer decorator that does nothing
+        def field_serializer(*args, **kwargs):  # pylint: disable=unused-argument
+            """Pydantic field_serializer fallback when pydantic is not available."""
+
+            def decorator(func):
+                return func
+
+            return decorator
+
         # Fallback: field_validator decorator that does nothing
         def field_validator(*args, **kwargs) -> Callable[..., Any]:  # pylint: disable=unused-argument,invalid-name
             """Pydantic field_validator fallback when pydantic is not available."""
@@ -77,20 +113,75 @@ else:
 
             return decorator
 
+        # Fallback: AfterValidator that returns the function unchanged
+        def AfterValidator(func):  # pylint: disable=invalid-name
+            """Pydantic AfterValidator fallback when pydantic is not available."""
+            return func
+
+        # Fallback: BeforeValidator that returns the function unchanged
+        def BeforeValidator(func):  # pylint: disable=invalid-name
+            """Pydantic BeforeValidator fallback when pydantic is not available."""
+            return func
+
+        # Fallback: PydanticExperimentalWarning
+        PydanticExperimentalWarning = Warning
+
+        # Fallback: StrictBool
+        StrictBool = bool
+
+        # Fallback: ValidationError
+        class ValidationError(Exception):
+            """
+            Pydantic ValidationError fallback when pydantic is not available.
+            """
+
+            def __init__(self, message="A custom error occurred."):
+                self.message = message
+                super().__init__(self.message)
+
+            def __str__(self):
+                return f"ValidationError: {self.message}"
+
+        # Fallback: model_validator decorator that does nothing
+        def model_validator(*args, **kwargs):  # pylint: disable=unused-argument
+            """Pydantic model_validator fallback when pydantic is not available."""
+
+            def decorator(func):
+                return func
+
+            return decorator
+
+        # Fallback: validator decorator that does nothing
+        def validator(*args, **kwargs):  # pylint: disable=unused-argument
+            """Pydantic validator fallback when pydantic is not available."""
+
+            def decorator(func):
+                return func
+
+            return decorator
+
     else:
-        HAS_PYDANTIC = True
+        HAS_PYDANTIC = True  # pylint: disable=invalid-name
         PYDANTIC_IMPORT_ERROR = None  # pylint: disable=invalid-name
 
 # Set HAS_PYDANTIC for when TYPE_CHECKING is True
 if TYPE_CHECKING:
-    HAS_PYDANTIC = True
-    PYDANTIC_IMPORT_ERROR = None
+    HAS_PYDANTIC = True  # pylint: disable=invalid-name
+    PYDANTIC_IMPORT_ERROR = None  # pylint: disable=invalid-name
 
 __all__ = [
+    "AfterValidator",
     "BaseModel",
+    "BeforeValidator",
     "ConfigDict",
     "Field",
-    "field_validator",
     "HAS_PYDANTIC",
     "PYDANTIC_IMPORT_ERROR",
+    "PydanticExperimentalWarning",
+    "StrictBool",
+    "ValidationError",
+    "field_serializer",
+    "field_validator",
+    "model_validator",
+    "validator",
 ]
