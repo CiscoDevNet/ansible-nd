@@ -189,7 +189,7 @@ def main():
         results.response_current = {
             "RETURN_CODE": error.status if error.status else -1,
             "MESSAGE": error.msg,
-            "DATA": error.payload if error.payload else {},
+            "DATA": error.response_payload if error.response_payload else {},
         }
         results.result_current = {
             "success": False,

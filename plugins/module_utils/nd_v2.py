@@ -36,7 +36,7 @@ def main():
         data = nd.request("/api/v1/some/endpoint", HttpVerbEnum.GET)
         module.exit_json(changed=False, data=data)
     except NDModuleError as e:
-        module.fail_json(msg=e.msg, status=e.status, payload=e.payload)
+        module.fail_json(msg=e.msg, status=e.status, response_payload=e.response_payload)
 ```
 """
 
@@ -51,10 +51,10 @@ from ansible.module_utils.basic import env_fallback
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_handler import ResponseHandlerProtocol
 from ansible_collections.cisco.nd.plugins.module_utils.protocol_sender import SenderProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
 from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.sender_nd import Sender
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
 
 
 class NDErrorData(BaseModel):
@@ -70,8 +70,8 @@ class NDErrorData(BaseModel):
 
     - msg: Human-readable error message (required)
     - status: HTTP status code as integer (optional)
-    - data: Request payload that was sent (optional)
-    - payload: Response payload from controller (optional)
+    - request_payload: Request payload that was sent (optional)
+    - response_payload: Response payload from controller (optional)
     - raw: Raw response content for non-JSON responses (optional)
     """
 
@@ -79,8 +79,8 @@ class NDErrorData(BaseModel):
 
     msg: str
     status: Optional[int] = None
-    data: Optional[Dict[str, Any]] = None
-    payload: Optional[Dict[str, Any]] = None
+    request_payload: Optional[Dict[str, Any]] = None
+    response_payload: Optional[Dict[str, Any]] = None
     raw: Optional[Any] = None
 
 
@@ -102,8 +102,8 @@ class NDModuleError(Exception):
     except NDModuleError as e:
         print(f"Error: {e.msg}")
         print(f"Status: {e.status}")
-        if e.payload:
-            print(f"Response: {e.payload}")
+        if e.response_payload:
+            print(f"Response: {e.response_payload}")
         # Use to_dict() for fail_json
         module.fail_json(**e.to_dict())
     ```
@@ -113,15 +113,15 @@ class NDModuleError(Exception):
         self,
         msg: str,
         status: Optional[int] = None,
-        data: Optional[Dict[str, Any]] = None,
-        payload: Optional[Dict[str, Any]] = None,
+        request_payload: Optional[Dict[str, Any]] = None,
+        response_payload: Optional[Dict[str, Any]] = None,
         raw: Optional[Any] = None,
     ) -> None:
         self.error_data = NDErrorData(
             msg=msg,
             status=status,
-            data=data,
-            payload=payload,
+            request_payload=request_payload,
+            response_payload=response_payload,
             raw=raw,
         )
         super().__init__(msg)
@@ -137,14 +137,14 @@ class NDModuleError(Exception):
         return self.error_data.status
 
     @property
-    def data(self) -> Optional[Dict[str, Any]]:
+    def request_payload(self) -> Optional[Dict[str, Any]]:
         """Request payload that was sent."""
-        return self.error_data.data
+        return self.error_data.request_payload
 
     @property
-    def payload(self) -> Optional[Dict[str, Any]]:
+    def response_payload(self) -> Optional[Dict[str, Any]]:
         """Response payload from controller."""
-        return self.error_data.payload
+        return self.error_data.response_payload
 
     @property
     def raw(self) -> Optional[Any]:
@@ -367,8 +367,8 @@ class NDModule:
             raise NDModuleError(
                 msg=error_msg if error_msg else "Unknown error",
                 status=self.status,
-                data=data,
-                payload=payload,
+                request_payload=data,
+                response_payload=payload,
                 raw=raw,
             )
 
