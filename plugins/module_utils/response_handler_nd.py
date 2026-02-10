@@ -201,7 +201,7 @@ class ResponseHandler:
 
         self.result = copy.copy(result)
 
-    def commit(self):
+    def commit(self) -> None:
         """
         # Summary
 
@@ -241,7 +241,7 @@ class ResponseHandler:
         return self._response
 
     @response.setter
-    def response(self, value):
+    def response(self, value: dict) -> None:
         method_name = "response"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
@@ -279,7 +279,7 @@ class ResponseHandler:
         return self._result
 
     @result.setter
-    def result(self, value):
+    def result(self, value: dict) -> None:
         method_name = "result"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
@@ -304,7 +304,7 @@ class ResponseHandler:
         return self._verb
 
     @verb.setter
-    def verb(self, value: HttpVerbEnum):
+    def verb(self, value: HttpVerbEnum) -> None:
         self._verb = value
 
     @property
@@ -332,41 +332,46 @@ class ResponseHandler:
         -   str: Human-readable error message if an error occurred.
         -   None: If the request was successful or commit() not called.
         """
+        msg: Optional[str] = None
+
         # Return None if result not set (commit not called) or success
-        if self._result is None or self._result.get("success", True):
-            return None
+        if self._result is not None and not self._result.get("success", True):
+            response_data = self._response.get("DATA") if self._response else None
+            return_code = self._response.get("RETURN_CODE", -1) if self._response else -1
 
-        response_data = self._response.get("DATA") if self._response else None
-        return_code = self._response.get("RETURN_CODE", -1) if self._response else -1
+            # No response data - connection failure
+            if response_data is None:
+                request_path = self._response.get("REQUEST_PATH", "unknown") if self._response else "unknown"
+                message = self._response.get("MESSAGE", "Unknown error") if self._response else "Unknown error"
+                msg = f"Connection failed for {request_path}. {message}"
+            # Dict response data - check various ND error formats
+            elif isinstance(response_data, dict):
+                # Type-narrow response_data to Dict[str, Any] for pylint
+                # pylint: disable=unsupported-membership-test,unsubscriptable-object
+                # Added pylint directive above since pylint is still flagging these errors.
+                data_dict: Dict[str, Any] = response_data
+                # Raw response (non-JSON)
+                if "raw_response" in data_dict:
+                    msg = "ND Error: Response could not be parsed as JSON"
+                # code/message format
+                elif "code" in data_dict and "message" in data_dict:
+                    msg = f"ND Error {data_dict['code']}: {data_dict['message']}"
 
-        # No response data - connection failure
-        if response_data is None:
-            request_path = self._response.get("REQUEST_PATH", "unknown") if self._response else "unknown"
-            message = self._response.get("MESSAGE", "Unknown error") if self._response else "Unknown error"
-            return f"Connection failed for {request_path}. {message}"
+                # messages array format
+                if msg is None and "messages" in data_dict and len(data_dict.get("messages", [])) > 0:
+                    first_msg = data_dict["messages"][0]
+                    if all(k in first_msg for k in ("code", "severity", "message")):
+                        msg = f"ND Error {first_msg['code']} ({first_msg['severity']}): {first_msg['message']}"
 
-        # Dict response data - check various ND error formats
-        if isinstance(response_data, dict):
-            # Type-narrow response_data to Dict[str, Any] for pylint
-            # pylint: disable=unsupported-membership-test,unsubscriptable-object
-            # Added pylint directive above since pylint is still flagging these errors.
-            data_dict: Dict[str, Any] = response_data
-            # Raw response (non-JSON)
-            if "raw_response" in data_dict:
-                return "ND Error: Response could not be parsed as JSON"
-            # code/message format
-            if "code" in data_dict and "message" in data_dict:
-                return f"ND Error {data_dict['code']}: {data_dict['message']}"
-            # messages array format
-            if "messages" in data_dict and len(data_dict.get("messages", [])) > 0:
-                first_msg = data_dict["messages"][0]
-                if all(k in first_msg for k in ("code", "severity", "message")):
-                    return f"ND Error {first_msg['code']} ({first_msg['severity']}): {first_msg['message']}"
-            # errors array format
-            if "errors" in data_dict and len(data_dict.get("errors", [])) > 0:
-                return f"ND Error: {data_dict['errors'][0]}"
-            # Unknown dict format - fallback
-            return f"ND Error: Request failed with status {return_code}"
+                # errors array format
+                if msg is None and "errors" in data_dict and len(data_dict.get("errors", [])) > 0:
+                    msg = f"ND Error: {data_dict['errors'][0]}"
 
-        # Non-dict response data
-        return f"ND Error: {response_data}"
+                # Unknown dict format - fallback
+                if msg is None:
+                    msg = f"ND Error: Request failed with status {return_code}"
+            # Non-dict response data
+            else:
+                msg = f"ND Error: {response_data}"
+
+        return msg
