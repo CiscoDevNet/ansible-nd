@@ -348,6 +348,8 @@ class ResponseHandler:
         # Dict response data - check various ND error formats
         if isinstance(response_data, dict):
             # Type-narrow response_data to Dict[str, Any] for pylint
+            # pylint: disable=unsupported-membership-test,unsubscriptable-object
+            # Added pylint directive above since pylint is still flagging these errors.
             data_dict: Dict[str, Any] = response_data
             # Raw response (non-JSON)
             if "raw_response" in data_dict:
