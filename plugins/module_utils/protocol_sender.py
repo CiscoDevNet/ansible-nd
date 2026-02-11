@@ -23,17 +23,20 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 @runtime_checkable
 class SenderProtocol(Protocol):
     """
-    ### Summary
+    # Summary
+
     Protocol defining the sender interface for RestSend.
 
     Any class implementing this protocol must provide:
+
     -   `path` property (getter/setter): The endpoint path for the REST request.
     -   `verb` property (getter/setter): The HTTP method (GET, POST, PUT, DELETE, etc.).
     -   `payload` property (getter/setter): Optional request payload as a dict.
     -   `response` property (getter): The response from the controller.
     -   `commit()` method: Sends the request to the controller.
 
-    ### Example Implementations
+    ## Example Implementations
+
     -   `Sender` in `sender_nd.py`: Uses Ansible HttpApi plugin.
     -   `Sender` in `sender_file.py`: Reads responses from files (for testing).
     """
