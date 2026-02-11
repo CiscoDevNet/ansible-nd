@@ -19,7 +19,9 @@ import copy
 import inspect
 import json
 import logging
-from typing import Optional
+
+# TODO: Review typing imports after we drop support for Python 3.8
+from typing import Any, Dict, Optional
 
 from ansible.module_utils.basic import AnsibleModule  # type: ignore
 from ansible.module_utils.connection import Connection  # type: ignore
@@ -65,8 +67,12 @@ class Sender:
     """
 
     def __init__(
-        self, ansible_module: Optional[AnsibleModule] = None, verb: Optional[HttpVerbEnum] = None, path: Optional[str] = None, payload: Optional[dict] = None
-    ):
+        self,
+        ansible_module: Optional[AnsibleModule] = None,
+        verb: Optional[HttpVerbEnum] = None,
+        path: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.class_name = self.__class__.__name__
 
         self.log = logging.getLogger(f"nd.{self.class_name}")
@@ -75,14 +81,14 @@ class Sender:
         self._connection: Optional[Connection] = None
 
         self._path: Optional[str] = path
-        self._payload: Optional[dict] = payload
-        self._response: Optional[dict] = None
+        self._payload: Optional[Dict[str, Any]] = payload
+        self._response: Optional[Dict[str, Any]] = None
         self._verb: Optional[HttpVerbEnum] = verb
 
         msg = "ENTERED Sender(): "
         self.log.debug(msg)
 
-    def commit(self):
+    def commit(self) -> None:
         """
         # Summary
 
@@ -214,7 +220,7 @@ class Sender:
         self._path = value
 
     @property
-    def payload(self):
+    def payload(self) -> Optional[Dict[str, Any]]:
         """
         # Summary
 
