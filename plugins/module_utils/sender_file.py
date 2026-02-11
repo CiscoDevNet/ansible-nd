@@ -15,11 +15,13 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 __author__ = "Allen Robel"
 
+import copy
 import inspect
 import logging
 from typing import Any, Dict, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
 from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 
 
@@ -64,17 +66,17 @@ class Sender:
     ```
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.class_name = self.__class__.__name__
 
         self.log = logging.getLogger(f"nd.{self.class_name}")
 
-        self._ansible_module = None
+        self._ansible_module: Optional[MockAnsibleModule] = None
         self._gen: Optional[ResponseGenerator] = None
         self._path: Optional[str] = None
         self._payload: Optional[Dict[str, Any]] = None
         self._response: Optional[Dict[str, Any]] = None
-        self._verb: HttpVerbEnum = HttpVerbEnum.GET
+        self._verb: Optional[HttpVerbEnum] = None
 
         self._raise_method: Optional[str] = None
         self._raise_exception: Optional[BaseException] = None
@@ -82,26 +84,12 @@ class Sender:
         msg = "ENTERED Sender(): "
         self.log.debug(msg)
 
-    def _verify_commit_parameters(self):
-        """
-        ### Summary
-        Verify that required parameters are set prior to calling ``commit()``
-
-        ## Raises
-        -   ``ValueError`` if ``verb`` is not set.
-        -   ``ValueError`` if ``path`` is not set
-        """
-        method_name = "_verify_commit_parameters"
-        if self.gen is None:
-            msg = f"{self.class_name}.{method_name}: "
-            msg += "gen must be set before calling commit()."
-            raise ValueError(msg)
-
-    def commit(self):
+    def commit(self) -> None:
         """
         # Summary
 
-        Simulate a commit to a controller by returning the next item from the response generator.
+        - Simulate a commit to a controller (does nothing).
+        - Allows to simulate exceptions for testing error handling in RestSend by setting the `raise_exception` and `raise_method` properties.
 
         ## Raises
 
@@ -116,22 +104,13 @@ class Sender:
             msg += f"Simulated {type(self.raise_exception).__name__}."
             raise self.raise_exception
 
-        try:
-            self._verify_commit_parameters()
-        except ValueError as error:
-            msg = f"{self.class_name}.{method_name}: "
-            msg += "Not all mandatory parameters are set. "
-            msg += f"Error detail: {error}"
-            raise ValueError(msg) from error
-
-        method_name = "commit"
         caller = inspect.stack()[1][3]
         msg = f"{self.class_name}.{method_name}: "
         msg += f"caller {caller}"
         self.log.debug(msg)
 
     @property
-    def ansible_module(self):
+    def ansible_module(self) -> Optional[MockAnsibleModule]:
         """
         # Summary
 
@@ -140,7 +119,7 @@ class Sender:
         return self._ansible_module
 
     @ansible_module.setter
-    def ansible_module(self, value):
+    def ansible_module(self, value: Optional[MockAnsibleModule]):
         self._ansible_module = value
 
     @property
@@ -176,20 +155,7 @@ class Sender:
         self._gen = value
 
     @property
-    def implements(self):
-        """
-        ## Summary
-
-        The interface implemented by this class.
-
-        ## Raises
-
-        None
-        """
-        return "sender_v1"
-
-    @property
-    def path(self):
+    def path(self) -> str:
         """
         # Summary
 
@@ -203,14 +169,17 @@ class Sender:
 
         ``/appcenter/cisco/ndfc/api/v1/...etc...``
         """
+        if self._path is None:
+            msg = f"{self.class_name}.path: path must be set before accessing."
+            raise ValueError(msg)
         return self._path
 
     @path.setter
-    def path(self, value):
+    def path(self, value: str):
         self._path = value
 
     @property
-    def payload(self):
+    def payload(self) -> Optional[Dict[str, Any]]:
         """
         # Summary
 
@@ -223,7 +192,7 @@ class Sender:
         return self._payload
 
     @payload.setter
-    def payload(self, value: Dict[str, Any]):
+    def payload(self, value: Optional[Dict[str, Any]]):
         self._payload = value
 
     @property
@@ -294,11 +263,13 @@ class Sender:
 
         The simulated response from a file.
 
+        Returns a deepcopy to prevent mutation of the response object.
+
         ## Raises
 
         None
         """
-        return self.gen.next
+        return copy.deepcopy(self.gen.next)
 
     @property
     def verb(self) -> HttpVerbEnum:
