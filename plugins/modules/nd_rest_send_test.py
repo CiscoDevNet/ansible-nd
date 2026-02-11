@@ -142,21 +142,12 @@ def main():
 
     try:
         # Make the request
-        data = nd.request(ep.path, ep.verb)
+        nd.request(ep.path, ep.verb)
 
-        # Populate Results with the response
-        # For query operations, we create a simple result dict
-        result = {"success": True, "found": True}
-
-        # Add response information to Results
-        # Note: nd_v2's RestSend infrastructure provides these via nd.response
-        response = {
-            "RETURN_CODE": nd.status,
-            "METHOD": nd.method,
-            "REQUEST_PATH": nd.path,
-            "MESSAGE": nd.response,
-            "DATA": data,
-        }
+        # Get response and result from RestSend (via NDModule)
+        # RestSend's ResponseHandler has already parsed the response
+        response = nd.rest_send.response_current
+        result = nd.rest_send.result_current
 
         # Register the task result
         results.response_current = response
@@ -185,16 +176,22 @@ def main():
         module.exit_json(**results.final_result)
 
     except NDModuleError as error:
-        # Create a failed result using Results class
-        results.response_current = {
-            "RETURN_CODE": error.status if error.status else -1,
-            "MESSAGE": error.msg,
-            "DATA": error.response_payload if error.response_payload else {},
-        }
-        results.result_current = {
-            "success": False,
-            "found": False,
-        }
+        # Get response and result from RestSend (via NDModule)
+        # RestSend's ResponseHandler has already parsed the failed response
+        try:
+            results.response_current = nd.rest_send.response_current
+            results.result_current = nd.rest_send.result_current
+        except ValueError:
+            # Fallback if RestSend wasn't initialized
+            results.response_current = {
+                "RETURN_CODE": error.status if error.status else -1,
+                "MESSAGE": error.msg,
+                "DATA": error.response_payload if error.response_payload else {},
+            }
+            results.result_current = {
+                "success": False,
+                "found": False,
+            }
         results.diff_current = {}
         results.register_task_result()
         results.build_final_result()
