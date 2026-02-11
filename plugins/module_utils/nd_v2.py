@@ -282,6 +282,39 @@ class NDModule:
             self.log.debug(msg)
         return self._rest_send
 
+    @property
+    def rest_send(self) -> RestSend:
+        """
+        # Summary
+
+        Access to the RestSend instance used by this NDModule.
+
+        ## Returns
+
+        -   RestSend: The RestSend instance.
+
+        ## Raises
+
+        -   `ValueError`: If accessed before `request()` has been called.
+
+        ## Usage
+
+        ```python
+        nd = NDModule(module)
+        data = nd.request("/api/v1/endpoint")
+
+        # Access RestSend response/result
+        response = nd.rest_send.response_current
+        result = nd.rest_send.result_current
+        ```
+        """
+        if self._rest_send is None:
+            msg = f"{self.class_name}.rest_send: "
+            msg += "rest_send must be initialized before accessing. "
+            msg += "Call request() first."
+            raise ValueError(msg)
+        return self._rest_send
+
     def request(
         self,
         path: str,
@@ -307,11 +340,15 @@ class NDModule:
 
         The response DATA from the controller (parsed JSON body).
 
+        For full response metadata (status, message, etc.), access
+        `rest_send.response_current` and `rest_send.result_current`
+        after calling this method.
+
         ## Raises
 
-        - NDModuleError: If the request fails (with status, payload, etc.)
-        - ValueError: If RestSend encounters configuration errors
-        - TypeError: If invalid types are passed
+        - `NDModuleError`: If the request fails (with status, payload, etc.)
+        - `ValueError`: If RestSend encounters configuration errors
+        - `TypeError`: If invalid types are passed
         """
         method_name = "request"
         # If PATCH with empty data, return early (existing behavior)
