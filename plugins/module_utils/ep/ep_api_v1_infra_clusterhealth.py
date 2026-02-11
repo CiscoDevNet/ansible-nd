@@ -15,18 +15,67 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 __author__ = "Allen Robel"
 
-from typing import Literal
+from typing import Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.ep.base_paths_infra import BasePath
-from ansible_collections.cisco.nd.plugins.module_utils.ep.endpoint_query_params import (
-    ClusterHealthConfigQueryParams,
-    ClusterHealthStatusQueryParams,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.ep.query_params import EndpointQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict, Field
 
 # Common config for basic validation
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
+
+
+class ClusterHealthConfigEndpointParams(EndpointQueryParams):
+    """
+    # Summary
+
+    Endpoint-specific query parameters for cluster health config endpoint.
+
+    ## Parameters
+
+    - cluster_name: Cluster name (optional)
+
+    ## Usage
+
+    ```python
+    params = ClusterHealthConfigEndpointParams(cluster_name="my-cluster")
+    query_string = params.to_query_string()
+    # Returns: "clusterName=my-cluster"
+    ```
+    """
+
+    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Cluster name")
+
+
+class ClusterHealthStatusEndpointParams(EndpointQueryParams):
+    """
+    # Summary
+
+    Endpoint-specific query parameters for cluster health status endpoint.
+
+    ## Parameters
+
+    - cluster_name: Cluster name (optional)
+    - health_category: Health category (optional)
+    - node_name: Node name (optional)
+
+    ## Usage
+
+    ```python
+    params = ClusterHealthStatusEndpointParams(
+        cluster_name="my-cluster",
+        health_category="cpu",
+        node_name="node1"
+    )
+    query_string = params.to_query_string()
+    # Returns: "clusterName=my-cluster&healthCategory=cpu&nodeName=node1"
+    ```
+    """
+
+    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Cluster name")
+    health_category: Optional[str] = Field(default=None, min_length=1, description="Health category")
+    node_name: Optional[str] = Field(default=None, min_length=1, description="Node name")
 
 
 class EpApiV1InfraClusterhealthConfigGet(BaseModel):
@@ -59,7 +108,7 @@ class EpApiV1InfraClusterhealthConfigGet(BaseModel):
 
     # Get cluster health config for specific cluster
     request = EpApiV1InfraClusterhealthConfigGet()
-    request.query_params.cluster_name = "foo"
+    request.endpoint_params.cluster_name = "foo"
     path = request.path
     verb = request.verb
     # Path will be: /api/v1/infra/clusterhealth/config?clusterName=foo
@@ -72,7 +121,9 @@ class EpApiV1InfraClusterhealthConfigGet(BaseModel):
         default="EpApiV1InfraClusterhealthConfigGet", description="Class name for backward compatibility"
     )
 
-    query_params: ClusterHealthConfigQueryParams = Field(default_factory=ClusterHealthConfigQueryParams, description="Query parameters for this endpoint")
+    endpoint_params: ClusterHealthConfigEndpointParams = Field(
+        default_factory=ClusterHealthConfigEndpointParams, description="Endpoint-specific query parameters"
+    )
 
     @property
     def path(self) -> str:
@@ -86,7 +137,7 @@ class EpApiV1InfraClusterhealthConfigGet(BaseModel):
         - Complete endpoint path string, optionally including query parameters
         """
         base_path = BasePath.nd_infra_clusterhealth("config")
-        query_string = self.query_params.to_query_string()
+        query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
         return base_path
@@ -128,15 +179,15 @@ class EpApiV1InfraClusterhealthStatusGet(BaseModel):
 
     # Get cluster health status for specific cluster
     request = EpApiV1InfraClusterhealthStatusGet()
-    request.query_params.cluster_name = "foo"
+    request.endpoint_params.cluster_name = "foo"
     path = request.path
     verb = request.verb
 
     # Get cluster health status with all filters
     request = EpApiV1InfraClusterhealthStatusGet()
-    request.query_params.cluster_name = "foo"
-    request.query_params.health_category = "bar"
-    request.query_params.node_name = "baz"
+    request.endpoint_params.cluster_name = "foo"
+    request.endpoint_params.health_category = "bar"
+    request.endpoint_params.node_name = "baz"
     path = request.path
     verb = request.verb
     # Path will be: /api/v1/infra/clusterhealth/status?clusterName=foo&healthCategory=bar&nodeName=baz
@@ -149,7 +200,9 @@ class EpApiV1InfraClusterhealthStatusGet(BaseModel):
         default="EpApiV1InfraClusterhealthStatusGet", description="Class name for backward compatibility"
     )
 
-    query_params: ClusterHealthStatusQueryParams = Field(default_factory=ClusterHealthStatusQueryParams, description="Query parameters for this endpoint")
+    endpoint_params: ClusterHealthStatusEndpointParams = Field(
+        default_factory=ClusterHealthStatusEndpointParams, description="Endpoint-specific query parameters"
+    )
 
     @property
     def path(self) -> str:
@@ -163,7 +216,7 @@ class EpApiV1InfraClusterhealthStatusGet(BaseModel):
         - Complete endpoint path string, optionally including query parameters
         """
         base_path = BasePath.nd_infra_clusterhealth("status")
-        query_string = self.query_params.to_query_string()
+        query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
         return base_path
