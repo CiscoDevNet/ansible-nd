@@ -39,7 +39,8 @@ class RestSend:
             -   The response handler interface is defined in
                 `module_utils/response_handler.py`
 
-    ### Raises
+    ## Raises
+
     -   `ValueError` if:
             -   self._verify_commit_parameters() raises
                 `ValueError`
@@ -143,7 +144,7 @@ class RestSend:
         msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
 
-    def restore_settings(self):
+    def restore_settings(self) -> None:
         """
         # Summary
 
@@ -173,7 +174,7 @@ class RestSend:
         if self.saved_timeout is not None:
             self.timeout = self.saved_timeout
 
-    def save_settings(self):
+    def save_settings(self) -> None:
         """
         # Summary
 
@@ -198,7 +199,7 @@ class RestSend:
         if self.timeout is not None:
             self.saved_timeout = self.timeout
 
-    def commit(self):
+    def commit(self) -> None:
         """
         # Summary
 
@@ -264,13 +265,14 @@ class RestSend:
 
         ## Properties read:
 
-            -   `verb`: HttpVerbEnum e.g. HttpVerb.DELETE, HttpVerb.GET, etc.
-            -   `path`: HTTP path e.g. http://controller_ip/path/to/endpoint
-            -   `payload`: Optional HTTP payload
+        -   `verb`: HttpVerbEnum e.g. HttpVerb.DELETE, HttpVerb.GET, etc.
+        -   `path`: HTTP path e.g. http://controller_ip/path/to/endpoint
+        -   `payload`: Optional HTTP payload
 
         ## Properties written:
-            -   `response_current`: raw simulated response
-            -   `result_current`: result from self._handle_response() method
+
+        -   `response_current`: raw simulated response
+        -   `result_current`: result from self._handle_response() method
         """
         method_name = "_commit_check_mode"
 
@@ -307,10 +309,11 @@ class RestSend:
         Call sender.commit() with retries until successful response or timeout is exceeded.
 
         ## Raises
-            -   `ValueError` if:
-                -   HandleResponse() raises `ValueError`
-                -   Sender().commit() raises `ValueError`
-                -   `verb` is not a valid verb (GET, POST, PUT, DELETE)"""
+
+        -   `ValueError` if:
+            -   HandleResponse() raises `ValueError`
+            -   Sender().commit() raises `ValueError`
+            -   `verb` is not a valid verb (GET, POST, PUT, DELETE)"""
         method_name = "_commit_normal_mode"
         timeout = copy.copy(self.timeout)
 
@@ -376,7 +379,7 @@ class RestSend:
         self._payload = None
 
     @property
-    def check_mode(self):
+    def check_mode(self) -> bool:
         """
         # Summary
 
@@ -408,7 +411,7 @@ class RestSend:
         return self._check_mode
 
     @check_mode.setter
-    def check_mode(self, value: bool):
+    def check_mode(self, value: bool) -> None:
         method_name = "check_mode"
         if not isinstance(value, bool):
             msg = f"{self.class_name}.{method_name}: "
@@ -417,14 +420,14 @@ class RestSend:
         self._check_mode = value
 
     @property
-    def failed_result(self):
+    def failed_result(self) -> dict:
         """
         Return a result for a failed task with no changes
         """
         return Results().failed_result
 
     @property
-    def implements(self):
+    def implements(self) -> str:
         """
         # Summary
 
@@ -457,7 +460,7 @@ class RestSend:
         return self._path
 
     @path.setter
-    def path(self, value: str):
+    def path(self, value: str) -> None:
         self._path = value
 
     @property
@@ -622,7 +625,7 @@ class RestSend:
         self._result_current = value
 
     @property
-    def send_interval(self):
+    def send_interval(self) -> int:
         """
         # Summary
 
@@ -639,7 +642,7 @@ class RestSend:
         return self._send_interval
 
     @send_interval.setter
-    def send_interval(self, value):
+    def send_interval(self, value: int) -> None:
         method_name = "send_interval"
         msg = f"{self.class_name}.{method_name}: "
         msg += f"{method_name} must be an integer. "
@@ -699,7 +702,7 @@ class RestSend:
         return self._timeout
 
     @timeout.setter
-    def timeout(self, value: int):
+    def timeout(self, value: int) -> None:
         method_name = "timeout"
         msg = f"{self.class_name}.{method_name}: "
         msg += f"{method_name} must be an integer. "
@@ -714,26 +717,23 @@ class RestSend:
     @property
     def unit_test(self) -> bool:
         """
-        ### Summary
+        # Summary
+
         Is RestSend being called from a unit test.
         Set this to True in unit tests to speed the test up.
 
-        ### Raises
-        -   setter: ``TypeError`` if value is not a ``bool``
+        ## Raises
+    
+        -   setter: `TypeError` if value is not a `bool`
 
-        ### Default
-        ``False``
+        ## Default
 
-        ### getter
-        Returns ``unit_test``
-
-        ### setter
-        Sets ``unit_test``
+        `False`
         """
         return self._unit_test
 
     @unit_test.setter
-    def unit_test(self, value: bool):
+    def unit_test(self, value: bool) -> None:
         method_name = "unit_test"
         if not isinstance(value, bool):
             msg = f"{self.class_name}.{method_name}: "
@@ -752,8 +752,8 @@ class RestSend:
 
         ## Raises
 
-        -   setter: ``TypeError`` if value is not an instance of HttpVerbEnum
-        -   getter: ``ValueError`` if verb is not set before accessing.
+        -   setter: `TypeError` if value is not an instance of HttpVerbEnum
+        -   getter: `ValueError` if verb is not set before accessing.
         """
         if self._verb is None:
             msg = f"{self.class_name}.verb: "
