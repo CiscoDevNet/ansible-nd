@@ -277,23 +277,6 @@ class RestSend:
         msg += f"verb {self.verb}, path {self.path}."
         self.log.debug(msg)
 
-        if self.path is None:
-            msg = f"{self.class_name}.{method_name}: "
-            msg += "path must be set before calling commit()."
-            raise ValueError(msg)
-        if self.response_handler is None:
-            msg = f"{self.class_name}.{method_name}: "
-            msg += "response_handler must be set before calling commit()."
-            raise ValueError(msg)
-        if self.sender is None:
-            msg = f"{self.class_name}.{method_name}: "
-            msg += "sender must be set before calling commit()."
-            raise ValueError(msg)
-        if self.verb is None:
-            msg = f"{self.class_name}.{method_name}: "
-            msg += "verb must be set before calling commit()."
-            raise ValueError(msg)
-
         response_current: dict = {}
         response_current["RETURN_CODE"] = 200
         response_current["METHOD"] = self.verb
@@ -328,20 +311,6 @@ class RestSend:
                 -   Sender().commit() raises `ValueError`
                 -   `verb` is not a valid verb (GET, POST, PUT, DELETE)"""
         method_name = "_commit_normal_mode"
-
-        if self.path is None:
-            msg = f"{self.class_name}.{method_name}: "
-            msg += "path must be set before calling commit()."
-            raise ValueError(msg)
-        if self.response_handler is None:
-            msg = f"{self.class_name}.{method_name}: "
-            msg += "response_handler must be set before calling commit()."
-            raise ValueError(msg)
-        if self.sender is None:
-            msg = f"{self.class_name}.{method_name}: "
-            msg += "sender must be set before calling commit()."
-            raise ValueError(msg)
-
         timeout = copy.copy(self.timeout)
 
         msg = "Entering commit loop. "
@@ -467,7 +436,7 @@ class RestSend:
         return "rest_send_v2"
 
     @property
-    def path(self):
+    def path(self) -> str:
         """
         # Summary
 
@@ -481,10 +450,13 @@ class RestSend:
 
         `/appcenter/cisco/ndfc/api/v1/...etc...`
         """
+        if self._path is None:
+            msg = f"{self.class_name}.path: path must be set before accessing."
+            raise ValueError(msg)
         return self._path
 
     @path.setter
-    def path(self, value):
+    def path(self, value: str):
         self._path = value
 
     @property
