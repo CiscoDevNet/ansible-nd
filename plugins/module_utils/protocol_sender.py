@@ -1,6 +1,7 @@
 """
 Protocol definition for Sender classes.
 """
+
 # pylint: disable=unnecessary-ellipsis
 
 # -*- coding: utf-8 -*-

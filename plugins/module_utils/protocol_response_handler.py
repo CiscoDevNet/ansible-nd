@@ -7,6 +7,7 @@
 """
 Protocol definition for ResponseHandler classes.
 """
+
 # pylint: disable=unnecessary-ellipsis
 
 from __future__ import absolute_import, division, print_function
