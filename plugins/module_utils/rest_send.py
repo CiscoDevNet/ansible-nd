@@ -8,6 +8,7 @@ Send REST requests to the controller with retries.
 """
 
 from __future__ import absolute_import, division, print_function
+
 # TODO: Python 3.8 compatibility. Review when we drop support for 3.8
 from typing import Any, Dict, List, Optional
 
