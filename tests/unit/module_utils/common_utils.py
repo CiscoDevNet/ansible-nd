@@ -17,7 +17,7 @@ from contextlib import contextmanager
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.log import Log
-from ansible_collections.cisco.nd.plugins.module_utils.sender_file import Sender as SenderFile
+from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender as SenderFile
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixture import load_fixture
 from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 
