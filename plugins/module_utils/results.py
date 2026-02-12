@@ -477,9 +477,10 @@ class Results:
             and metadata)
         2.  Set self.changed based on current_diff.
             If current_diff is empty, it is assumed that no changes were made
-            and self.changed is set to False.  Else, self.changed is set to True.
-        3.  Set self.failed based on current_result.  If current_result["success"]
-            is True, self.failed is set to False.  Else, self.failed is set to True.
+            and False is added to self.changed.  Else, True is added to self.changed.
+        3.  Set self.failed based on current_result.
+            If current_result["success"] is True, False is added to self.failed.
+            If current_result["success"] is False, True is added to self.failed.
         4.  Set self.metadata based on current_metadata.
 
         - self.response  : list of controller responses
@@ -565,15 +566,15 @@ class Results:
         ```
         """
         msg = f"self.changed: {self.changed}, "
-        msg = f"self.failed: {self.failed}, "
+        msg += f"self.failed: {self.failed}, "
         self.log.debug(msg)
 
-        if True in self.failed:  # pylint: disable=unsupported-membership-test
+        if True in self.failed:
             self.final_result["failed"] = True
         else:
             self.final_result["failed"] = False
 
-        if True in self.changed:  # pylint: disable=unsupported-membership-test
+        if True in self.changed:
             self.final_result["changed"] = True
         else:
             self.final_result["changed"] = False
@@ -708,7 +709,7 @@ class Results:
         self._operation_type = value
 
     @property
-    def changed(self) -> set:
+    def changed(self) -> Set[bool]:
         """
         # Summary
 
