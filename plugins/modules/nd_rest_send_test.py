@@ -85,16 +85,16 @@ metadata:
   elements: dict
 """
 
-from ansible.module_utils.basic import AnsibleModule  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.ep.ep_api_v1_infra_clusterhealth import EpApiV1InfraClusterhealthConfigGet  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.log import Log  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (  # type: ignore
+from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.ep.ep_api_v1_infra_clusterhealth import EpApiV1InfraClusterhealthConfigGet
+from ansible_collections.cisco.nd.plugins.module_utils.log import Log
+from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule,
     NDModuleError,
     nd_argument_spec,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.results import Results  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.results import Results
 
 
 def main():

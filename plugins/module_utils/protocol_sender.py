@@ -17,7 +17,7 @@ __author__ = "Allen Robel"
 
 from typing import Optional, Protocol, runtime_checkable
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
 @runtime_checkable

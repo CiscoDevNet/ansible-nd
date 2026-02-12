@@ -23,7 +23,7 @@ import logging
 # TODO: Python 3.8 compatibility. Review when we drop support for 3.8
 from typing import Any, Dict, List, Set
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 
 
 class Results:

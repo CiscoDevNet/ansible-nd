@@ -20,10 +20,10 @@ import json
 import logging
 from time import sleep
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_handler import ResponseHandlerProtocol  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.protocol_sender import SenderProtocol  # type: ignore
-from ansible_collections.cisco.nd.plugins.module_utils.results import Results  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_handler import ResponseHandlerProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.protocol_sender import SenderProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.results import Results
 
 
 class RestSend:
@@ -723,7 +723,7 @@ class RestSend:
         Set this to True in unit tests to speed the test up.
 
         ## Raises
-    
+
         -   setter: `TypeError` if value is not a `bool`
 
         ## Default

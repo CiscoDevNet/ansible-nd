@@ -27,7 +27,7 @@ import copy
 import logging
 from typing import Any, Dict, Optional
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
 class ResponseHandler:

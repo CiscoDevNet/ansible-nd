@@ -26,7 +26,7 @@ from typing import Any, Dict, Optional
 from ansible.module_utils.basic import AnsibleModule  # type: ignore
 from ansible.module_utils.connection import Connection  # type: ignore
 from ansible.module_utils.connection import ConnectionError as AnsibleConnectionError
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum  # type: ignore
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
 class Sender:
