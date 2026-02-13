@@ -16,7 +16,7 @@ import json
 import os
 import sys
 
-fixture_path = os.path.join(os.path.dirname(__file__), "fixtures")
+fixture_path = os.path.join(os.path.dirname(__file__), "fixture_data")
 
 
 def load_fixture(filename):

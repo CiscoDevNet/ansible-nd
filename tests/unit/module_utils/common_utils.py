@@ -18,7 +18,7 @@ from contextlib import contextmanager
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.log import Log
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender as SenderFile
-from ansible_collections.cisco.nd.tests.unit.module_utils.fixture import load_fixture
+from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
 from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 
 # from ansible_collections.cisco.dcnm.plugins.module_utils.common.controller_version import \
@@ -60,7 +60,7 @@ def sender_file_fixture():
 @pytest.fixture(name="log")
 def log_fixture():
     """
-    return Log with mocked AnsibleModule
+    return Log instance
     """
     return Log()
 

@@ -16,6 +16,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 __author__ = "Allen Robel"
 
 import copy
+import inspect
 import json
 import logging
 from time import sleep
@@ -286,7 +287,7 @@ class RestSend:
         response_current["REQUEST_PATH"] = self.path
         response_current["MESSAGE"] = "OK"
         response_current["CHECK_MODE"] = True
-        response_current["DATA"] = "[simulated-check-mode-response:Success]"
+        response_current["DATA"] = {"simulated": "check-mode-response", "status": "Success"}
 
         try:
             self.response_current = response_current
@@ -559,11 +560,40 @@ class RestSend:
             raise ValueError(msg)
         return self._response_handler
 
+    @staticmethod
+    def _has_member_static(obj: Any, member: str) -> bool:
+        """
+        Check whether an object has a member without triggering descriptors.
+
+        This avoids invoking property getters during dependency validation.
+        """
+        try:
+            inspect.getattr_static(obj, member)
+            return True
+        except AttributeError:
+            return False
+
     @response_handler.setter
     def response_handler(self, value: ResponseHandlerProtocol):
-        if not isinstance(value, ResponseHandlerProtocol):
+        required_members = (
+            "response",
+            "result",
+            "verb",
+            "commit",
+            "error_message",
+        )
+        missing_members = [
+            member for member in required_members if not self._has_member_static(value, member)
+        ]
+        if missing_members:
             msg = f"{self.class_name}.response_handler: "
             msg += "value must implement ResponseHandlerProtocol. "
+            msg += f"Missing members: {missing_members}. "
+            msg += f"Got type {type(value).__name__}."
+            raise TypeError(msg)
+        if not callable(getattr(value, "commit", None)):
+            msg = f"{self.class_name}.response_handler: "
+            msg += "value.commit must be callable. "
             msg += f"Got type {type(value).__name__}."
             raise TypeError(msg)
         self._response_handler = value
@@ -677,9 +707,25 @@ class RestSend:
 
     @sender.setter
     def sender(self, value: SenderProtocol):
-        if not isinstance(value, SenderProtocol):
+        required_members = (
+            "path",
+            "verb",
+            "payload",
+            "response",
+            "commit",
+        )
+        missing_members = [
+            member for member in required_members if not self._has_member_static(value, member)
+        ]
+        if missing_members:
             msg = f"{self.class_name}.sender: "
             msg += "value must implement SenderProtocol. "
+            msg += f"Missing members: {missing_members}. "
+            msg += f"Got type {type(value).__name__}."
+            raise TypeError(msg)
+        if not callable(getattr(value, "commit", None)):
+            msg = f"{self.class_name}.sender: "
+            msg += "value.commit must be callable. "
             msg += f"Got type {type(value).__name__}."
             raise TypeError(msg)
         self._sender = value

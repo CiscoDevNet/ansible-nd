@@ -357,6 +357,7 @@ class NDModule:
 
         rest_send = self._get_rest_send()
 
+
         # Send the request
         try:
             rest_send.path = path
