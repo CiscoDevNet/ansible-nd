@@ -127,7 +127,7 @@ def test_response_handler_nd_00120():
     instance = ResponseHandler()
     match = r"ResponseHandler\.response.*must be a dict"
     with pytest.raises(TypeError, match=match):
-        instance.response = "not a dict"
+        instance.response = "not a dict"  # type: ignore[assignment]
 
 
 def test_response_handler_nd_00130():
@@ -263,7 +263,7 @@ def test_response_handler_nd_00310():
     instance = ResponseHandler()
     match = r"ResponseHandler\.result.*must be a dict"
     with pytest.raises(TypeError, match=match):
-        instance.result = "not a dict"
+        instance.result = "not a dict"  # type: ignore[assignment]
 
 
 # =============================================================================

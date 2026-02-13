@@ -246,7 +246,7 @@ def test_sender_nd_00320():
     instance = Sender()
     match = r"Sender\.verb:.*must be one of"
     with pytest.raises(TypeError, match=match):
-        instance.verb = "INVALID"
+        instance.verb = "INVALID"  # type: ignore[assignment]
 
 
 # =============================================================================
@@ -312,7 +312,7 @@ def test_sender_nd_00420():
     instance = Sender()
     match = r"Sender\.payload:.*must be a dict"
     with pytest.raises(TypeError, match=match):
-        instance.payload = "not a dict"
+        instance.payload = "not a dict"  # type: ignore[assignment]
 
 
 def test_sender_nd_00430():
@@ -332,7 +332,7 @@ def test_sender_nd_00430():
     instance = Sender()
     match = r"Sender\.payload:.*must be a dict"
     with pytest.raises(TypeError, match=match):
-        instance.payload = [1, 2, 3]
+        instance.payload = [1, 2, 3]  # type: ignore[assignment]
 
 
 # =============================================================================
@@ -400,7 +400,7 @@ def test_sender_nd_00520():
     instance = Sender()
     match = r"Sender\.response:.*must be a dict"
     with pytest.raises(TypeError, match=match):
-        instance.response = "not a dict"
+        instance.response = "not a dict"  # type: ignore[assignment]
 
 
 def test_sender_nd_00530():
