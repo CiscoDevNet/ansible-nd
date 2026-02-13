@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-
-# Copyright: (c) 2026, Allen Robel (@allenrobel) <arobel@cisco.com>
-
-# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-
 """
 # Summary
 
@@ -14,6 +8,12 @@ Enum definitions for Nexus Dashboard Ansible modules.
 - HttpVerbEnum: Enum for HTTP verb values used in endpoints.
 - OperationType: Enum for operation types used by ResultsV2 to determine if changes have occurred.
 """
+
+# -*- coding: utf-8 -*-
+
+# Copyright: (c) 2026, Allen Robel (@allenrobel) <arobel@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
 

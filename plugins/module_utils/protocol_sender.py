@@ -47,7 +47,8 @@ class SenderProtocol(Protocol):
         ...
 
     @path.setter
-    def path(self, value: str) -> None: ...
+    def path(self, value: str) -> None:
+        ...
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -55,7 +56,8 @@ class SenderProtocol(Protocol):
         ...
 
     @verb.setter
-    def verb(self, value: HttpVerbEnum) -> None: ...
+    def verb(self, value: HttpVerbEnum) -> None:
+        ...
 
     @property
     def payload(self) -> Optional[dict]:
@@ -63,7 +65,8 @@ class SenderProtocol(Protocol):
         ...
 
     @payload.setter
-    def payload(self, value: dict) -> None: ...
+    def payload(self, value: dict) -> None:
+        ...
 
     @property
     def response(self) -> dict:

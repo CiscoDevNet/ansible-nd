@@ -1,3 +1,7 @@
+"""
+Exposes public class Results to collect results across tasks.
+"""
+
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -5,9 +9,6 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 # pylint: disable=too-many-instance-attributes,too-many-public-methods,line-too-long
-"""
-Exposes public class Results to collect results across tasks.
-"""
 
 from __future__ import absolute_import, division, print_function
 
