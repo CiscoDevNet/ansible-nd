@@ -31,8 +31,7 @@ from os import environ
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.log import Log
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import \
-    does_not_raise
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 
 def logging_config(logging_config_file) -> dict:
@@ -60,9 +59,7 @@ def logging_config(logging_config_file) -> dict:
                 "backupCount": 4,
             }
         },
-        "loggers": {
-            "dcnm": {"handlers": ["file"], "level": "DEBUG", "propagate": False}
-        },
+        "loggers": {"dcnm": {"handlers": ["file"], "level": "DEBUG", "propagate": False}},
         "root": {"level": "INFO", "handlers": ["file"]},
     }
 

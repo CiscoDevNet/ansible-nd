@@ -1,9 +1,3 @@
-"""
-Sender module conforming to SenderProtocol.
-
-See plugins/module_utils/protocol_sender.py for the protocol definition.
-"""
-
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -13,6 +7,12 @@ See plugins/module_utils/protocol_sender.py for the protocol definition.
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
+
+"""
+Sender module conforming to SenderProtocol.
+
+See plugins/module_utils/protocol_sender.py for the protocol definition.
+"""
 __author__ = "Allen Robel"
 
 import copy

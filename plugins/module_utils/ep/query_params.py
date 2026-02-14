@@ -1,11 +1,3 @@
-"""
-Query parameter classes for API endpoints.
-
-This module provides composable query parameter classes for building
-URL query strings. Supports endpoint-specific parameters and Lucene-style
-filtering with type safety via Pydantic.
-"""
-
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -15,6 +7,14 @@ filtering with type safety via Pydantic.
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
+
+"""
+Query parameter classes for API endpoints.
+
+This module provides composable query parameter classes for building
+URL query strings. Supports endpoint-specific parameters and Lucene-style
+filtering with type safety via Pydantic.
+"""
 __author__ = "Allen Robel"
 
 from abc import ABC, abstractmethod

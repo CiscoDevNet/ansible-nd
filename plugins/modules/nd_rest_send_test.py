@@ -1,8 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-"""
-Simple demo module for RestSend and Smart Endpoints.
-"""
+
 # Copyright: (c) 2026 Cisco and/or its affiliates.
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 # pylint: disable=wrong-import-position
@@ -10,6 +8,10 @@ Simple demo module for RestSend and Smart Endpoints.
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
+
+"""
+Simple demo module for RestSend and Smart Endpoints.
+"""
 
 DOCUMENTATION = r"""
 ---

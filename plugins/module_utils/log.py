@@ -1,7 +1,3 @@
-"""
-Logging utilities for the Ansible ND collection.
-"""
-
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -11,6 +7,10 @@ Logging utilities for the Ansible ND collection.
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
+
+"""
+Logging utilities for the Ansible ND collection.
+"""
 __copyright__ = "Copyright (c) 2024-2026 Cisco and/or its affiliates."
 __author__ = "Allen Robel"
 

@@ -1,7 +1,3 @@
-"""
-Exposes public class Results to collect results across tasks.
-"""
-
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -13,6 +9,10 @@ Exposes public class Results to collect results across tasks.
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
+
+"""
+Exposes public class Results to collect results across tasks.
+"""
 __copyright__ = "Copyright (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>"
 __author__ = "Allen Robel"
 

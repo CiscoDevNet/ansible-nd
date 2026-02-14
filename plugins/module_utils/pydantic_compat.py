@@ -1,11 +1,3 @@
-"""
-Pydantic compatibility layer.
-
-This module provides a single location for Pydantic imports with fallback
-implementations when Pydantic is not available. This ensures consistent
-behavior across all modules and follows the DRY principle.
-"""
-
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -17,6 +9,14 @@ behavior across all modules and follows the DRY principle.
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
+
+"""
+Pydantic compatibility layer.
+
+This module provides a single location for Pydantic imports with fallback
+implementations when Pydantic is not available. This ensures consistent
+behavior across all modules and follows the DRY principle.
+"""
 __author__ = "Allen Robel"
 
 import traceback

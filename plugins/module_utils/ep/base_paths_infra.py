@@ -1,13 +1,3 @@
-"""
-Centralized base paths for ND Infra API endpoints.
-
-/api/v1/infra
-
-This module provides a single location to manage all API Infra base paths,
-allowing easy modification when API paths change. All endpoint classes
-should use these path builders for consistency.
-"""
-
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -17,6 +7,16 @@ should use these path builders for consistency.
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
+
+"""
+Centralized base paths for ND Infra API endpoints.
+
+/api/v1/infra
+
+This module provides a single location to manage all API Infra base paths,
+allowing easy modification when API paths change. All endpoint classes
+should use these path builders for consistency.
+"""
 __author__ = "Allen Robel"
 
 from typing import Final

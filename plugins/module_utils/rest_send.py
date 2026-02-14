@@ -1,7 +1,3 @@
-"""
-Send REST requests to the controller with retries.
-"""
-
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -10,10 +6,15 @@ Send REST requests to the controller with retries.
 
 from __future__ import absolute_import, division, print_function
 
+__metaclass__ = type  # pylint: disable=invalid-name
+
+"""
+Send REST requests to the controller with retries.
+"""
+
 # TODO: Python 3.8 compatibility. Review when we drop support for 3.8
 from typing import Any, Dict, List, Optional
 
-__metaclass__ = type  # pylint: disable=invalid-name
 __author__ = "Allen Robel"
 
 import copy

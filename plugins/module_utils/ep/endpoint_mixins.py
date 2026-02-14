@@ -1,10 +1,3 @@
-"""
-Reusable mixin classes for endpoint models.
-
-This module provides mixin classes that can be composed to add common
-fields to endpoint models without duplication.
-"""
-
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -14,6 +7,13 @@ fields to endpoint models without duplication.
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
+
+"""
+Reusable mixin classes for endpoint models.
+
+This module provides mixin classes that can be composed to add common
+fields to endpoint models without duplication.
+"""
 __author__ = "Allen Robel"
 
 from typing import Optional

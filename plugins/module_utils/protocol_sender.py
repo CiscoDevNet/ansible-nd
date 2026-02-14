@@ -1,7 +1,3 @@
-"""
-Protocol definition for Sender classes.
-"""
-
 # pylint: disable=unnecessary-ellipsis
 
 # -*- coding: utf-8 -*-
@@ -13,6 +9,10 @@ Protocol definition for Sender classes.
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
+
+"""
+Protocol definition for Sender classes.
+"""
 __author__ = "Allen Robel"
 
 from typing import Optional, Protocol, runtime_checkable

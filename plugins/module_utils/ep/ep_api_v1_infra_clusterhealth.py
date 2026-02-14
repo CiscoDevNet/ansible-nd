@@ -1,10 +1,3 @@
-"""
-ND Infra ClusterHealth endpoint models.
-
-This module contains endpoint definitions for clusterhealth-related operations
-in the ND Infra API.
-"""
-
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -14,6 +7,13 @@ in the ND Infra API.
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
+
+"""
+ND Infra ClusterHealth endpoint models.
+
+This module contains endpoint definitions for clusterhealth-related operations
+in the ND Infra API.
+"""
 __author__ = "Allen Robel"
 
 from typing import Literal, Optional
