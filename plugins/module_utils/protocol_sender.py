@@ -1,5 +1,6 @@
 # pylint: disable=wrong-import-position
 # pylint: disable=missing-module-docstring
+# pylint: disable=unnecessary-ellipsis
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -44,7 +45,7 @@ class SenderProtocol(Protocol):
     @path.setter
     def path(self, value: str) -> None:
         """Set the endpoint path for the REST request."""
-        pass
+        ...
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -54,7 +55,7 @@ class SenderProtocol(Protocol):
     @verb.setter
     def verb(self, value: HttpVerbEnum) -> None:
         """Set the HTTP method for the REST request."""
-        pass
+        ...
 
     @property
     def payload(self) -> Optional[dict]:
@@ -64,7 +65,7 @@ class SenderProtocol(Protocol):
     @payload.setter
     def payload(self, value: dict) -> None:
         """Set the optional payload for the REST request."""
-        pass
+        ...
 
     @property
     def response(self) -> dict:
