@@ -7,7 +7,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type  # pylint: disable=invalid-name
+__metaclass__ = type
 
 """
 Protocol definition for ResponseHandler classes.

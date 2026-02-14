@@ -6,7 +6,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type  # pylint: disable=invalid-name
+__metaclass__ = type
 
 """
 Centralized base paths for ND Infra API endpoints.

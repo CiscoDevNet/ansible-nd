@@ -8,7 +8,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type  # pylint: disable=invalid-name
+__metaclass__ = type
 
 """
 Exposes public class Results to collect results across tasks.
