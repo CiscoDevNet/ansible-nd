@@ -20,6 +20,7 @@ Enum definitions for Nexus Dashboard Ansible modules.
 """
 
 from enum import Enum
+
 # TODO: Python 3.8 compatibility. Review when we drop support for 3.8
 from typing import List
 
