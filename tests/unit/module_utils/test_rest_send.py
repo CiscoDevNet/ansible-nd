@@ -9,6 +9,7 @@ Unit tests for rest_send.py
 
 Tests the RestSend class for sending REST requests with retries
 """
+
 # pylint: disable=protected-access,too-many-lines
 
 from __future__ import absolute_import, division, print_function

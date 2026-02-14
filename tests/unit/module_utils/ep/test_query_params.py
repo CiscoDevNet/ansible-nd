@@ -9,6 +9,7 @@ Unit tests for query_params.py
 
 Tests the query parameter composition classes
 """
+
 # pylint: disable=protected-access
 
 from __future__ import absolute_import, division, print_function

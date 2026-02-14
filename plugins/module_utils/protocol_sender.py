@@ -1,5 +1,5 @@
-# pylint: disable=unnecessary-ellipsis
-
+# pylint: disable=wrong-import-position
+# pylint: disable=missing-module-docstring
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
@@ -9,11 +9,6 @@
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
-
-"""
-Protocol definition for Sender classes.
-"""
-__author__ = "Allen Robel"
 
 from typing import Optional, Protocol, runtime_checkable
 
@@ -48,7 +43,8 @@ class SenderProtocol(Protocol):
 
     @path.setter
     def path(self, value: str) -> None:
-        ...
+        """Set the endpoint path for the REST request."""
+        pass
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -57,7 +53,8 @@ class SenderProtocol(Protocol):
 
     @verb.setter
     def verb(self, value: HttpVerbEnum) -> None:
-        ...
+        """Set the HTTP method for the REST request."""
+        pass
 
     @property
     def payload(self) -> Optional[dict]:
@@ -66,7 +63,8 @@ class SenderProtocol(Protocol):
 
     @payload.setter
     def payload(self, value: dict) -> None:
-        ...
+        """Set the optional payload for the REST request."""
+        pass
 
     @property
     def response(self) -> dict:

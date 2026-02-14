@@ -1,21 +1,15 @@
 # -*- coding: utf-8 -*-
-
+# pylint: disable=wrong-import-position
+# pylint: disable=missing-module-docstring
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
-
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 
-"""
-Send REST requests to the controller with retries.
-"""
-
 # TODO: Python 3.8 compatibility. Review when we drop support for 3.8
 from typing import Any, Dict, List, Optional
-
-__author__ = "Allen Robel"
 
 import copy
 import inspect
@@ -584,9 +578,7 @@ class RestSend:
             "commit",
             "error_message",
         )
-        missing_members = [
-            member for member in required_members if not self._has_member_static(value, member)
-        ]
+        missing_members = [member for member in required_members if not self._has_member_static(value, member)]
         if missing_members:
             msg = f"{self.class_name}.response_handler: "
             msg += "value must implement ResponseHandlerProtocol. "
@@ -716,9 +708,7 @@ class RestSend:
             "response",
             "commit",
         )
-        missing_members = [
-            member for member in required_members if not self._has_member_static(value, member)
-        ]
+        missing_members = [member for member in required_members if not self._has_member_static(value, member)]
         if missing_members:
             msg = f"{self.class_name}.sender: "
             msg += "value must implement SenderProtocol. "
