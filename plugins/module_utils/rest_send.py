@@ -6,7 +6,9 @@
 
 from __future__ import absolute_import, division, print_function
 
+# pylint: disable=invalid-name
 __metaclass__ = type
+# pylint: enable=invalid-name
 
 # TODO: Python 3.8 compatibility. Review when we drop support for 3.8
 from typing import Any, Dict, List, Optional
