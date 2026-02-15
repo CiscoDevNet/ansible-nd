@@ -568,15 +568,8 @@ class Results:
         msg += f"self.failed: {self.failed}, "
         self.log.debug(msg)
 
-        if True in self.failed:
-            self.final_result["failed"] = True
-        else:
-            self.final_result["failed"] = False
-
-        if True in self.changed:
-            self.final_result["changed"] = True
-        else:
-            self.final_result["changed"] = False
+        self.final_result["failed"] = True in self.failed
+        self.final_result["changed"] = True in self.changed
         self.final_result["diff"] = self.diff
         self.final_result["response"] = self.response
         self.final_result["result"] = self.result
