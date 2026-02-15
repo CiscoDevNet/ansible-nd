@@ -490,16 +490,17 @@ class Results:
         msg += f"self.result_current: {self.result_current}"
         self.log.debug(msg)
 
+        # Increment sequence number and register current values
         self._increment_task_sequence_number()
         self.add_metadata(self.metadata_current)
         self.add_response(self.response_current)
         self.add_result(self.result_current)
         self.add_diff(self.diff_current)
 
-        if not self.did_anything_change():
-            self.changed.add(False)
-        else:
-            self.changed.add(True)
+        # Determine if anything changed
+        self.changed.add(self.did_anything_change())
+
+        # Determine if the task failed based on the success flag
         success = self.result_current.get("success")
         if success is True:
             self._failed.add(False)
@@ -513,21 +514,14 @@ class Results:
             self.log.debug(msg)
             self._failed.add(False)
 
-        msg = f"{self.class_name}.{method_name}: "
-        msg += f"self.diff: {json.dumps(self.diff, indent=4, sort_keys=True)}, "
-        self.log.debug(msg)
-
-        msg = f"{self.class_name}.{method_name}: "
-        msg += f"self.metadata: {json.dumps(self.metadata, indent=4, sort_keys=True)}"
-        self.log.debug(msg)
-
-        msg = f"{self.class_name}.{method_name}: "
-        msg += f"self.response: {json.dumps(self.response, indent=4, sort_keys=True)}, "
-        self.log.debug(msg)
-
-        msg = f"{self.class_name}.{method_name}: "
-        msg += f"self.result: {json.dumps(self.result, indent=4, sort_keys=True)}, "
-        self.log.debug(msg)
+        # Log all registered data in a single consolidated message
+        if self.log.isEnabledFor(logging.DEBUG):
+            msg = f"{self.class_name}.{method_name}: Registered task result:\n"
+            msg += f"  diff: {json.dumps(self.diff, indent=4, sort_keys=True)}\n"
+            msg += f"  metadata: {json.dumps(self.metadata, indent=4, sort_keys=True)}\n"
+            msg += f"  response: {json.dumps(self.response, indent=4, sort_keys=True)}\n"
+            msg += f"  result: {json.dumps(self.result, indent=4, sort_keys=True)}"
+            self.log.debug(msg)
 
     def build_final_result(self) -> None:
         """
