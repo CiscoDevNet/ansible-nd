@@ -776,9 +776,7 @@ class Results:
 
         -   setter: `TypeError` if value is not a dict.
         """
-        value = self._diff_current
-        value["sequence_number"] = self.task_sequence_number
-        return value
+        return self._diff_current
 
     @diff_current.setter
     def diff_current(self, value: dict) -> None:
@@ -864,9 +862,7 @@ class Results:
 
         -   setter: `TypeError` if value is not a dict.
         """
-        value = self._response_current
-        value["sequence_number"] = self.task_sequence_number
-        return value
+        return self._response_current
 
     @response_current.setter
     def response_current(self, value: dict) -> None:
@@ -948,9 +944,7 @@ class Results:
 
         -   setter: `TypeError` if value is not a dict
         """
-        value = self._result_current
-        value["sequence_number"] = self.task_sequence_number
-        return value
+        return self._result_current
 
     @result_current.setter
     def result_current(self, value) -> None:
