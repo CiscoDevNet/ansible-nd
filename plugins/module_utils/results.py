@@ -413,7 +413,7 @@ class Results:
         msg = f"self.task_sequence_number: {self.task_sequence_number}"
         self.log.debug(msg)
 
-    def did_anything_change(self) -> bool:  # pylint: disable=too-many-return-statements
+    def did_anything_change(self) -> bool:
         """
         # Summary
 
@@ -437,36 +437,21 @@ class Results:
         msg += f"self.diff: {self.diff}"
         self.log.debug(msg)
 
-        # Early returns for no-change scenarios
-        if self.check_mode is True:
-            return False
+        something_changed: bool = False
 
-        # Check operation_type first (preferred method)
-        if self.operation_type.is_read_only():
-            return False
+        # Early exit conditions for no-change scenarios
+        if not (self.check_mode or self.operation_type.is_read_only() or "query" in self.action or self.state == "query"):
+            # Check explicit changed flag in result_current
+            changed_flag = self.result_current.get("changed")
+            if changed_flag is not None:
+                something_changed = changed_flag
+            else:
+                # Check if any diff has content (besides sequence_number)
+                something_changed = any(any(key != "sequence_number" for key in diff) for diff in self.diff)
 
-        # Fallback: Check action string for backward compatibility
-        if "query" in self.action or self.state == "query":
-            return False
-
-        # Check explicit changed flag in result_current
-        changed_flag = self.result_current.get("changed")
-        if changed_flag is not None:
-            msg = f"{self.class_name}.{method_name}: something_changed: {changed_flag}"
-            self.log.debug(msg)
-            return changed_flag
-
-        # Check if any diff has content (besides sequence_number)
-        for diff in self.diff:
-            # Use dict comprehension instead of deepcopy + pop
-            if any(key != "sequence_number" for key in diff):
-                msg = f"{self.class_name}.{method_name}: something_changed: True"
-                self.log.debug(msg)
-                return True
-
-        msg = f"{self.class_name}.{method_name}: something_changed: False"
+        msg = f"{self.class_name}.{method_name}: something_changed: {something_changed}"
         self.log.debug(msg)
-        return False
+        return something_changed
 
     def register_task_result(self) -> None:
         """
