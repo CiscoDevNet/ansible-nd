@@ -437,7 +437,7 @@ class Results:
         msg += f"self.diff: {self.diff}"
         self.log.debug(msg)
 
-        something_changed: bool = False
+        # Early returns for no-change scenarios
         if self.check_mode is True:
             return False
 
@@ -448,20 +448,25 @@ class Results:
         # Fallback: Check action string for backward compatibility
         if "query" in self.action or self.state == "query":
             return False
-        if self.result_current.get("changed", False) is True:
-            return True
-        if self.result_current.get("changed", True) is False:
-            return False
+
+        # Check explicit changed flag in result_current
+        changed_flag = self.result_current.get("changed")
+        if changed_flag is not None:
+            msg = f"{self.class_name}.{method_name}: something_changed: {changed_flag}"
+            self.log.debug(msg)
+            return changed_flag
+
+        # Check if any diff has content (besides sequence_number)
         for diff in self.diff:
-            something_changed = False
-            test_diff = copy.deepcopy(diff)
-            test_diff.pop("sequence_number", None)
-            if len(test_diff) != 0:
-                something_changed = True
-        msg = f"{self.class_name}.{method_name}: "
-        msg += f"something_changed: {something_changed}"
+            # Use dict comprehension instead of deepcopy + pop
+            if any(key != "sequence_number" for key in diff):
+                msg = f"{self.class_name}.{method_name}: something_changed: True"
+                self.log.debug(msg)
+                return True
+
+        msg = f"{self.class_name}.{method_name}: something_changed: False"
         self.log.debug(msg)
-        return something_changed
+        return False
 
     def register_task_result(self) -> None:
         """
