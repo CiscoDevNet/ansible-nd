@@ -232,20 +232,20 @@ class Results:
         # Assign a unique sequence number to each registered task
         self.task_sequence_number: int = 0
 
-        self.final_result: dict = {}
+        self.final_result: Dict[str, Any] = {}
         self._action: str = ""
         self._operation_type: OperationType = OperationType.QUERY
-        self._changed: set = set()
+        self._changed: Set[bool] = set()
         self._check_mode: bool = False
-        self._diff: List[dict] = []
-        self._diff_current: dict = {}
-        self._failed: set = set()
-        self._metadata: List[dict] = []
-        self._response: List[dict] = []
-        self._response_current: dict = {}
-        self._response_data: List[dict] = []
-        self._result: List[dict] = []
-        self._result_current: dict = {}
+        self._diff: List[Dict[str, Any]] = []
+        self._diff_current: Dict[str, Any] = {}
+        self._failed: Set[bool] = set()
+        self._metadata: List[Dict[str, Any]] = []
+        self._response: List[Dict[str, Any]] = []
+        self._response_current: Dict[str, Any] = {}
+        self._response_data: List[Dict[str, Any]] = []
+        self._result: List[Dict[str, Any]] = []
+        self._result_current: Dict[str, Any] = {}
         self._state: str = ""
 
         msg = f"ENTERED {self.class_name}():"
@@ -271,7 +271,7 @@ class Results:
             raise ValueError(msg)
         self._changed.add(value)
 
-    def add_diff(self, value: dict) -> None:
+    def add_diff(self, value: Dict[str, Any]) -> None:
         """
         # Summary
 
@@ -310,7 +310,7 @@ class Results:
             raise ValueError(msg)
         self._failed.add(value)
 
-    def add_metadata(self, value: dict) -> None:
+    def add_metadata(self, value: Dict[str, Any]) -> None:
         """
         # Summary
 
@@ -333,7 +333,7 @@ class Results:
         value_copy["sequence_number"] = self.task_sequence_number
         self._metadata.append(value_copy)
 
-    def add_response(self, value: dict) -> None:
+    def add_response(self, value: Dict[str, Any]) -> None:
         """
         # Summary
 
@@ -356,7 +356,7 @@ class Results:
         value_copy["sequence_number"] = self.task_sequence_number
         self._response.append(value_copy)
 
-    def add_response_data(self, value: dict) -> None:
+    def add_response_data(self, value: Dict[str, Any]) -> None:
         """
         # Summary
 
@@ -377,7 +377,7 @@ class Results:
             raise TypeError(msg)
         self._response_data.append(copy.deepcopy(value))
 
-    def add_result(self, value: dict) -> None:
+    def add_result(self, value: Dict[str, Any]) -> None:
         """
         # Summary
 
@@ -573,7 +573,7 @@ class Results:
         self.final_result["metadata"] = self.metadata
 
     @property
-    def failed_result(self) -> dict:
+    def failed_result(self) -> Dict[str, Any]:
         """
         # Summary
 
@@ -592,7 +592,7 @@ class Results:
         return result
 
     @property
-    def ok_result(self) -> dict:
+    def ok_result(self) -> Dict[str, Any]:
         """
         # Summary
 
@@ -727,7 +727,7 @@ class Results:
         self._check_mode = value
 
     @property
-    def diff(self) -> List[dict]:
+    def diff(self) -> List[Dict[str, Any]]:
         """
         # Summary
 
@@ -743,7 +743,7 @@ class Results:
         return self._diff
 
     @property
-    def diff_current(self) -> dict:
+    def diff_current(self) -> Dict[str, Any]:
         """
         # Summary
 
@@ -759,7 +759,7 @@ class Results:
         return self._diff_current
 
     @diff_current.setter
-    def diff_current(self, value: dict) -> None:
+    def diff_current(self, value: Dict[str, Any]) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
@@ -789,7 +789,7 @@ class Results:
         return self._failed
 
     @property
-    def metadata(self) -> List[dict]:
+    def metadata(self) -> List[Dict[str, Any]]:
         """
         # Summary
 
@@ -805,7 +805,7 @@ class Results:
         return self._metadata
 
     @property
-    def metadata_current(self) -> dict:
+    def metadata_current(self) -> Dict[str, Any]:
         """
         # Summary
 
@@ -828,7 +828,7 @@ class Results:
         return value
 
     @property
-    def response_current(self) -> dict:
+    def response_current(self) -> Dict[str, Any]:
         """
         # Summary
 
@@ -845,7 +845,7 @@ class Results:
         return self._response_current
 
     @response_current.setter
-    def response_current(self, value: dict) -> None:
+    def response_current(self, value: Dict[str, Any]) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
@@ -855,7 +855,7 @@ class Results:
         self._response_current = value
 
     @property
-    def response(self) -> List[dict]:
+    def response(self) -> List[Dict[str, Any]]:
         """
         # Summary
 
@@ -873,7 +873,7 @@ class Results:
         return self._response
 
     @property
-    def response_data(self) -> List[dict]:
+    def response_data(self) -> List[Dict[str, Any]]:
         """
         # Summary
 
@@ -891,7 +891,7 @@ class Results:
         return self._response_data
 
     @property
-    def result(self) -> List[dict]:
+    def result(self) -> List[Dict[str, Any]]:
         """
         # Summary
 
@@ -911,7 +911,7 @@ class Results:
         return self._result
 
     @property
-    def result_current(self) -> dict:
+    def result_current(self) -> Dict[str, Any]:
         """
         # Summary
 
@@ -927,7 +927,7 @@ class Results:
         return self._result_current
 
     @result_current.setter
-    def result_current(self, value) -> None:
+    def result_current(self, value: Dict[str, Any]) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
