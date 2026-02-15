@@ -576,22 +576,6 @@ class Results:
         self.final_result["result"] = self.result
         self.final_result["metadata"] = self.metadata
 
-    def add_to_failed(self, value: bool) -> None:
-        """
-        # Summary
-
-        Add a boolean value to the failed set.
-
-        ## Raises
-
-        -   `ValueError`: if value is not a bool
-        """
-        if not isinstance(value, bool):
-            msg = f"{self.class_name}.add_to_failed: "
-            msg += f"instance.add_to_failed must be a bool. Got {value}"
-            raise ValueError(msg)
-        self._failed.add(value)
-
     @property
     def failed_result(self) -> dict:
         """
