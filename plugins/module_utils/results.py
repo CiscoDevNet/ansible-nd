@@ -289,8 +289,9 @@ class Results:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"instance.diff must be a dict. Got {value}"
             raise TypeError(msg)
-        value["sequence_number"] = self.task_sequence_number
-        self._diff.append(copy.deepcopy(value))
+        value_copy = copy.deepcopy(value)
+        value_copy["sequence_number"] = self.task_sequence_number
+        self._diff.append(value_copy)
 
     def add_failed(self, value: bool) -> None:
         """
@@ -331,8 +332,9 @@ class Results:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"value must be a dict. Got {type(value).__name__}."
             raise TypeError(msg)
-        value["sequence_number"] = self.task_sequence_number
-        self._metadata.append(copy.deepcopy(value))
+        value_copy = copy.deepcopy(value)
+        value_copy["sequence_number"] = self.task_sequence_number
+        self._metadata.append(value_copy)
 
     def add_response(self, value: dict) -> None:
         """
@@ -353,8 +355,9 @@ class Results:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"instance.add_response must be a dict. Got {value}"
             raise TypeError(msg)
-        value["sequence_number"] = self.task_sequence_number
-        self._response.append(copy.deepcopy(value))
+        value_copy = copy.deepcopy(value)
+        value_copy["sequence_number"] = self.task_sequence_number
+        self._response.append(value_copy)
 
     def add_response_data(self, value: dict) -> None:
         """
@@ -396,8 +399,9 @@ class Results:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"instance.add_result must be a dict. Got {value}"
             raise TypeError(msg)
-        value["sequence_number"] = self.task_sequence_number
-        self._result.append(copy.deepcopy(value))
+        value_copy = copy.deepcopy(value)
+        value_copy["sequence_number"] = self.task_sequence_number
+        self._result.append(value_copy)
 
     def _increment_task_sequence_number(self) -> None:
         """
