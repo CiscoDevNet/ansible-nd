@@ -472,12 +472,13 @@ class Results:
         1.  Append result_current, response_current, diff_current and
             metadata_current their respective lists (result, response, diff,
             and metadata)
-        2.  Set self.changed based on current_diff.
-            If current_diff is empty, it is assumed that no changes were made
-            and False is added to self.changed.  Else, True is added to self.changed.
+        2.  Set self.changed based on whether anything changed.
+            If nothing changed, False is added to self.changed.
+            Otherwise, True is added to self.changed.
         3.  Set self.failed based on current_result.
-            If current_result["success"] is True, False is added to self.failed.
-            If current_result["success"] is False, True is added to self.failed.
+            If current_result["success"] is explicitly True, False is added to self.failed.
+            If current_result["success"] is explicitly False, True is added to self.failed.
+            If "success" is missing or not a boolean, False is added to self.failed.
         4.  Set self.metadata based on current_metadata.
 
         - self.response  : list of controller responses
@@ -498,13 +499,14 @@ class Results:
         self.add_result(self.result_current)
         self.add_diff(self.diff_current)
 
-        if self.did_anything_change() is False:
+        if not self.did_anything_change():
             self.changed.add(False)
         else:
             self.changed.add(True)
-        if self.result_current.get("success") is True:
+        success = self.result_current.get("success")
+        if success is True:
             self._failed.add(False)
-        elif self.result_current.get("success") is False:
+        elif success is False:
             self._failed.add(True)
         else:
             msg = f"{self.class_name}.{method_name}: "
