@@ -440,7 +440,7 @@ class Results:
         something_changed: bool = False
 
         # Early exit conditions for no-change scenarios
-        if not (self.check_mode or self.operation_type.is_read_only() or "query" in self.action or self.state == "query"):
+        if not (self.check_mode or self.operation_type.is_read_only() or self.state == "query"):
             # Check explicit changed flag in result_current
             changed_flag = self.result_current.get("changed")
             if changed_flag is not None:
