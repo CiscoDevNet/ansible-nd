@@ -229,9 +229,6 @@ class Results:
 
         self.log: logging.Logger = logging.getLogger(f"dcnm.{self.class_name}")
 
-        self.diff_keys: list = ["deleted", "merged", "query"]
-        self.response_keys: list = ["deleted", "merged", "query"]
-
         # Assign a unique sequence number to each registered task
         self.task_sequence_number: int = 0
 
