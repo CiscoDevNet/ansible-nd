@@ -13,18 +13,28 @@ to avoid circular import issues between sender_file.py and common_utils.py.
 
 from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type  # pylint: disable=invalid-name
-__author__ = "Allen Robel"
+# pylint: disable=invalid-name
+__metaclass__ = type
+# pylint: enable=invalid-name
 
-# Try to import AnsibleFailJson from ansible.netcommon, fall back to local definition
+# Define base exception class
+class AnsibleFailJson(Exception):
+    """
+    Exception raised by MockAnsibleModule.fail_json()
+    """
+
+# Try to import AnsibleFailJson from ansible.netcommon if available
+# This allows compatibility with tests that expect the netcommon version
 try:
-    from ansible_collections.ansible.netcommon.tests.unit.modules.utils import AnsibleFailJson
-except ImportError:
+    from ansible_collections.ansible.netcommon.tests.unit.modules.utils import (
+        AnsibleFailJson as _NetcommonFailJson,
+    )
 
-    class AnsibleFailJson(Exception):
-        """
-        Exception raised by MockAnsibleModule.fail_json()
-        """
+    # Use the netcommon version if available
+    AnsibleFailJson = _NetcommonFailJson  # type: ignore[misc]
+except ImportError:
+    # Use the local version defined above
+    pass
 
 
 class MockAnsibleModule:
