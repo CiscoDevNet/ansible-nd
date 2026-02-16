@@ -3,19 +3,17 @@
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+"""
+Sender module conforming to SenderProtocol.
+
+See plugins/module_utils/protocol_sender.py for the protocol definition.
+"""
 
 from __future__ import absolute_import, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
 # pylint: enable=invalid-name
-
-"""
-Sender module conforming to SenderProtocol.
-
-See plugins/module_utils/protocol_sender.py for the protocol definition.
-"""
-__author__ = "Allen Robel"
 
 import copy
 import inspect

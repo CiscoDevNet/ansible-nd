@@ -3,20 +3,18 @@
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-
-from __future__ import absolute_import, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
-
 """
 ND Infra AAA endpoint models.
 
 This module contains endpoint definitions for AAA-related operations
 in the ND Infra API.
 """
-__author__ = "Allen Robel"
+
+from __future__ import absolute_import, division, print_function
+
+# pylint: disable=invalid-name
+__metaclass__ = type
+# pylint: enable=invalid-name
 
 from typing import Literal
 

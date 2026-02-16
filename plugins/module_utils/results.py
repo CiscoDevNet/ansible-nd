@@ -4,19 +4,16 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# pylint: disable=too-many-instance-attributes,too-many-public-methods,line-too-long
+# pylint: disable=too-many-instance-attributes,too-many-public-methods,line-too-long,too-many-lines
+"""
+Exposes public class Results to collect results across Ansible tasks.
+"""
 
 from __future__ import absolute_import, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
 # pylint: enable=invalid-name
-
-"""
-Exposes public class Results to collect results across tasks.
-"""
-__copyright__ = "Copyright (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>"
-__author__ = "Allen Robel"
 
 import copy
 import inspect

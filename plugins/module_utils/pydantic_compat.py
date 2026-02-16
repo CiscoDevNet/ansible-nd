@@ -5,13 +5,6 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 # pylint: disable=too-few-public-methods
-
-from __future__ import absolute_import, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
-
 """
 Pydantic compatibility layer.
 
@@ -19,7 +12,12 @@ This module provides a single location for Pydantic imports with fallback
 implementations when Pydantic is not available. This ensures consistent
 behavior across all modules and follows the DRY principle.
 """
-__author__ = "Allen Robel"
+
+from __future__ import absolute_import, division, print_function
+
+# pylint: disable=invalid-name
+__metaclass__ = type
+# pylint: enable=invalid-name
 
 import traceback
 from typing import TYPE_CHECKING, Any, Callable, Union

@@ -3,18 +3,15 @@
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+"""
+Logging utilities for the Ansible ND collection.
+"""
 
 from __future__ import absolute_import, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
 # pylint: enable=invalid-name
-
-"""
-Logging utilities for the Ansible ND collection.
-"""
-__copyright__ = "Copyright (c) 2024-2026 Cisco and/or its affiliates."
-__author__ = "Allen Robel"
 
 import inspect
 import json

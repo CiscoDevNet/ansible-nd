@@ -3,13 +3,6 @@
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-
-from __future__ import absolute_import, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
-
 """
 # response_handler_nd.py
 
@@ -24,7 +17,12 @@ This handler processes responses from the ND HttpApi plugin which provides:
 
 TODO: Should response be converted to a Pydantic model by this class?
 """
-__author__ = "Allen Robel"
+
+from __future__ import absolute_import, division, print_function
+
+# pylint: disable=invalid-name
+__metaclass__ = type
+# pylint: enable=invalid-name
 
 import copy
 import logging

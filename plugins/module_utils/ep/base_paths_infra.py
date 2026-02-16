@@ -3,13 +3,6 @@
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-
-from __future__ import absolute_import, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
-
 """
 Centralized base paths for ND Infra API endpoints.
 
@@ -19,7 +12,12 @@ This module provides a single location to manage all API Infra base paths,
 allowing easy modification when API paths change. All endpoint classes
 should use these path builders for consistency.
 """
-__author__ = "Allen Robel"
+
+from __future__ import absolute_import, division, print_function
+
+# pylint: disable=invalid-name
+__metaclass__ = type
+# pylint: enable=invalid-name
 
 from typing import Final
 
