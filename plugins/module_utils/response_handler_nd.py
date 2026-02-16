@@ -104,6 +104,12 @@ class ResponseHandler:
 
     """
 
+    # HTTP status codes considered successful
+    # 200: OK, 201: Created, 202: Accepted, 204: No Content
+    RETURN_CODES_SUCCESS: set[int] = {200, 201, 202, 204}
+    # 404 is handled separately as "not found but not an error"
+    RETURN_CODE_NOT_FOUND: int = 404
+
     def __init__(self) -> None:
         self.class_name = self.__class__.__name__
         method_name = "__init__"
@@ -114,11 +120,6 @@ class ResponseHandler:
         self._result: Optional[dict] = None
         self._verb: Optional[HttpVerbEnum] = None
 
-        # HTTP status codes considered successful for GET requests
-        # 200: OK, 201: Created, 202: Accepted, 204: No Content
-        self.return_codes_success: set[int] = {200, 201, 202, 204}
-        # 404 is handled separately as "not found but not an error"
-        self.return_code_not_found: int = 404
         msg = f"ENTERED {self.class_name}.{method_name}"
         self.log.debug(msg)
 
@@ -151,11 +152,11 @@ class ResponseHandler:
         return_code = self.response.get("RETURN_CODE")
 
         # 404 Not Found - resource doesn't exist, but request was successful
-        if return_code == self.return_code_not_found:
+        if return_code == self.RETURN_CODE_NOT_FOUND:
             result["found"] = False
             result["success"] = True
         # Success codes - resource found
-        elif return_code in self.return_codes_success:
+        elif return_code in self.RETURN_CODES_SUCCESS:
             result["found"] = True
             result["success"] = True
         # Error codes - request failed
@@ -192,7 +193,7 @@ class ResponseHandler:
             result["success"] = False
             result["changed"] = False
         # Success codes indicate the operation completed
-        elif return_code in self.return_codes_success:
+        elif return_code in self.RETURN_CODES_SUCCESS:
             result["success"] = True
             result["changed"] = True
         # Any other status code is an error

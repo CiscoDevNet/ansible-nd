@@ -45,8 +45,8 @@ def test_response_handler_nd_00010():
     - _response defaults to None
     - _result defaults to None
     - _verb defaults to None
-    - return_codes_success contains expected status codes
-    - return_code_not_found is 404
+    - RETURN_CODES_SUCCESS contains expected status codes
+    - RETURN_CODE_NOT_FOUND is 404
 
     ## Classes and Methods
 
@@ -57,8 +57,8 @@ def test_response_handler_nd_00010():
     assert instance._response is None
     assert instance._result is None
     assert instance._verb is None
-    assert instance.return_codes_success == {200, 201, 202, 204}
-    assert instance.return_code_not_found == 404
+    assert instance.RETURN_CODES_SUCCESS == {200, 201, 202, 204}
+    assert instance.RETURN_CODE_NOT_FOUND == 404
 
 
 # =============================================================================
