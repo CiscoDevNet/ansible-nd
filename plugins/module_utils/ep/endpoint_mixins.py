@@ -22,16 +22,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStrin
 from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, Field
 
 
-class ForceShowRunMixin(BaseModel):
-    """Mixin for endpoints that require force_show_run parameter."""
+class ClusterNameMixin(BaseModel):
+    """Mixin for endpoints that require cluster_name parameter."""
 
-    force_show_run: BooleanStringEnum = Field(default=BooleanStringEnum.FALSE, description="Force show running config")
-
-
-class InclAllMsdSwitchesMixin(BaseModel):
-    """Mixin for endpoints that require incl_all_msd_switches parameter."""
-
-    incl_all_msd_switches: BooleanStringEnum = Field(default=BooleanStringEnum.FALSE, description="Include all MSD switches")
+    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Cluster name")
 
 
 class FabricNameMixin(BaseModel):
@@ -40,22 +34,22 @@ class FabricNameMixin(BaseModel):
     fabric_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="Fabric name")
 
 
-class SwitchSerialNumberMixin(BaseModel):
-    """Mixin for endpoints that require switch_sn parameter."""
+class ForceShowRunMixin(BaseModel):
+    """Mixin for endpoints that require force_show_run parameter."""
 
-    switch_sn: Optional[str] = Field(default=None, min_length=1, description="Switch serial number")
-
-
-class NetworkNameMixin(BaseModel):
-    """Mixin for endpoints that require network_name parameter."""
-
-    network_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="Network name")
+    force_show_run: BooleanStringEnum = Field(default=BooleanStringEnum.FALSE, description="Force show running config")
 
 
-class VrfNameMixin(BaseModel):
-    """Mixin for endpoints that require vrf_name parameter."""
+class HealthCategoryMixin(BaseModel):
+    """Mixin for endpoints that require health_category parameter."""
 
-    vrf_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="VRF name")
+    health_category: Optional[str] = Field(default=None, min_length=1, description="Health category")
+
+
+class InclAllMsdSwitchesMixin(BaseModel):
+    """Mixin for endpoints that require incl_all_msd_switches parameter."""
+
+    incl_all_msd_switches: BooleanStringEnum = Field(default=BooleanStringEnum.FALSE, description="Include all MSD switches")
 
 
 class LinkUuidMixin(BaseModel):
@@ -70,19 +64,25 @@ class LoginIdMixin(BaseModel):
     login_id: Optional[str] = Field(default=None, min_length=1, description="Login ID")
 
 
-class ClusterNameMixin(BaseModel):
-    """Mixin for endpoints that require cluster_name parameter."""
+class NetworkNameMixin(BaseModel):
+    """Mixin for endpoints that require network_name parameter."""
 
-    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Cluster name")
-
-
-class HealthCategoryMixin(BaseModel):
-    """Mixin for endpoints that require health_category parameter."""
-
-    health_category: Optional[str] = Field(default=None, min_length=1, description="Health category")
+    network_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="Network name")
 
 
 class NodeNameMixin(BaseModel):
     """Mixin for endpoints that require node_name parameter."""
 
     node_name: Optional[str] = Field(default=None, min_length=1, description="Node name")
+
+
+class SwitchSerialNumberMixin(BaseModel):
+    """Mixin for endpoints that require switch_sn parameter."""
+
+    switch_sn: Optional[str] = Field(default=None, min_length=1, description="Switch serial number")
+
+
+class VrfNameMixin(BaseModel):
+    """Mixin for endpoints that require vrf_name parameter."""
+
+    vrf_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="VRF name")
