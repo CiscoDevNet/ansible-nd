@@ -12,8 +12,9 @@ See plugins/module_utils/protocol_sender.py for the protocol definition.
 
 from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type  # pylint: disable=invalid-name
-__author__ = "Allen Robel"
+# pylint: disable=invalid-name
+__metaclass__ = type
+# pylint: enable=invalid-name
 
 import copy
 import inspect

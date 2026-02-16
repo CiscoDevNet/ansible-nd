@@ -19,10 +19,9 @@ Unit tests for plugins/module_utils/log.py
 
 from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type  # pylint: disable=invalid-name
-
-__copyright__ = "Copyright (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>"
-__author__ = "Allen Robel"
+# pylint: disable=invalid-name
+__metaclass__ = type
+# pylint: enable=invalid-name
 
 import inspect
 import json
