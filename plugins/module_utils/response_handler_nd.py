@@ -26,7 +26,8 @@ __metaclass__ = type
 
 import copy
 import logging
-from typing import Any, Dict, Optional
+# TODO: Python 3.8 compatibility. Review when we drop support for 3.8
+from typing import Any, Dict, Optional, Set
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
@@ -106,7 +107,7 @@ class ResponseHandler:
 
     # HTTP status codes considered successful
     # 200: OK, 201: Created, 202: Accepted, 204: No Content
-    RETURN_CODES_SUCCESS: set[int] = {200, 201, 202, 204}
+    RETURN_CODES_SUCCESS: Set[int] = {200, 201, 202, 204}
     # 404 is handled separately as "not found but not an error"
     RETURN_CODE_NOT_FOUND: int = 404
 
@@ -116,8 +117,8 @@ class ResponseHandler:
 
         self.log = logging.getLogger(f"dcnm.{self.class_name}")
 
-        self._response: Optional[dict] = None
-        self._result: Optional[dict] = None
+        self._response: Optional[Dict[str, Any]] = None
+        self._result: Optional[Dict[str, Any]] = None
         self._verb: Optional[HttpVerbEnum] = None
 
         msg = f"ENTERED {self.class_name}.{method_name}"
@@ -223,7 +224,7 @@ class ResponseHandler:
         self._handle_response()
 
     @property
-    def response(self) -> dict:
+    def response(self) -> Dict[str, Any]:
         """
         # Summary
 
@@ -243,7 +244,7 @@ class ResponseHandler:
         return self._response
 
     @response.setter
-    def response(self, value: dict) -> None:
+    def response(self, value: Dict[str, Any]) -> None:
         method_name = "response"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
@@ -263,7 +264,7 @@ class ResponseHandler:
         self._response = value
 
     @property
-    def result(self) -> dict:
+    def result(self) -> Dict[str, Any]:
         """
         # Summary
 
@@ -281,7 +282,7 @@ class ResponseHandler:
         return self._result
 
     @result.setter
-    def result(self, value: dict) -> None:
+    def result(self, value: Dict[str, Any]) -> None:
         method_name = "result"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
