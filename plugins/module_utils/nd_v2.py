@@ -40,14 +40,14 @@ def main():
 ```
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
 # pylint: enable=invalid-name
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from ansible.module_utils.basic import env_fallback
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -81,8 +81,8 @@ class NDErrorData(BaseModel):
 
     msg: str
     status: Optional[int] = None
-    request_payload: Optional[Dict[str, Any]] = None
-    response_payload: Optional[Dict[str, Any]] = None
+    request_payload: Optional[dict[str, Any]] = None
+    response_payload: Optional[dict[str, Any]] = None
     raw: Optional[Any] = None
 
 
@@ -115,8 +115,8 @@ class NDModuleError(Exception):
         self,
         msg: str,
         status: Optional[int] = None,
-        request_payload: Optional[Dict[str, Any]] = None,
-        response_payload: Optional[Dict[str, Any]] = None,
+        request_payload: Optional[dict[str, Any]] = None,
+        response_payload: Optional[dict[str, Any]] = None,
         raw: Optional[Any] = None,
     ) -> None:
         self.error_data = NDErrorData(
@@ -139,12 +139,12 @@ class NDModuleError(Exception):
         return self.error_data.status
 
     @property
-    def request_payload(self) -> Optional[Dict[str, Any]]:
+    def request_payload(self) -> Optional[dict[str, Any]]:
         """Request payload that was sent."""
         return self.error_data.request_payload
 
     @property
-    def response_payload(self) -> Optional[Dict[str, Any]]:
+    def response_payload(self) -> Optional[dict[str, Any]]:
         """Response payload from controller."""
         return self.error_data.response_payload
 
@@ -153,7 +153,7 @@ class NDModuleError(Exception):
         """Raw response content for non-JSON responses."""
         return self.error_data.raw
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert exception attributes to a dict for use with fail_json.
 
@@ -162,7 +162,7 @@ class NDModuleError(Exception):
         return self.error_data.model_dump(exclude_none=True)
 
 
-def nd_argument_spec() -> Dict[str, Any]:
+def nd_argument_spec() -> dict[str, Any]:
     """
     Return the common argument spec for ND modules.
 
@@ -234,7 +234,7 @@ class NDModule:
         """
         self.class_name = self.__class__.__name__
         self.module = module
-        self.params: Dict[str, Any] = module.params
+        self.params: dict[str, Any] = module.params
 
         self.log = logging.getLogger(f"nd.{self.class_name}")
 
@@ -321,8 +321,8 @@ class NDModule:
         self,
         path: str,
         verb: HttpVerbEnum = HttpVerbEnum.GET,
-        data: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        data: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """
         # Summary
 

@@ -19,7 +19,7 @@ Tests the ResponseHandler class for handling ND controller responses.
 # pylint: disable=line-too-long
 # pylint: disable=too-many-lines
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 

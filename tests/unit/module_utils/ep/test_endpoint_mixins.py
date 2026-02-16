@@ -10,7 +10,7 @@ Unit tests for endpoint_mixins.py
 Tests the mixin classes for endpoint models
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 

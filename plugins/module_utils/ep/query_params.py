@@ -11,7 +11,7 @@ URL query strings. Supports endpoint-specific parameters and Lucene-style
 filtering with type safety via Pydantic.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type

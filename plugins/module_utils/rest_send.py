@@ -4,14 +4,13 @@
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-# TODO: Python 3.8 compatibility. Review when we drop support for 3.8
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import copy
 import inspect
@@ -122,10 +121,10 @@ class RestSend:
         self._check_mode: bool = False
         self._path: Optional[str] = None
         self._payload: Optional[dict] = None
-        self._response: List[Dict[str, Any]] = []
-        self._response_current: Dict[str, Any] = {}
+        self._response: list[dict[str, Any]] = []
+        self._response_current: dict[str, Any] = {}
         self._response_handler: Optional[ResponseHandlerProtocol] = None
-        self._result: List[dict] = []
+        self._result: list[dict] = []
         self._result_current: dict = {}
         self._send_interval: int = 5
         self._sender: Optional[SenderProtocol] = None
@@ -510,7 +509,7 @@ class RestSend:
         self._response_current = value
 
     @property
-    def response(self) -> List[dict]:
+    def response(self) -> list[dict]:
         """
         # Summary
 
@@ -595,7 +594,7 @@ class RestSend:
         self._response_handler = value
 
     @property
-    def result(self) -> List[dict]:
+    def result(self) -> list[dict]:
         """
         # Summary
 

@@ -10,7 +10,7 @@ Sender module conforming to SenderProtocol for file-based mock responses.
 See plugins/module_utils/protocol_sender.py for the protocol definition.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
@@ -20,8 +20,7 @@ import copy
 import inspect
 import logging
 
-# TODO: Review typing imports after we drop support for Python 3.8
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule
@@ -77,8 +76,8 @@ class Sender:
         self._ansible_module: Optional[MockAnsibleModule] = None
         self._gen: Optional[ResponseGenerator] = None
         self._path: Optional[str] = None
-        self._payload: Optional[Dict[str, Any]] = None
-        self._response: Optional[Dict[str, Any]] = None
+        self._payload: Optional[dict[str, Any]] = None
+        self._response: Optional[dict[str, Any]] = None
         self._verb: Optional[HttpVerbEnum] = None
 
         self._raise_method: Optional[str] = None
@@ -182,7 +181,7 @@ class Sender:
         self._path = value
 
     @property
-    def payload(self) -> Optional[Dict[str, Any]]:
+    def payload(self) -> Optional[dict[str, Any]]:
         """
         # Summary
 
@@ -195,7 +194,7 @@ class Sender:
         return self._payload
 
     @payload.setter
-    def payload(self, value: Optional[Dict[str, Any]]):
+    def payload(self, value: Optional[dict[str, Any]]):
         self._payload = value
 
     @property
@@ -260,7 +259,7 @@ class Sender:
         self._raise_method = value
 
     @property
-    def response(self) -> Dict[str, Any]:
+    def response(self) -> dict[str, Any]:
         """
         # Summary
 

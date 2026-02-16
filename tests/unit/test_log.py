@@ -17,7 +17,7 @@ Unit tests for plugins/module_utils/log.py
 # Some tests require calling protected methods
 # pylint: disable=protected-access
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type

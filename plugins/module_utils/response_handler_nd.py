@@ -18,7 +18,7 @@ This handler processes responses from the ND HttpApi plugin which provides:
 TODO: Should response be converted to a Pydantic model by this class?
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
@@ -26,8 +26,7 @@ __metaclass__ = type
 
 import copy
 import logging
-# TODO: Python 3.8 compatibility. Review when we drop support for 3.8
-from typing import Any, Dict, Optional, Set
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
@@ -107,7 +106,7 @@ class ResponseHandler:
 
     # HTTP status codes considered successful
     # 200: OK, 201: Created, 202: Accepted, 204: No Content
-    RETURN_CODES_SUCCESS: Set[int] = {200, 201, 202, 204}
+    RETURN_CODES_SUCCESS: set[int] = {200, 201, 202, 204}
     # 404 is handled separately as "not found but not an error"
     RETURN_CODE_NOT_FOUND: int = 404
 
@@ -117,8 +116,8 @@ class ResponseHandler:
 
         self.log = logging.getLogger(f"dcnm.{self.class_name}")
 
-        self._response: Optional[Dict[str, Any]] = None
-        self._result: Optional[Dict[str, Any]] = None
+        self._response: Optional[dict[str, Any]] = None
+        self._result: Optional[dict[str, Any]] = None
         self._verb: Optional[HttpVerbEnum] = None
 
         msg = f"ENTERED {self.class_name}.{method_name}"
@@ -224,7 +223,7 @@ class ResponseHandler:
         self._handle_response()
 
     @property
-    def response(self) -> Dict[str, Any]:
+    def response(self) -> dict[str, Any]:
         """
         # Summary
 
@@ -244,7 +243,7 @@ class ResponseHandler:
         return self._response
 
     @response.setter
-    def response(self, value: Dict[str, Any]) -> None:
+    def response(self, value: dict[str, Any]) -> None:
         method_name = "response"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
@@ -264,7 +263,7 @@ class ResponseHandler:
         self._response = value
 
     @property
-    def result(self) -> Dict[str, Any]:
+    def result(self) -> dict[str, Any]:
         """
         # Summary
 
@@ -282,7 +281,7 @@ class ResponseHandler:
         return self._result
 
     @result.setter
-    def result(self, value: Dict[str, Any]) -> None:
+    def result(self, value: dict[str, Any]) -> None:
         method_name = "result"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
@@ -349,10 +348,10 @@ class ResponseHandler:
                 msg = f"Connection failed for {request_path}. {message}"
             # Dict response data - check various ND error formats
             elif isinstance(response_data, dict):
-                # Type-narrow response_data to Dict[str, Any] for pylint
+                # Type-narrow response_data to dict[str, Any] for pylint
                 # pylint: disable=unsupported-membership-test,unsubscriptable-object
                 # Added pylint directive above since pylint is still flagging these errors.
-                data_dict: Dict[str, Any] = response_data
+                data_dict: dict[str, Any] = response_data
                 # Raw response (non-JSON)
                 if "raw_response" in data_dict:
                     msg = "ND Error: Response could not be parsed as JSON"

@@ -8,10 +8,9 @@
 Common utilities used by unit tests.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
-
 
 from contextlib import contextmanager
 
@@ -29,20 +28,14 @@ params = {
     "config": {"switches": [{"ip_address": "172.22.150.105"}]},
     "check_mode": False,
 }
-
-
 # See the following for explanation of why fixtures are explicitely named
 # https://pylint.pycqa.org/en/latest/user_guide/messages/warning/redefined-outer-name.html
-
-
 # @pytest.fixture(name="controller_version")
 # def controller_version_fixture():
 #     """
 #     return ControllerVersion instance.
 #     """
 #     return ControllerVersion()
-
-
 @pytest.fixture(name="sender_file")
 def sender_file_fixture():
     """
@@ -55,24 +48,18 @@ def sender_file_fixture():
     instance = SenderFile()
     instance.gen = ResponseGenerator(responses())
     return instance
-
-
 @pytest.fixture(name="log")
 def log_fixture():
     """
     return Log instance
     """
     return Log()
-
-
 @contextmanager
 def does_not_raise():
     """
     A context manager that does not raise an exception.
     """
     yield
-
-
 def responses_sender_file(key: str) -> dict[str, str]:
     """
     Return data in responses_SenderFile.json

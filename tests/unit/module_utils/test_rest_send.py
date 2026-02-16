@@ -12,7 +12,7 @@ Tests the RestSend class for sending REST requests with retries
 
 # pylint: disable=protected-access,too-many-lines
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 

@@ -11,7 +11,7 @@ allowing easy modification when API paths change. All endpoint classes
 should use these path builders for consistency.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type

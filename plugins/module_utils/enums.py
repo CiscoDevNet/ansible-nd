@@ -14,17 +14,13 @@ Enum definitions for Nexus Dashboard Ansible modules.
 - OperationType: Enum for operation types used by ResultsV2 to determine if changes have occurred.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
 # pylint: enable=invalid-name
 
 from enum import Enum
-
-# TODO: Python 3.8 compatibility. Review when we drop support for 3.8
-from typing import List
-
 
 class BooleanStringEnum(str, Enum):
     """
@@ -40,8 +36,6 @@ class BooleanStringEnum(str, Enum):
 
     TRUE = "true"
     FALSE = "false"
-
-
 class HttpVerbEnum(str, Enum):
     """
     # Summary
@@ -64,7 +58,7 @@ class HttpVerbEnum(str, Enum):
     PATCH = "PATCH"
 
     @classmethod
-    def values(cls) -> List[str]:
+    def values(cls) -> list[str]:
         """
         # Summary
 
@@ -75,8 +69,6 @@ class HttpVerbEnum(str, Enum):
         - A list of string values representing the enum members.
         """
         return sorted([member.value for member in cls])
-
-
 class OperationType(Enum):
     """
     # Summary

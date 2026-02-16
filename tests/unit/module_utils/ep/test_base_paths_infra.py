@@ -10,7 +10,7 @@ Unit tests for base_paths_infra.py
 Tests the BasePath class methods for building ND Infra API paths
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 

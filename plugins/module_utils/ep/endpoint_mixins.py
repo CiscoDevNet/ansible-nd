@@ -10,7 +10,7 @@ This module provides mixin classes that can be composed to add common
 fields to endpoint models without duplication.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type

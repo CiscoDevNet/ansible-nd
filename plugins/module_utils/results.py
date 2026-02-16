@@ -9,7 +9,7 @@
 Exposes public class Results to collect results across Ansible tasks.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
@@ -19,8 +19,7 @@ import copy
 import inspect
 import logging
 
-# TODO: Python 3.8 compatibility. Review when we drop support for 3.8
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
@@ -59,10 +58,10 @@ class TaskResultData(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     sequence_number: int = Field(ge=1)
-    response: Dict[str, Any]
-    result: Dict[str, Any]
-    diff: Dict[str, Any]
-    metadata: Dict[str, Any]
+    response: dict[str, Any]
+    result: dict[str, Any]
+    diff: dict[str, Any]
+    metadata: dict[str, Any]
     changed: bool
     failed: bool
 
@@ -94,10 +93,10 @@ class FinalResultData(BaseModel):
 
     changed: bool
     failed: bool
-    diff: List[Dict[str, Any]] = Field(default_factory=list)
-    response: List[Dict[str, Any]] = Field(default_factory=list)
-    result: List[Dict[str, Any]] = Field(default_factory=list)
-    metadata: List[Dict[str, Any]] = Field(default_factory=list)
+    diff: list[dict[str, Any]] = Field(default_factory=list)
+    response: list[dict[str, Any]] = Field(default_factory=list)
+    result: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CurrentTaskData(BaseModel):
@@ -127,9 +126,9 @@ class CurrentTaskData(BaseModel):
 
     model_config = ConfigDict(extra="allow", validate_assignment=True)
 
-    response: Dict[str, Any] = Field(default_factory=dict)
-    result: Dict[str, Any] = Field(default_factory=dict)
-    diff: Dict[str, Any] = Field(default_factory=dict)
+    response: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    diff: dict[str, Any] = Field(default_factory=dict)
     action: str = ""
     state: str = ""
     check_mode: bool = False
@@ -354,25 +353,25 @@ class Results:
         self.task_sequence_number: int = 0
 
         # Registered tasks (immutable after registration)
-        self._tasks: List[TaskResultData] = []
+        self._tasks: list[TaskResultData] = []
 
         # Current task being built (mutable)
         self._current: CurrentTaskData = CurrentTaskData()
 
         # Aggregated state (derived from tasks)
-        self._changed: Set[bool] = set()
-        self._failed: Set[bool] = set()
+        self._changed: set[bool] = set()
+        self._failed: set[bool] = set()
 
         # Final result (built on demand)
         self._final_result: Optional[FinalResultData] = None
 
         # Legacy: response_data list for backward compatibility
-        self._response_data: List[Dict[str, Any]] = []
+        self._response_data: list[dict[str, Any]] = []
 
         msg = f"ENTERED {self.class_name}():"
         self.log.debug(msg)
 
-    def add_response_data(self, value: Dict[str, Any]) -> None:
+    def add_response_data(self, value: dict[str, Any]) -> None:
         """
         # Summary
 
@@ -626,7 +625,7 @@ class Results:
         self.log.debug(msg)
 
     @property
-    def final_result(self) -> Dict[str, Any]:
+    def final_result(self) -> dict[str, Any]:
         """
         # Summary
 
@@ -638,7 +637,7 @@ class Results:
 
         ## Returns
 
-        - `Dict[str, Any]`: The final result dictionary with all aggregated data
+        - `dict[str, Any]`: The final result dictionary with all aggregated data
         """
         if self._final_result is None:
             msg = f"{self.class_name}.final_result: "
@@ -647,7 +646,7 @@ class Results:
         return self._final_result.model_dump()
 
     @property
-    def failed_result(self) -> Dict[str, Any]:
+    def failed_result(self) -> dict[str, Any]:
         """
         # Summary
 
@@ -666,7 +665,7 @@ class Results:
         return result
 
     @property
-    def ok_result(self) -> Dict[str, Any]:
+    def ok_result(self) -> dict[str, Any]:
         """
         # Summary
 
@@ -751,7 +750,7 @@ class Results:
         self._current.operation_type = value
 
     @property
-    def changed(self) -> Set[bool]:
+    def changed(self) -> set[bool]:
         """
         # Summary
 
@@ -796,7 +795,7 @@ class Results:
         self._current.check_mode = value
 
     @property
-    def diff(self) -> List[Dict[str, Any]]:
+    def diff(self) -> list[dict[str, Any]]:
         """
         # Summary
 
@@ -808,12 +807,12 @@ class Results:
 
         ## Returns
 
-        - `List[Dict[str, Any]]`: List of diff dictionaries from all registered tasks
+        - `list[dict[str, Any]]`: List of diff dictionaries from all registered tasks
         """
         return [task.diff for task in self._tasks]
 
     @property
-    def diff_current(self) -> Dict[str, Any]:
+    def diff_current(self) -> dict[str, Any]:
         """
         # Summary
 
@@ -826,7 +825,7 @@ class Results:
         return self._current.diff
 
     @diff_current.setter
-    def diff_current(self, value: Dict[str, Any]) -> None:
+    def diff_current(self, value: dict[str, Any]) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
@@ -835,7 +834,7 @@ class Results:
         self._current.diff = value
 
     @property
-    def failed(self) -> Set[bool]:
+    def failed(self) -> set[bool]:
         """
         # Summary
 
@@ -855,7 +854,7 @@ class Results:
         return self._failed
 
     @property
-    def metadata(self) -> List[Dict[str, Any]]:
+    def metadata(self) -> list[dict[str, Any]]:
         """
         # Summary
 
@@ -867,12 +866,12 @@ class Results:
 
         ## Returns
 
-        - `List[Dict[str, Any]]`: List of metadata dictionaries from all registered tasks
+        - `list[dict[str, Any]]`: List of metadata dictionaries from all registered tasks
         """
         return [task.metadata for task in self._tasks]
 
     @property
-    def metadata_current(self) -> Dict[str, Any]:
+    def metadata_current(self) -> dict[str, Any]:
         """
         # Summary
 
@@ -887,7 +886,7 @@ class Results:
 
         None
         """
-        value: Dict[str, Any] = {}
+        value: dict[str, Any] = {}
         value["action"] = self.action
         value["check_mode"] = self.check_mode
         value["sequence_number"] = self.task_sequence_number
@@ -895,7 +894,7 @@ class Results:
         return value
 
     @property
-    def response_current(self) -> Dict[str, Any]:
+    def response_current(self) -> dict[str, Any]:
         """
         # Summary
 
@@ -908,7 +907,7 @@ class Results:
         return self._current.response
 
     @response_current.setter
-    def response_current(self, value: Dict[str, Any]) -> None:
+    def response_current(self, value: dict[str, Any]) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
@@ -917,7 +916,7 @@ class Results:
         self._current.response = value
 
     @property
-    def response(self) -> List[Dict[str, Any]]:
+    def response(self) -> list[dict[str, Any]]:
         """
         # Summary
 
@@ -930,12 +929,12 @@ class Results:
 
         ## Returns
 
-        - `List[Dict[str, Any]]`: List of response dictionaries from all registered tasks
+        - `list[dict[str, Any]]`: List of response dictionaries from all registered tasks
         """
         return [task.response for task in self._tasks]
 
     @property
-    def response_data(self) -> List[Dict[str, Any]]:
+    def response_data(self) -> list[dict[str, Any]]:
         """
         # Summary
 
@@ -953,7 +952,7 @@ class Results:
         return self._response_data
 
     @property
-    def result(self) -> List[Dict[str, Any]]:
+    def result(self) -> list[dict[str, Any]]:
         """
         # Summary
 
@@ -965,12 +964,12 @@ class Results:
 
         ## Returns
 
-        - `List[Dict[str, Any]]`: List of result dictionaries from all registered tasks
+        - `list[dict[str, Any]]`: List of result dictionaries from all registered tasks
         """
         return [task.result for task in self._tasks]
 
     @property
-    def result_current(self) -> Dict[str, Any]:
+    def result_current(self) -> dict[str, Any]:
         """
         # Summary
 
@@ -983,7 +982,7 @@ class Results:
         return self._current.result
 
     @result_current.setter
-    def result_current(self, value: Dict[str, Any]) -> None:
+    def result_current(self, value: dict[str, Any]) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "

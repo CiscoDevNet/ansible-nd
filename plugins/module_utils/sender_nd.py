@@ -9,7 +9,7 @@ Sender module conforming to SenderProtocol.
 See plugins/module_utils/protocol_sender.py for the protocol definition.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
@@ -20,8 +20,7 @@ import inspect
 import json
 import logging
 
-# TODO: Review typing imports after we drop support for Python 3.8
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from ansible.module_utils.basic import AnsibleModule  # type: ignore
 from ansible.module_utils.connection import Connection  # type: ignore
@@ -71,7 +70,7 @@ class Sender:
         ansible_module: Optional[AnsibleModule] = None,
         verb: Optional[HttpVerbEnum] = None,
         path: Optional[str] = None,
-        payload: Optional[Dict[str, Any]] = None,
+        payload: Optional[dict[str, Any]] = None,
     ) -> None:
         self.class_name = self.__class__.__name__
 
@@ -81,8 +80,8 @@ class Sender:
         self._connection: Optional[Connection] = None
 
         self._path: Optional[str] = path
-        self._payload: Optional[Dict[str, Any]] = payload
-        self._response: Optional[Dict[str, Any]] = None
+        self._payload: Optional[dict[str, Any]] = payload
+        self._response: Optional[dict[str, Any]] = None
         self._verb: Optional[HttpVerbEnum] = verb
 
         msg = "ENTERED Sender(): "
@@ -220,7 +219,7 @@ class Sender:
         self._path = value
 
     @property
-    def payload(self) -> Optional[Dict[str, Any]]:
+    def payload(self) -> Optional[dict[str, Any]]:
         """
         # Summary
 

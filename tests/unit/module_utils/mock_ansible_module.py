@@ -11,7 +11,7 @@ This module provides a mock implementation of Ansible's AnsibleModule
 to avoid circular import issues between sender_file.py and common_utils.py.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
