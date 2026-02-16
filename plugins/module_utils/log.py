@@ -18,6 +18,7 @@ import json
 import logging
 from logging.config import dictConfig
 from os import environ
+from typing import Optional
 
 
 class Log:
@@ -198,14 +199,10 @@ class Log:
         self.valid_handlers = set()
         self.valid_handlers.add("file")
 
-        self._build_properties()
+        self._config: Optional[str] = environ.get("ND_LOGGING_CONFIG", None)
+        self._develop: bool = False
 
-    def _build_properties(self) -> None:
-        self.properties = {}
-        self.properties["config"] = environ.get("ND_LOGGING_CONFIG", None)
-        self.properties["develop"] = False
-
-    def disable_logging(self):
+    def disable_logging(self) -> None:
         """
         # Summary
 
@@ -224,7 +221,7 @@ class Log:
         logger.addHandler(logging.NullHandler())
         logger.propagate = False
 
-    def enable_logging(self):
+    def enable_logging(self) -> None:
         """
         # Summary
 
@@ -235,7 +232,7 @@ class Log:
         -   `ValueError` if:
             -   An error is encountered reading the logging config file.
         """
-        if str(self.config).strip() == "":
+        if self.config is None or self.config.strip() == "":
             return
 
         try:
@@ -309,7 +306,7 @@ class Log:
             msg += f"Logging config file: {self.config}."
             raise ValueError(msg)
 
-    def commit(self):
+    def commit(self) -> None:
         """
         # Summary
 
@@ -343,7 +340,7 @@ class Log:
             self.enable_logging()
 
     @property
-    def config(self):
+    def config(self) -> Optional[str]:
         """
         ## Summary
 
@@ -364,14 +361,14 @@ class Log:
             Must conform to `logging.config.dictConfig` from Python's
             standard library.
         """
-        return self.properties["config"]
+        return self._config
 
     @config.setter
-    def config(self, value):
-        self.properties["config"] = value
+    def config(self, value: Optional[str]) -> None:
+        self._config = value
 
     @property
-    def develop(self):
+    def develop(self) -> bool:
         """
         # Summary
 
@@ -386,14 +383,14 @@ class Log:
         -   `True`:  Exceptions will be raised by the logging module.
         -   `False`: Exceptions will not be raised by the logging module.
         """
-        return self.properties["develop"]
+        return self._develop
 
     @develop.setter
-    def develop(self, value):
+    def develop(self, value: bool) -> None:
         method_name = inspect.stack()[0][3]
         if not isinstance(value, bool):
             msg = f"{self.class_name}.{method_name}: Expected boolean for develop. "
             msg += f"Got: type {type(value).__name__} for value {value}."
             raise TypeError(msg)
-        self.properties["develop"] = value
+        self._develop = value
         logging.raiseExceptions = value
