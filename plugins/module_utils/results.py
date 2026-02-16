@@ -20,24 +20,145 @@ __author__ = "Allen Robel"
 
 import copy
 import inspect
-import json
 import logging
 
 # TODO: Python 3.8 compatibility. Review when we drop support for 3.8
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+)
+
+
+class TaskResultData(BaseModel):
+    """
+    # Summary
+
+    Pydantic model for a single task result.
+
+    Represents all data for one task including its response, result, diff,
+    and metadata. Immutable after creation to prevent accidental modification
+    of registered tasks.
+
+    ## Raises
+
+    - `ValidationError`: if field validation fails during instantiation
+
+    ## Attributes
+
+    - `sequence_number`: Unique sequence number for this task (required, >= 1)
+    - `response`: Controller response dict (required)
+    - `result`: Handler result dict (required)
+    - `diff`: Changes dict (required, can be empty)
+    - `metadata`: Task metadata dict (required)
+    - `changed`: Whether this task resulted in changes (required)
+    - `failed`: Whether this task failed (required)
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sequence_number: int = Field(ge=1)
+    response: Dict[str, Any]
+    result: Dict[str, Any]
+    diff: Dict[str, Any]
+    metadata: Dict[str, Any]
+    changed: bool
+    failed: bool
+
+
+class FinalResultData(BaseModel):
+    """
+    # Summary
+
+    Pydantic model for the final aggregated result.
+
+    This is the structure returned to Ansible's `exit_json`/`fail_json`.
+    Contains aggregated data from all registered tasks.
+
+    ## Raises
+
+    - `ValidationError`: if field validation fails during instantiation
+
+    ## Attributes
+
+    - `changed`: Overall changed status across all tasks (required)
+    - `failed`: Overall failed status across all tasks (required)
+    - `diff`: List of all diff dicts (default empty list)
+    - `response`: List of all response dicts (default empty list)
+    - `result`: List of all result dicts (default empty list)
+    - `metadata`: List of all metadata dicts (default empty list)
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    changed: bool
+    failed: bool
+    diff: List[Dict[str, Any]] = Field(default_factory=list)
+    response: List[Dict[str, Any]] = Field(default_factory=list)
+    result: List[Dict[str, Any]] = Field(default_factory=list)
+    metadata: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class CurrentTaskData(BaseModel):
+    """
+    # Summary
+
+    Pydantic model for the current task data being built.
+
+    Mutable model used to stage data for the current task before
+    it's registered and converted to an immutable `TaskResultData`.
+    Provides validation while allowing flexibility during the build phase.
+
+    ## Raises
+
+    - `ValidationError`: if field validation fails during instantiation or assignment
+
+    ## Attributes
+
+    - `response`: Controller response dict (default empty dict)
+    - `result`: Handler result dict (default empty dict)
+    - `diff`: Changes dict (default empty dict)
+    - `action`: Action name for metadata (default empty string)
+    - `state`: Ansible state for metadata (default empty string)
+    - `check_mode`: Check mode flag for metadata (default False)
+    - `operation_type`: Operation type determining if changes might occur (default QUERY)
+    """
+
+    model_config = ConfigDict(extra="allow", validate_assignment=True)
+
+    response: Dict[str, Any] = Field(default_factory=dict)
+    result: Dict[str, Any] = Field(default_factory=dict)
+    diff: Dict[str, Any] = Field(default_factory=dict)
+    action: str = ""
+    state: str = ""
+    check_mode: bool = False
+    operation_type: OperationType = OperationType.QUERY
 
 
 class Results:
     """
     # Summary
 
-    Collect results across tasks.
+    Collect and aggregate results across tasks using Pydantic data models.
 
     ## Raises
 
-    -   `TypeError`: if properties are not of the correct type.
+    -   `TypeError`: if properties are not of the correct type
+    -   `ValueError`: if Pydantic validation fails or required data is missing
+
+    ## Architecture
+
+    This class uses a three-model Pydantic architecture for data validation:
+
+    1.  `CurrentTaskData` - Mutable staging area for building the current task
+    2.  `TaskResultData` - Immutable registered task with validation (frozen=True)
+    3.  `FinalResultData` - Aggregated result for Ansible output
+
+    The lifecycle is: **Build (Current) → Register (Task) → Aggregate (Final)**
 
     ## Description
 
@@ -47,12 +168,13 @@ class Results:
 
     1.  Accept an instantiation of `Results()`
         -   Typically a class property is used for this
-    2.  Populate the `Results` instance with the results of the task
-        -   Typically done by transferring `RestSend()`'s responses to the
-            `Results` instance
-    3. Register the results of the task with `Results`, using:
-        -   `Results.register_task_result()`
-        -   Typically done after the task is complete
+    2.  Populate the `Results` instance with the current task data
+        -   Set properties: `response_current`, `result_current`, `diff_current`
+        -   Set metadata properties: `action`, `state`, `check_mode`, `operation_type`
+    3. Register the task result with `Results.register_task_result()`
+        -   Converts current task to immutable `TaskResultData`
+        -   Validates data with Pydantic
+        -   Resets current task for next registration
 
     `Results` should be instantiated in the main Ansible Task class and
     passed to all other task classes for which results are to be collected.
@@ -205,9 +327,11 @@ class Results:
 
         def commit(self):
             ...
-            self._results.add_changed(True)  # or False, depending on whether changes were made
-            self._results.add_response(self._rest_send.response_current)
-            self._results.add_result(self._rest_send.result_current)
+            # Set current task data (no need to manually track changed/failed)
+            self._results.response_current = self._rest_send.response_current
+            self._results.result_current = self._rest_send.result_current
+            self._results.diff_current = {}  # or actual diff if available
+            # register_task_result() determines changed/failed automatically
             self._results.register_task_result()
             ...
 
@@ -229,132 +353,27 @@ class Results:
 
         self.log: logging.Logger = logging.getLogger(f"dcnm.{self.class_name}")
 
-        # Assign a unique sequence number to each registered task
+        # Task sequence tracking
         self.task_sequence_number: int = 0
 
-        self.final_result: Dict[str, Any] = {}
-        self._action: str = ""
-        self._operation_type: OperationType = OperationType.QUERY
+        # Registered tasks (immutable after registration)
+        self._tasks: List[TaskResultData] = []
+
+        # Current task being built (mutable)
+        self._current: CurrentTaskData = CurrentTaskData()
+
+        # Aggregated state (derived from tasks)
         self._changed: Set[bool] = set()
-        self._check_mode: bool = False
-        self._diff: List[Dict[str, Any]] = []
-        self._diff_current: Dict[str, Any] = {}
         self._failed: Set[bool] = set()
-        self._metadata: List[Dict[str, Any]] = []
-        self._response: List[Dict[str, Any]] = []
-        self._response_current: Dict[str, Any] = {}
+
+        # Final result (built on demand)
+        self._final_result: Optional[FinalResultData] = None
+
+        # Legacy: response_data list for backward compatibility
         self._response_data: List[Dict[str, Any]] = []
-        self._result: List[Dict[str, Any]] = []
-        self._result_current: Dict[str, Any] = {}
-        self._state: str = ""
 
         msg = f"ENTERED {self.class_name}():"
         self.log.debug(msg)
-
-    def add_changed(self, value: bool) -> None:
-        """
-        # Summary
-
-        Add a boolean value to the changed set.
-
-        ## Raises
-
-        -   `ValueError`: if value is not a bool
-
-        ## See also
-
-        -  `@changed` property
-        """
-        if not isinstance(value, bool):
-            msg = f"{self.class_name}.add_changed: "
-            msg += f"instance.add_changed must be a bool. Got {value}"
-            raise ValueError(msg)
-        self._changed.add(value)
-
-    def add_diff(self, value: Dict[str, Any]) -> None:
-        """
-        # Summary
-
-        Add a dict to the diff list.
-
-        ## Raises
-
-        -   `TypeError`: if value is not a dict
-        """
-        method_name: str = inspect.stack()[0][3]
-        if not isinstance(value, dict):
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"instance.diff must be a dict. Got {value}"
-            raise TypeError(msg)
-        value_copy = copy.deepcopy(value)
-        value_copy["sequence_number"] = self.task_sequence_number
-        self._diff.append(value_copy)
-
-    def add_failed(self, value: bool) -> None:
-        """
-        # Summary
-
-        Add a boolean value to the failed set.
-
-        ## Raises
-
-        -   `ValueError`: if value is not a bool
-
-        ## See also
-
-        -  `@failed` property
-        """
-        if not isinstance(value, bool):
-            msg = f"{self.class_name}.add_failed: "
-            msg += f"instance.add_failed must be a bool. Got {value}"
-            raise ValueError(msg)
-        self._failed.add(value)
-
-    def add_metadata(self, value: Dict[str, Any]) -> None:
-        """
-        # Summary
-
-        Add a dict to the metadata list.
-
-        ## Raises
-
-        -   `TypeError`: if value is not a dict
-
-        ## See also
-
-        `@metadata` property
-        """
-        method_name: str = inspect.stack()[0][3]
-        if not isinstance(value, dict):
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"value must be a dict. Got {type(value).__name__}."
-            raise TypeError(msg)
-        value_copy = copy.deepcopy(value)
-        value_copy["sequence_number"] = self.task_sequence_number
-        self._metadata.append(value_copy)
-
-    def add_response(self, value: Dict[str, Any]) -> None:
-        """
-        # Summary
-
-        Add a dict to the response list.
-
-        ## Raises
-
-        -   `TypeError`: if value is not a dict
-
-        ## See also
-
-        `@response` property
-        """
-        method_name: str = inspect.stack()[0][3]
-        if not isinstance(value, dict):
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"instance.add_response must be a dict. Got {value}"
-            raise TypeError(msg)
-        value_copy = copy.deepcopy(value)
-        value_copy["sequence_number"] = self.task_sequence_number
-        self._response.append(value_copy)
 
     def add_response_data(self, value: Dict[str, Any]) -> None:
         """
@@ -377,29 +396,6 @@ class Results:
             raise TypeError(msg)
         self._response_data.append(copy.deepcopy(value))
 
-    def add_result(self, value: Dict[str, Any]) -> None:
-        """
-        # Summary
-
-        Add a dict to the result list.
-
-        ## Raises
-
-        -   `TypeError`: if value is not a dict
-
-        ## See also
-
-        `@result` property
-        """
-        method_name: str = inspect.stack()[0][3]
-        if not isinstance(value, dict):
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"instance.add_result must be a dict. Got {value}"
-            raise TypeError(msg)
-        value_copy = copy.deepcopy(value)
-        value_copy["sequence_number"] = self.task_sequence_number
-        self._result.append(value_copy)
-
     def _increment_task_sequence_number(self) -> None:
         """
         # Summary
@@ -414,124 +410,168 @@ class Results:
         msg = f"self.task_sequence_number: {self.task_sequence_number}"
         self.log.debug(msg)
 
-    def did_anything_change(self) -> bool:
+    def _determine_if_changed(self) -> bool:
         """
         # Summary
 
-        Determine if anything changed in the current task.
+        Determine if the current task resulted in changes.
 
-        - Return True if there were any changes
-        - Return False otherwise
+        This is a private helper method used during task registration.
+        Checks operation type, check mode, state, explicit changed flag,
+        and diff content to determine if changes occurred.
 
         ## Raises
 
         None
+
+        ## Returns
+
+        - `bool`: True if changes occurred, False otherwise
         """
         method_name: str = inspect.stack()[0][3]
 
         msg = f"{self.class_name}.{method_name}: ENTERED: "
-        msg += f"self.action: {self.action}, "
-        msg += f"self.operation_type: {self.operation_type}, "
-        msg += f"self.state: {self.state}, "
-        msg += f"self.failed: {self.failed}, "
-        msg += f"self.result_current: {self.result_current}, "
-        msg += f"self.diff: {self.diff}"
+        msg += f"action={self._current.action}, "
+        msg += f"operation_type={self._current.operation_type}, "
+        msg += f"state={self._current.state}, "
+        msg += f"check_mode={self._current.check_mode}"
         self.log.debug(msg)
 
-        something_changed: bool = False
+        # Early exit for read-only operations
+        if self._current.check_mode or self._current.operation_type.is_read_only() or self._current.state == "query":
+            msg = f"{self.class_name}.{method_name}: No changes (read-only operation)"
+            self.log.debug(msg)
+            return False
 
-        # Early exit conditions for no-change scenarios
-        if not (self.check_mode or self.operation_type.is_read_only() or self.state == "query"):
-            # Check explicit changed flag in result_current
-            changed_flag = self.result_current.get("changed")
-            if changed_flag is not None:
-                something_changed = changed_flag
-            else:
-                # Check if any diff has content (besides sequence_number)
-                something_changed = any(any(key != "sequence_number" for key in diff) for diff in self.diff)
+        # Check explicit changed flag in result
+        changed_flag = self._current.result.get("changed")
+        if changed_flag is not None:
+            msg = f"{self.class_name}.{method_name}: changed={changed_flag} (from result)"
+            self.log.debug(msg)
+            return changed_flag
 
-        msg = f"{self.class_name}.{method_name}: something_changed: {something_changed}"
+        # Check if diff has content (besides sequence_number)
+        has_diff_content = any(key != "sequence_number" for key in self._current.diff)
+
+        msg = f"{self.class_name}.{method_name}: changed={has_diff_content} (from diff)"
         self.log.debug(msg)
-        return something_changed
+        return has_diff_content
 
     def register_task_result(self) -> None:
         """
         # Summary
 
-        Register a task's result.
+        Register the current task result.
+
+        Converts `CurrentTaskData` to immutable `TaskResultData`, increments
+        sequence number, and aggregates changed/failed status. The current task
+        is then reset for the next task.
 
         ## Raises
 
-        None
+        - `ValueError`: if Pydantic validation fails for task result data
+        - `ValueError`: if required fields are missing
 
         ## Description
 
-        1.  Append result_current, response_current, diff_current and
-            metadata_current their respective lists (result, response, diff,
-            and metadata)
-        2.  Set self.changed based on whether anything changed.
-            If nothing changed, False is added to self.changed.
-            Otherwise, True is added to self.changed.
-        3.  Set self.failed based on current_result.
-            If current_result["success"] is explicitly True, False is added to self.failed.
-            If current_result["success"] is explicitly False, True is added to self.failed.
-            If "success" is missing or not a boolean, False is added to self.failed.
-        4.  Set self.metadata based on current_metadata.
-
-        - self.response  : list of controller responses
-        - self.result    : list of results returned by the handler
-        - self.diff      : list of diffs
-        - self.metadata  : list of metadata
+        1.  Increment the task sequence number
+        2.  Build metadata from current task properties
+        3.  Determine if anything changed using `_determine_if_changed()`
+        4.  Determine if task failed based on `result["success"]` flag
+        5.  Add sequence_number to response, result, and diff
+        6.  Create immutable `TaskResultData` with validation
+        7.  Register the task and update aggregated changed/failed sets
+        8.  Reset current task for next registration
         """
         method_name: str = inspect.stack()[0][3]
 
         msg = f"{self.class_name}.{method_name}: "
-        msg += f"ENTERED: self.action: {self.action}, "
-        msg += f"self.result_current: {self.result_current}"
+        msg += f"ENTERED: action={self._current.action}, "
+        msg += f"result_current={self._current.result}"
         self.log.debug(msg)
 
-        # Increment sequence number and register current values
+        # Increment sequence number
         self._increment_task_sequence_number()
-        self.add_metadata(self.metadata_current)
-        self.add_response(self.response_current)
-        self.add_result(self.result_current)
-        self.add_diff(self.diff_current)
 
-        # Determine if anything changed
-        self.changed.add(self.did_anything_change())
+        # Build metadata from current task
+        metadata = {
+            "action": self._current.action,
+            "check_mode": self._current.check_mode,
+            "sequence_number": self.task_sequence_number,
+            "state": self._current.state,
+        }
 
-        # Determine if the task failed based on the success flag
-        success = self.result_current.get("success")
+        # Determine changed status
+        changed = self._determine_if_changed()
+
+        # Determine failed status from result
+        success = self._current.result.get("success")
         if success is True:
-            self._failed.add(False)
+            failed = False
         elif success is False:
-            self._failed.add(True)
+            failed = True
         else:
             msg = f"{self.class_name}.{method_name}: "
-            msg += "self.result_current['success'] is not a boolean. "
-            msg += f"self.result_current: {self.result_current}. "
-            msg += "Setting self.failed to False."
+            msg += "result['success'] is not a boolean. "
+            msg += f"result={self._current.result}. "
+            msg += "Setting failed=False."
             self.log.debug(msg)
-            self._failed.add(False)
+            failed = False
 
-        # Log all registered data in a single consolidated message
+        # Add sequence_number to response, result, diff
+        response = copy.deepcopy(self._current.response)
+        response["sequence_number"] = self.task_sequence_number
+
+        result = copy.deepcopy(self._current.result)
+        result["sequence_number"] = self.task_sequence_number
+
+        diff = copy.deepcopy(self._current.diff)
+        diff["sequence_number"] = self.task_sequence_number
+
+        # Create immutable TaskResultData with validation
+        try:
+            task_data = TaskResultData(
+                sequence_number=self.task_sequence_number,
+                response=response,
+                result=result,
+                diff=diff,
+                metadata=metadata,
+                changed=changed,
+                failed=failed,
+            )
+        except ValidationError as error:
+            msg = f"{self.class_name}.{method_name}: "
+            msg += f"Validation failed for task result: {error}"
+            raise ValueError(msg) from error
+
+        # Register the task
+        self._tasks.append(task_data)
+        self._changed.add(changed)
+        self._failed.add(failed)
+
+        # Reset current task for next task
+        self._current = CurrentTaskData()
+
+        # Log registration
         if self.log.isEnabledFor(logging.DEBUG):
-            msg = f"{self.class_name}.{method_name}: Registered task result:\n"
-            msg += f"  diff: {json.dumps(self.diff, indent=4, sort_keys=True)}\n"
-            msg += f"  metadata: {json.dumps(self.metadata, indent=4, sort_keys=True)}\n"
-            msg += f"  response: {json.dumps(self.response, indent=4, sort_keys=True)}\n"
-            msg += f"  result: {json.dumps(self.result, indent=4, sort_keys=True)}"
+            msg = f"{self.class_name}.{method_name}: "
+            msg += f"Registered task {self.task_sequence_number}: "
+            msg += f"changed={changed}, failed={failed}"
             self.log.debug(msg)
 
     def build_final_result(self) -> None:
         """
         # Summary
 
-        Build the final result.
+        Build the final result from all registered tasks.
+
+        Creates a `FinalResultData` Pydantic model with aggregated
+        changed/failed status and all task data. The model is stored
+        internally and can be accessed via the `final_result` property.
 
         ## Raises
 
-        None
+        - `ValueError`: if Pydantic validation fails for final result
 
         ## Description
 
@@ -555,16 +595,59 @@ class Results:
             }
         ```
         """
-        msg = f"self.changed: {self.changed}, "
-        msg += f"self.failed: {self.failed}, "
+        method_name: str = inspect.stack()[0][3]
+
+        msg = f"{self.class_name}.{method_name}: "
+        msg += f"changed={self._changed}, failed={self._failed}"
         self.log.debug(msg)
 
-        self.final_result["failed"] = True in self.failed
-        self.final_result["changed"] = True in self.changed
-        self.final_result["diff"] = self.diff
-        self.final_result["response"] = self.response
-        self.final_result["result"] = self.result
-        self.final_result["metadata"] = self.metadata
+        # Aggregate data from all tasks
+        diff_list = [task.diff for task in self._tasks]
+        response_list = [task.response for task in self._tasks]
+        result_list = [task.result for task in self._tasks]
+        metadata_list = [task.metadata for task in self._tasks]
+
+        # Create FinalResultData with validation
+        try:
+            self._final_result = FinalResultData(
+                changed=True in self._changed,
+                failed=True in self._failed,
+                diff=diff_list,
+                response=response_list,
+                result=result_list,
+                metadata=metadata_list,
+            )
+        except ValidationError as error:
+            msg = f"{self.class_name}.{method_name}: "
+            msg += f"Validation failed for final result: {error}"
+            raise ValueError(msg) from error
+
+        msg = f"{self.class_name}.{method_name}: "
+        msg += f"Built final result: changed={self._final_result.changed}, "
+        msg += f"failed={self._final_result.failed}, "
+        msg += f"tasks={len(self._tasks)}"
+        self.log.debug(msg)
+
+    @property
+    def final_result(self) -> Dict[str, Any]:
+        """
+        # Summary
+
+        Return the final result as a dict for Ansible `exit_json`/`fail_json`.
+
+        ## Raises
+
+        - `ValueError`: if `build_final_result()` hasn't been called
+
+        ## Returns
+
+        - `Dict[str, Any]`: The final result dictionary with all aggregated data
+        """
+        if self._final_result is None:
+            msg = f"{self.class_name}.final_result: "
+            msg += "build_final_result() must be called before accessing final_result"
+            raise ValueError(msg)
+        return self._final_result.model_dump()
 
     @property
     def failed_result(self) -> Dict[str, Any]:
@@ -609,26 +692,24 @@ class Results:
         """
         # Summary
 
-        Added to results to indicate the action that was taken
+        Action name for the current task.
+
+        Used in metadata to indicate the action that was taken.
 
         ## Raises
 
-        -   `TypeError`: if value is not a string
+        None
         """
-        return self._action
+        return self._current.action
 
     @action.setter
     def action(self, value: str) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, str):
             msg = f"{self.class_name}.{method_name}: "
-            msg += f"instance.{method_name} must be a string. "
-            msg += f"Got {value}."
+            msg += f"value must be a string. Got {type(value).__name__}."
             raise TypeError(msg)
-        msg = f"{self.class_name}.{method_name}: "
-        msg += f"value: {value}"
-        self.log.debug(msg)
-        self._action = value
+        self._current.action = value
 
     @property
     def operation_type(self) -> OperationType:
@@ -641,39 +722,36 @@ class Results:
 
         ## Raises
 
-        - `ValueError`: if operation type is not an OperationType enum value
+        None
 
         ## Returns
 
-        The current operation type (OperationType enum value)
+        The current operation type (`OperationType` enum value)
         """
-        return self._operation_type
+        return self._current.operation_type
 
     @operation_type.setter
     def operation_type(self, value: OperationType) -> None:
         """
         # Summary
 
-        Set the operation type.
+        Set the operation type for the current task.
 
         ## Raises
 
-        - `TypeError`: if value is not an OperationType instance
+        - `TypeError`: if value is not an `OperationType` instance
 
         ## Parameters
 
-        - value: The operation type to set (must be an OperationType enum value)
+        - value: The operation type to set (must be an `OperationType` enum value)
         """
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, OperationType):
             msg = f"{self.class_name}.{method_name}: "
             msg += "value must be an OperationType instance. "
-            msg += f"Got type {type(value)}, value {value}."
+            msg += f"Got type {type(value).__name__}, value {value}."
             raise TypeError(msg)
-        msg = f"{self.class_name}.{method_name}: "
-        msg += f"value: {value}"
-        self.log.debug(msg)
-        self._operation_type = value
+        self._current.operation_type = value
 
     @property
     def changed(self) -> Set[bool]:
@@ -701,66 +779,63 @@ class Results:
         """
         # Summary
 
-        - A boolean indicating whether Ansible check_mode is enabled.
+        Ansible check_mode flag for the current task.
+
         - `True` if check_mode is enabled, `False` otherwise.
 
         ## Raises
 
-        -   `TypeError`: if value is not a bool
+        None
         """
-        return self._check_mode
+        return self._current.check_mode
 
     @check_mode.setter
     def check_mode(self, value: bool) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, bool):
             msg = f"{self.class_name}.{method_name}: "
-            msg += f"instance.{method_name} must be a bool. "
-            msg += f"Got {value}."
+            msg += f"value must be a bool. Got {type(value).__name__}."
             raise TypeError(msg)
-        self._check_mode = value
+        self._current.check_mode = value
 
     @property
     def diff(self) -> List[Dict[str, Any]]:
         """
         # Summary
 
-        A list of dicts representing the changes made.
-
-        - The setter appends a dict to the list.
-        - The getter returns the list.
+        A list of dicts representing the changes made across all registered tasks.
 
         ## Raises
 
-        -   setter: `TypeError`: if value is not a dict
+        None
+
+        ## Returns
+
+        - `List[Dict[str, Any]]`: List of diff dictionaries from all registered tasks
         """
-        return self._diff
+        return [task.diff for task in self._tasks]
 
     @property
     def diff_current(self) -> Dict[str, Any]:
         """
         # Summary
 
-        A dict representing the current diff.
-
-        -   getter: Return the current diff
-        -   setter: Set the current diff
+        A dict representing the current diff for the current task.
 
         ## Raises
 
-        -   setter: `TypeError` if value is not a dict.
+        -   setter: `TypeError` if value is not a dict
         """
-        return self._diff_current
+        return self._current.diff
 
     @diff_current.setter
     def diff_current(self, value: Dict[str, Any]) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
-            msg += "instance.diff_current must be a dict. "
-            msg += f"Got {value}."
+            msg += f"value must be a dict. Got {type(value).__name__}."
             raise TypeError(msg)
-        self._diff_current = value
+        self._current.diff = value
 
     @property
     def failed(self) -> Set[bool]:
@@ -787,16 +862,17 @@ class Results:
         """
         # Summary
 
-        A list of dicts representing the metadata (if any) for each diff.
-
-        -   getter: Return the metadata.
-        -   setter: Append value to the metadata list.
+        A list of dicts representing the metadata for all registered tasks.
 
         ## Raises
 
-        -   setter: `TypeError` if value is not a dict.
+        None
+
+        ## Returns
+
+        - `List[Dict[str, Any]]`: List of metadata dictionaries from all registered tasks
         """
-        return self._metadata
+        return [task.metadata for task in self._tasks]
 
     @property
     def metadata_current(self) -> Dict[str, Any]:
@@ -826,27 +902,22 @@ class Results:
         """
         # Summary
 
-        Return a `dict` containing the current response from the controller.
-        `instance.commit()` must be called first.
-
-        -   getter: Return the current response.
-        -   setter: Set the current response.
+        Return a `dict` containing the current response from the controller for the current task.
 
         ## Raises
 
-        -   setter: `TypeError` if value is not a dict.
+        -   setter: `TypeError` if value is not a dict
         """
-        return self._response_current
+        return self._current.response
 
     @response_current.setter
     def response_current(self, value: Dict[str, Any]) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
-            msg += "instance.response_current must be a dict. "
-            msg += f"Got {value}."
+            msg += f"value must be a dict. Got {type(value).__name__}."
             raise TypeError(msg)
-        self._response_current = value
+        self._current.response = value
 
     @property
     def response(self) -> List[Dict[str, Any]]:
@@ -854,17 +925,17 @@ class Results:
         # Summary
 
         Return the response list; `list` of `dict`, where each `dict` contains a
-        response from the controller.
+        response from the controller across all registered tasks.
 
         ## Raises
 
         None
 
-        ## See also
+        ## Returns
 
-        `add_response()` method to add to the response list.
+        - `List[Dict[str, Any]]`: List of response dictionaries from all registered tasks
         """
-        return self._response
+        return [task.response for task in self._tasks]
 
     @property
     def response_data(self) -> List[Dict[str, Any]]:
@@ -889,69 +960,58 @@ class Results:
         """
         # Summary
 
-        A `list` of `dict`, where each `dict` contains a result.
-
-        -   getter: Return the result list.
-        -   setter: Append `dict` to the result list.
+        A `list` of `dict`, where each `dict` contains a result across all registered tasks.
 
         ## Raises
 
-        -   setter: `TypeError` if value is not a dict
+        None
 
-        ## See also
+        ## Returns
 
-        `add_result()` method to add to the result list.
+        - `List[Dict[str, Any]]`: List of result dictionaries from all registered tasks
         """
-        return self._result
+        return [task.result for task in self._tasks]
 
     @property
     def result_current(self) -> Dict[str, Any]:
         """
         # Summary
 
-        A `dict` representing the current result.
-
-        -   getter: Return the current result.
-        -   setter: Set the current result.
+        A `dict` representing the current result for the current task.
 
         ## Raises
 
         -   setter: `TypeError` if value is not a dict
         """
-        return self._result_current
+        return self._current.result
 
     @result_current.setter
     def result_current(self, value: Dict[str, Any]) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
-            msg += "instance.result_current must be a dict. "
-            msg += f"Got {value}."
+            msg += f"value must be a dict. Got {type(value).__name__}."
             raise TypeError(msg)
-        self._result_current = value
+        self._current.result = value
 
     @property
     def state(self) -> str:
         """
         # Summary
 
-        The Ansible state
-
-        -   getter: Return the state.
-        -   setter: Set the state.
+        The Ansible state for the current task.
 
         ## Raises
 
         -   setter: `TypeError` if value is not a string
         """
-        return self._state
+        return self._current.state
 
     @state.setter
-    def state(self, value) -> None:
+    def state(self, value: str) -> None:
         method_name: str = inspect.stack()[0][3]
         if not isinstance(value, str):
             msg = f"{self.class_name}.{method_name}: "
-            msg += f"instance.{method_name} must be a string. "
-            msg += f"Got {value}."
+            msg += f"value must be a string. Got {type(value).__name__}."
             raise TypeError(msg)
-        self._state = value
+        self._current.state = value
