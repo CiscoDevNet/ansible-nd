@@ -435,7 +435,7 @@ class RestSend:
 
         None
         """
-        return "rest_send_v2"
+        return "rest_send_v1"
 
     @property
     def path(self) -> str:

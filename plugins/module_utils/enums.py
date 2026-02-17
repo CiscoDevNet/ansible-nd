@@ -11,7 +11,7 @@ Enum definitions for Nexus Dashboard Ansible modules.
 ## Enums
 
 - HttpVerbEnum: Enum for HTTP verb values used in endpoints.
-- OperationType: Enum for operation types used by ResultsV2 to determine if changes have occurred.
+- OperationType: Enum for operation types used by Results to determine if changes have occurred.
 """
 
 from __future__ import absolute_import, annotations, division, print_function
@@ -75,7 +75,7 @@ class OperationType(Enum):
 
     Enumeration for operation types.
 
-    Used by ResultsV2 to determine if changes have occurred based on the operation type.
+    Used by Results to determine if changes have occurred based on the operation type.
 
     - QUERY: Represents a query operation which does not change state.
     - CREATE: Represents a create operation which adds new resources.

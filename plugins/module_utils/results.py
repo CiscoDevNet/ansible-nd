@@ -310,7 +310,7 @@ class Results:
     ```python
     from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
     from ansible_collections.cisco.nd.plugins.module_utils.results import Results
-    from ansible_collections.cisco.nd.plugins.module_utils.rest_send_v2 import RestSend
+    from ansible_collections.cisco.nd.plugins.module_utils.rest_send import RestSend
     ...
     class FabricDelete:
         def __init__(self, ansible_module):
