@@ -114,7 +114,7 @@ class ResponseHandler:
         self.class_name = self.__class__.__name__
         method_name = "__init__"
 
-        self.log = logging.getLogger(f"dcnm.{self.class_name}")
+        self.log = logging.getLogger(f"nd.{self.class_name}")
 
         self._response: Optional[dict[str, Any]] = None
         self._result: Optional[dict[str, Any]] = None

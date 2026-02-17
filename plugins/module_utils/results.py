@@ -277,7 +277,7 @@ class Results:
     }
     ```
 
-    diff, response, and result dicts are per the Ansible DCNM Collection standard output.
+    diff, response, and result dicts are per the Ansible ND Collection standard output.
 
     An example of a result dict would be (sequence_number is added by Results):
 
@@ -347,7 +347,7 @@ class Results:
     def __init__(self) -> None:
         self.class_name: str = self.__class__.__name__
 
-        self.log: logging.Logger = logging.getLogger(f"dcnm.{self.class_name}")
+        self.log: logging.Logger = logging.getLogger(f"nd.{self.class_name}")
 
         # Task sequence tracking
         self.task_sequence_number: int = 0
