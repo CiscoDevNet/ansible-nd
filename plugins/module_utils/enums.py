@@ -22,6 +22,7 @@ __metaclass__ = type
 
 from enum import Enum
 
+
 class BooleanStringEnum(str, Enum):
     """
     # Summary
@@ -36,6 +37,8 @@ class BooleanStringEnum(str, Enum):
 
     TRUE = "true"
     FALSE = "false"
+
+
 class HttpVerbEnum(str, Enum):
     """
     # Summary
@@ -69,6 +72,8 @@ class HttpVerbEnum(str, Enum):
         - A list of string values representing the enum members.
         """
         return sorted([member.value for member in cls])
+
+
 class OperationType(Enum):
     """
     # Summary
