@@ -10,10 +10,11 @@ __metaclass__ = type
 
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, ConfigDict
-from typing import List, Dict, Any, ClassVar, Tuple, Union, Literal
+from typing import List, Dict, Any, ClassVar, Tuple, Union, Literal, Optional
 from typing_extensions import Self
 
 
+# TODO: Revisit identifiers strategy (low priority)
 class NDBaseModel(BaseModel, ABC):
     """
     Base model for all Nexus Dashboard API objects.
@@ -22,8 +23,9 @@ class NDBaseModel(BaseModel, ABC):
     - single: One unique required field (e.g., ["login_id"])
     - composite: Multiple required fields as tuple (e.g., ["device", "interface"])
     - hierarchical: Priority-ordered fields (e.g., ["uuid", "name"])
+    - none: no identifiers required (e.g., only a single instance can exist in Nexus Dasboard)
     """
-    
+    # TODO: revisit initial Model Configurations (low priority)
     model_config = ConfigDict(
         str_strip_whitespace=True,
         use_enum_values=True,
@@ -31,14 +33,38 @@ class NDBaseModel(BaseModel, ABC):
         populate_by_name=True,
         extra='ignore'
     )
-    
-    # Subclasses MUST define these
-    identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical"]] = "single"
+
+    # TODO: Revisit identifiers strategy (low priority)
+    identifiers: ClassVar[Optional[List[str]]] = None
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "none"]]] = None
     
     # Optional: fields to exclude from diffs (e.g., passwords)
     exclude_from_diff: ClassVar[List[str]] = []
+
+    # TODO: Revisit it with identifiers strategy (low priority)
+    def __init_subclass__(cls, **kwargs):
+        """
+        Enforce configuration for identifiers definition.
+        """
+        super().__init_subclass__(**kwargs)
+        
+        # Skip enforcement for nested models
+        # TODO: Remove if `NDNestedModel` is a separated BaseModel (low priority)
+        if cls.__name__ in ['NDNestedModel']:
+            return
+
+        if not hasattr(cls, "identifiers") or cls.identifiers is None:
+            raise ValueError(
+                f"Class {cls.__name__} must define 'identifiers' and 'identifier_strategy'."
+                f"Example: `identifiers: ClassVar[Optional[List[str]]] = ['login_id']`"
+            )
+        if not hasattr(cls, "identifier_strategy") or cls.identifier_strategy is None:
+            raise ValueError(
+                f"Class {cls.__name__} must define 'identifiers' and 'identifier_strategy'."
+                f"Example: `identifier_strategy: ClassVar[Optional[Literal['single', 'composite', 'hierarchical', 'none']]] = 'single'`"
+            )
     
+    # NOTE: Might not need to make them absractmethod because of the Pydantic built-in methods (low priority)
     @abstractmethod
     def to_payload(self) -> Dict[str, Any]:
         """
@@ -54,6 +80,8 @@ class NDBaseModel(BaseModel, ABC):
         """
         pass
     
+    # TODO: Revisit this function when revisiting identifier strategy (low priority)
+    # TODO: Add condition when there is no identifiers (high priority)
     def get_identifier_value(self) -> Union[str, int, Tuple[Any, ...]]:
         """
         Extract identifier value(s) from this instance:
@@ -82,7 +110,7 @@ class NDBaseModel(BaseModel, ABC):
                     missing.append(field)
                 values.append(value)
             
-            # NOTE: might not be needed in the future with field_validator
+            # NOTE: might be redefined with Pydantic (low priority)
             if missing:
                 raise ValueError(
                     f"Composite identifier fields {missing} are None. "
@@ -104,6 +132,7 @@ class NDBaseModel(BaseModel, ABC):
         else:
             raise ValueError(f"Unknown identifier strategy: {self.identifier_strategy}")
     
+
     def to_diff_dict(self) -> Dict[str, Any]:
         """
         Export for diff comparison (excludes sensitive fields).
@@ -114,12 +143,13 @@ class NDBaseModel(BaseModel, ABC):
             exclude=set(self.exclude_from_diff)
         )
 
-# NOTE: Maybe make it a seperate BaseModel
+# TODO: Make it a seperated BaseModel (low priority)
 class NDNestedModel(NDBaseModel):
     """
     Base for nested models without identifiers.
     """
 
+    # TODO: Configuration Fields to be clearly defined here (low priority)
     identifiers: ClassVar[List[str]] = []
 
     def to_payload(self) -> Dict[str, Any]:
@@ -133,4 +163,4 @@ class NDNestedModel(NDBaseModel):
         """
         Create model instance from API response.
         """
-        return cls.model_validate(response)
+        return cls.model_validate(response, by_alias=True)

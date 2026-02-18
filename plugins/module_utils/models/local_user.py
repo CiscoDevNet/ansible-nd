@@ -8,15 +8,15 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_serializer, field_serializer, field_validator, model_validator, computed_field
 from types import MappingProxyType
 from typing import List, Dict, Any, Optional, ClassVar, Literal
 from typing_extensions import Self
 
 # TODO: To be replaced with: from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel, NDNestedModel
-from models.base import NDBaseModel, NDNestedModel
+from .base import NDBaseModel, NDNestedModel
 
-# TODO: Move it to constants.py and import it
+# TODO: Move it to constants.py and make a reverse class Map for this
 USER_ROLES_MAPPING = MappingProxyType({
     "fabric_admin": "fabric-admin",
     "observer": "observer",
@@ -31,11 +31,13 @@ class LocalUserSecurityDomainModel(NDNestedModel):
     """Security domain configuration for local user (nested model)."""
 
     # Fields
-    name: str
-    roles: Optional[List[str]] = None
-    
-    def to_payload(self) -> Dict[str, Any]:
+    name: str = Field(..., alias="name", exclude=True)
+    roles: Optional[List[str]] = Field(default=None, alias="roles", exclude=True)
 
+    # -- Serialization (Model instance -> API payload) --
+
+    @model_serializer()
+    def serialize_model(self) -> Dict:
         return {
             self.name: {
                 "roles": [
@@ -44,22 +46,12 @@ class LocalUserSecurityDomainModel(NDNestedModel):
                 ]
             }
         }
-    
-    @classmethod
-    def from_response(cls, name: str, domain_config: Dict[str, Any]) -> Self:
 
-        # NOTE: Maybe create a function from it to be moved to utils.py and to be imported
-        reverse_mapping = {value: key for key, value in USER_ROLES_MAPPING.items()}
-        
-        return cls(
-            name=name,
-            roles=[
-                reverse_mapping.get(role, role)
-                for role in domain_config.get("roles", [])
-            ]
-        )
+    # -- Deserialization (API response / Ansible payload -> Model instance) --
+    # NOTE: Not needed as it already defined in `LocalUserModel` -> investigate if needed
 
 
+# TODO: Add field validation (e.g. me, le, choices, etc...) (medium priority)
 class LocalUserModel(NDBaseModel):
     """
     Local user configuration.
@@ -68,73 +60,153 @@ class LocalUserModel(NDBaseModel):
     """
     
     # Identifier configuration
-    identifiers: ClassVar[List[str]] = ["login_id"]
-    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical"]] = "single"
+    # TODO: Revisit this identifiers strategy (low priority)
+    identifiers: ClassVar[Optional[List[str]]] = ["login_id"]
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "none"]]] = "single"
+
+    # Keys management configurations
+    # TODO: Revisit these configurations (low priority)
     exclude_from_diff: ClassVar[List[str]] = ["user_password"]
+    unwanted_keys: ClassVar[List[List[str]]]= [
+        ["passwordPolicy", "passwordChangeTime"],  # Nested path
+        ["userID"]  # Simple key
+    ]
     
     # Fields
+    # NOTE: `alias` are NOT the ansible aliases. they are the equivalent attribute's names from the API spec
     login_id: str = Field(..., alias="loginID")
-    email: Optional[str] = None
+    email: Optional[str] = Field(default=None, alias="email")
     first_name: Optional[str] = Field(default=None, alias="firstName")
     last_name: Optional[str] = Field(default=None, alias="lastName")
     user_password: Optional[SecretStr] = Field(default=None, alias="password")
-    reuse_limitation: Optional[int] = Field(default=None, alias="reuseLimitation")
-    time_interval_limitation: Optional[int] = Field(default=None, alias="timeIntervalLimitation")
-    security_domains: Optional[List[LocalUserSecurityDomainModel]] = Field(default=None, alias="domains")
+    reuse_limitation: Optional[int] = Field(default=None, alias="reuseLimitation", exclude=True)
+    time_interval_limitation: Optional[int] = Field(default=None, alias="timeIntervalLimitation", exclude=True)
+    security_domains: Optional[List[LocalUserSecurityDomainModel]] = Field(default=None, alias="rbac")
     remote_id_claim: Optional[str] = Field(default=None, alias="remoteIDClaim")
     remote_user_authorization: Optional[bool] = Field(default=None, alias="xLaunch")
-    
-    def to_payload(self) -> Dict[str, Any]:
-        payload = self.model_dump(
-            by_alias=True,
-            exclude={
-                'domains',
-                'security_domains',
-                'reuseLimitation',
-                'reuse_limitation',
-                'timeIntervalLimitation',
-                'time_interval_limitation'
-            },
-            exclude_none=True
-        )
 
-        if self.user_password:
-            payload["password"] = self.user_password.get_secret_value()
+    # -- Serialization (Model instance -> API payload) --
 
-        if self.security_domains:
-            payload["rbac"] = {"domains": {}}
-            for domain in self.security_domains:
-                payload["rbac"]["domains"].update(domain.to_payload())
-
-        if self.reuse_limitation is not None or self.time_interval_limitation is not None:
-            payload["passwordPolicy"] = {}
-            if self.reuse_limitation is not None:
-                payload["passwordPolicy"]["reuseLimitation"] = self.reuse_limitation
-            if self.time_interval_limitation is not None:
-                payload["passwordPolicy"]["timeIntervalLimitation"] = self.time_interval_limitation
+    @computed_field(alias="passwordPolicy")
+    @property
+    def password_policy(self) -> Optional[Dict[str, int]]:
+        """Computed nested structure for API payload."""
+        if self.reuse_limitation is None and self.time_interval_limitation is None:
+            return None
         
-        return payload
-    
+        policy = {}
+        if self.reuse_limitation is not None:
+            policy["reuseLimitation"] = self.reuse_limitation
+        if self.time_interval_limitation is not None:
+            policy["timeIntervalLimitation"] = self.time_interval_limitation
+        return policy
+
+    @field_serializer("user_password")
+    def serialize_password(self, value: Optional[SecretStr]) -> Optional[str]:
+        return value.get_secret_value() if value else None
+
+
+    @field_serializer("security_domains")
+    def serialize_domains(self, value: Optional[List[LocalUserSecurityDomainModel]]) -> Optional[Dict]:
+        # NOTE: exclude `None` values and empty list (-> should we exclude empty list?)
+        if not value:
+            return None
+
+        domains_dict = {}
+        for domain in value:
+            domains_dict.update(domain.to_payload())
+
+        return {
+            "domains": domains_dict
+        }
+
+
+    def to_payload(self) -> Dict[str, Any]:
+        return self.model_dump(by_alias=True, exclude_none=True)
+
+    # -- Deserialization (API response / Ansible payload -> Model instance) --
+
+    @model_validator(mode="before")
+    @classmethod
+    def deserialize_password_policy(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        password_policy = data.get("passwordPolicy")
+        
+        if password_policy and isinstance(password_policy, dict):
+            if "reuseLimitation" in password_policy:
+                data["reuse_limitation"] = password_policy["reuseLimitation"]
+            if "timeIntervalLimitation" in password_policy:
+                data["time_interval_limitation"] = password_policy["timeIntervalLimitation"]
+            
+            # Remove the nested structure from data to avoid conflicts
+            # (since it's a computed field, not a real field)
+            data.pop("passwordPolicy", None)
+        
+        return data
+
+    @field_validator("security_domains", mode="before")
+    @classmethod
+    def deserialize_domains(cls, value: Any) -> Optional[List[Dict]]:
+        if value is None:
+            return None
+        
+        # If already in list format (Ansible module representation), return as-is
+        if isinstance(value, list):
+            return value
+        
+        # If in the nested dict format (API representation)
+        if isinstance(value, dict) and "domains" in value:
+            domains_dict = value["domains"]
+            domains_list = []
+            
+            for domain_name, domain_data in domains_dict.items():
+                domains_list.append({
+                    "name": domain_name,
+                    "roles": [USER_ROLES_MAPPING.get(role, role) for role in domain_data.get("roles", [])]
+                })
+            
+            return domains_list
+        
+        return value
+
+    # TODO: only works for api responses but NOT for Ansible configs -> needs to be fixed (high priority)
     @classmethod
     def from_response(cls, response: Dict[str, Any]) -> Self:
-        password_policy = response.get("passwordPolicy", {})
-        rbac = response.get("rbac", {})
-        domains = rbac.get("domains", {})
+        return cls.model_validate(response, by_alias=True)
         
-        security_domains = [
-            LocalUserSecurityDomainModel.from_response(name, config)
-            for name, config in domains.items()
-        ] if domains else None
-        
-        return cls(
-            login_id=response.get("loginID"),
-            email=response.get("email"),
-            first_name=response.get("firstName"),
-            last_name=response.get("lastName"),
-            user_password=response.get("password"),
-            reuse_limitation=password_policy.get("reuseLimitation"),
-            time_interval_limitation=password_policy.get("timeIntervalLimitation"),
-            security_domains=security_domains,
-            remote_id_claim=response.get("remoteIDClaim"),
-            remote_user_authorization=response.get("xLaunch")
+
+    # -- Extra --
+
+    # TODO: to generate from Fields (low priority)
+    def get_argument_spec(self):
+        return dict(
+            config=dict(
+                type="list",
+                elements="dict",
+                required=True,
+                options=dict(
+                    email=dict(type="str"),
+                    login_id=dict(type="str", required=True),
+                    first_name=dict(type="str"),
+                    last_name=dict(type="str"),
+                    user_password=dict(type="str", no_log=True),
+                    reuse_limitation=dict(type="int"),
+                    time_interval_limitation=dict(type="int"),
+                    security_domains=dict(
+                        type="list",
+                        elements="dict",
+                        options=dict(
+                            name=dict(type="str", required=True, aliases=["security_domain_name", "domain_name"]),
+                            roles=dict(type="list", elements="str", choices=list(USER_ROLES_MAPPING)),
+                        ),
+                        aliases=["domains"],
+                    ),
+                    remote_id_claim=dict(type="str"),
+                    remote_user_authorization=dict(type="bool"),
+                ),
+            ),
+            override_exceptions=dict(type="list", elements="str"),
+            state=dict(type="str", default="merged", choices=["merged", "replaced", "overridden", "deleted"]),
         )
