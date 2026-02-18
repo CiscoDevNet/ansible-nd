@@ -444,7 +444,7 @@ class RestSend:
 
         ## Raises
 
-        None
+        -   getter: `ValueError` if `path` is not set before accessing.
 
         ## Example
 

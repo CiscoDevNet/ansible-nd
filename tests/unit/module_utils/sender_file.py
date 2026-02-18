@@ -165,7 +165,7 @@ class Sender:
 
         ## Raises
 
-        None
+        -   getter: `ValueError` if `path` is not set before accessing.
 
         ## Example
 
