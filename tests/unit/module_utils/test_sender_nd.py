@@ -662,12 +662,12 @@ def test_sender_nd_00720():
     """
     # Summary
 
-    Verify commit() raises AnsibleConnectionError on connection failure.
+    Verify commit() raises ValueError on connection failure.
 
     ## Test
 
     - When Connection.send_request raises AnsibleConnectionError,
-      commit() re-raises AnsibleConnectionError
+      commit() re-raises as ValueError
 
     ## Classes and Methods
 
@@ -690,7 +690,7 @@ def test_sender_nd_00720():
         return_value=mock_connection,
     ):
         match = r"Sender\.commit:.*ConnectionError occurred"
-        with pytest.raises(AnsibleConnectionError, match=match):
+        with pytest.raises(ValueError, match=match):
             instance.commit()
 
 
@@ -698,12 +698,12 @@ def test_sender_nd_00730():
     """
     # Summary
 
-    Verify commit() raises AnsibleConnectionError on unexpected exception.
+    Verify commit() raises ValueError on unexpected exception.
 
     ## Test
 
     - When Connection.send_request raises an unexpected Exception,
-      commit() wraps it in AnsibleConnectionError
+      commit() wraps it in ValueError
 
     ## Classes and Methods
 
@@ -726,7 +726,7 @@ def test_sender_nd_00730():
         return_value=mock_connection,
     ):
         match = r"Sender\.commit:.*Unexpected error occurred"
-        with pytest.raises(AnsibleConnectionError, match=match):
+        with pytest.raises(ValueError, match=match):
             instance.commit()
 
 

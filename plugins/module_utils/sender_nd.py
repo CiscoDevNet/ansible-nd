@@ -95,7 +95,7 @@ class Sender:
 
         ## Raises
 
-        -  `ConnectionError` if there is an error with the connection to the controller.
+        -  `ValueError` if there is an error with the connection to the controller.
 
         ## Properties read
 
@@ -139,12 +139,12 @@ class Sender:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"ConnectionError occurred: {error}"
             self.log.error(msg)
-            raise AnsibleConnectionError(msg) from error
+            raise ValueError(msg) from error
         except Exception as error:
             msg = f"{self.class_name}.{method_name}: "
             msg += f"Unexpected error occurred: {error}"
             self.log.error(msg)
-            raise AnsibleConnectionError(msg) from error
+            raise ValueError(msg) from error
 
     def _normalize_response(self, response: dict) -> dict:
         """
