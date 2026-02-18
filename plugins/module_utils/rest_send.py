@@ -35,13 +35,11 @@ class RestSend:
     -   Accepts a `ResponseHandler()` class that implements the response
         handler interface.
             -   The response handler interface is defined in
-                `module_utils/response_handler.py`
+                `module_utils/protocol_response_handler.py`
 
     ## Raises
 
     -   `ValueError` if:
-            -   self._verify_commit_parameters() raises
-                `ValueError`
             -   ResponseHandler() raises `TypeError` or `ValueError`
             -   Sender().commit() raises `ValueError`
             -   `verb` is not a valid verb (GET, POST, PUT, DELETE)
@@ -70,7 +68,7 @@ class RestSend:
     -   A `ResponseHandler()` class is used in the usage example below that
         abstracts controller response handling.  It accepts a controller
         response dict and returns a result dict.
-        -   See `module_utils/response_handler.py` for details
+        -   See `module_utils/protocol_response_handler.py` for details
             about implementing `ResponseHandler()` classes.
 
     ## Usage example

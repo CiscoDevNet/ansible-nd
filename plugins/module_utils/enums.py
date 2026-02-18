@@ -99,7 +99,7 @@ class OperationType(Enum):
     The above informs the Results class that the current operation is a query, and thus
     no changes should be expected.
 
-    Specifically, Results.has_anything_changed() will return False for QUERY operations,
+    Specifically, Results._determine_if_changed() will return False for QUERY operations,
     while it will evaluate CREATE, UPDATE, and DELETE operations in more detail to
     determine if any changes have occurred.
     """

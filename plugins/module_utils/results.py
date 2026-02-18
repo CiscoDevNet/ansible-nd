@@ -766,7 +766,7 @@ class Results:
 
         ## See also
 
-        -  `add_changed()` method to add to the changed set.
+        -  `register_task_result()` method to register tasks and update the changed set.
         """
         return self._changed
 
@@ -845,11 +845,11 @@ class Results:
 
         ## Raises
 
-        - `TypeError` if value is not a bool.
+        None
 
         ## See also
 
-        -  `add_failed()` method to add to the failed set.
+        -  `register_task_result()` method to register tasks and update the failed set.
         """
         return self._failed
 
