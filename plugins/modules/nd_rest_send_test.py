@@ -160,10 +160,11 @@ def main():
 
         # Build the final result
         results.build_final_result()
+        final = results.final_result
 
         # Add debug info if requested
         if output_level == "debug":
-            results.final_result["debug_info"] = {
+            final["debug_info"] = {
                 "method": nd.method,
                 "path": nd.path,
                 "status": nd.status,
@@ -175,8 +176,8 @@ def main():
         # Exit with the final result
         # Results class sets changed and failed appropriately
         if True in results.failed:
-            module.fail_json(**results.final_result)
-        module.exit_json(**results.final_result)
+            module.fail_json(**final)
+        module.exit_json(**final)
 
     except NDModuleError as error:
         # Get response and result from RestSend (via NDModule)
@@ -198,12 +199,13 @@ def main():
         results.diff_current = {}
         results.register_task_result()
         results.build_final_result()
+        final = results.final_result
 
         # Add error details if debug output is requested
         if output_level == "debug":
-            results.final_result["error_details"] = error.to_dict()
+            final["error_details"] = error.to_dict()
 
-        module.fail_json(**results.final_result)
+        module.fail_json(**final)
 
     except (TypeError, ValueError) as error:
         # For unexpected errors, use the failed_result from Results
