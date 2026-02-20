@@ -144,6 +144,16 @@ All Pydantic imports go through `plugins/module_utils/pydantic_compat.py`, which
 - Python >= 3.11 required
 - Pydantic v2 models preferred for new code
 - `HttpVerbEnum` for HTTP methods (this collection has the enum implemented, unlike `cisco.dcnm`)
+- Special pylint handling for lines containing `__metaclass__ = type`. 
+  - Surround these with pylint enable/disable directives since ansible-test using a regex that breaks when the suppression directive is inline.
+  - Example
+
+    ```python
+    # pylint: disable=invalid-name
+    __metaclass__ = type
+    # pylint: enable=invalid-name
+    ```
+  
 
 ### Class and Method Docstrings
 
