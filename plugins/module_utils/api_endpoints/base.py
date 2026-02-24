@@ -15,11 +15,14 @@ from typing import Final, Union, Tuple, Any
 
 IdentifierKey = Union[str, int, Tuple[Any, ...], None]
 
+# TODO: Rename it to APIEndpoint
+# NOTE: This is a very minimalist endpoint package -> needs to be enhanced
 class NDBaseSmartEndpoint(BaseModel, ABC):
 
     # TODO: maybe to be modified in the future
     model_config = ConfigDict(validate_assignment=True)
 
+    # TODO: to remove
     base_path: str
 
     @abstractmethod
@@ -34,7 +37,7 @@ class NDBaseSmartEndpoint(BaseModel, ABC):
 
     # TODO: Maybe to be modifed to be more Pydantic
     # TODO: Maybe change function's name
-    # NOTE: function to set mixins fields from identifiers
+    # NOTE: function to set endpoints attribute fields from identifiers
     @abstractmethod
     def set_identifiers(self, identifier: IdentifierKey = None):
         pass

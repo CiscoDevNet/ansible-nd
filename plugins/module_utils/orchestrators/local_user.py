@@ -9,8 +9,10 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from .base import NDBaseOrchestrator
+from ..models.base import NDBaseModel
 from ..models.local_user import LocalUserModel
 from typing import Dict, List, Any, Union, Type
+from ..api_endpoints.base import NDBaseSmartEndpoint
 from ..api_endpoints.local_user import (
     EpApiV1InfraAaaLocalUsersPost,
     EpApiV1InfraAaaLocalUsersPut,
@@ -23,12 +25,12 @@ ResponseType = Union[List[Dict[str, Any]], Dict[str, Any], None]
 
 class LocalUserOrchestrator(NDBaseOrchestrator):
 
-    model_class = Type[LocalUserModel]
+    model_class: Type[NDBaseModel] = LocalUserModel
 
-    post_endpoint = EpApiV1InfraAaaLocalUsersPost()
-    put_endpoint = EpApiV1InfraAaaLocalUsersPut()
-    delete_endpoint = EpApiV1InfraAaaLocalUsersDelete()
-    get_endpoint = EpApiV1InfraAaaLocalUsersGet()
+    post_endpoint: Type[NDBaseSmartEndpoint] = EpApiV1InfraAaaLocalUsersPost
+    put_endpoint: Type[NDBaseSmartEndpoint] = EpApiV1InfraAaaLocalUsersPut
+    delete_endpoint: Type[NDBaseSmartEndpoint] = EpApiV1InfraAaaLocalUsersDelete
+    get_endpoint: Type[NDBaseSmartEndpoint] = EpApiV1InfraAaaLocalUsersGet
 
     def query_all(self):
         """

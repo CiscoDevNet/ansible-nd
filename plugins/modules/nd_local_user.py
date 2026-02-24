@@ -180,53 +180,15 @@ from ansible.module_utils.basic import AnsibleModule
 # from ansible_collections.cisco.nd.plugins.module_utils.nd_network_resource_module import NDNetworkResourceModule
 # from ansible_collections.cisco.nd.plugins.module_utils.models.local_user import LocalUserModel
 # from ansible_collections.cisco.nd.plugins.module_utils.constants import USER_ROLES_MAPPING
-from module_utils.nd import nd_argument_spec
-from module_utils.nd_network_resources import NDNetworkResourceModule
-from module_utils.models.local_user import LocalUserModel
-from module_utils.constants import USER_ROLES_MAPPING
+from ..module_utils.nd import nd_argument_spec
+from ..module_utils.nd_network_resources import NDNetworkResourceModule
+from ..module_utils.models.local_user import LocalUserModel
+from ..module_utils.orchestrators.local_user import LocalUserOrchestrator
 
 
-# NOTE: Maybe Add the overwrite action in the LocalUserModel
-def query_all_local_users(nd_module):
-    """
-    Custom query_all action to extract 'localusers' from response.
-    """
-    response = nd_module.query_obj(nd_module.path)
-    return response.get("localusers", [])
-
-
-# NOTE: Maybe Add More aliases like in the LocalUserModel / Revisit the argmument_spec
 def main():
     argument_spec = nd_argument_spec()
-    argument_spec.update(
-        config=dict(
-            type="list",
-            elements="dict",
-            required=True,
-            options=dict(
-                email=dict(type="str"),
-                login_id=dict(type="str", required=True),
-                first_name=dict(type="str"),
-                last_name=dict(type="str"),
-                user_password=dict(type="str", no_log=True),
-                reuse_limitation=dict(type="int"),
-                time_interval_limitation=dict(type="int"),
-                security_domains=dict(
-                    type="list",
-                    elements="dict",
-                    options=dict(
-                        name=dict(type="str", required=True, aliases=["security_domain_name", "domain_name"]),
-                        roles=dict(type="list", elements="str", choices=list(USER_ROLES_MAPPING)),
-                    ),
-                    aliases=["domains"],
-                ),
-                remote_id_claim=dict(type="str"),
-                remote_user_authorization=dict(type="bool"),
-            ),
-        ),
-        override_exceptions=dict(type="list", elements="str"),
-        state=dict(type="str", default="merged", choices=["merged", "replaced", "overridden", "deleted"]),
-    )
+    argument_spec.update(LocalUserModel.get_argument_spec())
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -237,23 +199,12 @@ def main():
         # Create NDNetworkResourceModule with LocalUserModel
         nd_module = NDNetworkResourceModule(
             module=module,
-            path="/api/v1/infra/aaa/localUsers",
             model_class=LocalUserModel,
-            actions_overwrite_map={
-                "query_all": query_all_local_users
-            }
+            model_orchestrator=LocalUserOrchestrator,
         )
         
         # Manage state
-        nd_module.manage_state(
-            state=module.params["state"],
-            new_configs=module.params["config"],
-            unwanted_keys=[
-                ["passwordPolicy", "passwordChangeTime"],  # Nested path
-                ["userID"]  # Simple key
-            ],
-            override_exceptions=module.params.get("override_exceptions")
-        )
+        nd_module.manage_state()
 
         nd_module.exit_json()
     
