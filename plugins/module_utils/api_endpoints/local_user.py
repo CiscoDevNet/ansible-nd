@@ -31,6 +31,7 @@ class _EpApiV1InfraAaaLocalUsersBase(LoginIdMixin, NDBaseSmartEndpoint):
     /api/v1/infra/aaa/localUsers endpoint.
     """
 
+    # TODO: Remove it
     base_path: Final = NDBasePath.nd_infra_aaa("localUsers")
 
     @property

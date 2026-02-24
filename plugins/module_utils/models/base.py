@@ -40,6 +40,7 @@ class NDBaseModel(BaseModel, ABC):
     
     # Optional: fields to exclude from diffs (e.g., passwords)
     exclude_from_diff: ClassVar[List[str]] = []
+    unwanted_keys: ClassVar[List] = []
 
     # TODO: Revisit it with identifiers strategy (low priority)
     def __init_subclass__(cls, **kwargs):
@@ -65,8 +66,9 @@ class NDBaseModel(BaseModel, ABC):
             )
     
     # NOTE: Might not need to make them absractmethod because of the Pydantic built-in methods (low priority)
+    # NOTE: Should we use keyword arguments?
     @abstractmethod
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self, **kwargs) -> Dict[str, Any]:
         """
         Convert model to API payload format.
         """
@@ -74,7 +76,7 @@ class NDBaseModel(BaseModel, ABC):
     
     @classmethod
     @abstractmethod
-    def from_response(cls, response: Dict[str, Any]) -> Self:
+    def from_response(cls, response: Dict[str, Any], **kwargs) -> Self:
         """
         Create model instance from API response.
         """
@@ -142,6 +144,25 @@ class NDBaseModel(BaseModel, ABC):
             exclude_none=True,
             exclude=set(self.exclude_from_diff)
         )
+    
+    # NOTE: initialize and return a deep copy of the instance?
+    # TODO: Might be missing a proper merge on fields of type `List[NDNestedModel]`? -> similar to NDCOnfigCollection...
+    def merge(self, other_model: "NDBaseModel") -> Self:
+        if not isinstance(other_model, type(self)):
+            # TODO: Change error message
+            return TypeError("models are not of the same type.")
+        
+        for field, value in other_model:
+            if value is None:
+                continue
+            
+            current_value = getattr(self, field)
+            if isinstance(current_value, NDBaseModel) and isinstance(value, NDBaseModel):
+                setattr(self, field, current_value.merge(value))
+
+            else:
+                setattr(self, field, value)
+        return self
 
 # TODO: Make it a seperated BaseModel (low priority)
 class NDNestedModel(NDBaseModel):

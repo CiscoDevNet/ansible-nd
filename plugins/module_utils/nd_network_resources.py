@@ -9,8 +9,9 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from copy import deepcopy
-from typing import Optional, List, Dict, Any, Callable, Literal
+from typing import Optional, List, Dict, Any, Literal, Type
 from pydantic import ValidationError
+from ansible.module_utils.basic import AnsibleModule
 
 # TODO: To be replaced with:
 # from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
@@ -20,36 +21,48 @@ from pydantic import ValidationError
 from nd import NDModule
 from nd_config_collection import NDConfigCollection
 from models.base import NDBaseModel
+from .orchestrators.base import NDBaseOrchestrator
 from constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
 
-
+# TODO: replace path and verbs with smart Endpoint (Top priority)
+# TODO: Rename it (low priority)
+# TODO: Revisit Deserialization in every method (high priority)
 class NDNetworkResourceModule(NDModule):
     """
     Generic Network Resource Module for Nexus Dashboard.
     """
     
-    def __init__(self, module, path: str, model_class: type[NDBaseModel], actions_overwrite_map: Optional[Dict[str, Callable]] = None):
+    def __init__(self, module: AnsibleModule, model_class: Type[NDBaseModel], model_orchestrator: Type[NDBaseOrchestrator]):
         """
         Initialize the Network Resource Module.
         """
+        # TODO: Revisit Module initialization and configuration (medium priority). e.g., use instead:
+        # nd_module = NDModule()
         super().__init__(module)
         
         # Configuration
-        self.path = path
+        # TODO: make sure `model_class` is the same as the one in `model_orchestrator`. if not, error out (high priority)
         self.model_class = model_class
-        self.actions_overwrite_map = actions_overwrite_map or {}
+        self.model_orchestrator = model_orchestrator(module=module)
+        # TODO: Revisit these class variables when udpating Module intialization and configuration (medium priority)
+        self.state = self.params["state"]
+        self.ansible_config = self.params["config"]
+
         
         # Initialize collections
+        # TODO: Revisit collections initialization especially `init_all_data` (medium priority)
+        # TODO: Revisit class variables `previous`, `existing`, etc... (medium priority)
+        self.nd_config_collection = NDConfigCollection[model_class]
         try:
-            init_all_data = self._query_all()
+            init_all_data = self.model_orchestrator.query_all()
             
-            self.existing = NDConfigCollection.from_api_response(
+            self.existing = self.nd_config_collection.from_api_response(
                 response_data=init_all_data,
                 model_class=model_class
             )
-            self.previous = NDConfigCollection(model_class=model_class)
-            self.proposed = NDConfigCollection(model_class=model_class)
-            self.sent = NDConfigCollection(model_class=model_class)
+            self.previous = self.nd_config_collection(model_class=model_class)
+            self.proposed = self.nd_config_collection(model_class=model_class)
+            self.sent = self.nd_config_collection(model_class=model_class)
         
         except Exception as e:
             self.fail_json(
@@ -59,83 +72,10 @@ class NDNetworkResourceModule(NDModule):
         
         # Operation tracking
         self.nd_logs: List[Dict[str, Any]] = []
-        
-        # Current operation context
-        self.current_identifier = None
-        self.existing_config: Dict[str, Any] = {}
-        self.proposed_config: Dict[str, Any] = {}
-    
-    # Action Decorator
-    
-    @staticmethod
-    def actions_overwrite(action: str):
-        """
-        Decorator to allow overriding default action operations.
-        """
-        def decorator(func):
-            def wrapper(self, *args, **kwargs):
-                overwrite_action = self.actions_overwrite_map.get(action)
-                if callable(overwrite_action):
-                    return overwrite_action(self, *args, **kwargs)
-                else:
-                    return func(self, *args, **kwargs)
-            return wrapper
-        return decorator
-    
-    # Action Operations
-    
-    @actions_overwrite("create")
-    def _create(self) -> Optional[Dict[str, Any]]:
-        """
-        Create a new configuration object.
-        """
-        if self.module.check_mode:
-            return self.proposed_config
-        
-        try:
-            return self.request(path=self.path, method="POST", data=self.proposed_config)
-        except Exception as e:
-            raise Exception(f"Create failed for {self.current_identifier}: {e}") from e
-    
-    @actions_overwrite("update")
-    def _update(self) -> Optional[Dict[str, Any]]:
-        """
-        Update an existing configuration object.
-        """
-        if self.module.check_mode:
-            return self.proposed_config
-        
-        try:
-            object_path = f"{self.path}/{self.current_identifier}"
-            return self.request(path=object_path, method="PUT", data=self.proposed_config)
-        except Exception as e:
-            raise Exception(f"Update failed for {self.current_identifier}: {e}") from e
-    
-    @actions_overwrite("delete")
-    def _delete(self) -> None:
-        """Delete a configuration object."""
-        if self.module.check_mode:
-            return
-        
-        try:
-            object_path = f"{self.path}/{self.current_identifier}"
-            self.request(path=object_path, method="DELETE")
-        except Exception as e:
-            raise Exception(f"Delete failed for {self.current_identifier}: {e}") from e
-    
-    @actions_overwrite("query_all")
-    def _query_all(self) -> List[Dict[str, Any]]:
-        """
-        Query all configuration objects from device.
-        """
-        try:
-            result = self.query_obj(self.path)
-            return result or []
-        except Exception as e:
-            raise Exception(f"Query all failed: {e}") from e
-    
+
     # Logging
-    
+    # NOTE: format log placeholder
+    # TODO: use a proper logger (low priority)
     def format_log(self, identifier, status: Literal["created", "updated", "deleted", "no_change"], after_data: Optional[Dict[str, Any]] = None, sent_payload_data: Optional[Dict[str, Any]] = None) -> None:
         """
         Create and append a log entry.
@@ -159,20 +99,20 @@ class NDNetworkResourceModule(NDModule):
         
         self.nd_logs.append(log_entry)
     
-    # State Management
-    
-    def manage_state(
-        self, state: Literal["merged", "replaced", "overridden", "deleted"], new_configs: List[Dict[str, Any]], unwanted_keys: Optional[List] = None, override_exceptions: Optional[List] = None) -> None:
+    # State Management (core function)
+    # TODO: adapt all `manage` functions to endpoint/orchestrator strategies (Top priority)
+    def manage_state(self) -> None:
         """
         Manage state according to desired configuration.
         """
         unwanted_keys = unwanted_keys or []
-        override_exceptions = override_exceptions or []
         
         # Parse and validate configs
+        # TODO: move it to init() (top priority)
+        # TODO: Modify it if NDConfigCollection becomes a Pydantic RootModel (low priority)
         try:
             parsed_items = []
-            for config in new_configs:
+            for config in self.ansible_config:
                 try:
                     # Parse config into model
                     item = self.model_class.model_validate(config)
@@ -186,7 +126,7 @@ class NDNetworkResourceModule(NDModule):
                     return
             
             # Create proposed collection
-            self.proposed = NDConfigCollection(
+            self.proposed = self.nd_config_collection(
                 model_class=self.model_class,
                 items=parsed_items
             )
@@ -202,27 +142,29 @@ class NDNetworkResourceModule(NDModule):
             return
         
         # Execute state operations
-        if state in ["merged", "replaced", "overridden"]:
-            self._manage_create_update_state(state, unwanted_keys)
+        if self.state in ["merged", "replaced", "overridden"]:
+            self._manage_create_update_state()
             
-            if state == "overridden":
-                self._manage_override_deletions(override_exceptions)
+            if self.state == "overridden":
+                self._manage_override_deletions()
         
-        elif state == "deleted":
+        elif self.state == "deleted":
             self._manage_delete_state()
         
+        # TODO: not needed with Ansible `argument_spec` validation. Keep it for now but needs to be removed (low priority)
         else:
-            self.fail_json(msg=f"Invalid state: {state}")
+            self.fail_json(msg=f"Invalid state: {self.state}")
     
-    def _manage_create_update_state(self,state: Literal["merged", "replaced", "overridden"], unwanted_keys: List) -> None:
+
+    def _manage_create_update_state(self) -> None:
         """
         Handle merged/replaced/overridden states.
         """
         for proposed_item in self.proposed:
             try:
                 # Extract identifier
+                # TODO: Remove self.current_identifier, get it directly into the action functions
                 identifier = proposed_item.get_identifier_value()
-                self.current_identifier = identifier
                 
                 existing_item = self.existing.get(identifier)
                 self.existing_config = (
@@ -232,10 +174,7 @@ class NDNetworkResourceModule(NDModule):
                 )
                 
                 # Determine diff status
-                diff_status = self.existing.get_diff_config(
-                    proposed_item,
-                    unwanted_keys=unwanted_keys
-                )
+                diff_status = self.existing.get_diff_config(proposed_item)
                 
                 # No changes needed
                 if diff_status == "no_diff":
@@ -247,7 +186,7 @@ class NDNetworkResourceModule(NDModule):
                     continue
                 
                 # Prepare final config based on state
-                if state == "merged" and existing_item:
+                if self.state == "merged" and existing_item:
                     # Merge with existing
                     merged_item = self.existing.merge(proposed_item)
                     final_item = merged_item
@@ -264,16 +203,16 @@ class NDNetworkResourceModule(NDModule):
                 
                 # Execute API operation
                 if diff_status == "changed":
-                    response = self._update()
+                    response = self.model_orchestrator.update(final_item)
                     operation_status = "updated"
                 else:
-                    response = self._create()
+                    response = self.model_orchestrator.create(final_item)
                     operation_status = "created"
                 
                 # Track sent payload
                 if not self.module.check_mode:
                     self.sent.add(final_item)
-                    sent_payload = self.proposed_config
+                    sent_payload = final_item
                 else:
                     sent_payload = None
                 
@@ -297,7 +236,7 @@ class NDNetworkResourceModule(NDModule):
                     after_data=self.existing_config
                 )
                 
-                if not self.module.params.get("ignore_errors", False):
+                if not self.params.get("ignore_errors", False):
                     self.fail_json(
                         msg=error_msg,
                         identifier=str(identifier),
@@ -305,6 +244,7 @@ class NDNetworkResourceModule(NDModule):
                     )
                     return
     
+    # TODO: Refactor with orchestrator (Top priority)
     def _manage_override_deletions(self, override_exceptions: List) -> None:
         """
         Delete items not in proposed config (for overridden state).
@@ -351,6 +291,7 @@ class NDNetworkResourceModule(NDModule):
                     )
                     return
     
+    # TODO: Refactor with orchestrator (Top priority)
     def _manage_delete_state(self) -> None:
         """Handle deleted state."""
         for proposed_item in self.proposed:
@@ -398,7 +339,7 @@ class NDNetworkResourceModule(NDModule):
                     return
     
     # Output Formatting
-    
+    # TODO: move to separate Class (results) -> align it with rest_send PR
     def add_logs_and_outputs(self) -> None:
         """Add logs and outputs to module result based on output_level."""
         output_level = self.params.get("output_level", "normal")
