@@ -24,39 +24,43 @@ class NDBaseOrchestrator(BaseModel):
     model_class: ClassVar[Type[NDBaseModel]] = Type[NDBaseModel]
 
     # NOTE: if not defined by subclasses, return an error as they are required
-    post_endpoint: NDBaseSmartEndpoint
-    put_endpoint: NDBaseSmartEndpoint
-    delete_endpoint: NDBaseSmartEndpoint
-    get_endpoint: NDBaseSmartEndpoint
+    # TODO: change name from http method to crud (e.g. post -> create)
+    post_endpoint: Type[NDBaseSmartEndpoint]
+    put_endpoint: Type[NDBaseSmartEndpoint]
+    delete_endpoint: Type[NDBaseSmartEndpoint]
+    get_endpoint: Type[NDBaseSmartEndpoint]
 
     # NOTE: Module Field is always required
     # TODO: Replace it with future sender
     module: NDModule
 
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
-    # TODO: Explore how to make them even more general
+    # TODO: Explore new ways to make them even more general
+    # TODO: Revisit Deserialization
     def create(self, model_instance: NDBaseModel) -> ResponseType:
         if self.module.check_mode:
-            return model_instance.model_dump()
+            return model_instance.to_payload()
         
         try:
-            return self.module.request(path=self.post_endpoint.base_path, method=self.post_endpoint.verb, data=model_instance.model_dump())
+            api_endpoint = self.post_endpoint()
+            return self.module.request(path=api_endpoint.path, method=api_endpoint.verb, data=model_instance.to_payload())
         except Exception as e:
             raise Exception(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
+    # TODO: Make the same changes as create() with local api_endpoint variable
     def update(self, model_instance: NDBaseModel) -> ResponseType:
         if self.module.check_mode:
-            return model_instance.model_dump()
+            return model_instance.to_payload()
         
         try:
             self.put_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self.module.request(path=self.put_endpoint.path, method=self.put_endpoint.verb, data=model_instance.model_dump())
+            return self.module.request(path=self.put_endpoint.path, method=self.put_endpoint.verb, data=model_instance.to_payload())
         except Exception as e:
             raise Exception(f"Update failed for {self.current_identifier}: {e}") from e
 
     def delete(self, model_instance: NDBaseModel) -> ResponseType:
         if self.module.check_mode:
-            return model_instance.model_dump()
+            return model_instance.to_payload()
         
         try:
             self.delete_endpoint.set_identifiers(model_instance.get_identifier_value())
@@ -71,7 +75,8 @@ class NDBaseOrchestrator(BaseModel):
         except Exception as e:
             raise Exception(f"Query failed for {self.current_identifier}: {e}") from e
 
-    def query_all(self) -> ResponseType:
+    # TODO: Revisit the straegy around the query_all (see local_user's case)
+    def query_all(self, model_instance: NDBaseModel, **kwargs) -> ResponseType:
         try:
             result = self.module.query_obj(self.get_endpoint.path)
             return result or []
