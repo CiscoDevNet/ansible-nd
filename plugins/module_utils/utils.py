@@ -9,6 +9,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from copy import deepcopy
+from typing import Any
 
 
 def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
@@ -30,3 +31,26 @@ def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remo
                 if isinstance(item, dict):
                     result[k][index] = sanitize_dict(item, keys, values)
     return result
+
+
+def issubset(subset: Any, superset: Any) -> bool:
+    """Check if subset is contained in superset."""
+    if type(subset) is not type(superset):
+        return False
+    
+    if not isinstance(subset, dict):
+        if isinstance(subset, list):
+            return all(item in superset for item in subset)
+        return subset == superset
+    
+    for key, value in subset.items():
+        if value is None:
+            continue
+        
+        if key not in superset:
+            return False
+        
+        if not issubset(value, superset[key]):
+            return False
+    
+    return True

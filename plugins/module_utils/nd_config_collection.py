@@ -12,24 +12,26 @@ from typing import TypeVar, Generic, Optional, List, Dict, Any, Union, Tuple, Li
 from copy import deepcopy
 
 # TODO: To be replaced with: from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from models.base import NDBaseModel
+from .models.base import NDBaseModel
+from .utils import issubset
 
 # Type aliases
 # NOTE: Maybe add more type aliases in the future if needed
 ModelType = TypeVar('ModelType', bound=NDBaseModel)
+# TODO: Defined the same acros multiple files -> maybe move to constants.py
 IdentifierKey = Union[str, int, Tuple[Any, ...]]
 
-
+# TODO:Might make it a Pydantic RootModel (low priority but medium impact on NDNetworkResourceModule)
 class NDConfigCollection(Generic[ModelType]):
     """
     Nexus Dashboard configuration collection for NDBaseModel instances.
     """
     
-    def __init__(self, model_class: type[ModelType], items: Optional[List[ModelType]] = None):
+    def __init__(self, model_class: ModelType, items: Optional[List[ModelType]] = None):
         """
         Initialize collection.
         """
-        self._model_class = model_class
+        self._model_class: ModelType = model_class
         
         # Dual storage
         self._items: List[ModelType] = []
@@ -39,6 +41,7 @@ class NDConfigCollection(Generic[ModelType]):
             for item in items:
                 self.add(item)
     
+    # TODO: might not be necessary
     def _extract_key(self, item: ModelType) -> IdentifierKey:
         """
         Extract identifier key from item.
@@ -48,6 +51,7 @@ class NDConfigCollection(Generic[ModelType]):
         except Exception as e:
             raise ValueError(f"Failed to extract identifier: {e}") from e
     
+    # TODO: optimize it -> only needed for delete method (low priority)
     def _rebuild_index(self) -> None:
         """Rebuild index from scratch (O(n) operation)."""
         self._index.clear()
@@ -105,8 +109,8 @@ class NDConfigCollection(Generic[ModelType]):
         
         self._items[index] = item
         return True
-    
-    def merge(self, item: ModelType, custom_merge_function: Optional[Callable[[ModelType, ModelType], ModelType]] = None) -> ModelType:
+
+    def merge(self, item: ModelType) -> ModelType:
         """
         Merge item with existing, or add if not present.
         """
@@ -116,35 +120,11 @@ class NDConfigCollection(Generic[ModelType]):
         if existing is None:
             self.add(item)
             return item
-        
-        # Custom or default merge
-        if custom_merge_function:
-            merged = custom_merge_function(existing, item)
         else:
-            # Default merge
-            existing_data = existing.model_dump()
-            new_data = item.model_dump(exclude_unset=True)
-            merged_data = self._deep_merge(existing_data, new_data)
-            merged = self._model_class.model_validate(merged_data)
-        
+            merged = existing.merge(item)
         self.replace(merged)
         return merged
-    
-    def _deep_merge(self, base: Dict, update: Dict) -> Dict:
-        """Recursively merge dictionaries."""
-        result = base.copy()
-        
-        for key, value in update.items():
-            if value is None:
-                continue
-            
-            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                result[key] = self._deep_merge(result[key], value)
-            else:
-                result[key] = value
-        
-        return result
-    
+
     def delete(self, key: IdentifierKey) -> bool:
         """
         Delete item by identifier (O(n) operation due to index rebuild)
@@ -161,6 +141,7 @@ class NDConfigCollection(Generic[ModelType]):
     
     # Diff Operations
     
+    # NOTE: Maybe add a similar one in the NDBaseModel (-> but is it necessary?)
     def get_diff_config(self, new_item: ModelType, unwanted_keys: Optional[List[Union[str, List[str]]]] = None) -> Literal["new", "no_diff", "changed"]:
         """
         Compare single item against collection.
@@ -182,7 +163,7 @@ class NDConfigCollection(Generic[ModelType]):
             existing_data = self._remove_unwanted_keys(existing_data, unwanted_keys)
             new_data = self._remove_unwanted_keys(new_data, unwanted_keys)
 
-        is_subset = self._issubset(new_data, existing_data)
+        is_subset = issubset(new_data, existing_data)
         
         return "no_diff" if is_subset else "changed"
     
@@ -214,28 +195,7 @@ class NDConfigCollection(Generic[ModelType]):
         other_keys = set(other.keys())
         return list(current_keys - other_keys)
 
-    def _issubset(self, subset: Any, superset: Any) -> bool:
-        """Check if subset is contained in superset."""
-        if type(subset) is not type(superset):
-            return False
-        
-        if not isinstance(subset, dict):
-            if isinstance(subset, list):
-                return all(item in superset for item in subset)
-            return subset == superset
-        
-        for key, value in subset.items():
-            if value is None:
-                continue
-            
-            if key not in superset:
-                return False
-            
-            if not self._issubset(value, superset[key]):
-                return False
-        
-        return True
-
+    # TODO: Maybe not necessary
     def _remove_unwanted_keys(self, data: Dict, unwanted_keys: List[Union[str, List[str]]]) -> Dict:
         """Remove unwanted keys from dict (supports nested paths)."""
         data = deepcopy(data)
@@ -282,8 +242,8 @@ class NDConfigCollection(Generic[ModelType]):
             items=deepcopy(self._items)
         )
 
-    # Serialization
-    
+    # Collection Serialization
+
     def to_list(self, **kwargs) -> List[Dict]:
         """
         Export as list of dicts (with aliases).
@@ -301,7 +261,7 @@ class NDConfigCollection(Generic[ModelType]):
         """
         Create collection from list of dicts.
         """
-        items = [model_class.model_validate(item_data) for item_data in data]
+        items = [model_class.model_validate(item_data, by_name=True) for item_data in data]
         return cls(model_class=model_class, items=items)
     
     @classmethod

@@ -67,14 +67,14 @@ class LocalUserModel(NDBaseModel):
     # Keys management configurations
     # TODO: Revisit these configurations (low priority)
     exclude_from_diff: ClassVar[List[str]] = ["user_password"]
-    unwanted_keys: ClassVar[List[List[str]]]= [
+    unwanted_keys: ClassVar[List]= [
         ["passwordPolicy", "passwordChangeTime"],  # Nested path
         ["userID"]  # Simple key
     ]
     
     # Fields
     # NOTE: `alias` are NOT the ansible aliases. they are the equivalent attribute's names from the API spec
-    login_id: str = Field(..., alias="loginID")
+    login_id: str = Field(alias="loginID")
     email: Optional[str] = Field(default=None, alias="email")
     first_name: Optional[str] = Field(default=None, alias="firstName")
     last_name: Optional[str] = Field(default=None, alias="lastName")
@@ -121,8 +121,8 @@ class LocalUserModel(NDBaseModel):
         }
 
 
-    def to_payload(self) -> Dict[str, Any]:
-        return self.model_dump(by_alias=True, exclude_none=True)
+    def to_payload(self, **kwargs) -> Dict[str, Any]:
+        return self.model_dump(by_alias=True, exclude_none=True, **kwargs)
 
     # -- Deserialization (API response / Ansible payload -> Model instance) --
 
@@ -173,8 +173,8 @@ class LocalUserModel(NDBaseModel):
 
     # TODO: only works for api responses but NOT for Ansible configs -> needs to be fixed (high priority)
     @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> Self:
-        return cls.model_validate(response, by_alias=True)
+    def from_response(cls, response: Dict[str, Any], **kwargs) -> Self:
+        return cls.model_validate(response, by_alias=True, **kwargs)
         
 
     # -- Extra --
