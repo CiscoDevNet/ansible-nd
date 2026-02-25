@@ -47,6 +47,7 @@ class SwitchesEndpointParams(EndpointQueryParams):
     # Returns: "fabricName=fabric1&switchId=101"
     ```
     """
+    model_config = COMMON_CONFIG
 
     fabric_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="Name of the fabric")
     switch_id: Optional[str] = Field(default=None, min_length=1, description="Serial Number or Id of the switch/leaf")
