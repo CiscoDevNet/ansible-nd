@@ -74,6 +74,7 @@ class LocalUserModel(NDBaseModel):
     
     # Fields
     # NOTE: `alias` are NOT the ansible aliases. they are the equivalent attribute's names from the API spec
+    # TODO: use extra for generating argument_spec (low priority)
     login_id: str = Field(alias="loginID")
     email: Optional[str] = Field(default=None, alias="email")
     first_name: Optional[str] = Field(default=None, alias="firstName")
