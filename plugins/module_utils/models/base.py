@@ -15,6 +15,7 @@ from typing_extensions import Self
 
 
 # TODO: Revisit identifiers strategy (low priority)
+# TODO: add kwargs to every sub method
 class NDBaseModel(BaseModel, ABC):
     """
     Base model for all Nexus Dashboard API objects.
@@ -26,6 +27,7 @@ class NDBaseModel(BaseModel, ABC):
     - none: no identifiers required (e.g., only a single instance can exist in Nexus Dasboard)
     """
     # TODO: revisit initial Model Configurations (low priority)
+    # TODO: enable extra
     model_config = ConfigDict(
         str_strip_whitespace=True,
         use_enum_values=True,
@@ -36,7 +38,7 @@ class NDBaseModel(BaseModel, ABC):
 
     # TODO: Revisit identifiers strategy (low priority)
     identifiers: ClassVar[Optional[List[str]]] = None
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "none"]]] = None
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "none"]]] = "none"
     
     # Optional: fields to exclude from diffs (e.g., passwords)
     exclude_from_diff: ClassVar[List[str]] = []
@@ -51,7 +53,7 @@ class NDBaseModel(BaseModel, ABC):
         
         # Skip enforcement for nested models
         # TODO: Remove if `NDNestedModel` is a separated BaseModel (low priority)
-        if cls.__name__ in ['NDNestedModel']:
+        if cls.__name__ in ["NDNestedModel"] or any(base.__name__ == "NDNestedModel" for base in cls.__mro__):
             return
 
         if not hasattr(cls, "identifiers") or cls.identifiers is None:
@@ -146,7 +148,7 @@ class NDBaseModel(BaseModel, ABC):
         )
     
     # NOTE: initialize and return a deep copy of the instance?
-    # TODO: Might be missing a proper merge on fields of type `List[NDNestedModel]`? -> similar to NDCOnfigCollection...
+    # TODO: Might be missing a proper merge on fields of type `List[NDNestedModel]`? -> similar to NDCOnfigCollection... -> add argument to make it optional either replace
     def merge(self, other_model: "NDBaseModel") -> Self:
         if not isinstance(other_model, type(self)):
             # TODO: Change error message
