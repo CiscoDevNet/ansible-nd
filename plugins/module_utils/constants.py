@@ -9,6 +9,18 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
+from typing import Dict
+from types import MappingProxyType
+from copy import deepcopy
+
+class NDConstantMapping(Dict):
+
+    def __init__(self, data: Dict):
+        new_dict = deepcopy(data)
+        for k,v in data.items():
+            new_dict[v] = k
+        return MappingProxyType(new_dict)
+
 OBJECT_TYPES = {
     "tenant": "OST_TENANT",
     "vrf": "OST_VRF",
@@ -175,12 +187,3 @@ ND_REST_KEYS_TO_SANITIZE = ["metadata"]
 ND_SETUP_NODE_DEPLOYMENT_TYPE = {"physical": "cimc", "virtual": "vnode"}
 
 BACKUP_TYPE = {"config_only": "config-only", None: "config-only", "": "config-only", "full": "full"}
-
-USER_ROLES_MAPPING = {
-    "fabric_admin": "fabric-admin",
-    "observer": "observer",
-    "super_admin": "super-admin",
-    "support_engineer": "support-engineer",
-    "approver": "approver",
-    "designer": "designer",
-}

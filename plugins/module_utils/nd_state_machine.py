@@ -24,26 +24,24 @@ from models.base import NDBaseModel
 from .orchestrators.base import NDBaseOrchestrator
 from constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
 
-# TODO: replace path and verbs with smart Endpoint (Top priority)
-# TODO: Rename it (low priority)
+
 # TODO: Revisit Deserialization in every method (high priority)
-class NDNetworkResourceModule(NDModule):
+class NDStateMachine(NDModule):
     """
     Generic Network Resource Module for Nexus Dashboard.
     """
     
-    def __init__(self, module: AnsibleModule, model_class: Type[NDBaseModel], model_orchestrator: Type[NDBaseOrchestrator]):
+    def __init__(self, module: AnsibleModule, model_orchestrator: Type[NDBaseOrchestrator]):
         """
         Initialize the Network Resource Module.
         """
         # TODO: Revisit Module initialization and configuration (medium priority). e.g., use instead:
         # nd_module = NDModule()
         super().__init__(module)
-        
+
         # Configuration
-        # TODO: make sure `model_class` is the same as the one in `model_orchestrator`. if not, error out (high priority)
-        self.model_class = model_class
         self.model_orchestrator = model_orchestrator(module=module)
+        self.model_class = self.model_orchestrator.model_class
         # TODO: Revisit these class variables when udpating Module intialization and configuration (medium priority)
         self.state = self.params["state"]
         self.ansible_config = self.params["config"]
@@ -52,17 +50,17 @@ class NDNetworkResourceModule(NDModule):
         # Initialize collections
         # TODO: Revisit collections initialization especially `init_all_data` (medium priority)
         # TODO: Revisit class variables `previous`, `existing`, etc... (medium priority)
-        self.nd_config_collection = NDConfigCollection[model_class]
+        self.nd_config_collection = NDConfigCollection[self.model_class]
         try:
             init_all_data = self.model_orchestrator.query_all()
             
             self.existing = self.nd_config_collection.from_api_response(
                 response_data=init_all_data,
-                model_class=model_class
+                model_class=self.model_class
             )
-            self.previous = self.nd_config_collection(model_class=model_class)
-            self.proposed = self.nd_config_collection(model_class=model_class)
-            self.sent = self.nd_config_collection(model_class=model_class)
+            self.previous = self.nd_config_collection(model_class=self.model_class)
+            self.proposed = self.nd_config_collection(model_class=self.model_class)
+            self.sent = self.nd_config_collection(model_class=self.model_class)
         
         except Exception as e:
             self.fail_json(
@@ -340,6 +338,7 @@ class NDNetworkResourceModule(NDModule):
     
     # Output Formatting
     # TODO: move to separate Class (results) -> align it with rest_send PR
+    # TODO: return a defined ordered list of config (for integration test)
     def add_logs_and_outputs(self) -> None:
         """Add logs and outputs to module result based on output_level."""
         output_level = self.params.get("output_level", "normal")
