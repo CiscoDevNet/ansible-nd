@@ -47,6 +47,7 @@ def test_response_handler_nd_00010():
     - _verb defaults to None
     - RETURN_CODES_SUCCESS contains expected status codes
     - RETURN_CODE_NOT_FOUND is 404
+    - RETURN_CODES_ERROR contains expected error status codes
 
     ## Classes and Methods
 
@@ -57,8 +58,9 @@ def test_response_handler_nd_00010():
     assert instance._response is None
     assert instance._result is None
     assert instance._verb is None
-    assert instance.RETURN_CODES_SUCCESS == {200, 201, 202, 204}
+    assert instance.RETURN_CODES_SUCCESS == {200, 201, 202, 204, 207}
     assert instance.RETURN_CODE_NOT_FOUND == 404
+    assert instance.RETURN_CODES_ERROR == {405, 409}
 
 
 # =============================================================================
@@ -414,6 +416,30 @@ def test_response_handler_nd_00530():
     assert instance.result["success"] is True
 
 
+def test_response_handler_nd_00535():
+    """
+    # Summary
+
+    Verify GET response with 207 Multi-Status.
+
+    ## Test
+
+    - GET with RETURN_CODE 207 sets found=True, success=True
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {"RETURN_CODE": 207, "MESSAGE": "Multi-Status"}
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["found"] is True
+    assert instance.result["success"] is True
+
+
 def test_response_handler_nd_00540():
     """
     # Summary
@@ -504,6 +530,54 @@ def test_response_handler_nd_00570():
     """
     instance = ResponseHandler()
     instance.response = {"RETURN_CODE": 401, "MESSAGE": "Unauthorized"}
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["found"] is False
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_00575():
+    """
+    # Summary
+
+    Verify GET response with 405 Method Not Allowed.
+
+    ## Test
+
+    - GET with RETURN_CODE 405 sets found=False, success=False
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {"RETURN_CODE": 405, "MESSAGE": "Method Not Allowed"}
+    instance.verb = HttpVerbEnum.GET
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["found"] is False
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_00580():
+    """
+    # Summary
+
+    Verify GET response with 409 Conflict.
+
+    ## Test
+
+    - GET with RETURN_CODE 409 sets found=False, success=False
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_get_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {"RETURN_CODE": 409, "MESSAGE": "Conflict"}
     instance.verb = HttpVerbEnum.GET
     with does_not_raise():
         instance.commit()
@@ -660,6 +734,30 @@ def test_response_handler_nd_00650():
     assert instance.result["success"] is True
 
 
+def test_response_handler_nd_00655():
+    """
+    # Summary
+
+    Verify POST response with 207 Multi-Status.
+
+    ## Test
+
+    - POST with RETURN_CODE 207 and no errors sets changed=True, success=True
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {"RETURN_CODE": 207, "MESSAGE": "Multi-Status", "DATA": {"status": "partial"}}
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["changed"] is True
+    assert instance.result["success"] is True
+
+
 def test_response_handler_nd_00660():
     """
     # Summary
@@ -765,6 +863,62 @@ def test_response_handler_nd_00690():
         "RETURN_CODE": 400,
         "MESSAGE": "Bad Request",
         "DATA": {},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["changed"] is False
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_00695():
+    """
+    # Summary
+
+    Verify POST response with 405 Method Not Allowed.
+
+    ## Test
+
+    - POST with RETURN_CODE 405 sets changed=False, success=False
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 405,
+        "MESSAGE": "Method Not Allowed",
+        "DATA": {},
+    }
+    instance.verb = HttpVerbEnum.POST
+    with does_not_raise():
+        instance.commit()
+    assert instance.result["changed"] is False
+    assert instance.result["success"] is False
+
+
+def test_response_handler_nd_00705():
+    """
+    # Summary
+
+    Verify POST response with 409 Conflict.
+
+    ## Test
+
+    - POST with RETURN_CODE 409 sets changed=False, success=False
+
+    ## Classes and Methods
+
+    - ResponseHandler._handle_post_put_delete_response()
+    - ResponseHandler.commit()
+    """
+    instance = ResponseHandler()
+    instance.response = {
+        "RETURN_CODE": 409,
+        "MESSAGE": "Conflict",
+        "DATA": {"reason": "resource exists"},
     }
     instance.verb = HttpVerbEnum.POST
     with does_not_raise():

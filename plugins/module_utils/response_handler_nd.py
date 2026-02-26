@@ -105,10 +105,12 @@ class ResponseHandler:
     """
 
     # HTTP status codes considered successful
-    # 200: OK, 201: Created, 202: Accepted, 204: No Content
-    RETURN_CODES_SUCCESS: set[int] = {200, 201, 202, 204}
+    # 200: OK, 201: Created, 202: Accepted, 204: No Content, 207: Multi-Status
+    RETURN_CODES_SUCCESS: set[int] = {200, 201, 202, 204, 207}
     # 404 is handled separately as "not found but not an error"
     RETURN_CODE_NOT_FOUND: int = 404
+    # HTTP status codes considered errors (conflict, method not allowed)
+    RETURN_CODES_ERROR: set[int] = {405, 409}
 
     def __init__(self) -> None:
         self.class_name = self.__class__.__name__
@@ -145,7 +147,7 @@ class ResponseHandler:
                     -   False if RETURN_CODE == 404
                     -   True otherwise (when successful)
             -   success:
-                    -   True if RETURN_CODE in (200, 201, 202, 204, 404)
+                    -   True if RETURN_CODE in (200, 201, 202, 204, 207, 404)
                     -   False otherwise (error status codes)
         """
         result = {}
@@ -175,10 +177,10 @@ class ResponseHandler:
 
         -	self.result is a dict containing:
             -   changed:
-                -   True if RETURN_CODE in (200, 201, 202, 204) and no ERROR
+                -   True if RETURN_CODE in (200, 201, 202, 204, 207) and no ERROR
                 -   False otherwise
             -   success:
-                -   True if RETURN_CODE in (200, 201, 202, 204) and no ERROR
+                -   True if RETURN_CODE in (200, 201, 202, 204, 207) and no ERROR
                 -   False otherwise
         """
         result = {}
