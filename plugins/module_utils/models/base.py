@@ -15,7 +15,6 @@ from typing_extensions import Self
 
 
 # TODO: Revisit identifiers strategy (low priority)
-# TODO: add kwargs to every sub method
 class NDBaseModel(BaseModel, ABC):
     """
     Base model for all Nexus Dashboard API objects.
@@ -24,24 +23,24 @@ class NDBaseModel(BaseModel, ABC):
     - single: One unique required field (e.g., ["login_id"])
     - composite: Multiple required fields as tuple (e.g., ["device", "interface"])
     - hierarchical: Priority-ordered fields (e.g., ["uuid", "name"])
-    - none: no identifiers required (e.g., only a single instance can exist in Nexus Dasboard)
+    - singleton: no identifiers required (e.g., only a single instance can exist in Nexus Dasboard)
     """
     # TODO: revisit initial Model Configurations (low priority)
-    # TODO: enable extra
     model_config = ConfigDict(
         str_strip_whitespace=True,
         use_enum_values=True,
         validate_assignment=True,
         populate_by_name=True,
-        extra='ignore'
+        extra='allow',  # NOTE: enabled extra: allows to add extra Field infos for generating Ansible argument_spec and Module Docs
     )
 
     # TODO: Revisit identifiers strategy (low priority)
     identifiers: ClassVar[Optional[List[str]]] = None
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "none"]]] = "none"
+    # TODO: Rvisit no identifiers strategy naming (`singleton`) (low priority)
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
     
     # Optional: fields to exclude from diffs (e.g., passwords)
-    exclude_from_diff: ClassVar[List[str]] = []
+    exclude_from_diff: ClassVar[List] = []
     unwanted_keys: ClassVar[List] = []
 
     # TODO: Revisit it with identifiers strategy (low priority)
@@ -52,7 +51,7 @@ class NDBaseModel(BaseModel, ABC):
         super().__init_subclass__(**kwargs)
         
         # Skip enforcement for nested models
-        # TODO: Remove if `NDNestedModel` is a separated BaseModel (low priority)
+        # TODO: Remove if `NDNestedModel` is a separated BaseModel (low conditional priority)
         if cls.__name__ in ["NDNestedModel"] or any(base.__name__ == "NDNestedModel" for base in cls.__mro__):
             return
 
@@ -64,11 +63,10 @@ class NDBaseModel(BaseModel, ABC):
         if not hasattr(cls, "identifier_strategy") or cls.identifier_strategy is None:
             raise ValueError(
                 f"Class {cls.__name__} must define 'identifiers' and 'identifier_strategy'."
-                f"Example: `identifier_strategy: ClassVar[Optional[Literal['single', 'composite', 'hierarchical', 'none']]] = 'single'`"
+                f"Example: `identifier_strategy: ClassVar[Optional[Literal['single', 'composite', 'hierarchical', 'singleton']]] = 'single'`"
             )
     
     # NOTE: Might not need to make them absractmethod because of the Pydantic built-in methods (low priority)
-    # NOTE: Should we use keyword arguments?
     @abstractmethod
     def to_payload(self, **kwargs) -> Dict[str, Any]:
         """
@@ -85,16 +83,15 @@ class NDBaseModel(BaseModel, ABC):
         pass
     
     # TODO: Revisit this function when revisiting identifier strategy (low priority)
-    # TODO: Add condition when there is no identifiers (high priority)
-    def get_identifier_value(self) -> Union[str, int, Tuple[Any, ...]]:
+    def get_identifier_value(self, **kwargs) -> Union[str, int, Tuple[Any, ...]]:
         """
         Extract identifier value(s) from this instance:
         - single identifier: Returns field value.
         - composite identifiers: Returns tuple of all field values.
         - hierarchical identifiers: Returns tuple of (field_name, value) for first non-None field.
         """
-        if not self.identifiers:
-            raise ValueError(f"{self.__class__.__name__} has no identifiers defined")
+        if not self.identifiers and self.identifier_strategy != "singleton":
+            raise ValueError(f"{self.__class__.__name__} must have identifiers defined with its current identifier strategy: `{self.identifier_strategy}`")
         
         if self.identifier_strategy == "single":
             value = getattr(self, self.identifiers[0], None)
@@ -133,6 +130,10 @@ class NDBaseModel(BaseModel, ABC):
                 f"No non-None value in hierarchical fields {self.identifiers}"
             )
         
+        # TODO: Revisit condition when there is no identifiers (low priority)
+        elif self.identifier_strategy == "singleton":
+            return self.identifier_strategy
+        
         else:
             raise ValueError(f"Unknown identifier strategy: {self.identifier_strategy}")
     
@@ -166,7 +167,7 @@ class NDBaseModel(BaseModel, ABC):
                 setattr(self, field, value)
         return self
 
-# TODO: Make it a seperated BaseModel (low priority)
+# TODO: Make it a seperated BaseModel? (low conditional priority)
 class NDNestedModel(NDBaseModel):
     """
     Base for nested models without identifiers.
