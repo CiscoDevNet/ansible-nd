@@ -239,7 +239,7 @@ class NDModule(object):
             if file is not None:
                 info = self.connection.send_file_request(method, uri, file, data, None, file_key, file_ext)
             else:
-                if data:
+                if data is not None:
                     info = self.connection.send_request(method, uri, json.dumps(data))
                 else:
                     info = self.connection.send_request(method, uri)
