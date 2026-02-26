@@ -181,7 +181,7 @@ from ansible.module_utils.basic import AnsibleModule
 # from ansible_collections.cisco.nd.plugins.module_utils.models.local_user import LocalUserModel
 # from ansible_collections.cisco.nd.plugins.module_utils.constants import USER_ROLES_MAPPING
 from ..module_utils.nd import nd_argument_spec
-from ..module_utils.nd_network_resources import NDNetworkResourceModule
+from ..module_utils.nd_state_machine import NDStateMachine
 from ..module_utils.models.local_user import LocalUserModel
 from ..module_utils.orchestrators.local_user import LocalUserOrchestrator
 
@@ -194,12 +194,11 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
     )
-    
+
     try:
         # Create NDNetworkResourceModule with LocalUserModel
-        nd_module = NDNetworkResourceModule(
+        nd_module = NDStateMachine(
             module=module,
-            model_class=LocalUserModel,
             model_orchestrator=LocalUserOrchestrator,
         )
         

@@ -27,7 +27,8 @@ class NDBaseOrchestrator(BaseModel):
     create_endpoint: Type[NDBaseSmartEndpoint]
     update_endpoint: Type[NDBaseSmartEndpoint]
     delete_endpoint: Type[NDBaseSmartEndpoint]
-    query_endpoint: Type[NDBaseSmartEndpoint]
+    query_one_endpoint: Type[NDBaseSmartEndpoint]
+    query_all_endpoint: Type[NDBaseSmartEndpoint]
 
     # NOTE: Module Field is always required
     # TODO: Replace it with future sender (low priority)
@@ -70,9 +71,8 @@ class NDBaseOrchestrator(BaseModel):
 
     def query_one(self, model_instance: NDBaseModel, **kwargs) -> ResponseType:
         try:
-            api_endpoint = self.query_endpoint()
+            api_endpoint = self.query_one_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            self.query_endpoint.set_identifiers(model_instance.get_identifier_value())
             return self.module.request(path=api_endpoint.path, method=api_endpoint.verb)
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
@@ -80,7 +80,7 @@ class NDBaseOrchestrator(BaseModel):
     # TODO: Revisit the straegy around the query_all (see local_user's case)
     def query_all(self, model_instance: NDBaseModel, **kwargs) -> ResponseType:
         try:
-            result = self.module.query_obj(self.query_endpoint.path)
+            result = self.module.query_obj(self.query_all_endpoint.path)
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
