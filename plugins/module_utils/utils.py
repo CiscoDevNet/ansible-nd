@@ -9,7 +9,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from copy import deepcopy
-from typing import Any
+from typing import Any, Dict, List, Union
 
 
 def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
@@ -54,3 +54,30 @@ def issubset(subset: Any, superset: Any) -> bool:
             return False
     
     return True
+
+
+# TODO: Might not necessary with Pydantic validation and serialization built-in methods
+def remove_unwanted_keys(data: Dict, unwanted_keys: List[Union[str, List[str]]]) -> Dict:
+    """Remove unwanted keys from dict (supports nested paths)."""
+    data = deepcopy(data)
+    
+    for key in unwanted_keys:
+        if isinstance(key, str):
+            if key in data:
+                del data[key]
+        
+        elif isinstance(key, list) and len(key) > 0:
+            try:
+                parent = data
+                for k in key[:-1]:
+                    if isinstance(parent, dict) and k in parent:
+                        parent = parent[k]
+                    else:
+                        break
+                else:
+                    if isinstance(parent, dict) and key[-1] in parent:
+                        del parent[key[-1]]
+            except (KeyError, TypeError, IndexError):
+                pass
+    
+    return data
