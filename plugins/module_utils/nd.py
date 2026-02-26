@@ -239,13 +239,8 @@ class NDModule(object):
             if file is not None:
                 info = self.connection.send_file_request(method, uri, file, data, None, file_key, file_ext)
             else:
-<<<<<<< HEAD
                 if data:
                     info = self.connection.send_request(method, uri, json.dumps(data))
-=======
-                if data is not None:
-                    info = conn.send_request(method, uri, json.dumps(data))
->>>>>>> 7c967c3 ([minor_change] Add nd_local_user as a new network resource module for Nexus Dashboard v4.1.0 and higher.)
                 else:
                     info = self.connection.send_request(method, uri)
             self.result["data"] = data

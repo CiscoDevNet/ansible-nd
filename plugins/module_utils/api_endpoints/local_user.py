@@ -20,8 +20,7 @@ from mixins import LoginIdMixin
 from enums import VerbEnum
 from base import NDBaseSmartEndpoint, NDBasePath
 from pydantic import Field
-
-IdentifierKey = Union[str, int, Tuple[Any, ...], None]
+from ..types import IdentifierKey
 
 class _EpApiV1InfraAaaLocalUsersBase(LoginIdMixin, NDBaseSmartEndpoint):
     """

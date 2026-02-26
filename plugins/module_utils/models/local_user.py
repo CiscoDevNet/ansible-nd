@@ -13,11 +13,14 @@ from types import MappingProxyType
 from typing import List, Dict, Any, Optional, ClassVar, Literal
 from typing_extensions import Self
 
-# TODO: To be replaced with: from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel, NDNestedModel
-from .base import NDBaseModel, NDNestedModel
+# TODO: To be replaced with: from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+# TODO: To be replaced with: from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from .base import NDBaseModel
+from .nested import NDNestedModel
+from ..constants import NDConstantMapping 
 
-# TODO: Move it to constants.py and make a reverse class Map for this (low priority)
-USER_ROLES_MAPPING = MappingProxyType({
+# Constant defined here as it is only used in this model
+USER_ROLES_MAPPING = NDConstantMapping({
     "fabric_admin": "fabric-admin",
     "observer": "observer",
     "super_admin": "super-admin",
@@ -31,7 +34,7 @@ class LocalUserSecurityDomainModel(NDNestedModel):
     """Security domain configuration for local user (nested model)."""
 
     # Fields
-    name: str = Field(..., alias="name", exclude=True)
+    name: str = Field(alias="name", exclude=True)
     roles: Optional[List[str]] = Field(default=None, alias="roles", exclude=True)
 
     # -- Serialization (Model instance -> API payload) --
@@ -47,8 +50,7 @@ class LocalUserSecurityDomainModel(NDNestedModel):
             }
         }
 
-    # -- Deserialization (API response / Ansible payload -> Model instance) --
-    # NOTE: Not needed as it already defined in `LocalUserModel` -> investigate if needed
+    # NOTE: Deserialization defined in `LocalUserModel` due to API response complexity
 
 
 # TODO: Add field validation (e.g. me, le, choices, etc...) (low priority)
@@ -121,10 +123,6 @@ class LocalUserModel(NDBaseModel):
             "domains": domains_dict
         }
 
-
-    def to_payload(self, **kwargs) -> Dict[str, Any]:
-        return self.model_dump(by_alias=True, exclude_none=True, **kwargs)
-
     # -- Deserialization (API response / Ansible payload -> Model instance) --
 
     @model_validator(mode="before")
@@ -171,12 +169,6 @@ class LocalUserModel(NDBaseModel):
             return domains_list
         
         return value
-
-    # TODO: only works for api responses but NOT for Ansible configs -> needs to be fixed (high priority)
-    @classmethod
-    def from_response(cls, response: Dict[str, Any], **kwargs) -> Self:
-        return cls.model_validate(response, by_alias=True, **kwargs)
-        
 
     # -- Extra --
 
