@@ -35,9 +35,9 @@ class NDBaseSmartEndpoint(BaseModel, ABC):
     def verb(self) -> str:
         pass
 
-    # TODO: Maybe to be modifed to be more Pydantic
-    # TODO: Maybe change function's name
-    # NOTE: function to set endpoints attribute fields from identifiers
+    # TODO: Maybe to be modifed to be more Pydantic (low priority)
+    # TODO: Maybe change function's name (low priority)
+    # NOTE: function to set endpoints attribute fields from identifiers -> acts as the bridge between Models and Endpoints for API Request Orchestration
     @abstractmethod
     def set_identifiers(self, identifier: IdentifierKey = None):
         pass

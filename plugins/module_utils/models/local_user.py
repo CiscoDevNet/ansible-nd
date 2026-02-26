@@ -16,7 +16,7 @@ from typing_extensions import Self
 # TODO: To be replaced with: from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel, NDNestedModel
 from .base import NDBaseModel, NDNestedModel
 
-# TODO: Move it to constants.py and make a reverse class Map for this
+# TODO: Move it to constants.py and make a reverse class Map for this (low priority)
 USER_ROLES_MAPPING = MappingProxyType({
     "fabric_admin": "fabric-admin",
     "observer": "observer",
@@ -51,7 +51,7 @@ class LocalUserSecurityDomainModel(NDNestedModel):
     # NOTE: Not needed as it already defined in `LocalUserModel` -> investigate if needed
 
 
-# TODO: Add field validation (e.g. me, le, choices, etc...) (medium priority)
+# TODO: Add field validation (e.g. me, le, choices, etc...) (low priority)
 class LocalUserModel(NDBaseModel):
     """
     Local user configuration.
@@ -62,7 +62,7 @@ class LocalUserModel(NDBaseModel):
     # Identifier configuration
     # TODO: Revisit this identifiers strategy (low priority)
     identifiers: ClassVar[Optional[List[str]]] = ["login_id"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "none"]]] = "single"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
 
     # Keys management configurations
     # TODO: Revisit these configurations (low priority)
