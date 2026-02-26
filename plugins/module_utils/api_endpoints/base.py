@@ -12,8 +12,8 @@ __metaclass__ = type
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, ConfigDict
 from typing import Final, Union, Tuple, Any
+from ..types import IdentifierKey
 
-IdentifierKey = Union[str, int, Tuple[Any, ...], None]
 
 # TODO: Rename it to APIEndpoint
 # NOTE: This is a very minimalist endpoint package -> needs to be enhanced

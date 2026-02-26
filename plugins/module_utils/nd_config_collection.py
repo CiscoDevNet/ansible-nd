@@ -14,14 +14,12 @@ from copy import deepcopy
 # TODO: To be replaced with: from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from .models.base import NDBaseModel
 from .utils import issubset
+from .types import IdentifierKey
 
 # Type aliases
-# NOTE: Maybe add more type aliases in the future if needed
 ModelType = TypeVar('ModelType', bound=NDBaseModel)
-# TODO: Defined the same acros multiple files -> maybe move to constants.py (low priority)
-IdentifierKey = Union[str, int, Tuple[Any, ...]]
 
-# TODO: Make it a Pydantic RootModel? (low conditional priority but medium impact on NDNetworkResourceModule)
+
 class NDConfigCollection(Generic[ModelType]):
     """
     Nexus Dashboard configuration collection for NDBaseModel instances.
@@ -156,9 +154,9 @@ class NDConfigCollection(Generic[ModelType]):
         if existing is None:
             return "new"
 
+        # TODO: make a diff class level method for NDBaseModel
         existing_data = existing.to_diff_dict()
         new_data = new_item.to_diff_dict()
-
         is_subset = issubset(new_data, existing_data)
         
         return "no_diff" if is_subset else "changed"
@@ -214,30 +212,30 @@ class NDConfigCollection(Generic[ModelType]):
 
     # Collection Serialization
 
-    def to_list(self, **kwargs) -> List[Dict]:
+    def to_ansible_config(self, **kwargs) -> List[Dict]:
         """
-        Export as list of dicts (with aliases).
+        Export as an Ansible config.
         """
-        return [item.model_dump(by_alias=True, exclude_none=True, **kwargs) for item in self._items]
+        return [item.to_config(**kwargs) for item in self._items]
     
-    def to_payload_list(self) -> List[Dict[str, Any]]:
+    def to_payload_list(self, **kwargs) -> List[Dict[str, Any]]:
         """
         Export as list of API payloads.
         """
-        return [item.to_payload() for item in self._items]
+        return [item.to_payload(**kwargs) for item in self._items]
     
     @classmethod
-    def from_list(cls, data: List[Dict], model_class: type[ModelType]) -> "NDConfigCollection[ModelType]":
+    def from_ansible_config(cls, data: List[Dict], model_class: type[ModelType], **kwargs) -> "NDConfigCollection[ModelType]":
         """
-        Create collection from list of dicts.
+        Create collection from Ansible config.
         """
-        items = [model_class.model_validate(item_data, by_name=True) for item_data in data]
+        items = [model_class.from_config(item_data, **kwargs) for item_data in data]
         return cls(model_class=model_class, items=items)
     
     @classmethod
-    def from_api_response(cls, response_data: List[Dict[str, Any]], model_class: type[ModelType]) -> "NDConfigCollection[ModelType]":
+    def from_api_response(cls, response_data: List[Dict[str, Any]], model_class: type[ModelType], **kwargs) -> "NDConfigCollection[ModelType]":
         """
         Create collection from API response.
         """
-        items = [model_class.from_response(item_data) for item_data in response_data]
+        items = [model_class.from_response(item_data, **kwargs) for item_data in response_data]
         return cls(model_class=model_class, items=items)
