@@ -899,6 +899,7 @@ def test_rest_send_00510():
     ## Test
 
     - Failed POST request returns 400 response
+    - Loop retries until timeout is exhausted
 
     ## Classes and Methods
 
@@ -909,9 +910,9 @@ def test_rest_send_00510():
     key = f"{method_name}a"
 
     def responses():
-        # Provide an extra response entry for potential retry scenarios
-        yield responses_rest_send(key)
-        yield responses_rest_send(key)
+        # Provide responses for multiple retry attempts (60 retries * 5 second interval = 300 seconds)
+        for _ in range(60):
+            yield responses_rest_send(key)
 
     gen_responses = ResponseGenerator(responses())
 
@@ -931,7 +932,8 @@ def test_rest_send_00510():
         response_handler.commit()
         instance.response_handler = response_handler
         instance.unit_test = True
-        instance.timeout = 1
+        instance.timeout = 10
+        instance.send_interval = 5
         instance.path = "/api/v1/test/badrequest"
         instance.verb = HttpVerbEnum.POST
         instance.payload = {"invalid": "data"}
@@ -951,6 +953,7 @@ def test_rest_send_00520():
     ## Test
 
     - Failed GET request returns 500 response
+    - Loop retries until timeout is exhausted
 
     ## Classes and Methods
 
@@ -961,9 +964,9 @@ def test_rest_send_00520():
     key = f"{method_name}a"
 
     def responses():
-        # Provide an extra response entry for potential retry scenarios
-        yield responses_rest_send(key)
-        yield responses_rest_send(key)
+        # Provide responses for multiple retry attempts (60 retries * 5 second interval = 300 seconds)
+        for _ in range(60):
+            yield responses_rest_send(key)
 
     gen_responses = ResponseGenerator(responses())
 
@@ -983,7 +986,8 @@ def test_rest_send_00520():
         response_handler.commit()
         instance.response_handler = response_handler
         instance.unit_test = True
-        instance.timeout = 1
+        instance.timeout = 10
+        instance.send_interval = 5
         instance.path = "/api/v1/test/servererror"
         instance.verb = HttpVerbEnum.GET
         instance.commit()

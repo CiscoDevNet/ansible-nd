@@ -323,14 +323,6 @@ class RestSend:
             self.sender.payload = self.payload
         success = False
         while timeout > 0 and success is False:
-            timeout -= self.send_interval
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"unit_test: {self.unit_test}. "
-            msg += f"Subtracted {self.send_interval} from timeout. "
-            msg += f"timeout: {timeout}, "
-            msg += f"success: {success}."
-            self.log.debug(msg)
-
             msg = f"{self.class_name}.{method_name}: "
             msg += "Calling sender.commit(): "
             msg += f"timeout {timeout}, success {success}, verb {self.verb}, path {self.path}."
@@ -367,8 +359,14 @@ class RestSend:
             self.log.debug(msg)
 
             success = self.result_current["success"]
-            if success is False and self.unit_test is False:
-                sleep(self.send_interval)
+            if success is False:
+                if self.unit_test is False:
+                    sleep(self.send_interval)
+                timeout -= self.send_interval
+                msg = f"{self.class_name}.{method_name}: "
+                msg += f"Subtracted {self.send_interval} from timeout. "
+                msg += f"timeout: {timeout}."
+                self.log.debug(msg)
 
         self._response.append(self.response_current)
         self._result.append(self.result_current)
