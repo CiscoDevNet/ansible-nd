@@ -16,11 +16,11 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-from typing import Optional
+from typing import Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.ep.base_paths_manage import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.ep.query_params import CompositeQueryParams, EndpointQueryParams, LuceneQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.base_paths_manage import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict, Field
 
 # Common config for basic validation
@@ -47,6 +47,7 @@ class SwitchesEndpointParams(EndpointQueryParams):
     # Returns: "fabricName=fabric1&switchId=101"
     ```
     """
+
     model_config = COMMON_CONFIG
 
     fabric_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="Name of the fabric")
@@ -54,7 +55,7 @@ class SwitchesEndpointParams(EndpointQueryParams):
     hostname: Optional[str] = Field(default=None, min_length=1, description="Name of the hostname")
 
 
-class EpApiV1ManageSwitchesGet(BaseModel):
+class EpManageSwitchesGet(BaseModel):
     """
     # Summary
 
@@ -132,6 +133,10 @@ class EpApiV1ManageSwitchesGet(BaseModel):
     """
 
     model_config = COMMON_CONFIG
+
+    # Version metadata
+    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
+    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     endpoint_params: SwitchesEndpointParams = Field(default_factory=SwitchesEndpointParams, description="Endpoint-specific query parameters")
     lucene_params: LuceneQueryParams = Field(default_factory=LuceneQueryParams, description="Lucene-style filtering query parameters")

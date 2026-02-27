@@ -16,11 +16,11 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.ep.ep_api_v1_infra_clusterhealth import (
+from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.ep_infra_clusterhealth import (
     ClusterHealthConfigEndpointParams,
     ClusterHealthStatusEndpointParams,
-    EpApiV1InfraClusterhealthConfigGet,
-    EpApiV1InfraClusterhealthStatusGet,
+    EpInfraClusterhealthConfigGet,
+    EpInfraClusterhealthStatusGet,
 )
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
@@ -195,7 +195,7 @@ def test_ep_clusterhealth_00130():
 
 
 # =============================================================================
-# Test: EpApiV1InfraClusterhealthConfigGet
+# Test: EpInfraClusterhealthConfigGet
 # =============================================================================
 
 
@@ -203,7 +203,7 @@ def test_ep_clusterhealth_00200():
     """
     # Summary
 
-    Verify EpApiV1InfraClusterhealthConfigGet basic instantiation
+    Verify EpInfraClusterhealthConfigGet basic instantiation
 
     ## Test
 
@@ -213,13 +213,13 @@ def test_ep_clusterhealth_00200():
 
     ## Classes and Methods
 
-    - EpApiV1InfraClusterhealthConfigGet.__init__()
-    - EpApiV1InfraClusterhealthConfigGet.verb
-    - EpApiV1InfraClusterhealthConfigGet.class_name
+    - EpInfraClusterhealthConfigGet.__init__()
+    - EpInfraClusterhealthConfigGet.verb
+    - EpInfraClusterhealthConfigGet.class_name
     """
     with does_not_raise():
-        instance = EpApiV1InfraClusterhealthConfigGet()
-    assert instance.class_name == "EpApiV1InfraClusterhealthConfigGet"
+        instance = EpInfraClusterhealthConfigGet()
+    assert instance.class_name == "EpInfraClusterhealthConfigGet"
     assert instance.verb == HttpVerbEnum.GET
 
 
@@ -227,7 +227,7 @@ def test_ep_clusterhealth_00210():
     """
     # Summary
 
-    Verify EpApiV1InfraClusterhealthConfigGet path without params
+    Verify EpInfraClusterhealthConfigGet path without params
 
     ## Test
 
@@ -235,10 +235,10 @@ def test_ep_clusterhealth_00210():
 
     ## Classes and Methods
 
-    - EpApiV1InfraClusterhealthConfigGet.path
+    - EpInfraClusterhealthConfigGet.path
     """
     with does_not_raise():
-        instance = EpApiV1InfraClusterhealthConfigGet()
+        instance = EpInfraClusterhealthConfigGet()
         result = instance.path
     assert result == "/api/v1/infra/clusterhealth/config"
 
@@ -247,7 +247,7 @@ def test_ep_clusterhealth_00220():
     """
     # Summary
 
-    Verify EpApiV1InfraClusterhealthConfigGet path with cluster_name
+    Verify EpInfraClusterhealthConfigGet path with cluster_name
 
     ## Test
 
@@ -255,11 +255,11 @@ def test_ep_clusterhealth_00220():
 
     ## Classes and Methods
 
-    - EpApiV1InfraClusterhealthConfigGet.path
-    - EpApiV1InfraClusterhealthConfigGet.endpoint_params
+    - EpInfraClusterhealthConfigGet.path
+    - EpInfraClusterhealthConfigGet.endpoint_params
     """
     with does_not_raise():
-        instance = EpApiV1InfraClusterhealthConfigGet()
+        instance = EpInfraClusterhealthConfigGet()
         instance.endpoint_params.cluster_name = "my-cluster"
         result = instance.path
     assert result == "/api/v1/infra/clusterhealth/config?clusterName=my-cluster"
@@ -269,7 +269,7 @@ def test_ep_clusterhealth_00230():
     """
     # Summary
 
-    Verify EpApiV1InfraClusterhealthConfigGet params at instantiation
+    Verify EpInfraClusterhealthConfigGet params at instantiation
 
     ## Test
 
@@ -277,17 +277,17 @@ def test_ep_clusterhealth_00230():
 
     ## Classes and Methods
 
-    - EpApiV1InfraClusterhealthConfigGet.__init__()
+    - EpInfraClusterhealthConfigGet.__init__()
     """
     with does_not_raise():
         params = ClusterHealthConfigEndpointParams(cluster_name="test-cluster")
-        instance = EpApiV1InfraClusterhealthConfigGet(endpoint_params=params)
+        instance = EpInfraClusterhealthConfigGet(endpoint_params=params)
     assert instance.endpoint_params.cluster_name == "test-cluster"
     assert instance.path == "/api/v1/infra/clusterhealth/config?clusterName=test-cluster"
 
 
 # =============================================================================
-# Test: EpApiV1InfraClusterhealthStatusGet
+# Test: EpInfraClusterhealthStatusGet
 # =============================================================================
 
 
@@ -295,7 +295,7 @@ def test_ep_clusterhealth_00300():
     """
     # Summary
 
-    Verify EpApiV1InfraClusterhealthStatusGet basic instantiation
+    Verify EpInfraClusterhealthStatusGet basic instantiation
 
     ## Test
 
@@ -305,13 +305,13 @@ def test_ep_clusterhealth_00300():
 
     ## Classes and Methods
 
-    - EpApiV1InfraClusterhealthStatusGet.__init__()
-    - EpApiV1InfraClusterhealthStatusGet.verb
-    - EpApiV1InfraClusterhealthStatusGet.class_name
+    - EpInfraClusterhealthStatusGet.__init__()
+    - EpInfraClusterhealthStatusGet.verb
+    - EpInfraClusterhealthStatusGet.class_name
     """
     with does_not_raise():
-        instance = EpApiV1InfraClusterhealthStatusGet()
-    assert instance.class_name == "EpApiV1InfraClusterhealthStatusGet"
+        instance = EpInfraClusterhealthStatusGet()
+    assert instance.class_name == "EpInfraClusterhealthStatusGet"
     assert instance.verb == HttpVerbEnum.GET
 
 
@@ -319,7 +319,7 @@ def test_ep_clusterhealth_00310():
     """
     # Summary
 
-    Verify EpApiV1InfraClusterhealthStatusGet path without params
+    Verify EpInfraClusterhealthStatusGet path without params
 
     ## Test
 
@@ -327,10 +327,10 @@ def test_ep_clusterhealth_00310():
 
     ## Classes and Methods
 
-    - EpApiV1InfraClusterhealthStatusGet.path
+    - EpInfraClusterhealthStatusGet.path
     """
     with does_not_raise():
-        instance = EpApiV1InfraClusterhealthStatusGet()
+        instance = EpInfraClusterhealthStatusGet()
         result = instance.path
     assert result == "/api/v1/infra/clusterhealth/status"
 
@@ -339,7 +339,7 @@ def test_ep_clusterhealth_00320():
     """
     # Summary
 
-    Verify EpApiV1InfraClusterhealthStatusGet path with single param
+    Verify EpInfraClusterhealthStatusGet path with single param
 
     ## Test
 
@@ -347,11 +347,11 @@ def test_ep_clusterhealth_00320():
 
     ## Classes and Methods
 
-    - EpApiV1InfraClusterhealthStatusGet.path
-    - EpApiV1InfraClusterhealthStatusGet.endpoint_params
+    - EpInfraClusterhealthStatusGet.path
+    - EpInfraClusterhealthStatusGet.endpoint_params
     """
     with does_not_raise():
-        instance = EpApiV1InfraClusterhealthStatusGet()
+        instance = EpInfraClusterhealthStatusGet()
         instance.endpoint_params.cluster_name = "foo"
         result = instance.path
     assert result == "/api/v1/infra/clusterhealth/status?clusterName=foo"
@@ -361,7 +361,7 @@ def test_ep_clusterhealth_00330():
     """
     # Summary
 
-    Verify EpApiV1InfraClusterhealthStatusGet path with all params
+    Verify EpInfraClusterhealthStatusGet path with all params
 
     ## Test
 
@@ -369,11 +369,11 @@ def test_ep_clusterhealth_00330():
 
     ## Classes and Methods
 
-    - EpApiV1InfraClusterhealthStatusGet.path
-    - EpApiV1InfraClusterhealthStatusGet.endpoint_params
+    - EpInfraClusterhealthStatusGet.path
+    - EpInfraClusterhealthStatusGet.endpoint_params
     """
     with does_not_raise():
-        instance = EpApiV1InfraClusterhealthStatusGet()
+        instance = EpInfraClusterhealthStatusGet()
         instance.endpoint_params.cluster_name = "foo"
         instance.endpoint_params.health_category = "bar"
         instance.endpoint_params.node_name = "baz"
@@ -385,7 +385,7 @@ def test_ep_clusterhealth_00340():
     """
     # Summary
 
-    Verify EpApiV1InfraClusterhealthStatusGet with partial params
+    Verify EpInfraClusterhealthStatusGet with partial params
 
     ## Test
 
@@ -393,10 +393,10 @@ def test_ep_clusterhealth_00340():
 
     ## Classes and Methods
 
-    - EpApiV1InfraClusterhealthStatusGet.path
+    - EpInfraClusterhealthStatusGet.path
     """
     with does_not_raise():
-        instance = EpApiV1InfraClusterhealthStatusGet()
+        instance = EpInfraClusterhealthStatusGet()
         instance.endpoint_params.cluster_name = "cluster1"
         instance.endpoint_params.node_name = "node1"
         result = instance.path
@@ -438,10 +438,10 @@ def test_ep_clusterhealth_00410():
 
     ## Classes and Methods
 
-    - EpApiV1InfraClusterhealthConfigGet.endpoint_params
+    - EpInfraClusterhealthConfigGet.endpoint_params
     """
     with does_not_raise():
-        instance = EpApiV1InfraClusterhealthConfigGet()
+        instance = EpInfraClusterhealthConfigGet()
         assert instance.path == "/api/v1/infra/clusterhealth/config"
 
         instance.endpoint_params.cluster_name = "new-cluster"

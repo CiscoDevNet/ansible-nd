@@ -59,6 +59,48 @@ else:
 
 
 class HttpApi(HttpApiBase):
+    """
+    # Summary
+
+    HttpAPI plugin for ND API v1.
+
+    ## Version Compatibility
+
+    Currently supports: ND API v1 (ND 3.0+, NDFC 12+)
+
+    This plugin provides:
+
+    - Authentication: Bearer token + AuthCookie authentication
+    - Request formatting: JSON request handling
+    - Response normalization: All responses standardized to dict with keys:
+      - RETURN_CODE: HTTP status code (int)
+      - METHOD: HTTP method string (GET/POST/PUT/DELETE/PATCH)
+      - REQUEST_PATH: Request URL path (str)
+      - MESSAGE: HTTP reason phrase (str)
+      - DATA: Parsed JSON body (dict) or None
+
+    - File uploads: Multipart file uploads via requests_toolbelt
+    - Error handling: Non-JSON responses captured with raw_response key in DATA
+
+    ## DCNM Compatibility
+
+    Methods required for cisco.dcnm modules to work through ND:
+
+    - get_version(platform="ndfc") - Returns NDFC version
+    - get_token() - Returns authentication token
+    - get_url_connection() - Returns connection URL
+    - send_txt_request() - Sends text-based requests
+
+    ## Future v2 Considerations
+
+    If ND API v2 changes authentication, response format, or error structures,
+    an HttpApiV2 plugin may be required. See CLAUDE.md for versioning strategy.
+
+    ## Raises
+
+    None - exceptions are logged and wrapped
+    """
+
     def __init__(self, *args, **kwargs):
         super(HttpApi, self).__init__(*args, **kwargs)
         self.platform = "cisco.nd"

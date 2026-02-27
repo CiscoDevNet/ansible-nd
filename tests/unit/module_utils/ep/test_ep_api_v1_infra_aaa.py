@@ -16,16 +16,16 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.ep.ep_api_v1_infra_aaa import (
-    EpApiV1InfraAaaLocalUsersDelete,
-    EpApiV1InfraAaaLocalUsersGet,
-    EpApiV1InfraAaaLocalUsersPost,
-    EpApiV1InfraAaaLocalUsersPut,
+from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.ep_infra_aaa import (
+    EpInfraAaaLocalUsersDelete,
+    EpInfraAaaLocalUsersGet,
+    EpInfraAaaLocalUsersPost,
+    EpInfraAaaLocalUsersPut,
 )
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 # =============================================================================
-# Test: EpApiV1InfraAaaLocalUsersGet
+# Test: EpInfraAaaLocalUsersGet
 # =============================================================================
 
 
@@ -33,7 +33,7 @@ def test_ep_api_v1_infra_aaa_00010():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersGet basic instantiation
+    Verify EpInfraAaaLocalUsersGet basic instantiation
 
     ## Test
 
@@ -43,13 +43,13 @@ def test_ep_api_v1_infra_aaa_00010():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersGet.__init__()
-    - EpApiV1InfraAaaLocalUsersGet.verb
-    - EpApiV1InfraAaaLocalUsersGet.class_name
+    - EpInfraAaaLocalUsersGet.__init__()
+    - EpInfraAaaLocalUsersGet.verb
+    - EpInfraAaaLocalUsersGet.class_name
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersGet()
-    assert instance.class_name == "EpApiV1InfraAaaLocalUsersGet"
+        instance = EpInfraAaaLocalUsersGet()
+    assert instance.class_name == "EpInfraAaaLocalUsersGet"
     assert instance.verb == HttpVerbEnum.GET
 
 
@@ -57,7 +57,7 @@ def test_ep_api_v1_infra_aaa_00020():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersGet path without login_id
+    Verify EpInfraAaaLocalUsersGet path without login_id
 
     ## Test
 
@@ -65,10 +65,10 @@ def test_ep_api_v1_infra_aaa_00020():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersGet.path
+    - EpInfraAaaLocalUsersGet.path
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersGet()
+        instance = EpInfraAaaLocalUsersGet()
         result = instance.path
     assert result == "/api/v1/infra/aaa/localUsers"
 
@@ -77,7 +77,7 @@ def test_ep_api_v1_infra_aaa_00030():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersGet path with login_id
+    Verify EpInfraAaaLocalUsersGet path with login_id
 
     ## Test
 
@@ -85,11 +85,11 @@ def test_ep_api_v1_infra_aaa_00030():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersGet.path
-    - EpApiV1InfraAaaLocalUsersGet.login_id
+    - EpInfraAaaLocalUsersGet.path
+    - EpInfraAaaLocalUsersGet.login_id
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersGet()
+        instance = EpInfraAaaLocalUsersGet()
         instance.login_id = "admin"
         result = instance.path
     assert result == "/api/v1/infra/aaa/localUsers/admin"
@@ -99,7 +99,7 @@ def test_ep_api_v1_infra_aaa_00040():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersGet login_id can be set at instantiation
+    Verify EpInfraAaaLocalUsersGet login_id can be set at instantiation
 
     ## Test
 
@@ -107,16 +107,16 @@ def test_ep_api_v1_infra_aaa_00040():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersGet.__init__()
+    - EpInfraAaaLocalUsersGet.__init__()
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersGet(login_id="testuser")
+        instance = EpInfraAaaLocalUsersGet(login_id="testuser")
     assert instance.login_id == "testuser"
     assert instance.path == "/api/v1/infra/aaa/localUsers/testuser"
 
 
 # =============================================================================
-# Test: EpApiV1InfraAaaLocalUsersPost
+# Test: EpInfraAaaLocalUsersPost
 # =============================================================================
 
 
@@ -124,7 +124,7 @@ def test_ep_api_v1_infra_aaa_00100():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersPost basic instantiation
+    Verify EpInfraAaaLocalUsersPost basic instantiation
 
     ## Test
 
@@ -134,13 +134,13 @@ def test_ep_api_v1_infra_aaa_00100():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersPost.__init__()
-    - EpApiV1InfraAaaLocalUsersPost.verb
-    - EpApiV1InfraAaaLocalUsersPost.class_name
+    - EpInfraAaaLocalUsersPost.__init__()
+    - EpInfraAaaLocalUsersPost.verb
+    - EpInfraAaaLocalUsersPost.class_name
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersPost()
-    assert instance.class_name == "EpApiV1InfraAaaLocalUsersPost"
+        instance = EpInfraAaaLocalUsersPost()
+    assert instance.class_name == "EpInfraAaaLocalUsersPost"
     assert instance.verb == HttpVerbEnum.POST
 
 
@@ -148,7 +148,7 @@ def test_ep_api_v1_infra_aaa_00110():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersPost path
+    Verify EpInfraAaaLocalUsersPost path
 
     ## Test
 
@@ -156,10 +156,10 @@ def test_ep_api_v1_infra_aaa_00110():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersPost.path
+    - EpInfraAaaLocalUsersPost.path
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersPost()
+        instance = EpInfraAaaLocalUsersPost()
         result = instance.path
     assert result == "/api/v1/infra/aaa/localUsers"
 
@@ -168,7 +168,7 @@ def test_ep_api_v1_infra_aaa_00120():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersPost path with login_id
+    Verify EpInfraAaaLocalUsersPost path with login_id
 
     ## Test
 
@@ -176,18 +176,18 @@ def test_ep_api_v1_infra_aaa_00120():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersPost.path
-    - EpApiV1InfraAaaLocalUsersPost.login_id
+    - EpInfraAaaLocalUsersPost.path
+    - EpInfraAaaLocalUsersPost.login_id
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersPost()
+        instance = EpInfraAaaLocalUsersPost()
         instance.login_id = "admin"
         result = instance.path
     assert result == "/api/v1/infra/aaa/localUsers/admin"
 
 
 # =============================================================================
-# Test: EpApiV1InfraAaaLocalUsersPut
+# Test: EpInfraAaaLocalUsersPut
 # =============================================================================
 
 
@@ -195,7 +195,7 @@ def test_ep_api_v1_infra_aaa_00200():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersPut basic instantiation
+    Verify EpInfraAaaLocalUsersPut basic instantiation
 
     ## Test
 
@@ -205,13 +205,13 @@ def test_ep_api_v1_infra_aaa_00200():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersPut.__init__()
-    - EpApiV1InfraAaaLocalUsersPut.verb
-    - EpApiV1InfraAaaLocalUsersPut.class_name
+    - EpInfraAaaLocalUsersPut.__init__()
+    - EpInfraAaaLocalUsersPut.verb
+    - EpInfraAaaLocalUsersPut.class_name
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersPut()
-    assert instance.class_name == "EpApiV1InfraAaaLocalUsersPut"
+        instance = EpInfraAaaLocalUsersPut()
+    assert instance.class_name == "EpInfraAaaLocalUsersPut"
     assert instance.verb == HttpVerbEnum.PUT
 
 
@@ -219,7 +219,7 @@ def test_ep_api_v1_infra_aaa_00210():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersPut path with login_id
+    Verify EpInfraAaaLocalUsersPut path with login_id
 
     ## Test
 
@@ -227,11 +227,11 @@ def test_ep_api_v1_infra_aaa_00210():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersPut.path
-    - EpApiV1InfraAaaLocalUsersPut.login_id
+    - EpInfraAaaLocalUsersPut.path
+    - EpInfraAaaLocalUsersPut.login_id
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersPut()
+        instance = EpInfraAaaLocalUsersPut()
         instance.login_id = "admin"
         result = instance.path
     assert result == "/api/v1/infra/aaa/localUsers/admin"
@@ -241,7 +241,7 @@ def test_ep_api_v1_infra_aaa_00220():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersPut with complex login_id
+    Verify EpInfraAaaLocalUsersPut with complex login_id
 
     ## Test
 
@@ -249,15 +249,15 @@ def test_ep_api_v1_infra_aaa_00220():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersPut.path
+    - EpInfraAaaLocalUsersPut.path
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersPut(login_id="user-name_123")
+        instance = EpInfraAaaLocalUsersPut(login_id="user-name_123")
     assert instance.path == "/api/v1/infra/aaa/localUsers/user-name_123"
 
 
 # =============================================================================
-# Test: EpApiV1InfraAaaLocalUsersDelete
+# Test: EpInfraAaaLocalUsersDelete
 # =============================================================================
 
 
@@ -265,7 +265,7 @@ def test_ep_api_v1_infra_aaa_00300():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersDelete basic instantiation
+    Verify EpInfraAaaLocalUsersDelete basic instantiation
 
     ## Test
 
@@ -275,13 +275,13 @@ def test_ep_api_v1_infra_aaa_00300():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersDelete.__init__()
-    - EpApiV1InfraAaaLocalUsersDelete.verb
-    - EpApiV1InfraAaaLocalUsersDelete.class_name
+    - EpInfraAaaLocalUsersDelete.__init__()
+    - EpInfraAaaLocalUsersDelete.verb
+    - EpInfraAaaLocalUsersDelete.class_name
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersDelete()
-    assert instance.class_name == "EpApiV1InfraAaaLocalUsersDelete"
+        instance = EpInfraAaaLocalUsersDelete()
+    assert instance.class_name == "EpInfraAaaLocalUsersDelete"
     assert instance.verb == HttpVerbEnum.DELETE
 
 
@@ -289,7 +289,7 @@ def test_ep_api_v1_infra_aaa_00310():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersDelete path with login_id
+    Verify EpInfraAaaLocalUsersDelete path with login_id
 
     ## Test
 
@@ -297,11 +297,11 @@ def test_ep_api_v1_infra_aaa_00310():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersDelete.path
-    - EpApiV1InfraAaaLocalUsersDelete.login_id
+    - EpInfraAaaLocalUsersDelete.path
+    - EpInfraAaaLocalUsersDelete.login_id
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersDelete()
+        instance = EpInfraAaaLocalUsersDelete()
         instance.login_id = "admin"
         result = instance.path
     assert result == "/api/v1/infra/aaa/localUsers/admin"
@@ -311,7 +311,7 @@ def test_ep_api_v1_infra_aaa_00320():
     """
     # Summary
 
-    Verify EpApiV1InfraAaaLocalUsersDelete without login_id
+    Verify EpInfraAaaLocalUsersDelete without login_id
 
     ## Test
 
@@ -319,10 +319,10 @@ def test_ep_api_v1_infra_aaa_00320():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersDelete.path
+    - EpInfraAaaLocalUsersDelete.path
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersDelete()
+        instance = EpInfraAaaLocalUsersDelete()
         result = instance.path
     assert result == "/api/v1/infra/aaa/localUsers"
 
@@ -344,18 +344,18 @@ def test_ep_api_v1_infra_aaa_00400():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersGet
-    - EpApiV1InfraAaaLocalUsersPost
-    - EpApiV1InfraAaaLocalUsersPut
-    - EpApiV1InfraAaaLocalUsersDelete
+    - EpInfraAaaLocalUsersGet
+    - EpInfraAaaLocalUsersPost
+    - EpInfraAaaLocalUsersPut
+    - EpInfraAaaLocalUsersDelete
     """
     login_id = "testuser"
 
     with does_not_raise():
-        get_ep = EpApiV1InfraAaaLocalUsersGet(login_id=login_id)
-        post_ep = EpApiV1InfraAaaLocalUsersPost(login_id=login_id)
-        put_ep = EpApiV1InfraAaaLocalUsersPut(login_id=login_id)
-        delete_ep = EpApiV1InfraAaaLocalUsersDelete(login_id=login_id)
+        get_ep = EpInfraAaaLocalUsersGet(login_id=login_id)
+        post_ep = EpInfraAaaLocalUsersPost(login_id=login_id)
+        put_ep = EpInfraAaaLocalUsersPut(login_id=login_id)
+        delete_ep = EpInfraAaaLocalUsersDelete(login_id=login_id)
 
     # All should have same path when login_id is set
     expected_path = "/api/v1/infra/aaa/localUsers/testuser"
@@ -388,10 +388,10 @@ def test_ep_api_v1_infra_aaa_00500():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersGet.__init__()
+    - EpInfraAaaLocalUsersGet.__init__()
     """
     with pytest.raises(ValueError):
-        EpApiV1InfraAaaLocalUsersGet(login_id="")
+        EpInfraAaaLocalUsersGet(login_id="")
 
 
 def test_ep_api_v1_infra_aaa_00510():
@@ -406,10 +406,10 @@ def test_ep_api_v1_infra_aaa_00510():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersGet.__init__()
+    - EpInfraAaaLocalUsersGet.__init__()
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersGet(login_id=None)
+        instance = EpInfraAaaLocalUsersGet(login_id=None)
     assert instance.login_id is None
 
 
@@ -425,10 +425,10 @@ def test_ep_api_v1_infra_aaa_00520():
 
     ## Classes and Methods
 
-    - EpApiV1InfraAaaLocalUsersGet.login_id
+    - EpInfraAaaLocalUsersGet.login_id
     """
     with does_not_raise():
-        instance = EpApiV1InfraAaaLocalUsersGet()
+        instance = EpInfraAaaLocalUsersGet()
         assert instance.login_id is None
         instance.login_id = "newuser"
         assert instance.login_id == "newuser"

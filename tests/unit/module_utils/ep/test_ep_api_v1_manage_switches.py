@@ -16,8 +16,8 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.ep.ep_api_v1_manage_switches import (
-    EpApiV1ManageSwitchesGet,
+from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.ep_manage_switches import (
+    EpManageSwitchesGet,
     SwitchesEndpointParams,
 )
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
@@ -215,7 +215,7 @@ def test_ep_switches_00090():
 
 
 # =============================================================================
-# Test: EpApiV1ManageSwitchesGet
+# Test: EpManageSwitchesGet
 # =============================================================================
 
 
@@ -223,7 +223,7 @@ def test_ep_switches_00100():
     """
     # Summary
 
-    Verify EpApiV1ManageSwitchesGet basic instantiation
+    Verify EpManageSwitchesGet basic instantiation
 
     ## Test
 
@@ -232,11 +232,11 @@ def test_ep_switches_00100():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.__init__()
-    - EpApiV1ManageSwitchesGet.verb
+    - EpManageSwitchesGet.__init__()
+    - EpManageSwitchesGet.verb
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
     assert instance.verb == HttpVerbEnum.GET
 
 
@@ -244,7 +244,7 @@ def test_ep_switches_00110():
     """
     # Summary
 
-    Verify EpApiV1ManageSwitchesGet path without params
+    Verify EpManageSwitchesGet path without params
 
     ## Test
 
@@ -252,10 +252,10 @@ def test_ep_switches_00110():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.path
+    - EpManageSwitchesGet.path
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         result = instance.path
     assert result == "/api/v1/manage/inventory/switches"
 
@@ -264,7 +264,7 @@ def test_ep_switches_00120():
     """
     # Summary
 
-    Verify EpApiV1ManageSwitchesGet path with fabric_name
+    Verify EpManageSwitchesGet path with fabric_name
 
     ## Test
 
@@ -272,11 +272,11 @@ def test_ep_switches_00120():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.path
-    - EpApiV1ManageSwitchesGet.endpoint_params
+    - EpManageSwitchesGet.path
+    - EpManageSwitchesGet.endpoint_params
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         instance.endpoint_params.fabric_name = "Fabric1"
         result = instance.path
     assert result == "/api/v1/manage/inventory/switches?fabricName=Fabric1"
@@ -286,7 +286,7 @@ def test_ep_switches_00130():
     """
     # Summary
 
-    Verify EpApiV1ManageSwitchesGet path with switch_id
+    Verify EpManageSwitchesGet path with switch_id
 
     ## Test
 
@@ -294,11 +294,11 @@ def test_ep_switches_00130():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.path
-    - EpApiV1ManageSwitchesGet.endpoint_params
+    - EpManageSwitchesGet.path
+    - EpManageSwitchesGet.endpoint_params
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         instance.endpoint_params.switch_id = "101"
         result = instance.path
     assert result == "/api/v1/manage/inventory/switches?switchId=101"
@@ -308,7 +308,7 @@ def test_ep_switches_00140():
     """
     # Summary
 
-    Verify EpApiV1ManageSwitchesGet path with hostname
+    Verify EpManageSwitchesGet path with hostname
 
     ## Test
 
@@ -316,11 +316,11 @@ def test_ep_switches_00140():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.path
-    - EpApiV1ManageSwitchesGet.endpoint_params
+    - EpManageSwitchesGet.path
+    - EpManageSwitchesGet.endpoint_params
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         instance.endpoint_params.hostname = "leaf-01"
         result = instance.path
     assert result == "/api/v1/manage/inventory/switches?hostname=leaf-01"
@@ -330,7 +330,7 @@ def test_ep_switches_00150():
     """
     # Summary
 
-    Verify EpApiV1ManageSwitchesGet path with all endpoint params
+    Verify EpManageSwitchesGet path with all endpoint params
 
     ## Test
 
@@ -338,11 +338,11 @@ def test_ep_switches_00150():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.path
-    - EpApiV1ManageSwitchesGet.endpoint_params
+    - EpManageSwitchesGet.path
+    - EpManageSwitchesGet.endpoint_params
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         instance.endpoint_params.fabric_name = "Fabric1"
         instance.endpoint_params.switch_id = "101"
         instance.endpoint_params.hostname = "switch1"
@@ -354,7 +354,7 @@ def test_ep_switches_00160():
     """
     # Summary
 
-    Verify EpApiV1ManageSwitchesGet path with Lucene filter
+    Verify EpManageSwitchesGet path with Lucene filter
 
     ## Test
 
@@ -362,11 +362,11 @@ def test_ep_switches_00160():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.path
-    - EpApiV1ManageSwitchesGet.lucene_params
+    - EpManageSwitchesGet.path
+    - EpManageSwitchesGet.lucene_params
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         instance.lucene_params.filter = "role:leaf AND status:active"
         result = instance.path
     # URL encoding should be applied
@@ -379,7 +379,7 @@ def test_ep_switches_00170():
     """
     # Summary
 
-    Verify EpApiV1ManageSwitchesGet path with Lucene pagination
+    Verify EpManageSwitchesGet path with Lucene pagination
 
     ## Test
 
@@ -387,11 +387,11 @@ def test_ep_switches_00170():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.path
-    - EpApiV1ManageSwitchesGet.lucene_params
+    - EpManageSwitchesGet.path
+    - EpManageSwitchesGet.lucene_params
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         instance.lucene_params.max = 10
         instance.lucene_params.offset = 20
         result = instance.path
@@ -402,7 +402,7 @@ def test_ep_switches_00180():
     """
     # Summary
 
-    Verify EpApiV1ManageSwitchesGet path with Lucene sort
+    Verify EpManageSwitchesGet path with Lucene sort
 
     ## Test
 
@@ -410,11 +410,11 @@ def test_ep_switches_00180():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.path
-    - EpApiV1ManageSwitchesGet.lucene_params
+    - EpManageSwitchesGet.path
+    - EpManageSwitchesGet.lucene_params
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         instance.lucene_params.sort = "hostname:asc"
         result = instance.path
     # URL encoding should be applied
@@ -426,7 +426,7 @@ def test_ep_switches_00190():
     """
     # Summary
 
-    Verify EpApiV1ManageSwitchesGet path with combined params
+    Verify EpManageSwitchesGet path with combined params
 
     ## Test
 
@@ -434,12 +434,12 @@ def test_ep_switches_00190():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.path
-    - EpApiV1ManageSwitchesGet.endpoint_params
-    - EpApiV1ManageSwitchesGet.lucene_params
+    - EpManageSwitchesGet.path
+    - EpManageSwitchesGet.endpoint_params
+    - EpManageSwitchesGet.lucene_params
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         instance.endpoint_params.fabric_name = "Fabric1"
         instance.lucene_params.max = 50
         instance.lucene_params.sort = "hostname:asc"
@@ -454,7 +454,7 @@ def test_ep_switches_00200():
     """
     # Summary
 
-    Verify EpApiV1ManageSwitchesGet path with all params
+    Verify EpManageSwitchesGet path with all params
 
     ## Test
 
@@ -462,12 +462,12 @@ def test_ep_switches_00200():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.path
-    - EpApiV1ManageSwitchesGet.endpoint_params
-    - EpApiV1ManageSwitchesGet.lucene_params
+    - EpManageSwitchesGet.path
+    - EpManageSwitchesGet.endpoint_params
+    - EpManageSwitchesGet.lucene_params
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         instance.endpoint_params.fabric_name = "Fabric1"
         instance.endpoint_params.hostname = "switch1"
         instance.lucene_params.filter = "role:leaf"
@@ -536,10 +536,10 @@ def test_ep_switches_00320():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.endpoint_params
+    - EpManageSwitchesGet.endpoint_params
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         assert instance.path == "/api/v1/manage/inventory/switches"
 
         instance.endpoint_params.fabric_name = "NewFabric"
@@ -558,10 +558,10 @@ def test_ep_switches_00330():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.lucene_params
+    - EpManageSwitchesGet.lucene_params
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         assert instance.path == "/api/v1/manage/inventory/switches"
 
         instance.lucene_params.max = 100
@@ -585,10 +585,10 @@ def test_ep_switches_00400():
 
     ## Classes and Methods
 
-    - EpApiV1ManageSwitchesGet.path
+    - EpManageSwitchesGet.path
     """
     with does_not_raise():
-        instance = EpApiV1ManageSwitchesGet()
+        instance = EpManageSwitchesGet()
         instance.endpoint_params.fabric_name = "Fabric1"
         instance.lucene_params.max = 10
         result = instance.path

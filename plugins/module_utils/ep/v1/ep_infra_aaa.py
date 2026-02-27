@@ -19,15 +19,15 @@ __metaclass__ = type
 from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.ep.base_paths_infra import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.ep.endpoint_mixins import LoginIdMixin
+from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.base_paths_infra import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict, Field
 
 # Common config for basic validation
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
 
-class _EpApiV1InfraAaaLocalUsersBase(LoginIdMixin, BaseModel):
+class _EpInfraAaaLocalUsersBase(LoginIdMixin, BaseModel):
     """
     Base class for ND Infra AAA Local Users endpoints.
 
@@ -36,6 +36,10 @@ class _EpApiV1InfraAaaLocalUsersBase(LoginIdMixin, BaseModel):
     """
 
     model_config = COMMON_CONFIG
+
+    # Version metadata
+    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
+    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     @property
     def path(self) -> str:
@@ -53,7 +57,7 @@ class _EpApiV1InfraAaaLocalUsersBase(LoginIdMixin, BaseModel):
         return BasePath.nd_infra_aaa("localUsers")
 
 
-class EpApiV1InfraAaaLocalUsersGet(_EpApiV1InfraAaaLocalUsersBase):
+class EpInfraAaaLocalUsersGet(_EpInfraAaaLocalUsersBase):
     """
     # Summary
 
@@ -89,7 +93,7 @@ class EpApiV1InfraAaaLocalUsersGet(_EpApiV1InfraAaaLocalUsersBase):
     ```
     """
 
-    class_name: Literal["EpApiV1InfraAaaLocalUsersGet"] = Field(default="EpApiV1InfraAaaLocalUsersGet", description="Class name for backward compatibility")
+    class_name: Literal["EpInfraAaaLocalUsersGet"] = Field(default="EpInfraAaaLocalUsersGet", description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -97,7 +101,7 @@ class EpApiV1InfraAaaLocalUsersGet(_EpApiV1InfraAaaLocalUsersBase):
         return HttpVerbEnum.GET
 
 
-class EpApiV1InfraAaaLocalUsersPost(_EpApiV1InfraAaaLocalUsersBase):
+class EpInfraAaaLocalUsersPost(_EpInfraAaaLocalUsersBase):
     """
     # Summary
 
@@ -124,7 +128,7 @@ class EpApiV1InfraAaaLocalUsersPost(_EpApiV1InfraAaaLocalUsersBase):
     ```
     """
 
-    class_name: Literal["EpApiV1InfraAaaLocalUsersPost"] = Field(default="EpApiV1InfraAaaLocalUsersPost", description="Class name for backward compatibility")
+    class_name: Literal["EpInfraAaaLocalUsersPost"] = Field(default="EpInfraAaaLocalUsersPost", description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -132,7 +136,7 @@ class EpApiV1InfraAaaLocalUsersPost(_EpApiV1InfraAaaLocalUsersBase):
         return HttpVerbEnum.POST
 
 
-class EpApiV1InfraAaaLocalUsersPut(_EpApiV1InfraAaaLocalUsersBase):
+class EpInfraAaaLocalUsersPut(_EpInfraAaaLocalUsersBase):
     """
     # Summary
 
@@ -160,7 +164,7 @@ class EpApiV1InfraAaaLocalUsersPut(_EpApiV1InfraAaaLocalUsersBase):
     ```
     """
 
-    class_name: Literal["EpApiV1InfraAaaLocalUsersPut"] = Field(default="EpApiV1InfraAaaLocalUsersPut", description="Class name for backward compatibility")
+    class_name: Literal["EpInfraAaaLocalUsersPut"] = Field(default="EpInfraAaaLocalUsersPut", description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -168,7 +172,7 @@ class EpApiV1InfraAaaLocalUsersPut(_EpApiV1InfraAaaLocalUsersBase):
         return HttpVerbEnum.PUT
 
 
-class EpApiV1InfraAaaLocalUsersDelete(_EpApiV1InfraAaaLocalUsersBase):
+class EpInfraAaaLocalUsersDelete(_EpInfraAaaLocalUsersBase):
     """
     # Summary
 
@@ -196,9 +200,7 @@ class EpApiV1InfraAaaLocalUsersDelete(_EpApiV1InfraAaaLocalUsersBase):
     ```
     """
 
-    class_name: Literal["EpApiV1InfraAaaLocalUsersDelete"] = Field(
-        default="EpApiV1InfraAaaLocalUsersDelete", description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpInfraAaaLocalUsersDelete"] = Field(default="EpInfraAaaLocalUsersDelete", description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:

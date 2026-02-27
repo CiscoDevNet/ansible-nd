@@ -8,12 +8,46 @@
 
 Implements the ResponseHandler interface for handling Nexus Dashboard controller responses.
 
-This handler processes responses from the ND HttpApi plugin which provides:
--   RETURN_CODE: HTTP status code (e.g., 200, 404, 500)
--   MESSAGE: HTTP reason phrase (e.g., "OK", "Not Found", "Internal Server Error")
--   DATA: Parsed JSON body (or dict with raw_response if parsing failed)
--   REQUEST_PATH: The request URL
--   METHOD: The HTTP method used
+## Version Compatibility
+
+This handler is designed for ND API v1 responses (ND 3.0+, NDFC 12+).
+
+### Status Code Assumptions
+
+- Success: 200, 201, 202, 204, 207
+- Not Found: 404 (treated as success for GET)
+- Error: 405, 409
+
+These codes are hardcoded in RETURN_CODES_SUCCESS, RETURN_CODE_NOT_FOUND, and
+RETURN_CODES_ERROR. If ND API v2 uses different codes, a ResponseHandlerV2 or
+version-aware validation strategy will be required.
+
+### Response Format
+
+Expects ND HttpApi plugin to provide responses with these keys:
+
+- RETURN_CODE (int): HTTP status code (e.g., 200, 404, 500)
+- MESSAGE (str): HTTP reason phrase (e.g., "OK", "Not Found")
+- DATA (dict): Parsed JSON body or dict with raw_response if parsing failed
+- REQUEST_PATH (str): The request URL path
+- METHOD (str): The HTTP method used (GET, POST, PUT, DELETE, PATCH)
+
+### Supported Error Formats
+
+The error_message property handles multiple ND API v1 error response formats:
+
+1. code/message dict: {"code": <int>, "message": <str>}
+2. messages array: {"messages": [{"code": <int>, "severity": <str>, "message": <str>}]}
+3. errors array: {"errors": [<str>, ...]}
+4. raw_response: {"raw_response": <str>} for non-JSON responses
+
+If ND API v2 changes error response structures, error extraction logic will need updates.
+
+## Future v2 Considerations
+
+If ND API v2 changes response format or status codes, a ResponseHandlerV2
+will be required. See CLAUDE.md for API versioning strategy and
+response_strategies/ directory for extracting version-specific validation logic.
 
 TODO: Should response be converted to a Pydantic model by this class?
 """
@@ -104,7 +138,7 @@ class ResponseHandler:
 
     """
 
-    # HTTP status codes considered successful
+    # ND API v1 status codes - these may need version-specific handling in future
     # 200: OK, 201: Created, 202: Accepted, 204: No Content, 207: Multi-Status
     RETURN_CODES_SUCCESS: set[int] = {200, 201, 202, 204, 207}
     # 404 is handled separately as "not found but not an error"

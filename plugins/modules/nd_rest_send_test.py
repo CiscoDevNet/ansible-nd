@@ -90,7 +90,7 @@ metadata:
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.ep.ep_api_v1_infra_clusterhealth import EpApiV1InfraClusterhealthConfigGet
+from ansible_collections.cisco.nd.plugins.module_utils.ep.v1 import EpInfraClusterhealthConfigGet
 from ansible_collections.cisco.nd.plugins.module_utils.log import Log
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule,
@@ -138,7 +138,7 @@ def main():
     results.operation_type = OperationType.QUERY  # Query operations don't change state
 
     # Initialize endpoint
-    ep = EpApiV1InfraClusterhealthConfigGet()
+    ep = EpInfraClusterhealthConfigGet()
 
     # Initialize NDModule (uses RestSend infrastructure internally)
     nd = NDModule(module)

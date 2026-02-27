@@ -16,7 +16,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.ep.base_path import ND_MANAGE_API
-from ansible_collections.cisco.nd.plugins.module_utils.ep.base_paths_manage import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.base_paths_manage import BasePath
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 # =============================================================================
