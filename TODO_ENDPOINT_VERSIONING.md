@@ -62,7 +62,7 @@ plugins/module_utils/response_strategies/
 
 ### Key Design Principles
 
-1. **Version-Agnostic Constants** - `base_path.py` contains root API paths shared across all versions
+1. **Version-Agnostic Constants** - `base_path.py` contains root API paths as an Enum (`ApiPath`) for type safety, shared across all versions
 2. **Version-Specific Implementations** - Each version has its own directory with complete endpoint definitions
 3. **Protocol-Based Strategy Pattern** - Response validation can be overridden per version without modifying core ResponseHandler
 4. **Metadata-Driven Detection** - Version information embedded in classes enables runtime selection logic
