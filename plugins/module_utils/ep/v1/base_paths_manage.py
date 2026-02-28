@@ -21,7 +21,7 @@ __metaclass__ = type
 
 from typing import Final
 
-from ansible_collections.cisco.nd.plugins.module_utils.ep.base_path import ND_MANAGE_API
+from ansible_collections.cisco.nd.plugins.module_utils.ep.base_path import ApiPath
 
 
 class BasePath:
@@ -57,7 +57,7 @@ class BasePath:
     - If ND Manage changes base API paths, only this class needs updating
     """
 
-    API: Final = ND_MANAGE_API
+    API: Final = ApiPath.MANAGE.value
 
     @classmethod
     def nd_manage(cls, *segments: str) -> str:

@@ -21,7 +21,7 @@ __metaclass__ = type
 
 from typing import Final
 
-from ansible_collections.cisco.nd.plugins.module_utils.ep.base_path import ND_INFRA_API
+from ansible_collections.cisco.nd.plugins.module_utils.ep.base_path import ApiPath
 
 
 class BasePath:
@@ -57,7 +57,7 @@ class BasePath:
     - If ND Infra changes base API paths, only this class needs updating
     """
 
-    API: Final = ND_INFRA_API
+    API: Final = ApiPath.INFRA.value
 
     @classmethod
     def nd_infra(cls, *segments: str) -> str:

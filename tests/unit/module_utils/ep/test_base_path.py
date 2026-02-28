@@ -15,6 +15,7 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 from ansible_collections.cisco.nd.plugins.module_utils.ep.base_path import (
+    ApiPath,
     LOGIN,
     ND_ANALYZE_API,
     ND_INFRA_API,
@@ -355,3 +356,87 @@ def test_base_path_00300():
         ]
         # Convert to set and check length matches
         assert len(paths) == len(set(paths)), "Duplicate paths found"
+
+
+# =============================================================================
+# Test: ApiPath Enum
+# =============================================================================
+
+
+def test_base_path_00400():
+    """
+    # Summary
+
+    Verify ApiPath enum provides all expected members
+
+    ## Test
+
+    - All 7 API paths available as enum members
+    - Enum members have correct string values
+    - Enum is iterable
+
+    ## Classes and Methods
+
+    - base_path.ApiPath
+    """
+    with does_not_raise():
+        paths = list(ApiPath)
+
+    assert len(paths) == 7
+    assert ApiPath.ANALYZE in paths
+    assert ApiPath.INFRA in paths
+    assert ApiPath.MANAGE in paths
+    assert ApiPath.ONEMANAGE in paths
+    assert ApiPath.MSO in paths
+    assert ApiPath.NDFC in paths
+    assert ApiPath.LOGIN in paths
+
+
+def test_base_path_00410():
+    """
+    # Summary
+
+    Verify ApiPath enum values match backward compat constants
+
+    ## Test
+
+    - ApiPath.ANALYZE.value equals ND_ANALYZE_API
+    - ApiPath.INFRA.value equals ND_INFRA_API
+    - ApiPath.MANAGE.value equals ND_MANAGE_API
+    - All enum values match corresponding constants
+
+    ## Classes and Methods
+
+    - base_path.ApiPath
+    """
+    with does_not_raise():
+        assert ApiPath.ANALYZE.value == ND_ANALYZE_API
+        assert ApiPath.INFRA.value == ND_INFRA_API
+        assert ApiPath.MANAGE.value == ND_MANAGE_API
+        assert ApiPath.ONEMANAGE.value == ND_ONEMANAGE_API
+        assert ApiPath.MSO.value == ND_MSO_API
+        assert ApiPath.NDFC.value == NDFC_API
+        assert ApiPath.LOGIN.value == LOGIN
+
+
+def test_base_path_00420():
+    """
+    # Summary
+
+    Verify ApiPath enum members are strings
+
+    ## Test
+
+    - ApiPath enum extends str
+    - Enum members can be used directly in string operations
+    - String conversion works correctly
+
+    ## Classes and Methods
+
+    - base_path.ApiPath
+    """
+    with does_not_raise():
+        assert isinstance(ApiPath.INFRA, str)
+        assert isinstance(ApiPath.MANAGE, str)
+        assert ApiPath.INFRA == "/api/v1/infra"
+        assert ApiPath.MANAGE == "/api/v1/manage"
