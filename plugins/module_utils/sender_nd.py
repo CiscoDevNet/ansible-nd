@@ -87,6 +87,22 @@ class Sender:
         msg = "ENTERED Sender(): "
         self.log.debug(msg)
 
+    def _get_caller_name(self) -> str:
+        """
+        # Summary
+
+        Get the name of the method that called the current method.
+
+        ## Raises
+
+        None
+
+        ## Returns
+
+        - `str`: The name of the calling method
+        """
+        return inspect.stack()[2][3]
+
     def commit(self) -> None:
         """
         # Summary
@@ -108,7 +124,7 @@ class Sender:
         -   `response`: raw response from the controller
         """
         method_name = "commit"
-        caller = inspect.stack()[1][3]
+        caller = self._get_caller_name()
 
         if self._connection is None:
             self._connection = Connection(self.ansible_module._socket_path)  # pylint: disable=protected-access
@@ -232,7 +248,7 @@ class Sender:
 
     @payload.setter
     def payload(self, value: dict):
-        method_name = inspect.stack()[0][3]
+        method_name = "payload"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
             msg += f"{method_name} must be a dict. "
@@ -264,7 +280,7 @@ class Sender:
 
     @response.setter
     def response(self, value: dict):
-        method_name = inspect.stack()[0][3]
+        method_name = "response"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
             msg += f"{method_name} must be a dict. "
@@ -293,7 +309,7 @@ class Sender:
 
     @verb.setter
     def verb(self, value: HttpVerbEnum):
-        method_name = inspect.stack()[0][3]
+        method_name = "verb"
         if value not in HttpVerbEnum.values():
             msg = f"{self.class_name}.{method_name}: "
             msg += f"{method_name} must be one of {HttpVerbEnum.values()}. "

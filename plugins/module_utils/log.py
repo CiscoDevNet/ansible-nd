@@ -387,7 +387,7 @@ class Log:
 
     @develop.setter
     def develop(self, value: bool) -> None:
-        method_name = inspect.stack()[0][3]
+        method_name = "develop"
         if not isinstance(value, bool):
             msg = f"{self.class_name}.{method_name}: Expected boolean for develop. "
             msg += f"Got: type {type(value).__name__} for value {value}."

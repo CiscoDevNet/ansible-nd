@@ -385,7 +385,7 @@ class Results:
 
         `@response_data` property
         """
-        method_name: str = inspect.stack()[0][3]
+        method_name: str = "add_response_data"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
             msg += f"instance.add_response_data must be a dict. Got {value}"
@@ -424,7 +424,7 @@ class Results:
 
         - `bool`: True if changes occurred, False otherwise
         """
-        method_name: str = inspect.stack()[0][3]
+        method_name: str = "_determine_if_changed"
 
         msg = f"{self.class_name}.{method_name}: ENTERED: "
         msg += f"action={self._current.action}, "
@@ -479,7 +479,7 @@ class Results:
         7.  Register the task and update aggregated changed/failed sets
         8.  Reset current task for next registration
         """
-        method_name: str = inspect.stack()[0][3]
+        method_name: str = "register_task_result"
 
         msg = f"{self.class_name}.{method_name}: "
         msg += f"ENTERED: action={self._current.action}, "
@@ -591,7 +591,7 @@ class Results:
             }
         ```
         """
-        method_name: str = inspect.stack()[0][3]
+        method_name: str = "build_final_result"
 
         msg = f"{self.class_name}.{method_name}: "
         msg += f"changed={self._changed}, failed={self._failed}"
@@ -700,7 +700,7 @@ class Results:
 
     @action.setter
     def action(self, value: str) -> None:
-        method_name: str = inspect.stack()[0][3]
+        method_name: str = "action"
         if not isinstance(value, str):
             msg = f"{self.class_name}.{method_name}: "
             msg += f"value must be a string. Got {type(value).__name__}."
@@ -741,7 +741,7 @@ class Results:
 
         - value: The operation type to set (must be an `OperationType` enum value)
         """
-        method_name: str = inspect.stack()[0][3]
+        method_name: str = "operation_type"
         if not isinstance(value, OperationType):
             msg = f"{self.class_name}.{method_name}: "
             msg += "value must be an OperationType instance. "
@@ -787,7 +787,7 @@ class Results:
 
     @check_mode.setter
     def check_mode(self, value: bool) -> None:
-        method_name: str = inspect.stack()[0][3]
+        method_name: str = "check_mode"
         if not isinstance(value, bool):
             msg = f"{self.class_name}.{method_name}: "
             msg += f"value must be a bool. Got {type(value).__name__}."
@@ -826,7 +826,7 @@ class Results:
 
     @diff_current.setter
     def diff_current(self, value: dict[str, Any]) -> None:
-        method_name: str = inspect.stack()[0][3]
+        method_name: str = "diff_current"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
             msg += f"value must be a dict. Got {type(value).__name__}."
@@ -908,7 +908,7 @@ class Results:
 
     @response_current.setter
     def response_current(self, value: dict[str, Any]) -> None:
-        method_name: str = inspect.stack()[0][3]
+        method_name: str = "response_current"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
             msg += f"value must be a dict. Got {type(value).__name__}."
@@ -983,7 +983,7 @@ class Results:
 
     @result_current.setter
     def result_current(self, value: dict[str, Any]) -> None:
-        method_name: str = inspect.stack()[0][3]
+        method_name: str = "result_current"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
             msg += f"value must be a dict. Got {type(value).__name__}."
@@ -1005,7 +1005,7 @@ class Results:
 
     @state.setter
     def state(self, value: str) -> None:
-        method_name: str = inspect.stack()[0][3]
+        method_name: str = "state"
         if not isinstance(value, str):
             msg = f"{self.class_name}.{method_name}: "
             msg += f"value must be a string. Got {type(value).__name__}."
