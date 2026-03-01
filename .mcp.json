@@ -1,0 +1,11 @@
+{
+    "mcpServers": {
+        "nd-openapi": {
+            "command": "uv",
+            "args": ["run", ".claude/mcp-servers/nd-openapi/server.py"],
+            "env": {
+                "ND_SCHEMA_DIR": ".claude/schemas"
+            }
+        }
+    }
+}
