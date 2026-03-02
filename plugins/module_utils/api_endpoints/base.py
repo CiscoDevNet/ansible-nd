@@ -25,13 +25,13 @@ class NDBaseSmartEndpoint(BaseModel, ABC):
     # TODO: to remove
     base_path: str
 
-    @abstractmethod
     @property
+    @abstractmethod
     def path(self) -> str:
         pass
-
-    @abstractmethod
+    
     @property
+    @abstractmethod
     def verb(self) -> str:
         pass
 
