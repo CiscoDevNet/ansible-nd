@@ -16,16 +16,16 @@ from ansible.module_utils.basic import AnsibleModule
 # TODO: To be replaced with:
 # from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 # from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
-# from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+# from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+# from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 # from ansible_collections.cisco.nd.plugins.module_utils.constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
-from nd import NDModule
-from nd_config_collection import NDConfigCollection
-from models.base import NDBaseModel
+from .nd import NDModule
+from .nd_config_collection import NDConfigCollection
 from .orchestrators.base import NDBaseOrchestrator
-from constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
+from .types import IdentifierKey
+from .constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
 
 
-# TODO: Revisit Deserialization in every method (high priority)
 class NDStateMachine(NDModule):
     """
     Generic Network Resource Module for Nexus Dashboard.
@@ -35,16 +35,21 @@ class NDStateMachine(NDModule):
         """
         Initialize the Network Resource Module.
         """
-        # TODO: Revisit Module initialization and configuration (medium priority). e.g., use instead:
+        # TODO: Revisit Module initialization and configuration
         # nd_module = NDModule()
-        super().__init__(module)
+        self.module = module
+        self.nd_module = NDModule(module)
+
+        # Operation tracking
+        self.nd_logs: List[Dict[str, Any]] = []
+        self.result: Dict[str, Any] = {"changed": False}
 
         # Configuration
-        self.model_orchestrator = model_orchestrator(module=module)
+        self.model_orchestrator = model_orchestrator(sender=self.nd_module)
         self.model_class = self.model_orchestrator.model_class
         # TODO: Revisit these class variables when udpating Module intialization and configuration (medium priority)
-        self.state = self.params["state"]
-        self.ansible_config = self.params["config"]
+        self.state = self.module.params["state"]
+        self.ansible_config = self.module.params.get("config", [])
 
         
         # Initialize collections
@@ -53,46 +58,64 @@ class NDStateMachine(NDModule):
         self.nd_config_collection = NDConfigCollection[self.model_class]
         try:
             init_all_data = self.model_orchestrator.query_all()
-            
+
             self.existing = self.nd_config_collection.from_api_response(
                 response_data=init_all_data,
                 model_class=self.model_class
             )
-            self.previous = self.nd_config_collection(model_class=self.model_class)
+            # Save previous state
+            self.previous = self.existing.copy()
             self.proposed = self.nd_config_collection(model_class=self.model_class)
             self.sent = self.nd_config_collection(model_class=self.model_class)
-        
+
+            for config in self.ansible_config:
+                try:
+                    # Parse config into model
+                    item = self.model_class.from_config(config)
+                    self.proposed.add(item)
+                except ValidationError as e:
+                    self.fail_json(
+                        msg=f"Invalid configuration: {e}",
+                        config=config,
+                        validation_errors=e.errors()
+                    )
+                    return
+
         except Exception as e:
             self.fail_json(
                 msg=f"Initialization failed: {str(e)}",
                 error=str(e)
             )
-        
-        # Operation tracking
-        self.nd_logs: List[Dict[str, Any]] = []
 
     # Logging
     # NOTE: format log placeholder
     # TODO: use a proper logger (low priority)
-    def format_log(self, identifier, status: Literal["created", "updated", "deleted", "no_change"], after_data: Optional[Dict[str, Any]] = None, sent_payload_data: Optional[Dict[str, Any]] = None) -> None:
+    def format_log(
+            self,
+            identifier: IdentifierKey,
+            operation_status: Literal["no_change", "created", "updated", "deleted"],
+            before: Optional[Dict[str, Any]] = None,
+            after: Optional[Dict[str, Any]] = None,
+            payload: Optional[Dict[str, Any]] = None,
+        ) -> None:
         """
         Create and append a log entry.
         """
         log_entry = {
             "identifier": identifier,
-            "status": status,
-            "before": deepcopy(self.existing_config),
-            "after": deepcopy(after_data) if after_data is not None else self.existing_config,
-            "sent_payload": deepcopy(sent_payload_data) if sent_payload_data is not None else {}
+            "operation_status": operation_status,
+            "before": before,
+            "after": after,
+            "payload": payload,
         }
         
         # Add HTTP details if not in check mode
-        if not self.module.check_mode and self.url is not None:
+        if not self.module.check_mode and self.nd_module.url is not None:
             log_entry.update({
-                "method": self.method,
-                "response": self.response,
-                "status": self.status,
-                "url": self.url
+                "method": self.nd_module.method,
+                "response": self.nd_module.response,
+                "status": self.nd_module.status,
+                "url": self.nd_module.url
             })
         
         self.nd_logs.append(log_entry)
@@ -103,42 +126,6 @@ class NDStateMachine(NDModule):
         """
         Manage state according to desired configuration.
         """
-        unwanted_keys = unwanted_keys or []
-        
-        # Parse and validate configs
-        # TODO: move it to init() (top priority)
-        # TODO: Modify it if NDConfigCollection becomes a Pydantic RootModel (low priority)
-        try:
-            parsed_items = []
-            for config in self.ansible_config:
-                try:
-                    # Parse config into model
-                    item = self.model_class.model_validate(config)
-                    parsed_items.append(item)
-                except ValidationError as e:
-                    self.fail_json(
-                        msg=f"Invalid configuration: {e}",
-                        config=config,
-                        validation_errors=e.errors()
-                    )
-                    return
-            
-            # Create proposed collection
-            self.proposed = self.nd_config_collection(
-                model_class=self.model_class,
-                items=parsed_items
-            )
-            
-            # Save previous state
-            self.previous = self.existing.copy()
-        
-        except Exception as e:
-            self.fail_json(
-                msg=f"Failed to prepare configurations: {e}",
-                error=str(e)
-            )
-            return
-        
         # Execute state operations
         if self.state in ["merged", "replaced", "overridden"]:
             self._manage_create_update_state()
@@ -159,18 +146,10 @@ class NDStateMachine(NDModule):
         Handle merged/replaced/overridden states.
         """
         for proposed_item in self.proposed:
+            # Extract identifier
+            identifier = proposed_item.get_identifier_value()
+            existing_config = self.existing.get(identifier).to_config() if self.existing.get(identifier) else {}
             try:
-                # Extract identifier
-                # TODO: Remove self.current_identifier, get it directly into the action functions
-                identifier = proposed_item.get_identifier_value()
-                
-                existing_item = self.existing.get(identifier)
-                self.existing_config = (
-                    existing_item.model_dump(by_alias=True, exclude_none=True)
-                    if existing_item
-                    else {}
-                )
-                
                 # Determine diff status
                 diff_status = self.existing.get_diff_config(proposed_item)
                 
@@ -178,51 +157,44 @@ class NDStateMachine(NDModule):
                 if diff_status == "no_diff":
                     self.format_log(
                         identifier=identifier,
-                        status="no_change",
-                        after_data=self.existing_config
+                        operation_status="no_change",
+                        before=existing_config,
+                        after=existing_config,
                     )
                     continue
                 
                 # Prepare final config based on state
-                if self.state == "merged" and existing_item:
+                if self.state == "merged":
                     # Merge with existing
                     merged_item = self.existing.merge(proposed_item)
                     final_item = merged_item
                 else:
                     # Replace or create
-                    if existing_item:
+                    if diff_status == "changed":
                         self.existing.replace(proposed_item)
                     else:
                         self.existing.add(proposed_item)
                     final_item = proposed_item
-                
-                # Convert to API payload
-                self.proposed_config = final_item.to_payload()
-                
+
                 # Execute API operation
                 if diff_status == "changed":
-                    response = self.model_orchestrator.update(final_item)
+                    if not self.module.check_mode:
+                        response = self.model_orchestrator.update(final_item)
+                        self.sent.add(final_item)
                     operation_status = "updated"
-                else:
-                    response = self.model_orchestrator.create(final_item)
+                elif diff_status == "new":
+                    if not self.module.check_mode:
+                        response = self.model_orchestrator.create(final_item)
+                        self.sent.add(final_item)
                     operation_status = "created"
-                
-                # Track sent payload
-                if not self.module.check_mode:
-                    self.sent.add(final_item)
-                    sent_payload = final_item
-                else:
-                    sent_payload = None
                 
                 # Log operation
                 self.format_log(
                     identifier=identifier,
-                    status=operation_status,
-                    after_data=(
-                        response if not self.module.check_mode
-                        else final_item.model_dump(by_alias=True, exclude_none=True)
-                    ),
-                    sent_payload_data=sent_payload
+                    operation_status=operation_status,
+                    before=existing_config,
+                    after=self.model_class.model_validate(response).to_config() if not self.module.check_mode else final_item.to_config(),
+                    payload=final_item.to_payload(),
                 )
             
             except Exception as e:
@@ -230,11 +202,12 @@ class NDStateMachine(NDModule):
                 
                 self.format_log(
                     identifier=identifier,
-                    status="no_change",
-                    after_data=self.existing_config
+                    operation_status="no_change",
+                    before=existing_config,
+                    after=existing_config,
                 )
                 
-                if not self.params.get("ignore_errors", False):
+                if not self.module.params.get("ignore_errors", False):
                     self.fail_json(
                         msg=error_msg,
                         identifier=str(identifier),
@@ -243,30 +216,21 @@ class NDStateMachine(NDModule):
                     return
     
     # TODO: Refactor with orchestrator (Top priority)
-    def _manage_override_deletions(self, override_exceptions: List) -> None:
+    def _manage_override_deletions(self) -> None:
         """
         Delete items not in proposed config (for overridden state).
         """
         diff_identifiers = self.previous.get_diff_identifiers(self.proposed)
         
         for identifier in diff_identifiers:
-            if identifier in override_exceptions:
-                continue
-            
             try:
-                self.current_identifier = identifier
-                
                 existing_item = self.existing.get(identifier)
                 if not existing_item:
                     continue
-                
-                self.existing_config = existing_item.model_dump(
-                    by_alias=True,
-                    exclude_none=True
-                )
-                
+
                 # Execute delete
-                self._delete()
+                if not self.module.check_mode:
+                    response = self.model_orchestrator.delete(existing_item)
                 
                 # Remove from collection
                 self.existing.delete(identifier)
@@ -274,8 +238,10 @@ class NDStateMachine(NDModule):
                 # Log deletion
                 self.format_log(
                     identifier=identifier,
-                    status="deleted",
-                    after_data={}
+                    operation_status="deleted",
+                    before=existing_item.to_config(),
+                    after={},
+
                 )
             
             except Exception as e:
@@ -295,25 +261,21 @@ class NDStateMachine(NDModule):
         for proposed_item in self.proposed:
             try:
                 identifier = proposed_item.get_identifier_value()
-                self.current_identifier = identifier
                 
                 existing_item = self.existing.get(identifier)
                 if not existing_item:
                     # Already deleted or doesn't exist
                     self.format_log(
                         identifier=identifier,
-                        status="no_change",
-                        after_data={}
+                        operation_status="no_change",
+                        before={},
+                        after={},
                     )
                     continue
                 
-                self.existing_config = existing_item.model_dump(
-                    by_alias=True,
-                    exclude_none=True
-                )
-                
                 # Execute delete
-                self._delete()
+                if not self.module.check_mode:
+                    response = self.model_orchestrator.delete(existing_item)
                 
                 # Remove from collection
                 self.existing.delete(identifier)
@@ -321,8 +283,9 @@ class NDStateMachine(NDModule):
                 # Log deletion
                 self.format_log(
                     identifier=identifier,
-                    status="deleted",
-                    after_data={}
+                    operation_status="deleted",
+                    before=existing_item.to_config(),
+                    after={},
                 )
             
             except Exception as e:
@@ -341,35 +304,35 @@ class NDStateMachine(NDModule):
     # TODO: return a defined ordered list of config (for integration test)
     def add_logs_and_outputs(self) -> None:
         """Add logs and outputs to module result based on output_level."""
-        output_level = self.params.get("output_level", "normal")
-        state = self.params.get("state")
+        output_level = self.module.params.get("output_level", "normal")
+        state = self.module.params.get("state")
         
         # Add previous state for certain states and output levels
         if state in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
             if output_level in ("debug", "info"):
-                self.result["previous"] = self.previous.to_list()
+                self.result["previous"] = self.previous.to_ansible_config()
             
             # Check if there were changes
-            if not self.has_modified and self.previous.get_diff_collection(self.existing):
+            if self.previous.get_diff_collection(self.existing):
                 self.result["changed"] = True
         
         # Add stdout if present
-        if self.stdout:
-            self.result["stdout"] = self.stdout
+        if self.nd_module.stdout:
+            self.result["stdout"] = self.nd_module.stdout
         
         # Add debug information
         if output_level == "debug":
             self.result["nd_logs"] = self.nd_logs
             
-            if self.url is not None:
-                self.result["httpapi_logs"] = self.httpapi_logs
+            if self.nd_module.url is not None:
+                self.result["httpapi_logs"] = self.nd_module.httpapi_logs
             
             if state in ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED:
                 self.result["sent"] = self.sent.to_payload_list()
-                self.result["proposed"] = self.proposed.to_list()
+                self.result["proposed"] = self.proposed.to_ansible_config()
         
         # Always include current state
-        self.result["current"] = self.existing.to_list()
+        self.result["current"] = self.existing.to_ansible_config()
     
     # Module Exit Methods
     

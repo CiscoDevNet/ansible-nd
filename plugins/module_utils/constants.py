@@ -16,10 +16,13 @@ from copy import deepcopy
 class NDConstantMapping(Dict):
 
     def __init__(self, data: Dict):
-        new_dict = deepcopy(data)
+        self.new_dict = deepcopy(data)
         for k,v in data.items():
-            new_dict[v] = k
-        return MappingProxyType(new_dict)
+            self.new_dict[v] = k
+        self.new_dict = MappingProxyType(self.new_dict)
+    
+    def get_dict(self):
+        return self.new_dict
 
 OBJECT_TYPES = {
     "tenant": "OST_TENANT",

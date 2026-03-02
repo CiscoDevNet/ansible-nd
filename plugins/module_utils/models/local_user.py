@@ -27,7 +27,7 @@ USER_ROLES_MAPPING = NDConstantMapping({
     "support_engineer": "support-engineer",
     "approver": "approver",
     "designer": "designer",
-})
+}).get_dict()
 
 
 class LocalUserSecurityDomainModel(NDNestedModel):
@@ -173,7 +173,8 @@ class LocalUserModel(NDBaseModel):
     # -- Extra --
 
     # TODO: to generate from Fields (low priority)
-    def get_argument_spec(self):
+    @classmethod
+    def get_argument_spec(cls) -> Dict:
         return dict(
             config=dict(
                 type="list",
