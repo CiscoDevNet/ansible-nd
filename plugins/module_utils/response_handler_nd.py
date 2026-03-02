@@ -47,7 +47,8 @@ If ND API v2 changes error response structures, error extraction logic will need
 
 If ND API v2 changes response format or status codes, a ResponseHandlerV2
 will be required. See CLAUDE.md for API versioning strategy and
-response_strategies/ directory for extracting version-specific validation logic.
+protocol_response_validation.py / response_validation_nd_v1.py for version-specific
+validation logic.
 
 TODO: Should response be converted to a Pydantic model by this class?
 """
