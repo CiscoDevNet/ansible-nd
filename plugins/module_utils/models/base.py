@@ -32,6 +32,7 @@ class NDBaseModel(BaseModel, ABC):
         use_enum_values=True,
         validate_assignment=True,
         populate_by_name=True,
+        arbitrary_types_allowed=True,
         extra='allow',  # NOTE: enabled extra: allows to add extra Field infos for generating Ansible argument_spec and Module Docs
     )
 
@@ -77,7 +78,7 @@ class NDBaseModel(BaseModel, ABC):
         """
         Convert model to Ansible config format.
         """
-        return self.model_dump(by_name=True, exclude_none=True, **kwargs)
+        return self.model_dump(by_alias=False, exclude_none=True, **kwargs)
 
     @classmethod
     def from_response(cls, response: Dict[str, Any], **kwargs) -> Self:

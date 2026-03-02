@@ -16,9 +16,9 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 from typing import Literal, Union, Tuple, Any, Final
-from mixins import LoginIdMixin
-from enums import VerbEnum
-from base import NDBaseSmartEndpoint, NDBasePath
+from .mixins import LoginIdMixin
+from .enums import VerbEnum
+from .base import NDBaseSmartEndpoint, NDBasePath
 from pydantic import Field
 from ..types import IdentifierKey
 
