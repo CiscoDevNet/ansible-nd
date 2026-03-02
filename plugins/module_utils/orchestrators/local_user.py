@@ -38,7 +38,7 @@ class LocalUserOrchestrator(NDBaseOrchestrator):
         Custom query_all action to extract 'localusers' from response.
         """
         try:
-            result = self.module.query_obj(self.query_all_endpoint.base_path)
+            result = self.sender.query_obj(self.query_all_endpoint.base_path)
             return result.get("localusers", []) or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
