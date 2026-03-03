@@ -15,14 +15,16 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
-from ansible_collections.cisco.nd.plugins.module_utils.ep.query_params import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     CompositeQueryParams,
     EndpointQueryParams,
     LuceneQueryParams,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
 from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import Field
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
+    does_not_raise,
+)
 
 # =============================================================================
 # Helper test class for EndpointQueryParams

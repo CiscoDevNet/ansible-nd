@@ -13,14 +13,16 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest  # pylint: disable=unused-import
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.ep_infra_clusterhealth import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra_clusterhealth import (
     ClusterHealthConfigEndpointParams,
     ClusterHealthStatusEndpointParams,
     EpInfraClusterhealthConfigGet,
     EpInfraClusterhealthStatusGet,
 )
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
+    does_not_raise,
+)
 
 # =============================================================================
 # Test: ClusterHealthConfigEndpointParams

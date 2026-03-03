@@ -1,4 +1,3 @@
-
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
@@ -18,7 +17,10 @@ __metaclass__ = type
 from typing import Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, Field
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
+    BaseModel,
+    Field,
+)
 
 
 class ClusterNameMixin(BaseModel):

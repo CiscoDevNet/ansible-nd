@@ -12,8 +12,7 @@ from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 
-from ansible_collections.cisco.nd.plugins.module_utils.ep.base_path import (
-    ApiPath,
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_path import (
     LOGIN,
     ND_ANALYZE_API,
     ND_INFRA_API,
@@ -21,8 +20,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.ep.base_path import (
     ND_MSO_API,
     ND_ONEMANAGE_API,
     NDFC_API,
+    ApiPath,
 )
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
+    does_not_raise,
+)
 
 # =============================================================================
 # Test: Root API Path Constants

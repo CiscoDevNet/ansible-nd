@@ -11,7 +11,7 @@ and preventing invalid path usage through compile-time checking.
 ## Usage
 
 ```python
-from ansible_collections.cisco.nd.plugins.module_utils.ep.base_path import ApiPath
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_path import ApiPath
 
 # Recommended: Use enum for type safety
 base_url = ApiPath.INFRA.value
@@ -60,6 +60,7 @@ class ApiPath(str, Enum):
     INFRA = "/api/v1/infra"
     MANAGE = "/api/v1/manage"
     ONEMANAGE = "/api/v1/onemanage"
+
 
 ND_ANALYZE_API: Final = ApiPath.ANALYZE.value
 ND_INFRA_API: Final = ApiPath.INFRA.value

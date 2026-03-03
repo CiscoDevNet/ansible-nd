@@ -16,10 +16,20 @@ __metaclass__ = type
 
 from typing import Literal, Optional
 
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    CompositeQueryParams,
+    EndpointQueryParams,
+    LuceneQueryParams,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import (
+    BasePath,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.ep.query_params import CompositeQueryParams, EndpointQueryParams, LuceneQueryParams
-from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.base_paths_manage import BasePath
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict, Field
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
+    BaseModel,
+    ConfigDict,
+    Field,
+)
 
 # Common config for basic validation
 COMMON_CONFIG = ConfigDict(validate_assignment=True)

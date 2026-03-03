@@ -21,7 +21,9 @@ __metaclass__ = type
 
 from typing import Final
 
-from ansible_collections.cisco.nd.plugins.module_utils.ep.base_path import ApiPath
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_path import (
+    ApiPath,
+)
 
 
 class BasePath:
@@ -38,7 +40,7 @@ class BasePath:
     ## Usage
 
     ```python
-    from ansible_collections.cisco.nd.plugins.module_utils.ep.base_paths_infra import BasePath
+    from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_paths_infra import BasePath
 
     # Get a complete base path for ND Infra
     path = BasePath.nd_infra("aaa", "localUsers")

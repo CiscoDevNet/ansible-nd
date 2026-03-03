@@ -13,12 +13,14 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest  # pylint: disable=unused-import
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.ep_manage_switches import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage_switches import (
     EpManageSwitchesGet,
     SwitchesEndpointParams,
 )
-from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
+    does_not_raise,
+)
 
 # =============================================================================
 # Test: SwitchesEndpointParams

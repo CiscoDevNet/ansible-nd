@@ -18,10 +18,18 @@ __metaclass__ = type
 
 from typing import Literal
 
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.endpoint_mixins import (
+    LoginIdMixin,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_infra import (
+    BasePath,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.ep.endpoint_mixins import LoginIdMixin
-from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.base_paths_infra import BasePath
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict, Field
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
+    BaseModel,
+    ConfigDict,
+    Field,
+)
 
 # Common config for basic validation
 COMMON_CONFIG = ConfigDict(validate_assignment=True)

@@ -20,7 +20,11 @@ from enum import Enum
 from typing import Optional, Union
 from urllib.parse import quote
 
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, Field, field_validator
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
+    BaseModel,
+    Field,
+    field_validator,
+)
 
 
 class QueryParams(ABC):

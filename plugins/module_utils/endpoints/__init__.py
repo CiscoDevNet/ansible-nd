@@ -1,31 +1,46 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """
-ND API v1 endpoint definitions.
+# Summary
 
-This module provides all endpoint classes and helpers for ND API v1
-(ND 3.0+, NDFC 12+).
+ND Endpoint infrastructure (smart endpoints).
 
-Import from this module to explicitly use v1 endpoints:
+## Description
+
+Provides Pydantic-based endpoint models that bundle URL paths with HTTP verbs,
+enabling type-safe API endpoint definitions.
+
+## Current Stable API Version
+
+v1 (ND 3.0+, NDFC 12+)
+
+## Usage
+
+Import from top-level for current stable version:
 
 ```python
-from ansible_collections.cisco.nd.plugins.module_utils.ep.v1 import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints import (
     EpInfraAaaLocalUsersGet,
     BasePathInfra,
 )
 ```
 
-Or import from the parent ep module for current stable version:
+Or import explicitly from version directory:
 
 ```python
-from ansible_collections.cisco.nd.plugins.module_utils.ep import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1 import (
     EpInfraAaaLocalUsersGet,
-    BasePathInfra,
 )
 ```
+
+## Version Management
+
+When v2 is released, this module will re-export the latest stable version.
+Legacy code can continue importing from version-specific subdirectories:
+
+- `ep.v1.*` - ND API v1 endpoints
+- `ep.v2.*` - ND API v2 endpoints (future)
 """
 
 from __future__ import absolute_import, annotations, division, print_function
@@ -34,21 +49,18 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.base_paths_infra import BasePath as BasePathInfra
-from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.base_paths_manage import BasePath as BasePathManage
-from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.ep_infra_aaa import (
+# Re-export v1 as current stable
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1 import (
+    BasePathInfra,
+    BasePathManage,
+    ClusterHealthConfigEndpointParams,
+    ClusterHealthStatusEndpointParams,
     EpInfraAaaLocalUsersDelete,
     EpInfraAaaLocalUsersGet,
     EpInfraAaaLocalUsersPost,
     EpInfraAaaLocalUsersPut,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.ep_infra_clusterhealth import (
-    ClusterHealthConfigEndpointParams,
-    ClusterHealthStatusEndpointParams,
     EpInfraClusterhealthConfigGet,
     EpInfraClusterhealthStatusGet,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.ep.v1.ep_manage_switches import (
     EpManageSwitchesGet,
     SwitchesEndpointParams,
 )
@@ -57,17 +69,17 @@ __all__ = [
     # BasePath helpers
     "BasePathInfra",
     "BasePathManage",
-    # Infra AAA endpoints
+    # Infra AAA
     "EpInfraAaaLocalUsersGet",
     "EpInfraAaaLocalUsersPost",
     "EpInfraAaaLocalUsersPut",
     "EpInfraAaaLocalUsersDelete",
-    # Infra ClusterHealth endpoints
+    # Infra ClusterHealth
     "EpInfraClusterhealthConfigGet",
     "EpInfraClusterhealthStatusGet",
     "ClusterHealthConfigEndpointParams",
     "ClusterHealthStatusEndpointParams",
-    # Manage Switches endpoints
+    # Manage Switches
     "EpManageSwitchesGet",
     "SwitchesEndpointParams",
 ]
