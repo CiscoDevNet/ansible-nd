@@ -37,22 +37,22 @@ def issubset(subset: Any, superset: Any) -> bool:
     """Check if subset is contained in superset."""
     if type(subset) is not type(superset):
         return False
-    
+
     if not isinstance(subset, dict):
         if isinstance(subset, list):
             return all(item in superset for item in subset)
         return subset == superset
-    
+
     for key, value in subset.items():
         if value is None:
             continue
-        
+
         if key not in superset:
             return False
-        
+
         if not issubset(value, superset[key]):
             return False
-    
+
     return True
 
 
@@ -60,12 +60,12 @@ def issubset(subset: Any, superset: Any) -> bool:
 def remove_unwanted_keys(data: Dict, unwanted_keys: List[Union[str, List[str]]]) -> Dict:
     """Remove unwanted keys from dict (supports nested paths)."""
     data = deepcopy(data)
-    
+
     for key in unwanted_keys:
         if isinstance(key, str):
             if key in data:
                 del data[key]
-        
+
         elif isinstance(key, list) and len(key) > 0:
             try:
                 parent = data
@@ -79,5 +79,5 @@ def remove_unwanted_keys(data: Dict, unwanted_keys: List[Union[str, List[str]]])
                         del parent[key[-1]]
             except (KeyError, TypeError, IndexError):
                 pass
-    
+
     return data
