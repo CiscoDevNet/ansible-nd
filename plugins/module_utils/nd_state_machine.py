@@ -19,8 +19,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.constants import ALLOWED_
 
 
 # TODO: Revisit StateMachine when there is more arguments than config (e.g., "fabric" and "config" for switches config)
-# TODO:
-class NDStateMachine(NDModule):
+# TODO: Remove inheritence from NDModule (Top Priority)
+class NDStateMachine:
     """
     Generic Network Resource Module for Nexus Dashboard.
     """
@@ -31,7 +31,7 @@ class NDStateMachine(NDModule):
         """
         # TODO: Revisit Module initialization and configuration with rest_send
         self.module = module
-        self.nd_module = NDModule(module)
+        self.nd_module = NDModule(self.module)
 
         # Operation tracking
         self.nd_logs: List[Dict[str, Any]] = []
