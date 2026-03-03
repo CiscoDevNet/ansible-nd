@@ -12,8 +12,8 @@ from pydantic import BaseModel, ConfigDict
 from typing import ClassVar, Type, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
-from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.base import NDBaseSmartEndpoint
-from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseSmartEndpoint
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.types import ResponseType
 
 
 # TODO: Revisit naming them "Orchestrator"
