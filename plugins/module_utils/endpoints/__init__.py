@@ -61,6 +61,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1 import (
     EpInfraAaaLocalUsersPut,
     EpInfraClusterhealthConfigGet,
     EpInfraClusterhealthStatusGet,
+    EpInfraLoginPost,
     EpManageSwitchesGet,
     SwitchesEndpointParams,
 )
@@ -79,6 +80,8 @@ __all__ = [
     "EpInfraClusterhealthStatusGet",
     "ClusterHealthConfigEndpointParams",
     "ClusterHealthStatusEndpointParams",
+    # Infra Login
+    "EpInfraLoginPost",
     # Manage Switches
     "EpManageSwitchesGet",
     "SwitchesEndpointParams",
