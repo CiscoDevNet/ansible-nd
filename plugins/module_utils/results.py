@@ -16,7 +16,6 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 import copy
-import inspect
 import logging
 
 from typing import Any, Optional
