@@ -8,6 +8,6 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from typing import Any, Union, Tuple
+from typing import Any, Union, List, Dict
 
-IdentifierKey = Union[str, int, Tuple[Any, ...]]
+ResponseType = Union[List[Dict[str, Any]], Dict[str, Any], None]

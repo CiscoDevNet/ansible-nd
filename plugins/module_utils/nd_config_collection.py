@@ -8,12 +8,11 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from typing import TypeVar, Generic, Optional, List, Dict, Any, Union, Tuple, Literal, Callable
+from typing import TypeVar, Generic, Optional, List, Dict, Any, Literal
 from copy import deepcopy
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
-
 
 # Type aliases
 ModelType = TypeVar("ModelType", bound=NDBaseModel)
