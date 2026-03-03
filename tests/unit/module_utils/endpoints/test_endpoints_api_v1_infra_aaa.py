@@ -29,7 +29,7 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
 # =============================================================================
 
 
-def test_ep_api_v1_infra_aaa_00010():
+def test_endpoints_api_v1_infra_aaa_00010():
     """
     # Summary
 
@@ -53,7 +53,7 @@ def test_ep_api_v1_infra_aaa_00010():
     assert instance.verb == HttpVerbEnum.GET
 
 
-def test_ep_api_v1_infra_aaa_00020():
+def test_endpoints_api_v1_infra_aaa_00020():
     """
     # Summary
 
@@ -73,7 +73,7 @@ def test_ep_api_v1_infra_aaa_00020():
     assert result == "/api/v1/infra/aaa/localUsers"
 
 
-def test_ep_api_v1_infra_aaa_00030():
+def test_endpoints_api_v1_infra_aaa_00030():
     """
     # Summary
 
@@ -95,7 +95,7 @@ def test_ep_api_v1_infra_aaa_00030():
     assert result == "/api/v1/infra/aaa/localUsers/admin"
 
 
-def test_ep_api_v1_infra_aaa_00040():
+def test_endpoints_api_v1_infra_aaa_00040():
     """
     # Summary
 
@@ -120,7 +120,7 @@ def test_ep_api_v1_infra_aaa_00040():
 # =============================================================================
 
 
-def test_ep_api_v1_infra_aaa_00100():
+def test_endpoints_api_v1_infra_aaa_00100():
     """
     # Summary
 
@@ -144,7 +144,7 @@ def test_ep_api_v1_infra_aaa_00100():
     assert instance.verb == HttpVerbEnum.POST
 
 
-def test_ep_api_v1_infra_aaa_00110():
+def test_endpoints_api_v1_infra_aaa_00110():
     """
     # Summary
 
@@ -164,7 +164,7 @@ def test_ep_api_v1_infra_aaa_00110():
     assert result == "/api/v1/infra/aaa/localUsers"
 
 
-def test_ep_api_v1_infra_aaa_00120():
+def test_endpoints_api_v1_infra_aaa_00120():
     """
     # Summary
 
@@ -191,7 +191,7 @@ def test_ep_api_v1_infra_aaa_00120():
 # =============================================================================
 
 
-def test_ep_api_v1_infra_aaa_00200():
+def test_endpoints_api_v1_infra_aaa_00200():
     """
     # Summary
 
@@ -215,7 +215,7 @@ def test_ep_api_v1_infra_aaa_00200():
     assert instance.verb == HttpVerbEnum.PUT
 
 
-def test_ep_api_v1_infra_aaa_00210():
+def test_endpoints_api_v1_infra_aaa_00210():
     """
     # Summary
 
@@ -237,7 +237,7 @@ def test_ep_api_v1_infra_aaa_00210():
     assert result == "/api/v1/infra/aaa/localUsers/admin"
 
 
-def test_ep_api_v1_infra_aaa_00220():
+def test_endpoints_api_v1_infra_aaa_00220():
     """
     # Summary
 
@@ -261,7 +261,7 @@ def test_ep_api_v1_infra_aaa_00220():
 # =============================================================================
 
 
-def test_ep_api_v1_infra_aaa_00300():
+def test_endpoints_api_v1_infra_aaa_00300():
     """
     # Summary
 
@@ -285,7 +285,7 @@ def test_ep_api_v1_infra_aaa_00300():
     assert instance.verb == HttpVerbEnum.DELETE
 
 
-def test_ep_api_v1_infra_aaa_00310():
+def test_endpoints_api_v1_infra_aaa_00310():
     """
     # Summary
 
@@ -307,7 +307,7 @@ def test_ep_api_v1_infra_aaa_00310():
     assert result == "/api/v1/infra/aaa/localUsers/admin"
 
 
-def test_ep_api_v1_infra_aaa_00320():
+def test_endpoints_api_v1_infra_aaa_00320():
     """
     # Summary
 
@@ -332,7 +332,7 @@ def test_ep_api_v1_infra_aaa_00320():
 # =============================================================================
 
 
-def test_ep_api_v1_infra_aaa_00400():
+def test_endpoints_api_v1_infra_aaa_00400():
     """
     # Summary
 
@@ -376,7 +376,7 @@ def test_ep_api_v1_infra_aaa_00400():
 # =============================================================================
 
 
-def test_ep_api_v1_infra_aaa_00500():
+def test_endpoints_api_v1_infra_aaa_00500():
     """
     # Summary
 
@@ -394,7 +394,7 @@ def test_ep_api_v1_infra_aaa_00500():
         EpInfraAaaLocalUsersGet(login_id="")
 
 
-def test_ep_api_v1_infra_aaa_00510():
+def test_endpoints_api_v1_infra_aaa_00510():
     """
     # Summary
 
@@ -413,7 +413,7 @@ def test_ep_api_v1_infra_aaa_00510():
     assert instance.login_id is None
 
 
-def test_ep_api_v1_infra_aaa_00520():
+def test_endpoints_api_v1_infra_aaa_00520():
     """
     # Summary
 

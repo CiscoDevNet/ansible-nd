@@ -27,7 +27,7 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
 # =============================================================================
 
 
-def test_ep_switches_00010():
+def test_endpoints_switches_00010():
     """
     # Summary
 
@@ -48,7 +48,7 @@ def test_ep_switches_00010():
     assert params.hostname is None
 
 
-def test_ep_switches_00020():
+def test_endpoints_switches_00020():
     """
     # Summary
 
@@ -67,7 +67,7 @@ def test_ep_switches_00020():
     assert params.fabric_name == "MyFabric"
 
 
-def test_ep_switches_00030():
+def test_endpoints_switches_00030():
     """
     # Summary
 
@@ -86,7 +86,7 @@ def test_ep_switches_00030():
     assert params.switch_id == "FDO12345678"
 
 
-def test_ep_switches_00040():
+def test_endpoints_switches_00040():
     """
     # Summary
 
@@ -105,7 +105,7 @@ def test_ep_switches_00040():
     assert params.hostname == "leaf-01"
 
 
-def test_ep_switches_00050():
+def test_endpoints_switches_00050():
     """
     # Summary
 
@@ -126,7 +126,7 @@ def test_ep_switches_00050():
     assert params.hostname == "switch1"
 
 
-def test_ep_switches_00060():
+def test_endpoints_switches_00060():
     """
     # Summary
 
@@ -146,7 +146,7 @@ def test_ep_switches_00060():
     assert result == "fabricName=MyFabric&switchId=101&hostname=leaf-01"
 
 
-def test_ep_switches_00070():
+def test_endpoints_switches_00070():
     """
     # Summary
 
@@ -174,7 +174,7 @@ def test_ep_switches_00070():
     assert "switch_id" not in result
 
 
-def test_ep_switches_00080():
+def test_endpoints_switches_00080():
     """
     # Summary
 
@@ -194,7 +194,7 @@ def test_ep_switches_00080():
     assert result == "fabricName=Fabric1"
 
 
-def test_ep_switches_00090():
+def test_endpoints_switches_00090():
     """
     # Summary
 
@@ -219,7 +219,7 @@ def test_ep_switches_00090():
 # =============================================================================
 
 
-def test_ep_switches_00100():
+def test_endpoints_switches_00100():
     """
     # Summary
 
@@ -240,7 +240,7 @@ def test_ep_switches_00100():
     assert instance.verb == HttpVerbEnum.GET
 
 
-def test_ep_switches_00110():
+def test_endpoints_switches_00110():
     """
     # Summary
 
@@ -260,7 +260,7 @@ def test_ep_switches_00110():
     assert result == "/api/v1/manage/inventory/switches"
 
 
-def test_ep_switches_00120():
+def test_endpoints_switches_00120():
     """
     # Summary
 
@@ -282,7 +282,7 @@ def test_ep_switches_00120():
     assert result == "/api/v1/manage/inventory/switches?fabricName=Fabric1"
 
 
-def test_ep_switches_00130():
+def test_endpoints_switches_00130():
     """
     # Summary
 
@@ -304,7 +304,7 @@ def test_ep_switches_00130():
     assert result == "/api/v1/manage/inventory/switches?switchId=101"
 
 
-def test_ep_switches_00140():
+def test_endpoints_switches_00140():
     """
     # Summary
 
@@ -326,7 +326,7 @@ def test_ep_switches_00140():
     assert result == "/api/v1/manage/inventory/switches?hostname=leaf-01"
 
 
-def test_ep_switches_00150():
+def test_endpoints_switches_00150():
     """
     # Summary
 
@@ -350,7 +350,7 @@ def test_ep_switches_00150():
     assert result == "/api/v1/manage/inventory/switches?fabricName=Fabric1&switchId=101&hostname=switch1"
 
 
-def test_ep_switches_00160():
+def test_endpoints_switches_00160():
     """
     # Summary
 
@@ -375,7 +375,7 @@ def test_ep_switches_00160():
     assert "leaf" in result
 
 
-def test_ep_switches_00170():
+def test_endpoints_switches_00170():
     """
     # Summary
 
@@ -398,7 +398,7 @@ def test_ep_switches_00170():
     assert result == "/api/v1/manage/inventory/switches?max=10&offset=20"
 
 
-def test_ep_switches_00180():
+def test_endpoints_switches_00180():
     """
     # Summary
 
@@ -422,7 +422,7 @@ def test_ep_switches_00180():
     assert "hostname" in result
 
 
-def test_ep_switches_00190():
+def test_endpoints_switches_00190():
     """
     # Summary
 
@@ -450,7 +450,7 @@ def test_ep_switches_00190():
     assert "hostname" in result
 
 
-def test_ep_switches_00200():
+def test_endpoints_switches_00200():
     """
     # Summary
 
@@ -487,7 +487,7 @@ def test_ep_switches_00200():
 # =============================================================================
 
 
-def test_ep_switches_00300():
+def test_endpoints_switches_00300():
     """
     # Summary
 
@@ -505,7 +505,7 @@ def test_ep_switches_00300():
         SwitchesEndpointParams(fabric_name="")
 
 
-def test_ep_switches_00310():
+def test_endpoints_switches_00310():
     """
     # Summary
 
@@ -524,7 +524,7 @@ def test_ep_switches_00310():
         SwitchesEndpointParams(fabric_name=long_name)
 
 
-def test_ep_switches_00320():
+def test_endpoints_switches_00320():
     """
     # Summary
 
@@ -546,7 +546,7 @@ def test_ep_switches_00320():
         assert instance.path == "/api/v1/manage/inventory/switches?fabricName=NewFabric"
 
 
-def test_ep_switches_00330():
+def test_endpoints_switches_00330():
     """
     # Summary
 
@@ -573,7 +573,7 @@ def test_ep_switches_00330():
 # =============================================================================
 
 
-def test_ep_switches_00400():
+def test_endpoints_switches_00400():
     """
     # Summary
 

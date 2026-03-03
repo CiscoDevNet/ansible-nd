@@ -29,7 +29,7 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
 # =============================================================================
 
 
-def test_ep_clusterhealth_00010():
+def test_endpoints_clusterhealth_00010():
     """
     # Summary
 
@@ -48,7 +48,7 @@ def test_ep_clusterhealth_00010():
     assert params.cluster_name is None
 
 
-def test_ep_clusterhealth_00020():
+def test_endpoints_clusterhealth_00020():
     """
     # Summary
 
@@ -67,7 +67,7 @@ def test_ep_clusterhealth_00020():
     assert params.cluster_name == "my-cluster"
 
 
-def test_ep_clusterhealth_00030():
+def test_endpoints_clusterhealth_00030():
     """
     # Summary
 
@@ -87,7 +87,7 @@ def test_ep_clusterhealth_00030():
     assert result == "clusterName=test-cluster"
 
 
-def test_ep_clusterhealth_00040():
+def test_endpoints_clusterhealth_00040():
     """
     # Summary
 
@@ -112,7 +112,7 @@ def test_ep_clusterhealth_00040():
 # =============================================================================
 
 
-def test_ep_clusterhealth_00100():
+def test_endpoints_clusterhealth_00100():
     """
     # Summary
 
@@ -133,7 +133,7 @@ def test_ep_clusterhealth_00100():
     assert params.node_name is None
 
 
-def test_ep_clusterhealth_00110():
+def test_endpoints_clusterhealth_00110():
     """
     # Summary
 
@@ -154,7 +154,7 @@ def test_ep_clusterhealth_00110():
     assert params.node_name == "node1"
 
 
-def test_ep_clusterhealth_00120():
+def test_endpoints_clusterhealth_00120():
     """
     # Summary
 
@@ -174,7 +174,7 @@ def test_ep_clusterhealth_00120():
     assert result == "clusterName=foo&healthCategory=bar&nodeName=baz"
 
 
-def test_ep_clusterhealth_00130():
+def test_endpoints_clusterhealth_00130():
     """
     # Summary
 
@@ -199,7 +199,7 @@ def test_ep_clusterhealth_00130():
 # =============================================================================
 
 
-def test_ep_clusterhealth_00200():
+def test_endpoints_clusterhealth_00200():
     """
     # Summary
 
@@ -223,7 +223,7 @@ def test_ep_clusterhealth_00200():
     assert instance.verb == HttpVerbEnum.GET
 
 
-def test_ep_clusterhealth_00210():
+def test_endpoints_clusterhealth_00210():
     """
     # Summary
 
@@ -243,7 +243,7 @@ def test_ep_clusterhealth_00210():
     assert result == "/api/v1/infra/clusterhealth/config"
 
 
-def test_ep_clusterhealth_00220():
+def test_endpoints_clusterhealth_00220():
     """
     # Summary
 
@@ -265,7 +265,7 @@ def test_ep_clusterhealth_00220():
     assert result == "/api/v1/infra/clusterhealth/config?clusterName=my-cluster"
 
 
-def test_ep_clusterhealth_00230():
+def test_endpoints_clusterhealth_00230():
     """
     # Summary
 
@@ -291,7 +291,7 @@ def test_ep_clusterhealth_00230():
 # =============================================================================
 
 
-def test_ep_clusterhealth_00300():
+def test_endpoints_clusterhealth_00300():
     """
     # Summary
 
@@ -315,7 +315,7 @@ def test_ep_clusterhealth_00300():
     assert instance.verb == HttpVerbEnum.GET
 
 
-def test_ep_clusterhealth_00310():
+def test_endpoints_clusterhealth_00310():
     """
     # Summary
 
@@ -335,7 +335,7 @@ def test_ep_clusterhealth_00310():
     assert result == "/api/v1/infra/clusterhealth/status"
 
 
-def test_ep_clusterhealth_00320():
+def test_endpoints_clusterhealth_00320():
     """
     # Summary
 
@@ -357,7 +357,7 @@ def test_ep_clusterhealth_00320():
     assert result == "/api/v1/infra/clusterhealth/status?clusterName=foo"
 
 
-def test_ep_clusterhealth_00330():
+def test_endpoints_clusterhealth_00330():
     """
     # Summary
 
@@ -381,7 +381,7 @@ def test_ep_clusterhealth_00330():
     assert result == "/api/v1/infra/clusterhealth/status?clusterName=foo&healthCategory=bar&nodeName=baz"
 
 
-def test_ep_clusterhealth_00340():
+def test_endpoints_clusterhealth_00340():
     """
     # Summary
 
@@ -408,7 +408,7 @@ def test_ep_clusterhealth_00340():
 # =============================================================================
 
 
-def test_ep_clusterhealth_00400():
+def test_endpoints_clusterhealth_00400():
     """
     # Summary
 
@@ -426,7 +426,7 @@ def test_ep_clusterhealth_00400():
         ClusterHealthConfigEndpointParams(cluster_name="")
 
 
-def test_ep_clusterhealth_00410():
+def test_endpoints_clusterhealth_00410():
     """
     # Summary
 
@@ -448,7 +448,7 @@ def test_ep_clusterhealth_00410():
         assert instance.path == "/api/v1/infra/clusterhealth/config?clusterName=new-cluster"
 
 
-def test_ep_clusterhealth_00420():
+def test_endpoints_clusterhealth_00420():
     """
     # Summary
 
