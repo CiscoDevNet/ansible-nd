@@ -16,11 +16,12 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 from typing import Literal, Union, Tuple, Any, Final
-from .mixins import LoginIdMixin
-from .enums import VerbEnum
-from .base import NDBaseSmartEndpoint, NDBasePath
+from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.mixins import LoginIdMixin
+from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.enums import VerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.base import NDBaseSmartEndpoint, NDBasePath
 from pydantic import Field
-from ..types import IdentifierKey
+from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
+
 
 class _EpApiV1InfraAaaLocalUsersBase(LoginIdMixin, NDBaseSmartEndpoint):
     """
@@ -105,7 +106,7 @@ class EpApiV1InfraAaaLocalUsersPost(_EpApiV1InfraAaaLocalUsersBase):
     """
 
     class_name: Literal["EpApiV1InfraAaaLocalUsersPost"] = Field(
-        default="EpApiV1InfraAaaLocalUsersPost", 
+        default="EpApiV1InfraAaaLocalUsersPost",
         description="Class name for backward compatibility",
         frozen=True,
     )
@@ -136,7 +137,7 @@ class EpApiV1InfraAaaLocalUsersPut(_EpApiV1InfraAaaLocalUsersBase):
     """
 
     class_name: Literal["EpApiV1InfraAaaLocalUsersPut"] = Field(
-        default="EpApiV1InfraAaaLocalUsersPut", 
+        default="EpApiV1InfraAaaLocalUsersPut",
         description="Class name for backward compatibility",
         frozen=True,
     )

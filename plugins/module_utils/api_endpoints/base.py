@@ -12,13 +12,12 @@ __metaclass__ = type
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, ConfigDict
 from typing import Final, Union, Tuple, Any
-from ..types import IdentifierKey
+from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.types import IdentifierKey
 
 
 # TODO: Rename it to APIEndpoint
 # NOTE: This is a very minimalist endpoint package -> needs to be enhanced
 class NDBaseSmartEndpoint(BaseModel, ABC):
-
     # TODO: maybe to be modified in the future
     model_config = ConfigDict(validate_assignment=True)
 
@@ -29,7 +28,7 @@ class NDBaseSmartEndpoint(BaseModel, ABC):
     @abstractmethod
     def path(self) -> str:
         pass
-    
+
     @property
     @abstractmethod
     def verb(self) -> str:

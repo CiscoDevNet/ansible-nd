@@ -8,12 +8,12 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from .base import NDBaseOrchestrator
-from ..models.base import NDBaseModel
-from ..models.local_user import LocalUserModel
 from typing import Dict, List, Any, Union, Type
-from ..api_endpoints.base import NDBaseSmartEndpoint
-from ..api_endpoints.local_user import (
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.local_user import LocalUserModel
+from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.base import NDBaseSmartEndpoint
+from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.local_user import (
     EpApiV1InfraAaaLocalUsersPost,
     EpApiV1InfraAaaLocalUsersPut,
     EpApiV1InfraAaaLocalUsersDelete,
@@ -23,8 +23,8 @@ from ..api_endpoints.local_user import (
 
 ResponseType = Union[List[Dict[str, Any]], Dict[str, Any], None]
 
-class LocalUserOrchestrator(NDBaseOrchestrator):
 
+class LocalUserOrchestrator(NDBaseOrchestrator):
     model_class: Type[NDBaseModel] = LocalUserModel
 
     create_endpoint: Type[NDBaseSmartEndpoint] = EpApiV1InfraAaaLocalUsersPost
