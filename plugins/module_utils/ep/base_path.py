@@ -62,16 +62,8 @@ class ApiPath(str, Enum):
     INFRA = "/api/v1/infra"
     MANAGE = "/api/v1/manage"
     ONEMANAGE = "/api/v1/onemanage"
-    MSO = "/mso"
-    NDFC = "/appcenter/cisco/ndfc/api"
-    LOGIN = "/login"
 
-
-# Backward compatibility - deprecated, use ApiPath enum instead
 ND_ANALYZE_API: Final = ApiPath.ANALYZE.value
 ND_INFRA_API: Final = ApiPath.INFRA.value
 ND_MANAGE_API: Final = ApiPath.MANAGE.value
 ND_ONEMANAGE_API: Final = ApiPath.ONEMANAGE.value
-ND_MSO_API: Final = ApiPath.MSO.value
-NDFC_API: Final = ApiPath.NDFC.value
-LOGIN: Final = ApiPath.LOGIN.value
