@@ -80,6 +80,7 @@ class NDStateMachine:
         """
         for proposed_item in self.proposed:
             # Extract identifier
+            response = {}
             identifier = proposed_item.get_identifier_value()
             try:
                 # Determine diff status
