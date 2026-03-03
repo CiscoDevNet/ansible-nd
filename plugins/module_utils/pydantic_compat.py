@@ -6,11 +6,25 @@
 
 # pylint: disable=too-few-public-methods
 """
+# Summary
+
 Pydantic compatibility layer.
 
 This module provides a single location for Pydantic imports with fallback
 implementations when Pydantic is not available. This ensures consistent
 behavior across all modules and follows the DRY principle.
+
+## Usage
+
+### Importing
+
+Rather than importing directly from pydantic, import from this module:
+
+```python
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel
+```
+
+This ensure that Ansible sanity tests will not fail due to missing Pydantic dependencies.
 """
 
 from __future__ import absolute_import, annotations, division, print_function
