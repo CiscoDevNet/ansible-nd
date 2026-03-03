@@ -18,12 +18,12 @@ __metaclass__ = type
 from typing import Literal, Final
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import LoginIdMixin
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.enums import VerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseSmartEndpoint, NDBasePath
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseEndpoint, NDBasePath
 from pydantic import Field
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
-class _V1InfraAaaLocalUsersBase(LoginIdMixin, NDBaseSmartEndpoint):
+class _V1InfraAaaLocalUsersBase(LoginIdMixin, NDBaseEndpoint):
     """
     Base class for ND Infra AAA Local Users endpoints.
 
