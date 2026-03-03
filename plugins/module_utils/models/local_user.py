@@ -8,9 +8,7 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from types import MappingProxyType
 from typing import List, Dict, Any, Optional, ClassVar, Literal
-from typing_extensions import Self
 from pydantic import Field, SecretStr, model_serializer, field_serializer, field_validator, model_validator, computed_field
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
