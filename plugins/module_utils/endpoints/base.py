@@ -12,7 +12,7 @@ __metaclass__ = type
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, ConfigDict
 from typing import Final
-from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.types import IdentifierKey
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.types import IdentifierKey
 
 
 # TODO: Rename it to APIEndpoint

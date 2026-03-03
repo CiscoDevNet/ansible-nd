@@ -13,7 +13,7 @@ fields to endpoint models without duplication.
 
 from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type  # pylint: disable=invalid-name
+__metaclass__ = type
 
 from typing import Optional
 from pydantic import BaseModel, Field
