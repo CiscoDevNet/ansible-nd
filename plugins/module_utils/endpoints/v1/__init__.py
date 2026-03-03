@@ -34,12 +34,8 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_infra import (
-    BasePath as BasePathInfra,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import (
-    BasePath as BasePathManage,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_infra import BasePath as BasePathInfra
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import BasePath as BasePathManage
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra_aaa import (
     EpInfraAaaLocalUsersDelete,
     EpInfraAaaLocalUsersGet,
