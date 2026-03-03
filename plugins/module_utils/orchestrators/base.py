@@ -12,13 +12,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from typing import ClassVar, Type, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
-<<<<<<< HEAD
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-=======
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseSmartEndpoint
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.types import ResponseType
->>>>>>> 8d72e06 ([ignore] Restructure api_endpoints folder into endpoints -> v1. Fix some sanity issues.)
 
 
 class NDBaseOrchestrator(BaseModel):
