@@ -194,6 +194,9 @@ def main():
         )
 
         # Manage state
+        # TODO: return module output class object:
+        # output = nd_state_machine.manage_state()
+        # module.exit_json(**output)
         nd_state_machine.manage_state()
 
         module.exit_json(**nd_state_machine.output.format())
