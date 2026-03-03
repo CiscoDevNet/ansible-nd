@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 
