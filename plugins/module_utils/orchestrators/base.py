@@ -12,8 +12,8 @@ from pydantic import BaseModel, ConfigDict
 from typing import ClassVar, Type, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseSmartEndpoint
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseEndpoint
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
 # TODO: Revisit naming them "Orchestrator"
@@ -28,11 +28,11 @@ class NDBaseOrchestrator(BaseModel):
     model_class: ClassVar[Type[NDBaseModel]] = Type[NDBaseModel]
 
     # NOTE: if not defined by subclasses, return an error as they are required
-    create_endpoint: Type[NDBaseSmartEndpoint]
-    update_endpoint: Type[NDBaseSmartEndpoint]
-    delete_endpoint: Type[NDBaseSmartEndpoint]
-    query_one_endpoint: Type[NDBaseSmartEndpoint]
-    query_all_endpoint: Type[NDBaseSmartEndpoint]
+    create_endpoint: Type[NDBaseEndpoint]
+    update_endpoint: Type[NDBaseEndpoint]
+    delete_endpoint: Type[NDBaseEndpoint]
+    query_one_endpoint: Type[NDBaseEndpoint]
+    query_all_endpoint: Type[NDBaseEndpoint]
 
     # NOTE: Module Field is always required
     # TODO: Replace it with future sender (low priority)
