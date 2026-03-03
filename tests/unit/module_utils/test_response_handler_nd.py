@@ -26,6 +26,7 @@ __metaclass__ = type  # pylint: disable=invalid-name
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.response_validation_nd_v1 import NdV1Strategy
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 # =============================================================================
@@ -45,9 +46,7 @@ def test_response_handler_nd_00010():
     - _response defaults to None
     - _result defaults to None
     - _verb defaults to None
-    - RETURN_CODES_SUCCESS contains expected status codes
-    - RETURN_CODE_NOT_FOUND is 404
-    - RETURN_CODES_ERROR contains expected error status codes
+    - _strategy defaults to NdV1Strategy instance
 
     ## Classes and Methods
 
@@ -58,9 +57,53 @@ def test_response_handler_nd_00010():
     assert instance._response is None
     assert instance._result is None
     assert instance._verb is None
-    assert instance.RETURN_CODES_SUCCESS == {200, 201, 202, 204, 207}
-    assert instance.RETURN_CODE_NOT_FOUND == 404
-    assert instance.RETURN_CODES_ERROR == {405, 409}
+    assert isinstance(instance._strategy, NdV1Strategy)
+
+
+def test_response_handler_nd_00015():
+    """
+    # Summary
+
+    Verify validation_strategy getter returns the default NdV1Strategy and
+    setter accepts a valid strategy.
+
+    ## Test
+
+    - Default strategy is NdV1Strategy
+    - Setting a new NdV1Strategy instance is accepted
+    - Getter returns the newly set strategy
+
+    ## Classes and Methods
+
+    - ResponseHandler.validation_strategy (getter/setter)
+    """
+    instance = ResponseHandler()
+    assert isinstance(instance.validation_strategy, NdV1Strategy)
+
+    new_strategy = NdV1Strategy()
+    with does_not_raise():
+        instance.validation_strategy = new_strategy
+    assert instance.validation_strategy is new_strategy
+
+
+def test_response_handler_nd_00020():
+    """
+    # Summary
+
+    Verify validation_strategy setter raises TypeError for invalid type.
+
+    ## Test
+
+    - Setting validation_strategy to a non-strategy object raises TypeError
+
+    ## Classes and Methods
+
+    - ResponseHandler.validation_strategy (setter)
+    """
+    instance = ResponseHandler()
+    match = r"ResponseHandler\.validation_strategy:.*Expected ResponseValidationStrategy"
+    with pytest.raises(TypeError, match=match):
+        instance.validation_strategy = "not a strategy"  # type: ignore[assignment]
 
 
 # =============================================================================

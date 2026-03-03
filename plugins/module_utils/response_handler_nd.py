@@ -14,13 +14,15 @@ This handler is designed for ND API v1 responses (ND 3.0+, NDFC 12+).
 
 ### Status Code Assumptions
 
+Status codes are defined by the injected `ResponseValidationStrategy`, defaulting
+to `NdV1Strategy` (ND 3.0+, NDFC 12+):
+
 - Success: 200, 201, 202, 204, 207
 - Not Found: 404 (treated as success for GET)
 - Error: 405, 409
 
-These codes are hardcoded in RETURN_CODES_SUCCESS, RETURN_CODE_NOT_FOUND, and
-RETURN_CODES_ERROR. If ND API v2 uses different codes, a ResponseHandlerV2 or
-version-aware validation strategy will be required.
+If ND API v2 uses different codes, inject a new strategy via the
+`validation_strategy` property rather than modifying this class.
 
 ### Response Format
 
@@ -45,10 +47,9 @@ If ND API v2 changes error response structures, error extraction logic will need
 
 ## Future v2 Considerations
 
-If ND API v2 changes response format or status codes, a ResponseHandlerV2
-will be required. See CLAUDE.md for API versioning strategy and
-protocol_response_validation.py / response_validation_nd_v1.py for version-specific
-validation logic.
+If ND API v2 changes response format or status codes, implement a new strategy
+class (e.g. `NdV2Strategy`) conforming to `ResponseValidationStrategy` and inject
+it via `response_handler.validation_strategy = NdV2Strategy()`.
 
 TODO: Should response be converted to a Pydantic model by this class?
 """
@@ -64,6 +65,8 @@ import logging
 from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_validation import ResponseValidationStrategy
+from ansible_collections.cisco.nd.plugins.module_utils.response_validation_nd_v1 import NdV1Strategy
 
 
 class ResponseHandler:
@@ -139,14 +142,6 @@ class ResponseHandler:
 
     """
 
-    # ND API v1 status codes - these may need version-specific handling in future
-    # 200: OK, 201: Created, 202: Accepted, 204: No Content, 207: Multi-Status
-    RETURN_CODES_SUCCESS: set[int] = {200, 201, 202, 204, 207}
-    # 404 is handled separately as "not found but not an error"
-    RETURN_CODE_NOT_FOUND: int = 404
-    # HTTP status codes considered errors (conflict, method not allowed)
-    RETURN_CODES_ERROR: set[int] = {405, 409}
-
     def __init__(self) -> None:
         self.class_name = self.__class__.__name__
         method_name = "__init__"
@@ -155,6 +150,7 @@ class ResponseHandler:
 
         self._response: Optional[dict[str, Any]] = None
         self._result: Optional[dict[str, Any]] = None
+        self._strategy: ResponseValidationStrategy = NdV1Strategy()
         self._verb: Optional[HttpVerbEnum] = None
 
         msg = f"ENTERED {self.class_name}.{method_name}"
@@ -189,11 +185,11 @@ class ResponseHandler:
         return_code = self.response.get("RETURN_CODE")
 
         # 404 Not Found - resource doesn't exist, but request was successful
-        if return_code == self.RETURN_CODE_NOT_FOUND:
+        if self._strategy.is_not_found(return_code):
             result["found"] = False
             result["success"] = True
         # Success codes - resource found
-        elif return_code in self.RETURN_CODES_SUCCESS:
+        elif self._strategy.is_success(return_code):
             result["found"] = True
             result["success"] = True
         # Error codes - request failed
@@ -230,7 +226,7 @@ class ResponseHandler:
             result["success"] = False
             result["changed"] = False
         # Success codes indicate the operation completed
-        elif return_code in self.RETURN_CODES_SUCCESS:
+        elif self._strategy.is_success(return_code):
             result["success"] = True
             result["changed"] = True
         # Any other status code is an error
@@ -351,66 +347,58 @@ class ResponseHandler:
         """
         # Summary
 
-        Extract a human-readable error message from the response DATA based on
-        ND error formats.
+        Extract a human-readable error message from the response DATA.
 
-        Returns None if result indicates success or if commit() has not been called.
-
-        ## ND Error Formats Handled
-
-        1. raw_response: Non-JSON response stored in DATA.raw_response
-        2. code/message: DATA.code and DATA.message
-        3. messages array: DATA.messages[0].{code, severity, message}
-        4. errors array: DATA.errors[0]
-        5. No DATA: Connection failure with REQUEST_PATH and MESSAGE
-        6. Non-dict DATA: Stringified DATA value
-        7. Unknown: Fallback with RETURN_CODE
+        Delegates to the injected `ResponseValidationStrategy`. Returns None if
+        result indicates success or if `commit()` has not been called.
 
         ## Returns
 
         -   str: Human-readable error message if an error occurred.
-        -   None: If the request was successful or commit() not called.
+        -   None: If the request was successful or `commit()` not called.
+
+        ## Raises
+
+        None
         """
-        msg: Optional[str] = None
-
-        # Return None if result not set (commit not called) or success
         if self._result is not None and not self._result.get("success", True):
-            response_data = self._response.get("DATA") if self._response else None
-            return_code = self._response.get("RETURN_CODE", -1) if self._response else -1
+            return self._strategy.extract_error_message(self._response)
+        return None
 
-            # No response data - connection failure
-            if response_data is None:
-                request_path = self._response.get("REQUEST_PATH", "unknown") if self._response else "unknown"
-                message = self._response.get("MESSAGE", "Unknown error") if self._response else "Unknown error"
-                msg = f"Connection failed for {request_path}. {message}"
-            # Dict response data - check various ND error formats
-            elif isinstance(response_data, dict):
-                # Type-narrow response_data to dict[str, Any] for pylint
-                # pylint: disable=unsupported-membership-test,unsubscriptable-object
-                # Added pylint directive above since pylint is still flagging these errors.
-                data_dict: dict[str, Any] = response_data
-                # Raw response (non-JSON)
-                if "raw_response" in data_dict:
-                    msg = "ND Error: Response could not be parsed as JSON"
-                # code/message format
-                elif "code" in data_dict and "message" in data_dict:
-                    msg = f"ND Error {data_dict['code']}: {data_dict['message']}"
+    @property
+    def validation_strategy(self) -> ResponseValidationStrategy:
+        """
+        # Summary
 
-                # messages array format
-                if msg is None and "messages" in data_dict and len(data_dict.get("messages", [])) > 0:
-                    first_msg = data_dict["messages"][0]
-                    if all(k in first_msg for k in ("code", "severity", "message")):
-                        msg = f"ND Error {first_msg['code']} ({first_msg['severity']}): {first_msg['message']}"
+        The response validation strategy used to check status codes and extract
+        error messages.
 
-                # errors array format
-                if msg is None and "errors" in data_dict and len(data_dict.get("errors", [])) > 0:
-                    msg = f"ND Error: {data_dict['errors'][0]}"
+        ## Returns
 
-                # Unknown dict format - fallback
-                if msg is None:
-                    msg = f"ND Error: Request failed with status {return_code}"
-            # Non-dict response data
-            else:
-                msg = f"ND Error: {response_data}"
+        - `ResponseValidationStrategy`: The current strategy instance.
 
-        return msg
+        ## Raises
+
+        None
+        """
+        return self._strategy
+
+    @validation_strategy.setter
+    def validation_strategy(self, value: ResponseValidationStrategy) -> None:
+        """
+        # Summary
+
+        Set the response validation strategy.
+
+        ## Raises
+
+        ### TypeError
+
+        - If `value` does not implement `ResponseValidationStrategy`.
+        """
+        method_name = "validation_strategy"
+        if not isinstance(value, ResponseValidationStrategy):
+            msg = f"{self.class_name}.{method_name}: "
+            msg += f"Expected ResponseValidationStrategy. Got {type(value)}."
+            raise TypeError(msg)
+        self._strategy = value
