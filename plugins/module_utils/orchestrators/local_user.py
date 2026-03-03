@@ -12,8 +12,8 @@ from typing import Type
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.local_user import LocalUserModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseSmartEndpoint
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseEndpoint
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra_aaa_local_users import (
     V1InfraAaaLocalUsersPost,
     V1InfraAaaLocalUsersPut,
@@ -25,11 +25,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra_aaa_lo
 class LocalUserOrchestrator(NDBaseOrchestrator):
     model_class: Type[NDBaseModel] = LocalUserModel
 
-    create_endpoint: Type[NDBaseSmartEndpoint] = V1InfraAaaLocalUsersPost
-    update_endpoint: Type[NDBaseSmartEndpoint] = V1InfraAaaLocalUsersPut
-    delete_endpoint: Type[NDBaseSmartEndpoint] = V1InfraAaaLocalUsersDelete
-    query_one_endpoint: Type[NDBaseSmartEndpoint] = V1InfraAaaLocalUsersGet
-    query_all_endpoint: Type[NDBaseSmartEndpoint] = V1InfraAaaLocalUsersGet
+    create_endpoint: Type[NDBaseEndpoint] = V1InfraAaaLocalUsersPost
+    update_endpoint: Type[NDBaseEndpoint] = V1InfraAaaLocalUsersPut
+    delete_endpoint: Type[NDBaseEndpoint] = V1InfraAaaLocalUsersDelete
+    query_one_endpoint: Type[NDBaseEndpoint] = V1InfraAaaLocalUsersGet
+    query_all_endpoint: Type[NDBaseEndpoint] = V1InfraAaaLocalUsersGet
 
     def query_all(self) -> ResponseType:
         """

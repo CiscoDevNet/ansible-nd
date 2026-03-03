@@ -198,8 +198,11 @@ def main():
         )
 
         # Manage state
+        # TODO: return module output class object:
+        # output = nd_state_machine.manage_state()
+        # module.exit_json(**output)
         nd_state_machine.manage_state()
-
+        
         nd_state_machine.exit_json()
 
     except Exception as e:
