@@ -8,7 +8,7 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from pydantic import BaseModel, ConfigDict
 from typing import List, Dict, Any, ClassVar, Tuple, Union, Literal, Optional
 from typing_extensions import Self
@@ -144,7 +144,8 @@ class NDBaseModel(BaseModel, ABC):
         return self.model_dump(by_alias=True, exclude_none=True, exclude=set(self.exclude_from_diff), **kwargs)
 
     # NOTE: initialize and return a deep copy of the instance?
-    # TODO: Might be missing a proper merge on fields of type `List[NDNestedModel]`? -> similar to NDCOnfigCollection... -> add argument to make it optional either replace
+    # TODO: Might be missing a proper merge on fields of type `List[NDNestedModel]`?
+    # -> similar to NDCOnfigCollection... -> add argument to make it optional either replace
     def merge(self, other_model: "NDBaseModel", **kwargs) -> Self:
         if not isinstance(other_model, type(self)):
             # TODO: Change error message

@@ -13,9 +13,9 @@ in the ND Infra AAA API.
 
 from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type  # pylint: disable=invalid-name
+__metaclass__ = type
 
-from typing import Literal, Union, Tuple, Any, Final
+from typing import Literal, Final
 from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.mixins import LoginIdMixin
 from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.enums import VerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.base import NDBaseSmartEndpoint, NDBasePath

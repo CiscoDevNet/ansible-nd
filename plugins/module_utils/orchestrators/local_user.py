@@ -8,20 +8,18 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from typing import Dict, List, Any, Union, Type
+from typing import Type
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.local_user import LocalUserModel
 from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.base import NDBaseSmartEndpoint
+from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.local_user import (
     EpApiV1InfraAaaLocalUsersPost,
     EpApiV1InfraAaaLocalUsersPut,
     EpApiV1InfraAaaLocalUsersDelete,
     EpApiV1InfraAaaLocalUsersGet,
 )
-
-
-ResponseType = Union[List[Dict[str, Any]], Dict[str, Any], None]
 
 
 class LocalUserOrchestrator(NDBaseOrchestrator):
@@ -33,7 +31,7 @@ class LocalUserOrchestrator(NDBaseOrchestrator):
     query_one_endpoint: Type[NDBaseSmartEndpoint] = EpApiV1InfraAaaLocalUsersGet
     query_all_endpoint: Type[NDBaseSmartEndpoint] = EpApiV1InfraAaaLocalUsersGet
 
-    def query_all(self):
+    def query_all(self) -> ResponseType:
         """
         Custom query_all action to extract 'localusers' from response.
         """

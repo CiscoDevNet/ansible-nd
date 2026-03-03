@@ -8,7 +8,6 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from copy import deepcopy
 from typing import Optional, List, Dict, Any, Literal, Type
 from pydantic import ValidationError
 from ansible.module_utils.basic import AnsibleModule
