@@ -175,15 +175,10 @@ RETURN = r"""
 """
 
 from ansible.module_utils.basic import AnsibleModule
-# TODO: To be replaced with:
-# from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-# from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-# from ansible_collections.cisco.nd.plugins.module_utils.models.local_user import LocalUserModel
-# from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.local_user import LocalUserOrchestrator
-from ..module_utils.nd import nd_argument_spec
-from ..module_utils.nd_state_machine import NDStateMachine
-from ..module_utils.models.local_user import LocalUserModel
-from ..module_utils.orchestrators.local_user import LocalUserOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.models.local_user import LocalUserModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.local_user import LocalUserOrchestrator
 
 
 def main():
@@ -196,17 +191,17 @@ def main():
     )
 
     try:
-        # Create NDNetworkResourceModule with LocalUserModel
-        nd_module = NDStateMachine(
+        # Initialize StateMachine
+        nd_state_machine = NDStateMachine(
             module=module,
             model_orchestrator=LocalUserOrchestrator,
         )
-        
-        # Manage state
-        nd_module.manage_state()
 
-        nd_module.exit_json()
-    
+        # Manage state
+        nd_state_machine.manage_state()
+
+        nd_state_machine.exit_json()
+
     except Exception as e:
         module.fail_json(msg=f"Module execution failed: {str(e)}")
 

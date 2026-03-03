@@ -8,11 +8,11 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from ..models.base import NDBaseModel
-from ..nd import NDModule
-from ..api_endpoints.base import NDBaseSmartEndpoint
-from typing import Dict, List, Any, Union, ClassVar, Type, Optional
 from pydantic import BaseModel, ConfigDict
+from typing import Dict, List, Any, Union, ClassVar, Type, Optional
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
+from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.base import NDBaseSmartEndpoint
 
 
 ResponseType = Union[List[Dict[str, Any]], Dict[str, Any], None]
@@ -20,7 +20,6 @@ ResponseType = Union[List[Dict[str, Any]], Dict[str, Any], None]
 
 # TODO: Revisit naming them "Orchestrator"
 class NDBaseOrchestrator(BaseModel):
-
     model_config = ConfigDict(
         use_enum_values=True,
         validate_assignment=True,
