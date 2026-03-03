@@ -9,13 +9,11 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from pydantic import BaseModel, ConfigDict
-from typing import Dict, List, Any, Union, ClassVar, Type, Optional
+from typing import ClassVar, Type, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.base import NDBaseSmartEndpoint
-
-
-ResponseType = Union[List[Dict[str, Any]], Dict[str, Any], None]
+from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.types import ResponseType
 
 
 # TODO: Revisit naming them "Orchestrator"
