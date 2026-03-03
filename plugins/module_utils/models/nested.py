@@ -9,7 +9,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from typing import List, ClassVar
-from .base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
 
 class NDNestedModel(NDBaseModel):

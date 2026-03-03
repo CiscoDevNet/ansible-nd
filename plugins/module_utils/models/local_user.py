@@ -8,26 +8,25 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from pydantic import Field, SecretStr, model_serializer, field_serializer, field_validator, model_validator, computed_field
 from types import MappingProxyType
 from typing import List, Dict, Any, Optional, ClassVar, Literal
 from typing_extensions import Self
-
-# TODO: To be replaced with: from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-# TODO: To be replaced with: from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from .base import NDBaseModel
-from .nested import NDNestedModel
-from ..constants import NDConstantMapping 
+from pydantic import Field, SecretStr, model_serializer, field_serializer, field_validator, model_validator, computed_field
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
 
 # Constant defined here as it is only used in this model
-USER_ROLES_MAPPING = NDConstantMapping({
-    "fabric_admin": "fabric-admin",
-    "observer": "observer",
-    "super_admin": "super-admin",
-    "support_engineer": "support-engineer",
-    "approver": "approver",
-    "designer": "designer",
-}).get_dict()
+USER_ROLES_MAPPING = NDConstantMapping(
+    {
+        "fabric_admin": "fabric-admin",
+        "observer": "observer",
+        "super_admin": "super-admin",
+        "support_engineer": "support-engineer",
+        "approver": "approver",
+        "designer": "designer",
+    }
+).get_dict()
 
 
 class LocalUserSecurityDomainModel(NDNestedModel):
@@ -41,14 +40,7 @@ class LocalUserSecurityDomainModel(NDNestedModel):
 
     @model_serializer()
     def serialize_model(self) -> Dict:
-        return {
-            self.name: {
-                "roles": [
-                    USER_ROLES_MAPPING.get(role, role)
-                    for role in (self.roles or [])
-                ]
-            }
-        }
+        return {self.name: {"roles": [USER_ROLES_MAPPING.get(role, role) for role in (self.roles or [])]}}
 
     # NOTE: Deserialization defined in `LocalUserModel` due to API response complexity
 
@@ -60,7 +52,7 @@ class LocalUserModel(NDBaseModel):
 
     Identifier: login_id (single field)
     """
-    
+
     # Identifier configuration
     # TODO: Revisit this identifiers strategy (low priority)
     identifiers: ClassVar[Optional[List[str]]] = ["login_id"]
@@ -69,11 +61,8 @@ class LocalUserModel(NDBaseModel):
     # Keys management configurations
     # TODO: Revisit these configurations (low priority)
     exclude_from_diff: ClassVar[List[str]] = ["user_password"]
-    unwanted_keys: ClassVar[List]= [
-        ["passwordPolicy", "passwordChangeTime"],  # Nested path
-        ["userID"]  # Simple key
-    ]
-    
+    unwanted_keys: ClassVar[List] = [["passwordPolicy", "passwordChangeTime"], ["userID"]]  # Nested path  # Simple key
+
     # Fields
     # NOTE: `alias` are NOT the ansible aliases. they are the equivalent attribute's names from the API spec
     # TODO: use extra for generating argument_spec (low priority)
@@ -96,7 +85,7 @@ class LocalUserModel(NDBaseModel):
         """Computed nested structure for API payload."""
         if self.reuse_limitation is None and self.time_interval_limitation is None:
             return None
-        
+
         policy = {}
         if self.reuse_limitation is not None:
             policy["reuseLimitation"] = self.reuse_limitation
@@ -108,7 +97,6 @@ class LocalUserModel(NDBaseModel):
     def serialize_password(self, value: Optional[SecretStr]) -> Optional[str]:
         return value.get_secret_value() if value else None
 
-
     @field_serializer("security_domains")
     def serialize_domains(self, value: Optional[List[LocalUserSecurityDomainModel]]) -> Optional[Dict]:
         # NOTE: exclude `None` values and empty list (-> should we exclude empty list?)
@@ -119,9 +107,7 @@ class LocalUserModel(NDBaseModel):
         for domain in value:
             domains_dict.update(domain.to_payload())
 
-        return {
-            "domains": domains_dict
-        }
+        return {"domains": domains_dict}
 
     # -- Deserialization (API response / Ansible payload -> Model instance) --
 
@@ -132,17 +118,17 @@ class LocalUserModel(NDBaseModel):
             return data
 
         password_policy = data.get("passwordPolicy")
-        
+
         if password_policy and isinstance(password_policy, dict):
             if "reuseLimitation" in password_policy:
                 data["reuse_limitation"] = password_policy["reuseLimitation"]
             if "timeIntervalLimitation" in password_policy:
                 data["time_interval_limitation"] = password_policy["timeIntervalLimitation"]
-            
+
             # Remove the nested structure from data to avoid conflicts
             # (since it's a computed field, not a real field)
             data.pop("passwordPolicy", None)
-        
+
         return data
 
     @field_validator("security_domains", mode="before")
@@ -150,24 +136,21 @@ class LocalUserModel(NDBaseModel):
     def deserialize_domains(cls, value: Any) -> Optional[List[Dict]]:
         if value is None:
             return None
-        
+
         # If already in list format (Ansible module representation), return as-is
         if isinstance(value, list):
             return value
-        
+
         # If in the nested dict format (API representation)
         if isinstance(value, dict) and "domains" in value:
             domains_dict = value["domains"]
             domains_list = []
-            
+
             for domain_name, domain_data in domains_dict.items():
-                domains_list.append({
-                    "name": domain_name,
-                    "roles": [USER_ROLES_MAPPING.get(role, role) for role in domain_data.get("roles", [])]
-                })
-            
+                domains_list.append({"name": domain_name, "roles": [USER_ROLES_MAPPING.get(role, role) for role in domain_data.get("roles", [])]})
+
             return domains_list
-        
+
         return value
 
     # -- Extra --
