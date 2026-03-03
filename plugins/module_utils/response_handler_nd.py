@@ -10,12 +10,12 @@ Implements the ResponseHandler interface for handling Nexus Dashboard controller
 
 ## Version Compatibility
 
-This handler is designed for ND API v1 responses (ND 3.0+, NDFC 12+).
+This handler is designed for ND API v1 responses (ND 4.2+).
 
 ### Status Code Assumptions
 
 Status codes are defined by the injected `ResponseValidationStrategy`, defaulting
-to `NdV1Strategy` (ND 3.0+, NDFC 12+):
+to `NdV1Strategy` (ND 4.2+):
 
 - Success: 200, 201, 202, 204, 207
 - Not Found: 404 (treated as success for GET)

@@ -11,7 +11,7 @@ ND API v1 response validation strategy.
 ## Description
 
 Implements status code validation and error message extraction for ND API v1
-responses (ND 3.0+, NDFC 12+).
+responses (ND 4.2).
 
 This strategy encapsulates the response handling logic previously hardcoded
 in ResponseHandler, enabling version-specific behavior to be injected.
@@ -35,7 +35,7 @@ class NdV1Strategy:
     ## Description
 
     Implements status code validation and error message extraction
-    for ND API v1 (ND 3.0+, NDFC 12+).
+    for ND API v1 (ND 4.2+).
 
     ## Status Codes
 
