@@ -10,7 +10,9 @@ Tests the root API path constants defined in base_path.py
 
 from __future__ import absolute_import, annotations, division, print_function
 
-__metaclass__ = type  # pylint: disable=invalid-name
+# pylint: disable=invalid-name
+__metaclass__ = type
+# pylint: enable=invalid-name
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_path import (
     LOGIN,

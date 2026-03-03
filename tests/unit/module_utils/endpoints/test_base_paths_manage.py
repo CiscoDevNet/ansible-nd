@@ -10,7 +10,9 @@ Tests the BasePath class methods for building ND Manage API paths
 
 from __future__ import absolute_import, annotations, division, print_function
 
-__metaclass__ = type  # pylint: disable=invalid-name
+# pylint: disable=invalid-name
+__metaclass__ = type
+# pylint: enable=invalid-name
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_path import (
