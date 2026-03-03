@@ -16,14 +16,14 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from typing import Literal, Final
-from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.mixins import LoginIdMixin
-from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.enums import VerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.api_endpoints.base import NDBaseSmartEndpoint, NDBasePath
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import LoginIdMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.enums import VerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseSmartEndpoint, NDBasePath
 from pydantic import Field
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
-class _EpApiV1InfraAaaLocalUsersBase(LoginIdMixin, NDBaseSmartEndpoint):
+class _V1InfraAaaLocalUsersBase(LoginIdMixin, NDBaseSmartEndpoint):
     """
     Base class for ND Infra AAA Local Users endpoints.
 
@@ -53,7 +53,7 @@ class _EpApiV1InfraAaaLocalUsersBase(LoginIdMixin, NDBaseSmartEndpoint):
         self.login_id = identifier
 
 
-class EpApiV1InfraAaaLocalUsersGet(_EpApiV1InfraAaaLocalUsersBase):
+class V1InfraAaaLocalUsersGet(_V1InfraAaaLocalUsersBase):
     """
     # Summary
 
@@ -74,8 +74,8 @@ class EpApiV1InfraAaaLocalUsersGet(_EpApiV1InfraAaaLocalUsersBase):
     - GET
     """
 
-    class_name: Literal["EpApiV1InfraAaaLocalUsersGet"] = Field(
-        default="EpApiV1InfraAaaLocalUsersGet",
+    class_name: Literal["V1InfraAaaLocalUsersGet"] = Field(
+        default="V1InfraAaaLocalUsersGet",
         description="Class name for backward compatibility",
         frozen=True,
     )
@@ -86,7 +86,7 @@ class EpApiV1InfraAaaLocalUsersGet(_EpApiV1InfraAaaLocalUsersBase):
         return VerbEnum.GET
 
 
-class EpApiV1InfraAaaLocalUsersPost(_EpApiV1InfraAaaLocalUsersBase):
+class V1InfraAaaLocalUsersPost(_V1InfraAaaLocalUsersBase):
     """
     # Summary
 
@@ -105,8 +105,8 @@ class EpApiV1InfraAaaLocalUsersPost(_EpApiV1InfraAaaLocalUsersBase):
     - POST
     """
 
-    class_name: Literal["EpApiV1InfraAaaLocalUsersPost"] = Field(
-        default="EpApiV1InfraAaaLocalUsersPost",
+    class_name: Literal["V1InfraAaaLocalUsersPost"] = Field(
+        default="V1InfraAaaLocalUsersPost",
         description="Class name for backward compatibility",
         frozen=True,
     )
@@ -117,7 +117,7 @@ class EpApiV1InfraAaaLocalUsersPost(_EpApiV1InfraAaaLocalUsersBase):
         return VerbEnum.POST
 
 
-class EpApiV1InfraAaaLocalUsersPut(_EpApiV1InfraAaaLocalUsersBase):
+class V1InfraAaaLocalUsersPut(_V1InfraAaaLocalUsersBase):
     """
     # Summary
 
@@ -136,8 +136,8 @@ class EpApiV1InfraAaaLocalUsersPut(_EpApiV1InfraAaaLocalUsersBase):
     - PUT
     """
 
-    class_name: Literal["EpApiV1InfraAaaLocalUsersPut"] = Field(
-        default="EpApiV1InfraAaaLocalUsersPut",
+    class_name: Literal["V1InfraAaaLocalUsersPut"] = Field(
+        default="V1InfraAaaLocalUsersPut",
         description="Class name for backward compatibility",
         frozen=True,
     )
@@ -148,7 +148,7 @@ class EpApiV1InfraAaaLocalUsersPut(_EpApiV1InfraAaaLocalUsersBase):
         return VerbEnum.PUT
 
 
-class EpApiV1InfraAaaLocalUsersDelete(_EpApiV1InfraAaaLocalUsersBase):
+class V1InfraAaaLocalUsersDelete(_V1InfraAaaLocalUsersBase):
     """
     # Summary
 
@@ -167,8 +167,8 @@ class EpApiV1InfraAaaLocalUsersDelete(_EpApiV1InfraAaaLocalUsersBase):
     - DELETE
     """
 
-    class_name: Literal["EpApiV1InfraAaaLocalUsersDelete"] = Field(
-        default="EpApiV1InfraAaaLocalUsersDelete",
+    class_name: Literal["V1InfraAaaLocalUsersDelete"] = Field(
+        default="V1InfraAaaLocalUsersDelete",
         description="Class name for backward compatibility",
         frozen=True,
     )

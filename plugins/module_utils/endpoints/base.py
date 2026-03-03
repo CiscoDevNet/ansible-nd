@@ -1,4 +1,5 @@
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
+# Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """
@@ -22,6 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     Field,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.types import IdentifierKey
 
 
 class NDEndpointBaseModel(BaseModel, ABC):
@@ -129,3 +131,8 @@ class NDEndpointBaseModel(BaseModel, ABC):
 
         None
         """
+    
+    # NOTE: function to set endpoints attribute fields from identifiers -> acts as the bridge between Models and Endpoints for API Request Orchestration
+    @abstractmethod
+    def set_identifiers(self, identifier: IdentifierKey = None):
+        pass
