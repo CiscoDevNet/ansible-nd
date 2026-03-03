@@ -166,10 +166,13 @@ class Results:
     2.  Populate the `Results` instance with the current task data
         -   Set properties: `response_current`, `result_current`, `diff_current`
         -   Set metadata properties: `action`, `state`, `check_mode`, `operation_type`
-    3. Register the task result with `Results.register_task_result()`
+    3. Optional. Register the task result with `Results.register_task_result()`
         -   Converts current task to immutable `TaskResultData`
         -   Validates data with Pydantic
         -   Resets current task for next registration
+        -   Tasks are NOT required to be registered.  There are cases where
+            a task's information would not be useful to an end-user.  If this
+            is the case, the task can simply not be registered.
 
     `Results` should be instantiated in the main Ansible Task class and
     passed to all other task classes for which results are to be collected.
@@ -229,7 +232,7 @@ class Results:
             ...
             self.fabric_delete.fabric_names = ["FABRIC_1", "FABRIC_2"]
             self.fabric_delete.results = self.results
-            # results.register_task_result() is called within the
+            # results.register_task_result() is optionally called within the
             # commit() method of the FabricDelete class.
             self.fabric_delete.commit()
     ```
