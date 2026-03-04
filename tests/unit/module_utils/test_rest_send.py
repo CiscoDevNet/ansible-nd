@@ -20,8 +20,8 @@ import inspect
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import ResponseHandler
-from ansible_collections.cisco.nd.plugins.module_utils.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 from ansible_collections.cisco.nd.tests.unit.module_utils.fixtures.load_fixture import load_fixture
 from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import MockAnsibleModule

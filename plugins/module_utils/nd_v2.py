@@ -50,13 +50,13 @@ import logging
 from typing import Any, Optional
 
 from ansible.module_utils.basic import env_fallback
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_handler import ResponseHandlerProtocol
-from ansible_collections.cisco.nd.plugins.module_utils.protocol_sender import SenderProtocol
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
-from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import ResponseHandler
-from ansible_collections.cisco.nd.plugins.module_utils.rest_send import RestSend
-from ansible_collections.cisco.nd.plugins.module_utils.sender_nd import Sender
+from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_handler import ResponseHandlerProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.sender import SenderProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
 
 class NDErrorData(BaseModel):

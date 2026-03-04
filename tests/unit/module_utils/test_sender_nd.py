@@ -28,7 +28,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from ansible.module_utils.connection import ConnectionError as AnsibleConnectionError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.sender_nd import Sender
+from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 # =============================================================================

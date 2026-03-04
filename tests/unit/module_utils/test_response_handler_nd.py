@@ -25,8 +25,8 @@ __metaclass__ = type  # pylint: disable=invalid-name
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import ResponseHandler
-from ansible_collections.cisco.nd.plugins.module_utils.response_validation_nd_v1 import NdV1Strategy
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_strategies.nd_v1_strategy import NdV1Strategy
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 # =============================================================================
