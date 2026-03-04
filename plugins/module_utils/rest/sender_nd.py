@@ -19,7 +19,6 @@ import copy
 import inspect
 import json
 import logging
-
 from typing import Any, Optional
 
 from ansible.module_utils.basic import AnsibleModule  # type: ignore

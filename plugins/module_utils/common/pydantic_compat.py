@@ -21,7 +21,7 @@ behavior across all modules and follows the DRY principle.
 Rather than importing directly from pydantic, import from this module:
 
 ```python
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel
 ```
 
 This ensure that Ansible sanity tests will not fail due to missing Pydantic dependencies.

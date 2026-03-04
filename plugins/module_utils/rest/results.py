@@ -17,16 +17,15 @@ __metaclass__ = type
 
 import copy
 import logging
-
 from typing import Any, Optional
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
     ConfigDict,
     Field,
     ValidationError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 
 
 class TaskResultData(BaseModel):
@@ -311,8 +310,8 @@ class Results:
 
     ```python
     from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-    from ansible_collections.cisco.nd.plugins.module_utils.results import Results
-    from ansible_collections.cisco.nd.plugins.module_utils.rest_send import RestSend
+    from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+    from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
     ...
     class FabricDelete:
         def __init__(self, ansible_module):

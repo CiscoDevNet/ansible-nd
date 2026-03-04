@@ -65,8 +65,8 @@ import logging
 from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_validation import ResponseValidationStrategy
-from ansible_collections.cisco.nd.plugins.module_utils.response_validation_nd_v1 import NdV1Strategy
+from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_validation import ResponseValidationStrategy
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_strategies.nd_v1_strategy import NdV1Strategy
 
 
 class ResponseHandler:
@@ -120,7 +120,7 @@ class ResponseHandler:
 
     ```python
     # import and instantiate the class
-    from ansible_collections.cisco.nd.plugins.module_utils.response_handler_nd import \
+    from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import \
         ResponseHandler
     response_handler = ResponseHandler()
 

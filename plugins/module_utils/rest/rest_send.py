@@ -10,18 +10,17 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-from typing import Any, Optional
-
 import copy
 import inspect
 import json
 import logging
 from time import sleep
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.protocol_response_handler import ResponseHandlerProtocol
-from ansible_collections.cisco.nd.plugins.module_utils.protocol_sender import SenderProtocol
-from ansible_collections.cisco.nd.plugins.module_utils.results import Results
+from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_handler import ResponseHandlerProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.sender import SenderProtocol
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
 
 class RestSend:
@@ -31,11 +30,11 @@ class RestSend:
     -   Send REST requests to the controller with retries.
     -   Accepts a `Sender()` class that implements SenderProtocol.
             -   The sender interface is defined in
-                `module_utils/protocol_sender.py`
+                `module_utils/rest/protocols/sender.py`
     -   Accepts a `ResponseHandler()` class that implements the response
         handler interface.
             -   The response handler interface is defined in
-                `module_utils/protocol_response_handler.py`
+                `module_utils/rest/protocols/response_handler.py`
 
     ## Raises
 
@@ -63,12 +62,12 @@ class RestSend:
     -   A Sender() class is used in the usage example below that requires an
         instance of `AnsibleModule`, and uses the connection plugin (plugins/httpapi.nd.py)
         to send requests to the controller.
-        -   See ``module_utils/protocol_sender.py`` for details about
+        -   See ``module_utils/rest/protocols/sender.py`` for details about
             implementing `Sender()` classes.
     -   A `ResponseHandler()` class is used in the usage example below that
         abstracts controller response handling.  It accepts a controller
         response dict and returns a result dict.
-        -   See `module_utils/protocol_response_handler.py` for details
+        -   See `module_utils/rest/protocols/response_handler.py` for details
             about implementing `ResponseHandler()` classes.
 
     ## Usage example
@@ -421,19 +420,6 @@ class RestSend:
         return Results().failed_result
 
     @property
-    def implements(self) -> str:
-        """
-        # Summary
-
-        The interface implemented by this class.
-
-        ## Raises
-
-        None
-        """
-        return "rest_send_v1"
-
-    @property
     def path(self) -> str:
         """
         # Summary
@@ -545,7 +531,7 @@ class RestSend:
 
         ## NOTES
 
-        -   See module_utils/protocol_response_handler.py for the protocol definition.
+        -   See module_utils/rest/protocols/response_handler.py for the protocol definition.
         """
         if self._response_handler is None:
             msg = f"{self.class_name}.response_handler: "
@@ -683,7 +669,7 @@ class RestSend:
 
         A class implementing the SenderProtocol.
 
-        See module_utils/protocol_sender.py for SenderProtocol definition.
+        See module_utils/rest/protocols/sender.py for SenderProtocol definition.
 
         ## Raises
 
