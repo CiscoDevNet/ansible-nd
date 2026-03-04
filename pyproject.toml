@@ -1,0 +1,45 @@
+[project]
+name = "ansible-nd"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "ansible>=12.3.0",
+    "black>=26.1.0",
+    "coverage==4.5.4",
+    "isort>=7.0.0",
+    "jsonpath-ng>=1.7.0",
+    "librt>=0.8.0",
+    "lxml>=6.0.2",
+    "pip>=26.0.1",
+    "pydantic>=2.12.5",
+    "pylint>=4.0.4",
+    "pytest>=9.0.2",
+    "requests>=2.32.5",
+    "requests-toolbelt>=1.0.0",
+]
+[tool.black]
+line-length = 159
+
+[tool.isort]
+profile = "black"
+line_length = 159
+
+[tool.mypy]
+plugins = ["pydantic.mypy"]
+follow_imports = "normal"
+strict_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_any_generics = false
+check_untyped_defs = true
+no_implicit_reexport = false
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pylint.format]
+max-line-length = 159
