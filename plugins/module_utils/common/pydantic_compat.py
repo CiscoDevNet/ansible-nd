@@ -52,6 +52,9 @@ if TYPE_CHECKING:
         model_validator,
         validator,
     )
+
+    HAS_PYDANTIC = True  # pylint: disable=invalid-name
+    PYDANTIC_IMPORT_ERROR = None  # pylint: disable=invalid-name
 else:
     # Runtime: try to import, with fallback
     try:
@@ -179,10 +182,42 @@ else:
         HAS_PYDANTIC = True  # pylint: disable=invalid-name
         PYDANTIC_IMPORT_ERROR = None  # pylint: disable=invalid-name
 
-# Set HAS_PYDANTIC for when TYPE_CHECKING is True
-if TYPE_CHECKING:
-    HAS_PYDANTIC = True  # pylint: disable=invalid-name
-    PYDANTIC_IMPORT_ERROR = None  # pylint: disable=invalid-name
+
+def require_pydantic(module) -> None:
+    """
+    # Summary
+
+    Call `module.fail_json` if pydantic is not installed.
+
+    Intended to be called once at the top of a module's `main()` function,
+    immediately after `AnsibleModule` is instantiated, to provide a clear
+    error message when pydantic is a required dependency.
+
+    ## Example
+
+    ```python
+    from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+
+    def main():
+        module = AnsibleModule(argument_spec=...)
+        require_pydantic(module)
+    ```
+
+    ## Raises
+
+    None
+
+    ## Notes
+
+    - Does nothing if pydantic is installed.
+    - Uses Ansible's `missing_required_lib` to produce a standardized error
+      message that includes installation instructions.
+    """
+    if not HAS_PYDANTIC:
+        from ansible.module_utils.basic import missing_required_lib  # pylint: disable=import-outside-toplevel
+
+        module.fail_json(msg=missing_required_lib("pydantic"), exception=PYDANTIC_IMPORT_ERROR)
+
 
 __all__ = [
     "AfterValidator",
@@ -198,5 +233,6 @@ __all__ = [
     "field_serializer",
     "field_validator",
     "model_validator",
+    "require_pydantic",
     "validator",
 ]
