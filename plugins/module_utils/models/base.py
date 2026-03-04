@@ -9,9 +9,8 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from abc import ABC
-from pydantic import BaseModel, ConfigDict
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
 from typing import List, Dict, Any, ClassVar, Tuple, Union, Literal, Optional
-from typing_extensions import Self
 
 
 # TODO: Revisit identifiers strategy (low priority)
@@ -82,11 +81,11 @@ class NDBaseModel(BaseModel, ABC):
         return self.model_dump(by_alias=False, exclude_none=True, **kwargs)
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any], **kwargs) -> Self:
+    def from_response(cls, response: Dict[str, Any], **kwargs) -> "NDBaseModel":
         return cls.model_validate(response, by_alias=True, **kwargs)
 
     @classmethod
-    def from_config(cls, ansible_config: Dict[str, Any], **kwargs) -> Self:
+    def from_config(cls, ansible_config: Dict[str, Any], **kwargs) -> "NDBaseModel":
         return cls.model_validate(ansible_config, by_name=True, **kwargs)
 
     # TODO: Revisit this function when revisiting identifier strategy (low priority)
@@ -146,7 +145,7 @@ class NDBaseModel(BaseModel, ABC):
     # NOTE: initialize and return a deep copy of the instance?
     # TODO: Might be missing a proper merge on fields of type `List[NDNestedModel]`?
     # -> similar to NDCOnfigCollection... -> add argument to make it optional either replace
-    def merge(self, other_model: "NDBaseModel", **kwargs) -> Self:
+    def merge(self, other_model: "NDBaseModel", **kwargs) -> "NDBaseModel":
         if not isinstance(other_model, type(self)):
             # TODO: Change error message
             return TypeError("models are not of the same type.")
