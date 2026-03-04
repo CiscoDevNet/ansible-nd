@@ -27,6 +27,7 @@ options:
     - The list of the local users to configure.
     type: list
     elements: dict
+    required: True
     suboptions:
       email:
         description:
@@ -202,7 +203,7 @@ def main():
         # output = nd_state_machine.manage_state()
         # module.exit_json(**output)
         nd_state_machine.manage_state()
-        
+
         nd_state_machine.exit_json()
 
     except Exception as e:

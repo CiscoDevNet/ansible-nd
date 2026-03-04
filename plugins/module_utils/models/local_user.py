@@ -9,7 +9,15 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from typing import List, Dict, Any, Optional, ClassVar, Literal
-from pydantic import Field, SecretStr, model_serializer, field_serializer, field_validator, model_validator, computed_field
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
+    Field,
+    SecretStr,
+    model_serializer,
+    field_serializer,
+    field_validator,
+    model_validator,
+    computed_field,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
@@ -24,7 +32,7 @@ USER_ROLES_MAPPING = NDConstantMapping(
         "approver": "approver",
         "designer": "designer",
     }
-).get_dict()
+)
 
 
 class LocalUserSecurityDomainModel(NDNestedModel):
@@ -38,7 +46,7 @@ class LocalUserSecurityDomainModel(NDNestedModel):
 
     @model_serializer()
     def serialize_model(self) -> Dict:
-        return {self.name: {"roles": [USER_ROLES_MAPPING.get(role, role) for role in (self.roles or [])]}}
+        return {self.name: {"roles": [USER_ROLES_MAPPING.get_dict().get(role, role) for role in (self.roles or [])]}}
 
     # NOTE: Deserialization defined in `LocalUserModel` due to API response complexity
 
@@ -145,7 +153,7 @@ class LocalUserModel(NDBaseModel):
             domains_list = []
 
             for domain_name, domain_data in domains_dict.items():
-                domains_list.append({"name": domain_name, "roles": [USER_ROLES_MAPPING.get(role, role) for role in domain_data.get("roles", [])]})
+                domains_list.append({"name": domain_name, "roles": [USER_ROLES_MAPPING.get_dict().get(role, role) for role in domain_data.get("roles", [])]})
 
             return domains_list
 
@@ -174,7 +182,7 @@ class LocalUserModel(NDBaseModel):
                         elements="dict",
                         options=dict(
                             name=dict(type="str", required=True, aliases=["security_domain_name", "domain_name"]),
-                            roles=dict(type="list", elements="str", choices=list(USER_ROLES_MAPPING)),
+                            roles=dict(type="list", elements="str", choices=USER_ROLES_MAPPING.get_original_data()),
                         ),
                         aliases=["domains"],
                     ),
@@ -182,6 +190,5 @@ class LocalUserModel(NDBaseModel):
                     remote_user_authorization=dict(type="bool"),
                 ),
             ),
-            override_exceptions=dict(type="list", elements="str"),
             state=dict(type="str", default="merged", choices=["merged", "replaced", "overridden", "deleted"]),
         )

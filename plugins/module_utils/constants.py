@@ -16,6 +16,7 @@ from copy import deepcopy
 
 class NDConstantMapping(Dict):
     def __init__(self, data: Dict):
+        self.data = data
         self.new_dict = deepcopy(data)
         for k, v in data.items():
             self.new_dict[v] = k
@@ -23,6 +24,9 @@ class NDConstantMapping(Dict):
 
     def get_dict(self):
         return self.new_dict
+
+    def get_original_data(self):
+        return list(self.data.keys())
 
 
 OBJECT_TYPES = {

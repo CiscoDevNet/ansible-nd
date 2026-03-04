@@ -19,7 +19,7 @@ from typing import Literal, Final
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import LoginIdMixin
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.enums import VerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseEndpoint, NDBasePath
-from pydantic import Field
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
