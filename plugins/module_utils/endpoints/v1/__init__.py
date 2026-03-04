@@ -7,7 +7,7 @@
 ND API v1 endpoint definitions.
 
 This module provides all endpoint classes and helpers for ND API v1
-(ND 3.0+, NDFC 12+).
+(ND 4.2).
 
 Import from this module to explicitly use v1 endpoints:
 

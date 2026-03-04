@@ -13,7 +13,7 @@ enabling type-safe API endpoint definitions.
 
 ## Current Stable API Version
 
-v1 (ND 3.0+, NDFC 12+)
+v1 (ND 4.2)
 
 ## Usage
 
