@@ -16,7 +16,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from typing import Optional
-from pydantic import BaseModel, Field
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, Field
 
 
 class LoginIdMixin(BaseModel):

@@ -10,7 +10,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from abc import ABC, abstractmethod
-from pydantic import BaseModel, ConfigDict
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
 from typing import Final
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 

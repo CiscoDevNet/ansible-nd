@@ -32,12 +32,14 @@ if TYPE_CHECKING:
         Field,
         PydanticExperimentalWarning,
         StrictBool,
+        SecretStr,
         ValidationError,
         field_serializer,
         model_serializer,
         field_validator,
         model_validator,
         validator,
+        computed_field,
     )
 else:
     # Runtime: try to import, with fallback
@@ -50,12 +52,14 @@ else:
             Field,
             PydanticExperimentalWarning,
             StrictBool,
+            SecretStr,
             ValidationError,
             field_serializer,
             model_serializer,
             field_validator,
             model_validator,
             validator,
+            computed_field,
         )
     except ImportError:
         HAS_PYDANTIC = False  # pylint: disable=invalid-name
@@ -106,7 +110,7 @@ else:
                 return func
 
             return decorator
-        
+
         # Fallback: model_serializer decorator that does nothing
         def model_serializer(*args, **kwargs):  # pylint: disable=unused-argument
             """Pydantic model_serializer fallback when pydantic is not available."""
@@ -119,6 +123,15 @@ else:
         # Fallback: field_validator decorator that does nothing
         def field_validator(*args, **kwargs) -> Callable[..., Any]:  # pylint: disable=unused-argument,invalid-name
             """Pydantic field_validator fallback when pydantic is not available."""
+
+            def decorator(func):
+                return func
+
+            return decorator
+
+        # Fallback: computed_field decorator that does nothing
+        def computed_field(*args, **kwargs):  # pylint: disable=unused-argument
+            """Pydantic computed_field fallback when pydantic is not available."""
 
             def decorator(func):
                 return func
@@ -140,6 +153,9 @@ else:
 
         # Fallback: StrictBool
         StrictBool = bool
+
+        # Fallback: SecretStr
+        SecretStr = str
 
         # Fallback: ValidationError
         class ValidationError(Exception):
@@ -191,10 +207,12 @@ __all__ = [
     "PYDANTIC_IMPORT_ERROR",
     "PydanticExperimentalWarning",
     "StrictBool",
+    "SecretStr",
     "ValidationError",
     "field_serializer",
     "model_serializer",
     "field_validator",
     "model_validator",
     "validator",
+    "computed_field",
 ]
