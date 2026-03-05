@@ -15,7 +15,10 @@ import logging
 from enum import Enum
 from logging.config import dictConfig
 from os import environ
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from ansible.module_utils.basic import AnsibleModule
 
 
 class ValidLogHandlers(str, Enum):
@@ -65,7 +68,7 @@ class Log:
     -   Instantiate a Log() object instance and call `commit()` on the instance:
 
     ```python
-    from ansible_collections.cisco.nd.plugins.module_utils.log import Log
+    from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
     try:
         log = Log()
         log.commit()
@@ -84,7 +87,7 @@ class Log:
     development), set `develop` to True:
 
     ```python
-    from ansible_collections.cisco.nd.plugins.module_utils.log import Log
+    from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
     try:
         log = Log()
         log.develop = True
@@ -98,7 +101,7 @@ class Log:
     property prior to calling `commit()`:
 
     ```python
-    from ansible_collections.cisco.nd.plugins.module_utils.log import Log
+    from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
     try:
         log = Log()
         log.config = "/path/to/logging_config.json"
@@ -118,7 +121,7 @@ class Log:
     In the main() function of a module.
 
     ```python
-    from ansible_collections.cisco.nd.plugins.module_utils.log import Log
+    from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
 
     def main():
         try:
@@ -392,3 +395,39 @@ class Log:
             raise TypeError(msg)
         self._develop = value
         logging.raiseExceptions = value
+
+
+def setup_logging(module: "AnsibleModule") -> Log:
+    """
+    # Summary
+
+    Configure nd collection logging and return the `Log` instance.
+
+    Intended for use in each Ansible module's `main()` function after
+    `AnsibleModule` is instantiated.
+
+    ## Raises
+
+    None
+
+    ## Notes
+
+    -   Calls `module.fail_json()` if logging configuration fails, which
+        exits the module with an error message rather than raising an exception.
+
+    ## Usage
+
+    ```python
+    from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
+
+    def main():
+        module = AnsibleModule(...)
+        log = setup_logging(module)
+    ```
+    """
+    try:
+        log = Log()
+        log.commit()
+    except ValueError as error:
+        module.fail_json(msg=str(error))
+    return log

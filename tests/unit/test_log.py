@@ -29,7 +29,9 @@ import logging
 from os import environ
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.log import Log
+from unittest.mock import MagicMock
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log, setup_logging
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 
@@ -431,3 +433,69 @@ def test_log_00310(develop) -> None:
         instance = Log()
         instance.develop = develop
     assert instance.develop == develop
+
+
+def test_setup_logging_00010(tmp_path) -> None:
+    """
+    # Summary
+
+    Verify `setup_logging()` returns a `Log` instance when the config is valid.
+
+    ## Test
+
+    - `ND_LOGGING_CONFIG` points to a valid logging config file.
+    - `setup_logging()` returns a `Log` instance.
+    - `module.fail_json()` is not called.
+
+    ## Classes and Methods
+
+    - `setup_logging()`
+    """
+    log_dir = tmp_path / "log_dir"
+    log_dir.mkdir()
+    config_file = log_dir / "logging_config.json"
+    log_file = log_dir / "nd.log"
+    config = logging_config(str(log_file))
+    with open(config_file, "w", encoding="UTF-8") as fp:
+        json.dump(config, fp)
+
+    environ["ND_LOGGING_CONFIG"] = str(config_file)
+
+    mock_module = MagicMock()
+
+    with does_not_raise():
+        result = setup_logging(mock_module)
+
+    assert isinstance(result, Log)
+    mock_module.fail_json.assert_not_called()
+
+
+def test_setup_logging_00020() -> None:
+    """
+    # Summary
+
+    Verify `setup_logging()` calls `module.fail_json()` when the config file
+    does not exist.
+
+    ## Test
+
+    - `ND_LOGGING_CONFIG` points to a nonexistent file.
+    - `setup_logging()` calls `module.fail_json()` with an error message
+      describing the failure.
+
+    ## Classes and Methods
+
+    - `setup_logging()`
+    """
+    config_file = "DOES_NOT_EXIST.json"
+    environ["ND_LOGGING_CONFIG"] = config_file
+
+    mock_module = MagicMock()
+    mock_module.fail_json.side_effect = SystemExit
+
+    with pytest.raises(SystemExit):
+        setup_logging(mock_module)
+
+    mock_module.fail_json.assert_called_once()
+    call_kwargs = mock_module.fail_json.call_args.kwargs
+    assert "error reading logging config" in call_kwargs["msg"]
