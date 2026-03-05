@@ -15,7 +15,10 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-from typing import Literal
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_infra import (
     BasePath,

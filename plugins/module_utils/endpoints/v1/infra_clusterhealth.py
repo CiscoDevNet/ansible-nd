@@ -14,7 +14,10 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
