@@ -26,6 +26,8 @@ __metaclass__ = type
 
 from typing import Optional, Protocol, runtime_checkable
 
+# pylint: disable=unnecessary-ellipsis
+
 
 @runtime_checkable
 class ResponseValidationStrategy(Protocol):
