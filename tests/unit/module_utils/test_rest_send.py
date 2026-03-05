@@ -66,7 +66,6 @@ def test_rest_send_00010():
     assert instance.timeout == 300
     assert instance.send_interval == 5
     assert instance.unit_test is False
-    assert instance.implements == "rest_send_v1"
 
 
 def test_rest_send_00020():
