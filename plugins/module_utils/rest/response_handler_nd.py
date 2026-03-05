@@ -55,8 +55,10 @@ TODO: Should response be converted to a Pydantic model by this class?
 """
 
 # isort: off
+# fmt: off
 from __future__ import (absolute_import, division, print_function)
 from __future__ import annotations
+# fmt: on
 # isort: on
 
 # pylint: disable=invalid-name

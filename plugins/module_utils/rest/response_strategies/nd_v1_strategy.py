@@ -18,8 +18,10 @@ in ResponseHandler, enabling version-specific behavior to be injected.
 """
 
 # isort: off
+# fmt: off
 from __future__ import (absolute_import, division, print_function)
 from __future__ import annotations
+# fmt: on
 # isort: on
 
 # pylint: disable=invalid-name

@@ -15,8 +15,10 @@ Enum definitions for Nexus Dashboard Ansible modules.
 """
 
 # isort: off
+# fmt: off
 from __future__ import (absolute_import, division, print_function)
 from __future__ import annotations
+# fmt: on
 # isort: on
 
 # pylint: disable=invalid-name

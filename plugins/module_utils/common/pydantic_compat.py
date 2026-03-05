@@ -28,8 +28,10 @@ This ensure that Ansible sanity tests will not fail due to missing Pydantic depe
 """
 
 # isort: off
+# fmt: off
 from __future__ import (absolute_import, division, print_function)
 from __future__ import annotations
+# fmt: on
 # isort: on
 
 # pylint: disable=invalid-name
