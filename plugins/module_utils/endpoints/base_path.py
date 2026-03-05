@@ -37,7 +37,10 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 from enum import Enum
-from typing import Final
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Final
 
 
 class ApiPath(str, Enum):

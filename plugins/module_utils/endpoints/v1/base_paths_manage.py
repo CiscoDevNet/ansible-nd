@@ -19,7 +19,10 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-from typing import Final
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Final
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_path import (
     ApiPath,
