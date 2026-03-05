@@ -9,7 +9,10 @@ Sender module conforming to SenderProtocol.
 See plugins/module_utils/protocol_sender.py for the protocol definition.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+# isort: off
+from __future__ import (absolute_import, division, print_function)
+from __future__ import annotations
+# isort: on
 
 # pylint: disable=invalid-name
 __metaclass__ = type

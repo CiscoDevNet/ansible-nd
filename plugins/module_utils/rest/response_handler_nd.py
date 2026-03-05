@@ -54,7 +54,10 @@ it via `response_handler.validation_strategy = NdV2Strategy()`.
 TODO: Should response be converted to a Pydantic model by this class?
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+# isort: off
+from __future__ import (absolute_import, division, print_function)
+from __future__ import annotations
+# isort: on
 
 # pylint: disable=invalid-name
 __metaclass__ = type

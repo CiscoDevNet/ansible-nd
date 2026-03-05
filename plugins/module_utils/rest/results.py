@@ -9,7 +9,10 @@
 Exposes public class Results to collect results across Ansible tasks.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+# isort: off
+from __future__ import (absolute_import, division, print_function)
+from __future__ import annotations
+# isort: on
 
 # pylint: disable=invalid-name
 __metaclass__ = type

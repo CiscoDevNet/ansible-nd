@@ -18,7 +18,10 @@ When ND API v2 is released with different status codes or response formats,
 implementing a new strategy class allows clean separation of v1 and v2 logic.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+# isort: off
+from __future__ import (absolute_import, division, print_function)
+from __future__ import annotations
+# isort: on
 
 # pylint: disable=invalid-name
 __metaclass__ = type

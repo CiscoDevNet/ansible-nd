@@ -27,7 +27,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 This ensure that Ansible sanity tests will not fail due to missing Pydantic dependencies.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+# isort: off
+from __future__ import (absolute_import, division, print_function)
+from __future__ import annotations
+# isort: on
 
 # pylint: disable=invalid-name
 __metaclass__ = type
