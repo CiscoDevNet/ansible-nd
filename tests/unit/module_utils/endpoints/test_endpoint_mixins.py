@@ -15,7 +15,7 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 import pytest  # pylint: disable=unused-import
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.endpoint_mixins import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     ClusterNameMixin,
     FabricNameMixin,
     ForceShowRunMixin,

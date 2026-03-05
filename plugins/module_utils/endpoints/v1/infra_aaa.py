@@ -18,7 +18,7 @@ __metaclass__ = type
 
 from typing import Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.endpoint_mixins import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     LoginIdMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_infra import (
