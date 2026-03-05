@@ -27,7 +27,14 @@ __metaclass__ = type
 try:
     from typing import Protocol, runtime_checkable
 except ImportError:
-    from typing_extensions import Protocol, runtime_checkable  # type: ignore[assignment]
+    try:
+        from typing_extensions import Protocol, runtime_checkable  # type: ignore[assignment]
+    except ImportError:
+        class Protocol:  # type: ignore[no-redef]
+            """Stub for Python < 3.8 without typing_extensions."""
+
+        def runtime_checkable(cls):  # type: ignore[no-redef]
+            return cls
 from typing import Optional
 
 # pylint: disable=unnecessary-ellipsis
