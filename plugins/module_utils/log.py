@@ -15,9 +15,16 @@ __metaclass__ = type
 
 import json
 import logging
+from enum import Enum
 from logging.config import dictConfig
 from os import environ
 from typing import Optional
+
+
+class ValidLogHandlers(str, Enum):
+    """Valid logging handler types."""
+
+    FILE = "file"
 
 
 class Log:
@@ -32,8 +39,7 @@ class Log:
             -   An error is encountered reading the logging config file.
             -   An error is encountered parsing the logging config file.
             -   An invalid handler is found in the logging config file.
-                    -   Valid handlers are listed in self.valid_handlers,
-                        which currently contains: "file".
+                    -   Valid handlers are defined in `ValidLogHandlers`.
             -   No formatters are found in the logging config file that
                 are associated with the configured handlers.
     -   `TypeError` if:
@@ -195,9 +201,6 @@ class Log:
         # Set this to True during development to catch logging errors.
         logging.raiseExceptions = False
 
-        self.valid_handlers = set()
-        self.valid_handlers.add("file")
-
         self._config: Optional[str] = environ.get("ND_LOGGING_CONFIG", None)
         self._develop: bool = False
 
@@ -273,8 +276,7 @@ class Log:
         -   `ValueError` if:
             -   The logging config file contains no handlers.
             -   The logging config file contains a handler other than
-                the handlers listed in self.valid_handlers (see class
-                docstring).
+                those defined in `ValidLogHandlers`.
 
         ## Usage
 
@@ -293,7 +295,7 @@ class Log:
             raise ValueError(msg)
         bad_handlers = []
         for handler in logging_config.get("handlers", {}):
-            if handler not in self.valid_handlers:
+            if handler not in set(ValidLogHandlers):
                 msg = "logging.config.dictConfig: "
                 msg += "handlers found that may interrupt Ansible module "
                 msg += "execution. "
