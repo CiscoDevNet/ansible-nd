@@ -22,9 +22,12 @@ if TYPE_CHECKING:
 
 
 class ValidLogHandlers(str, Enum):
-    """Valid logging handler types."""
+    """Valid logging handler classes (must not log to console)."""
 
-    FILE = "file"
+    FILE_HANDLER = "logging.FileHandler"
+    ROTATING_FILE_HANDLER = "logging.handlers.RotatingFileHandler"
+    TIMED_ROTATING_FILE_HANDLER = "logging.handlers.TimedRotatingFileHandler"
+    WATCHED_FILE_HANDLER = "logging.handlers.WatchedFileHandler"
 
 
 class Log:
@@ -275,8 +278,8 @@ class Log:
 
         -   `ValueError` if:
             -   The logging config file contains no handlers.
-            -   The logging config file contains a handler other than
-                those defined in `ValidLogHandlers`.
+            -   Any handler's `class` property is not one of the classes
+                defined in `ValidLogHandlers`.
 
         ## Usage
 
@@ -294,14 +297,15 @@ class Log:
             msg += f"and try again: {self.config}"
             raise ValueError(msg)
         bad_handlers = []
-        for handler in logging_config.get("handlers", {}):
-            if handler not in set(ValidLogHandlers):
+        for handler_name, handler_config in logging_config.get("handlers", {}).items():
+            handler_class = handler_config.get("class", "")
+            if handler_class not in set(ValidLogHandlers):
                 msg = "logging.config.dictConfig: "
                 msg += "handlers found that may interrupt Ansible module "
                 msg += "execution. "
                 msg += "Remove these handlers from the logging config file "
                 msg += "and try again. "
-                bad_handlers.append(handler)
+                bad_handlers.append(handler_name)
         if len(bad_handlers) > 0:
             msg += f"Handlers: {','.join(bad_handlers)}. "
             msg += f"Logging config file: {self.config}."

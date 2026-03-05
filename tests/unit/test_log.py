@@ -334,6 +334,74 @@ def test_log_00230(tmp_path) -> None:
         instance.commit()
 
 
+def test_log_00231(tmp_path) -> None:
+    """
+    ### Methods
+    -   Log().commit()
+
+    ### Test
+    -   No ``ValueError`` is raised when a handler uses a non-standard name
+        but a valid handler class (e.g. ``logging.handlers.RotatingFileHandler``).
+    -   Previously, validation checked the handler key name rather than the
+        class, so ``"my_file_handler"`` would have been incorrectly rejected.
+    """
+    log_dir = tmp_path / "log_dir"
+    log_dir.mkdir()
+    config_file = log_dir / "logging_config.json"
+    log_file = log_dir / "dcnm.log"
+    config = logging_config(str(log_file))
+    # Rename the handler key from "file" to a non-standard name.
+    config["handlers"]["my_file_handler"] = config["handlers"].pop("file")
+    config["loggers"]["dcnm"]["handlers"] = ["my_file_handler"]
+    config["root"]["handlers"] = ["my_file_handler"]
+    with open(config_file, "w", encoding="UTF-8") as fp:
+        json.dump(config, fp)
+
+    environ["ND_LOGGING_CONFIG"] = str(config_file)
+
+    with does_not_raise():
+        instance = Log()
+        instance.commit()
+
+
+def test_log_00232(tmp_path) -> None:
+    """
+    ### Methods
+    -   Log().commit()
+
+    ### Test
+    -   ``ValueError`` is raised when a handler is named ``"file"`` but
+        its ``class`` property is ``logging.StreamHandler``.
+    -   Previously, validation checked the handler key name rather than the
+        class, so a ``StreamHandler`` named ``"file"`` would have been
+        incorrectly accepted.
+    """
+    log_dir = tmp_path / "log_dir"
+    log_dir.mkdir()
+    config_file = log_dir / "logging_config.json"
+    log_file = log_dir / "dcnm.log"
+    config = logging_config(str(log_file))
+    # Keep the key name "file" but switch to a disallowed handler class.
+    config["handlers"]["file"]["class"] = "logging.StreamHandler"
+    with open(config_file, "w", encoding="UTF-8") as fp:
+        json.dump(config, fp)
+
+    environ["ND_LOGGING_CONFIG"] = str(config_file)
+
+    with does_not_raise():
+        instance = Log()
+
+    match = r"logging.config.dictConfig:\s+"
+    match += r"handlers found that may interrupt Ansible module\s+"
+    match += r"execution\.\s+"
+    match += r"Remove these handlers from the logging config file and\s+"
+    match += r"try again\.\s+"
+    match += r"Handlers:\s+.*\.\s+"
+    match += r"Logging config file:\s+.*\."
+    with pytest.raises(ValueError, match=match):
+        instance.commit()
+
+
 def test_log_00240(tmp_path) -> None:
     """
     ### Methods
