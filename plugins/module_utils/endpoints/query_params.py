@@ -20,7 +20,7 @@ from enum import Enum
 from typing import Optional, Union
 from urllib.parse import quote
 
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
     Field,
     field_validator,

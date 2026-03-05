@@ -21,7 +21,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_i
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
     ConfigDict,
     Field,

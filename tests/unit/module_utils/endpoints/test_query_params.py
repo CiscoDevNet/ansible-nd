@@ -23,7 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params im
     LuceneQueryParams,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
     does_not_raise,
 )
