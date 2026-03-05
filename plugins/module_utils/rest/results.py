@@ -414,7 +414,7 @@ class Results:
         Determine if the current task resulted in changes.
 
         This is a private helper method used during task registration.
-        Checks operation type, check mode, state, explicit changed flag,
+        Checks operation type, check mode, explicit changed flag,
         and diff content to determine if changes occurred.
 
         ## Raises
@@ -435,7 +435,7 @@ class Results:
         self.log.debug(msg)
 
         # Early exit for read-only operations
-        if self._current.check_mode or self._current.operation_type.is_read_only() or self._current.state == "query":
+        if self._current.check_mode or self._current.operation_type.is_read_only():
             msg = f"{self.class_name}.{method_name}: No changes (read-only operation)"
             self.log.debug(msg)
             return False
