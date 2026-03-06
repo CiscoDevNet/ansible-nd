@@ -128,10 +128,10 @@ EXAMPLES = r"""
         reuse_limitation: 20
         time_interval_limitation: 10
         security_domains:
-          name: all
-          roles:
-            - observer
-            - support_engineer
+          - name: all
+            roles:
+              - observer
+              - support_engineer
         remote_id_claim: remote_user
         remote_user_authorization: true
     state: merged
@@ -204,10 +204,10 @@ def main():
         # module.exit_json(**output)
         nd_state_machine.manage_state()
 
-        nd_state_machine.exit_json()
+        module.exit_json(**nd_state_machine.output.format())
 
     except Exception as e:
-        module.fail_json(msg=f"Module execution failed: {str(e)}")
+        module.fail_json(msg=f"Module execution failed: {str(e)}", **nd_state_machine.output.format())
 
 
 if __name__ == "__main__":
