@@ -844,6 +844,37 @@ def test_setup_logging_00010(tmp_path, monkeypatch) -> None:
     mock_module.fail_json.assert_not_called()
 
 
+@pytest.mark.parametrize("develop", [(True), (False)])
+def test_setup_logging_00040(monkeypatch, develop) -> None:
+    """
+    # Summary
+
+    Verify `setup_logging()` passes `develop` through to the `Log` instance.
+
+    ## Test
+
+    - `ND_LOGGING_CONFIG` is not set.
+    - `setup_logging()` is called with `develop` set to `True` or `False`.
+    - `result.develop` matches the value passed.
+    - `logging.raiseExceptions` matches the value passed.
+
+    ## Classes and Methods
+
+    - `setup_logging()`
+    """
+    monkeypatch.delenv("ND_LOGGING_CONFIG", raising=False)
+
+    mock_module = MagicMock()
+
+    with does_not_raise():
+        result = setup_logging(mock_module, develop=develop)
+
+    assert isinstance(result, Log)
+    assert result.develop is develop
+    assert logging.raiseExceptions is develop
+    mock_module.fail_json.assert_not_called()
+
+
 def test_setup_logging_00020(monkeypatch) -> None:
     """
     # Summary

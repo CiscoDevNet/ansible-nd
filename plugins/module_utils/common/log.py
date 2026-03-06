@@ -121,7 +121,26 @@ class Log:
 
     ## Example module code using the Log() object
 
-    In the main() function of a module.
+    The `setup_logging()` helper is the recommended way to configure logging in module `main()` functions.
+    It handles exceptions internally by calling `module.fail_json()`.
+
+    ```python
+    from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
+
+    def main():
+        module = AnsibleModule(...)
+        log = setup_logging(module)
+
+        task = AnsibleTask()
+    ```
+
+    To enable logging exceptions during development, pass `develop=True`:
+
+    ```python
+    log = setup_logging(module, develop=True)
+    ```
+
+    Alternatively, `Log()` can be used directly when finer control is needed:
 
     ```python
     from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
@@ -404,7 +423,7 @@ class Log:
         logging.raiseExceptions = value
 
 
-def setup_logging(module: "AnsibleModule") -> Log:
+def setup_logging(module: "AnsibleModule", develop: bool = False) -> Log:
     """
     # Summary
 
@@ -431,9 +450,15 @@ def setup_logging(module: "AnsibleModule") -> Log:
         module = AnsibleModule(...)
         log = setup_logging(module)
     ```
+
+    To enable logging exceptions during development, pass `develop=True`:
+
+    ```python
+    log = setup_logging(module, develop=True)
+    ```
     """
     try:
-        log = Log()
+        log = Log(develop=develop)
         log.commit()
     except ValueError as error:
         module.fail_json(msg=str(error))
