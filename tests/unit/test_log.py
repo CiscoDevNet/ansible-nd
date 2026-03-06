@@ -60,7 +60,7 @@ def logging_config(logging_config_file) -> dict:
                 "backupCount": 4,
             }
         },
-        "loggers": {"dcnm": {"handlers": ["file"], "level": "DEBUG", "propagate": False}},
+        "loggers": {"nd": {"handlers": ["file"], "level": "DEBUG", "propagate": False}},
         "root": {"level": "INFO", "handlers": ["file"]},
     }
 
@@ -307,7 +307,7 @@ def test_log_00230(tmp_path) -> None:
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
     config_file = log_dir / "logging_config.json"
-    log_file = log_dir / "dcnm.log"
+    log_file = log_dir / "nd.log"
     config = logging_config(str(log_file))
     config["handlers"]["console"] = {
         "class": "logging.StreamHandler",
