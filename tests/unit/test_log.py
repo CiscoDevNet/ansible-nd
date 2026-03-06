@@ -94,7 +94,7 @@ def test_log_00010(tmp_path) -> None:
     debug_msg = "bing"
     warning_msg = "bar"
     critical_msg = "baz"
-    log = logging.getLogger("dcnm.test_logger")
+    log = logging.getLogger("nd.test_logger")
     log.info(info_msg)
     log.debug(debug_msg)
     log.warning(warning_msg)
@@ -119,7 +119,7 @@ def test_log_00100(tmp_path) -> None:
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
     config_file = log_dir / "logging_config.json"
-    log_file = log_dir / "dcnm.log"
+    log_file = log_dir / "nd.log"
     config = logging_config(str(log_file))
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
@@ -132,7 +132,7 @@ def test_log_00100(tmp_path) -> None:
     debug_msg = "bing"
     warning_msg = "bar"
     critical_msg = "baz"
-    log = logging.getLogger("dcnm.test_logger")
+    log = logging.getLogger("nd.test_logger")
     log.info(info_msg)
     log.debug(debug_msg)
     log.warning(warning_msg)
@@ -155,7 +155,7 @@ def test_log_00110(tmp_path, env_var) -> None:
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
     config_file = log_dir / "logging_config.json"
-    log_file = log_dir / "dcnm.log"
+    log_file = log_dir / "nd.log"
     config = logging_config(str(log_file))
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
@@ -170,7 +170,7 @@ def test_log_00110(tmp_path, env_var) -> None:
     debug_msg = "bing"
     warning_msg = "bar"
     critical_msg = "baz"
-    log = logging.getLogger("dcnm.test_logger")
+    log = logging.getLogger("nd.test_logger")
     log.info(info_msg)
     log.debug(debug_msg)
     log.warning(warning_msg)
@@ -196,7 +196,7 @@ def test_log_00120(tmp_path) -> None:
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
     config_file = log_dir / "logging_config.json"
-    log_file = log_dir / "dcnm.log"
+    log_file = log_dir / "nd.log"
     config = logging_config(str(log_file))
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
@@ -212,7 +212,7 @@ def test_log_00120(tmp_path) -> None:
     debug_msg = "bing"
     warning_msg = "bar"
     critical_msg = "baz"
-    log = logging.getLogger("dcnm.test_logger")
+    log = logging.getLogger("nd.test_logger")
     log.info(info_msg)
     log.debug(debug_msg)
     log.warning(warning_msg)
@@ -348,11 +348,11 @@ def test_log_00231(tmp_path) -> None:
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
     config_file = log_dir / "logging_config.json"
-    log_file = log_dir / "dcnm.log"
+    log_file = log_dir / "nd.log"
     config = logging_config(str(log_file))
     # Rename the handler key from "file" to a non-standard name.
     config["handlers"]["my_file_handler"] = config["handlers"].pop("file")
-    config["loggers"]["dcnm"]["handlers"] = ["my_file_handler"]
+    config["loggers"]["nd"]["handlers"] = ["my_file_handler"]
     config["root"]["handlers"] = ["my_file_handler"]
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
@@ -379,7 +379,7 @@ def test_log_00232(tmp_path) -> None:
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
     config_file = log_dir / "logging_config.json"
-    log_file = log_dir / "dcnm.log"
+    log_file = log_dir / "nd.log"
     config = logging_config(str(log_file))
     # Keep the key name "file" but switch to a disallowed handler class.
     config["handlers"]["file"]["class"] = "logging.StreamHandler"
@@ -419,7 +419,7 @@ def test_log_00240(tmp_path) -> None:
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
     config_file = log_dir / "logging_config.json"
-    log_file = log_dir / "dcnm.log"
+    log_file = log_dir / "nd.log"
     config = logging_config(str(log_file))
     del config["handlers"]
     with open(config_file, "w", encoding="UTF-8") as fp:
@@ -451,7 +451,7 @@ def test_log_00250(tmp_path) -> None:
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
     config_file = log_dir / "logging_config.json"
-    log_file = log_dir / "dcnm.log"
+    log_file = log_dir / "nd.log"
     config = logging_config(str(log_file))
     del config["formatters"]
     with open(config_file, "w", encoding="UTF-8") as fp:
