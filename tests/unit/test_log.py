@@ -79,7 +79,7 @@ def test_log_00010(tmp_path) -> None:
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
     config_file = log_dir / "logging_config.json"
-    log_file = log_dir / "dcnm.log"
+    log_file = log_dir / "nd.log"
     config = logging_config(str(log_file))
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
