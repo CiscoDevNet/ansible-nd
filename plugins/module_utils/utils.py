@@ -56,7 +56,7 @@ def issubset(subset: Any, superset: Any) -> bool:
     return True
 
 
-# TODO: Might not necessary with Pydantic validation and serialization built-in methods
+# TODO: Might not necessary with Pydantic validation and serialization built-in methods (see models/local_user)
 def remove_unwanted_keys(data: Dict, unwanted_keys: List[Union[str, List[str]]]) -> Dict:
     """Remove unwanted keys from dict (supports nested paths)."""
     data = deepcopy(data)

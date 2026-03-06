@@ -143,12 +143,11 @@ class NDBaseModel(BaseModel, ABC):
         return self.model_dump(by_alias=True, exclude_none=True, exclude=set(self.exclude_from_diff), **kwargs)
 
     # NOTE: initialize and return a deep copy of the instance?
-    # TODO: Might be missing a proper merge on fields of type `List[NDNestedModel]`?
-    # -> similar to NDCOnfigCollection... -> add argument to make it optional either replace
     def merge(self, other_model: "NDBaseModel", **kwargs) -> "NDBaseModel":
         if not isinstance(other_model, type(self)):
-            # TODO: Change error message
-            return TypeError("models are not of the same type.")
+            return TypeError(
+                f"NDBaseModel.merge method requires models of the same type. self of type {type(self)} and other_model of type {type(other_model)}"
+            )
 
         for field, value in other_model:
             if value is None:

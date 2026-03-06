@@ -16,7 +16,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDB
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
-# TODO: Revisit naming them "Orchestrator"
 class NDBaseOrchestrator(BaseModel):
     model_config = ConfigDict(
         use_enum_values=True,
@@ -40,7 +39,6 @@ class NDBaseOrchestrator(BaseModel):
 
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     # TODO: Explore new ways to make them even more general -> e.g., create a general API operation function (low priority)
-    # TODO: Revisit Deserialization
     def create(self, model_instance: NDBaseModel, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.create_endpoint()
@@ -72,7 +70,6 @@ class NDBaseOrchestrator(BaseModel):
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    # TODO: Revisit the straegy around the query_all (see local_user's case)
     def query_all(self, model_instance: Optional[NDBaseModel] = None, **kwargs) -> ResponseType:
         try:
             result = self.sender.query_obj(self.query_all_endpoint.path)
