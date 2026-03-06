@@ -198,7 +198,7 @@ class Log:
     ```
     """
 
-    def __init__(self):
+    def __init__(self, config: Optional[str] = None, develop: bool = False):
         self.class_name = self.__class__.__name__
         # Disable exceptions raised by the logging module.
         # Set this to True during development to catch logging errors.
@@ -206,6 +206,9 @@ class Log:
 
         self._config: Optional[str] = environ.get("ND_LOGGING_CONFIG", None)
         self._develop: bool = False
+        if config is not None:
+            self.config = config
+        self.develop = develop
 
     def disable_logging(self) -> None:
         """
