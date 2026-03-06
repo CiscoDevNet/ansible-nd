@@ -67,13 +67,19 @@ def logging_config(logging_config_file) -> dict:
 
 def test_log_00010(tmp_path) -> None:
     """
-    ### Methods
-    -   Log().commit()
+    # Summary
 
-    ### Test
-    -   Happy path.
-    -   log.<level> logs to the logfile.
-    -   The log message contains the calling method's name.
+    Verify Log().commit() happy path. log.<level> logs to the logfile and the log message contains the calling method's name.
+
+    ## Test
+
+    - Log().commit() is called with a valid logging config.
+    - log.info(), log.debug(), log.warning(), log.critical() all write to the logfile.
+    - The log message contains the calling method's name.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     method_name = inspect.stack()[0][3]
     log_dir = tmp_path / "log_dir"
@@ -110,11 +116,19 @@ def test_log_00010(tmp_path) -> None:
 
 def test_log_00100(tmp_path) -> None:
     """
-    ### Methods
-    -   Log().commit()
+    # Summary
 
-    ### Test
-    -   Nothing is logged when ND_LOGGING_CONFIG is not set
+    Verify nothing is logged when ND_LOGGING_CONFIG is not set.
+
+    ## Test
+
+    - ND_LOGGING_CONFIG is not set.
+    - Log().commit() succeeds.
+    - No logfile is created.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
@@ -145,12 +159,19 @@ def test_log_00100(tmp_path) -> None:
 @pytest.mark.parametrize("env_var", [(""), ("   ")])
 def test_log_00110(tmp_path, env_var) -> None:
     """
-    ### Methods
-    -   Log().commit()
+    # Summary
 
-    ### Test
-    -   Nothing is logged when ND_LOGGING_CONFIG is set to an
-        an empty string.
+    Verify nothing is logged when ND_LOGGING_CONFIG is set to an empty string or whitespace.
+
+    ## Test
+
+    - ND_LOGGING_CONFIG is set to an empty string or whitespace.
+    - Log().commit() succeeds.
+    - No logfile is created.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
@@ -182,16 +203,22 @@ def test_log_00110(tmp_path, env_var) -> None:
 
 def test_log_00120(tmp_path) -> None:
     """
-    ### Methods
-    -   Log().commit()
+    # Summary
 
-    ### Test Setup
-    -   ND_LOGGING_CONFIG is set to a file that exists,
-        which would normally enable logging.
-    -   Log().config is set to None, which overrides ND_LOGGING_CONFIG.
+    Verify nothing is logged when Log().config is set to None, overriding ND_LOGGING_CONFIG.
 
-    ### Test
-    -   Nothing is logged becase Log().config overrides ND_LOGGING_CONFIG.
+    ## Test Setup
+
+    - ND_LOGGING_CONFIG is set to a file that exists, which would normally enable logging.
+    - Log().config is set to None, which overrides ND_LOGGING_CONFIG.
+
+    ## Test
+
+    - Nothing is logged because Log().config overrides ND_LOGGING_CONFIG.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
@@ -224,11 +251,13 @@ def test_log_00120(tmp_path) -> None:
 
 def test_log_00200() -> None:
     """
-    ### Methods
-    - Log().commit()
+    # Summary
 
-    ### Test
-    -   ``ValueError`` is raised if logging config file does not exist.
+    Verify `ValueError` is raised if logging config file does not exist.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     config_file = "DOES_NOT_EXIST.json"
     environ["ND_LOGGING_CONFIG"] = config_file
@@ -245,11 +274,13 @@ def test_log_00200() -> None:
 
 def test_log_00210(tmp_path) -> None:
     """
-    ### Methods
-    - Log().commit()
+    # Summary
 
-    ### Test
-    -   ``ValueError`` is raised if logging config file contains invalid JSON.
+    Verify `ValueError` is raised if logging config file contains invalid JSON.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
@@ -272,11 +303,13 @@ def test_log_00210(tmp_path) -> None:
 
 def test_log_00220(tmp_path) -> None:
     """
-    ### Methods
-    - Log().commit()
+    # Summary
 
-    ### Test
-    -   ``ValueError`` is raised if logging config file does not contain JSON.
+    Verify `ValueError` is raised if logging config file does not contain JSON.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
@@ -297,12 +330,13 @@ def test_log_00220(tmp_path) -> None:
 
 def test_log_00230(tmp_path) -> None:
     """
-    ### Methods
-    -   Log().commit()
+    # Summary
 
-    ### Test
-    -   ``ValueError`` is raised if logging config file contains
-        handler(s) that emit to non-file destinations.
+    Verify `ValueError` is raised if logging config file contains handler(s) that emit to non-file destinations.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
@@ -336,14 +370,17 @@ def test_log_00230(tmp_path) -> None:
 
 def test_log_00231(tmp_path) -> None:
     """
-    ### Methods
-    -   Log().commit()
+    # Summary
 
-    ### Test
-    -   No ``ValueError`` is raised when a handler uses a non-standard name
-        but a valid handler class (e.g. ``logging.handlers.RotatingFileHandler``).
-    -   Previously, validation checked the handler key name rather than the
-        class, so ``"my_file_handler"`` would have been incorrectly rejected.
+    Verify no `ValueError` is raised when a handler uses a non-standard name but a valid handler class (e.g. `logging.handlers.RotatingFileHandler`).
+
+    ## Test
+
+    - Previously, validation checked the handler key name rather than the class, so `"my_file_handler"` would have been incorrectly rejected.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
@@ -366,15 +403,17 @@ def test_log_00231(tmp_path) -> None:
 
 def test_log_00232(tmp_path) -> None:
     """
-    ### Methods
-    -   Log().commit()
+    # Summary
 
-    ### Test
-    -   ``ValueError`` is raised when a handler is named ``"file"`` but
-        its ``class`` property is ``logging.StreamHandler``.
-    -   Previously, validation checked the handler key name rather than the
-        class, so a ``StreamHandler`` named ``"file"`` would have been
-        incorrectly accepted.
+    Verify `ValueError` is raised when a handler is named `"file"` but its `class` property is `logging.StreamHandler`.
+
+    ## Test
+
+    - Previously, validation checked the handler key name rather than the class, so a `StreamHandler` named `"file"` would have been incorrectly accepted.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
@@ -404,17 +443,17 @@ def test_log_00232(tmp_path) -> None:
 
 def test_log_00240(tmp_path) -> None:
     """
-    ### Methods
-    -   Log().commit()
+    # Summary
 
-    ### Test
-    -   ``ValueError`` is raised if logging config file does not
-        contain any handlers.
+    Verify `ValueError` is raised if logging config file does not contain any handlers.
 
-    ### NOTES:
-    -   test_log_v2_00210, raises the same error message in the case where
-        the logging config file contains JSON that is not conformant with
-        dictConfig.
+    ## Notes
+
+    - `test_log_00210` raises the same error message in the case where the logging config file contains JSON that is not conformant with dictConfig.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
@@ -440,13 +479,13 @@ def test_log_00240(tmp_path) -> None:
 
 def test_log_00250(tmp_path) -> None:
     """
-    ### Methods
-    -   Log().commit()
+    # Summary
 
-    ### Test
-    -   ``ValueError`` is raised if logging config file does not
-        contain any formatters or contains formatters that are not
-        associated with handlers.
+    Verify `ValueError` is raised if logging config file does not contain any formatters or contains formatters that are not associated with handlers.
+
+    ## Classes and Methods
+
+    - Log().commit()
     """
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
@@ -471,11 +510,13 @@ def test_log_00250(tmp_path) -> None:
 
 def test_log_00300() -> None:
     """
-    ### Methods
-    -   Log().develop (setter)
+    # Summary
 
-    ### Test
-    -   ``TypeError`` is raised if develop is set to a non-bool.
+    Verify `TypeError` is raised if develop is set to a non-bool.
+
+    ## Classes and Methods
+
+    - Log().develop (setter)
     """
     with does_not_raise():
         instance = Log()
@@ -490,12 +531,13 @@ def test_log_00300() -> None:
 @pytest.mark.parametrize("develop", [(True), (False)])
 def test_log_00310(develop) -> None:
     """
-    ### Methods
-    -   Log().develop (setter)
+    # Summary
 
-    ### Test
-    -   develop is set correctly if passed a bool.
-    -   No exceptions are raised.
+    Verify develop is set correctly if passed a bool and no exceptions are raised.
+
+    ## Classes and Methods
+
+    - Log().develop (setter)
     """
     with does_not_raise():
         instance = Log()
@@ -517,7 +559,7 @@ def test_setup_logging_00010(tmp_path) -> None:
 
     ## Classes and Methods
 
-    - `setup_logging()`
+    - setup_logging()
     """
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
@@ -542,18 +584,16 @@ def test_setup_logging_00020() -> None:
     """
     # Summary
 
-    Verify `setup_logging()` calls `module.fail_json()` when the config file
-    does not exist.
+    Verify `setup_logging()` calls `module.fail_json()` when the config file does not exist.
 
     ## Test
 
     - `ND_LOGGING_CONFIG` points to a nonexistent file.
-    - `setup_logging()` calls `module.fail_json()` with an error message
-      describing the failure.
+    - `setup_logging()` calls `module.fail_json()` with an error message describing the failure.
 
     ## Classes and Methods
 
-    - `setup_logging()`
+    - setup_logging()
     """
     config_file = "DOES_NOT_EXIST.json"
     environ["ND_LOGGING_CONFIG"] = config_file
