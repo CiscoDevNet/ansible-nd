@@ -8,14 +8,22 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
+<<<<<<< HEAD
 from typing import Type
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
+=======
+from typing import List, Dict, Any, Type
+from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import ValidationError
+>>>>>>> 520625b ([ignore] Add NDOutput class. Modify NDStateMachine and nd_local_user accordingly)
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+<<<<<<< HEAD
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+=======
+>>>>>>> 520625b ([ignore] Add NDOutput class. Modify NDStateMachine and nd_local_user accordingly)
 
 
 class NDStateMachine:
@@ -84,7 +92,6 @@ class NDStateMachine:
         """
         for proposed_item in self.proposed:
             # Extract identifier
-            response = {}
             identifier = proposed_item.get_identifier_value()
             try:
                 # Determine diff status

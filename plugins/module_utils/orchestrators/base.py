@@ -8,11 +8,7 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-<<<<<<< HEAD
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
-=======
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
->>>>>>> 6e81ee0 ([ignore] Replace all pydantic imports with pydantic_compat. Fix sanity issues.)
 from typing import ClassVar, Type, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
