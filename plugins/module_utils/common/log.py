@@ -254,7 +254,7 @@ class Log:
             raise ValueError(msg) from error
 
         try:
-            self.validate_logging_config(logging_config)
+            self._validate_logging_config(logging_config)
         except ValueError as error:
             raise ValueError(str(error)) from error
 
@@ -266,7 +266,7 @@ class Log:
             msg += f"Error detail: {error}"
             raise ValueError(msg) from error
 
-    def validate_logging_config(self, logging_config: dict) -> None:
+    def _validate_logging_config(self, logging_config: dict) -> None:
         """
         # Summary
 
