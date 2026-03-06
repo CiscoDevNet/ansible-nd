@@ -37,7 +37,6 @@ class NDConfigCollection(Generic[ModelType]):
             for item in items:
                 self.add(item)
 
-    # TODO: might not be necessary
     def _extract_key(self, item: ModelType) -> IdentifierKey:
         """
         Extract identifier key from item.
@@ -144,7 +143,7 @@ class NDConfigCollection(Generic[ModelType]):
         if existing is None:
             return "new"
 
-        # TODO: make a diff class level method for NDBaseModel
+        # TODO: make a diff class level method for NDBaseModel (high priority)
         existing_data = existing.to_diff_dict()
         new_data = new_item.to_diff_dict()
         is_subset = issubset(new_data, existing_data)

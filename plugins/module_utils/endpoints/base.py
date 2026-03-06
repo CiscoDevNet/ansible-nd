@@ -15,10 +15,8 @@ from typing import Final
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
-# TODO: Rename it to APIEndpoint
 # NOTE: This is a very minimalist endpoint package -> needs to be enhanced
 class NDBaseEndpoint(BaseModel, ABC):
-    # TODO: maybe to be modified in the future
     model_config = ConfigDict(validate_assignment=True)
 
     # TODO: to remove
