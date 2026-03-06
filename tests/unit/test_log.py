@@ -16,6 +16,9 @@ Unit tests for plugins/module_utils/log.py
 # pylint: disable=unused-argument
 # Some tests require calling protected methods
 # pylint: disable=protected-access
+# pylint: disable=unused-variable
+# pylint: disable=line-too-long
+# pylint: disable=too-many-lines
 
 from __future__ import absolute_import, annotations, division, print_function
 
@@ -26,11 +29,9 @@ __metaclass__ = type
 import inspect
 import json
 import logging
-from os import environ
-
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log, setup_logging
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
@@ -65,7 +66,34 @@ def logging_config(logging_config_file) -> dict:
     }
 
 
-def test_log_00010(tmp_path) -> None:
+def test_log_00000(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify default state of `Log()` when `ND_LOGGING_CONFIG` is not set.
+
+    ## Test
+
+    - `ND_LOGGING_CONFIG` is not set.
+    - `instance.config` is `None`.
+    - `instance.develop` is `False`.
+    - `logging.raiseExceptions` is `False`.
+
+    ## Classes and Methods
+
+    - `Log.__init__()`
+    """
+    monkeypatch.delenv("ND_LOGGING_CONFIG", raising=False)
+
+    with does_not_raise():
+        instance = Log()
+
+    assert instance.config is None
+    assert instance.develop is False
+    assert logging.raiseExceptions is False
+
+
+def test_log_00010(tmp_path, monkeypatch) -> None:
     """
     # Summary
 
@@ -90,7 +118,7 @@ def test_log_00010(tmp_path) -> None:
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
 
-    environ["ND_LOGGING_CONFIG"] = str(config_file)
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
 
     with does_not_raise():
         instance = Log()
@@ -114,7 +142,68 @@ def test_log_00010(tmp_path) -> None:
     assert method_name in log_file.read_text(encoding="UTF-8")
 
 
-def test_log_00100(tmp_path) -> None:
+def test_log_00020(tmp_path, monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `Log(config=...)` constructor parameter enables logging without setting `ND_LOGGING_CONFIG`.
+
+    ## Test
+
+    - `ND_LOGGING_CONFIG` is not set.
+    - A valid config path is passed directly to `Log(config=...)`.
+    - `commit()` succeeds and messages appear in the log file.
+
+    ## Classes and Methods
+
+    - `Log.__init__()`
+    - `Log.commit()`
+    """
+    monkeypatch.delenv("ND_LOGGING_CONFIG", raising=False)
+    log_dir = tmp_path / "log_dir"
+    log_dir.mkdir()
+    config_file = log_dir / "logging_config.json"
+    log_file = log_dir / "nd.log"
+    config = logging_config(str(log_file))
+    with open(config_file, "w", encoding="UTF-8") as fp:
+        json.dump(config, fp)
+
+    with does_not_raise():
+        instance = Log(config=str(config_file))
+        instance.commit()
+
+    msg = "hello_from_test_log_00020"
+    log = logging.getLogger("nd.test_log_00020")
+    log.info(msg)
+    assert msg in log_file.read_text(encoding="UTF-8")
+
+
+def test_log_00030(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `Log(develop=True)` constructor parameter sets `develop` and `logging.raiseExceptions`.
+
+    ## Test
+
+    - `Log(develop=True)` is instantiated.
+    - `instance.develop` is `True`.
+    - `logging.raiseExceptions` is `True`.
+
+    ## Classes and Methods
+
+    - `Log.__init__()`
+    """
+    monkeypatch.delenv("ND_LOGGING_CONFIG", raising=False)
+
+    with does_not_raise():
+        instance = Log(develop=True)
+
+    assert instance.develop is True
+    assert logging.raiseExceptions is True
+
+
+def test_log_00100(tmp_path, monkeypatch) -> None:
     """
     # Summary
 
@@ -130,6 +219,7 @@ def test_log_00100(tmp_path) -> None:
 
     - Log().commit()
     """
+    monkeypatch.delenv("ND_LOGGING_CONFIG", raising=False)
     log_dir = tmp_path / "log_dir"
     log_dir.mkdir()
     config_file = log_dir / "logging_config.json"
@@ -157,7 +247,7 @@ def test_log_00100(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("env_var", [(""), ("   ")])
-def test_log_00110(tmp_path, env_var) -> None:
+def test_log_00110(tmp_path, monkeypatch, env_var) -> None:
     """
     # Summary
 
@@ -181,7 +271,7 @@ def test_log_00110(tmp_path, env_var) -> None:
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
 
-    environ["ND_LOGGING_CONFIG"] = env_var
+    monkeypatch.setenv("ND_LOGGING_CONFIG", env_var)
 
     with does_not_raise():
         instance = Log()
@@ -201,7 +291,7 @@ def test_log_00110(tmp_path, env_var) -> None:
         log_file.read_text(encoding="UTF-8")
 
 
-def test_log_00120(tmp_path) -> None:
+def test_log_00120(tmp_path, monkeypatch) -> None:
     """
     # Summary
 
@@ -228,7 +318,7 @@ def test_log_00120(tmp_path) -> None:
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
 
-    environ["ND_LOGGING_CONFIG"] = str(config_file)
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
 
     with does_not_raise():
         instance = Log()
@@ -249,7 +339,57 @@ def test_log_00120(tmp_path) -> None:
         log_file.read_text(encoding="UTF-8")
 
 
-def test_log_00200() -> None:
+def test_log_00130(tmp_path, monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `instance.config` set to a file path overrides `ND_LOGGING_CONFIG`, logging to the new file.
+
+    ## Test Setup
+
+    - `ND_LOGGING_CONFIG` points to config A (log file A).
+    - `instance.config` is set to config B (log file B) after instantiation.
+
+    ## Test
+
+    - Messages appear in log file B, not log file A.
+
+    ## Classes and Methods
+
+    - `Log.config` (setter)
+    - `Log.commit()`
+    """
+    log_dir_a = tmp_path / "log_dir_a"
+    log_dir_a.mkdir()
+    config_file_a = log_dir_a / "logging_config_a.json"
+    log_file_a = log_dir_a / "nd_a.log"
+    config_a = logging_config(str(log_file_a))
+    with open(config_file_a, "w", encoding="UTF-8") as fp:
+        json.dump(config_a, fp)
+
+    log_dir_b = tmp_path / "log_dir_b"
+    log_dir_b.mkdir()
+    config_file_b = log_dir_b / "logging_config_b.json"
+    log_file_b = log_dir_b / "nd_b.log"
+    config_b = logging_config(str(log_file_b))
+    with open(config_file_b, "w", encoding="UTF-8") as fp:
+        json.dump(config_b, fp)
+
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file_a))
+
+    with does_not_raise():
+        instance = Log()
+        instance.config = str(config_file_b)
+        instance.commit()
+
+    msg = "hello_from_test_log_00130"
+    log = logging.getLogger("nd.test_log_00130")
+    log.info(msg)
+    assert msg in log_file_b.read_text(encoding="UTF-8")
+    assert not log_file_a.exists()
+
+
+def test_log_00200(monkeypatch) -> None:
     """
     # Summary
 
@@ -260,7 +400,7 @@ def test_log_00200() -> None:
     - Log().commit()
     """
     config_file = "DOES_NOT_EXIST.json"
-    environ["ND_LOGGING_CONFIG"] = config_file
+    monkeypatch.setenv("ND_LOGGING_CONFIG", config_file)
 
     with does_not_raise():
         instance = Log()
@@ -272,7 +412,7 @@ def test_log_00200() -> None:
         instance.commit()
 
 
-def test_log_00210(tmp_path) -> None:
+def test_log_00210(tmp_path, monkeypatch) -> None:
     """
     # Summary
 
@@ -288,7 +428,7 @@ def test_log_00210(tmp_path) -> None:
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump({"BAD": "JSON"}, fp)
 
-    environ["ND_LOGGING_CONFIG"] = str(config_file)
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
 
     with does_not_raise():
         instance = Log()
@@ -301,7 +441,7 @@ def test_log_00210(tmp_path) -> None:
         instance.commit()
 
 
-def test_log_00220(tmp_path) -> None:
+def test_log_00220(tmp_path, monkeypatch) -> None:
     """
     # Summary
 
@@ -317,7 +457,7 @@ def test_log_00220(tmp_path) -> None:
     with open(config_file, "w", encoding="UTF-8") as fp:
         fp.write("NOT JSON")
 
-    environ["ND_LOGGING_CONFIG"] = str(config_file)
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
 
     with does_not_raise():
         instance = Log()
@@ -328,7 +468,7 @@ def test_log_00220(tmp_path) -> None:
         instance.commit()
 
 
-def test_log_00230(tmp_path) -> None:
+def test_log_00230(tmp_path, monkeypatch) -> None:
     """
     # Summary
 
@@ -352,7 +492,7 @@ def test_log_00230(tmp_path) -> None:
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
 
-    environ["ND_LOGGING_CONFIG"] = str(config_file)
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
 
     with does_not_raise():
         instance = Log()
@@ -368,7 +508,7 @@ def test_log_00230(tmp_path) -> None:
         instance.commit()
 
 
-def test_log_00231(tmp_path) -> None:
+def test_log_00231(tmp_path, monkeypatch) -> None:
     """
     # Summary
 
@@ -394,14 +534,14 @@ def test_log_00231(tmp_path) -> None:
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
 
-    environ["ND_LOGGING_CONFIG"] = str(config_file)
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
 
     with does_not_raise():
         instance = Log()
         instance.commit()
 
 
-def test_log_00232(tmp_path) -> None:
+def test_log_00232(tmp_path, monkeypatch) -> None:
     """
     # Summary
 
@@ -425,7 +565,7 @@ def test_log_00232(tmp_path) -> None:
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
 
-    environ["ND_LOGGING_CONFIG"] = str(config_file)
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
 
     with does_not_raise():
         instance = Log()
@@ -441,7 +581,107 @@ def test_log_00232(tmp_path) -> None:
         instance.commit()
 
 
-def test_log_00240(tmp_path) -> None:
+def test_log_00233(tmp_path, monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `commit()` does not raise when the handler class is `logging.FileHandler`.
+
+    ## Test
+
+    - Config uses `logging.FileHandler` (a valid handler class per `ValidLogHandlers`).
+    - `commit()` succeeds without raising.
+
+    ## Classes and Methods
+
+    - `Log.commit()`
+    """
+    log_dir = tmp_path / "log_dir"
+    log_dir.mkdir()
+    config_file = log_dir / "logging_config.json"
+    log_file = log_dir / "nd.log"
+    config = logging_config(str(log_file))
+    config["handlers"]["file"]["class"] = "logging.FileHandler"
+    del config["handlers"]["file"]["maxBytes"]
+    del config["handlers"]["file"]["backupCount"]
+    with open(config_file, "w", encoding="UTF-8") as fp:
+        json.dump(config, fp)
+
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
+
+    with does_not_raise():
+        instance = Log()
+        instance.commit()
+
+
+def test_log_00234(tmp_path, monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `commit()` does not raise when the handler class is `logging.handlers.TimedRotatingFileHandler`.
+
+    ## Test
+
+    - Config uses `logging.handlers.TimedRotatingFileHandler` (a valid handler class per `ValidLogHandlers`).
+    - `commit()` succeeds without raising.
+
+    ## Classes and Methods
+
+    - `Log.commit()`
+    """
+    log_dir = tmp_path / "log_dir"
+    log_dir.mkdir()
+    config_file = log_dir / "logging_config.json"
+    log_file = log_dir / "nd.log"
+    config = logging_config(str(log_file))
+    config["handlers"]["file"]["class"] = "logging.handlers.TimedRotatingFileHandler"
+    config["handlers"]["file"]["when"] = "midnight"
+    del config["handlers"]["file"]["maxBytes"]
+    del config["handlers"]["file"]["mode"]
+    with open(config_file, "w", encoding="UTF-8") as fp:
+        json.dump(config, fp)
+
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
+
+    with does_not_raise():
+        instance = Log()
+        instance.commit()
+
+
+def test_log_00235(tmp_path, monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `commit()` does not raise when the handler class is `logging.handlers.WatchedFileHandler`.
+
+    ## Test
+
+    - Config uses `logging.handlers.WatchedFileHandler` (a valid handler class per `ValidLogHandlers`).
+    - `commit()` succeeds without raising.
+
+    ## Classes and Methods
+
+    - `Log.commit()`
+    """
+    log_dir = tmp_path / "log_dir"
+    log_dir.mkdir()
+    config_file = log_dir / "logging_config.json"
+    log_file = log_dir / "nd.log"
+    config = logging_config(str(log_file))
+    config["handlers"]["file"]["class"] = "logging.handlers.WatchedFileHandler"
+    del config["handlers"]["file"]["maxBytes"]
+    del config["handlers"]["file"]["backupCount"]
+    with open(config_file, "w", encoding="UTF-8") as fp:
+        json.dump(config, fp)
+
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
+
+    with does_not_raise():
+        instance = Log()
+        instance.commit()
+
+
+def test_log_00240(tmp_path, monkeypatch) -> None:
     """
     # Summary
 
@@ -464,7 +704,7 @@ def test_log_00240(tmp_path) -> None:
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
 
-    environ["ND_LOGGING_CONFIG"] = str(config_file)
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
 
     with does_not_raise():
         instance = Log()
@@ -477,7 +717,7 @@ def test_log_00240(tmp_path) -> None:
         instance.commit()
 
 
-def test_log_00250(tmp_path) -> None:
+def test_log_00250(tmp_path, monkeypatch) -> None:
     """
     # Summary
 
@@ -496,7 +736,7 @@ def test_log_00250(tmp_path) -> None:
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
 
-    environ["ND_LOGGING_CONFIG"] = str(config_file)
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
 
     with does_not_raise():
         instance = Log()
@@ -525,7 +765,7 @@ def test_log_00300() -> None:
     match += r"Expected boolean for develop\.\s+"
     match += r"Got: type str for value FOO\."
     with pytest.raises(TypeError, match=match):
-        instance.develop = "FOO"
+        instance.develop = "FOO"  # type: ignore[assignment]
 
 
 @pytest.mark.parametrize("develop", [(True), (False)])
@@ -545,7 +785,31 @@ def test_log_00310(develop) -> None:
     assert instance.develop == develop
 
 
-def test_setup_logging_00010(tmp_path) -> None:
+@pytest.mark.parametrize("develop", [(True), (False)])
+def test_log_00320(develop) -> None:
+    """
+    # Summary
+
+    Verify `Log.develop` setter side effect: `logging.raiseExceptions` is updated to match `develop`.
+
+    ## Test
+
+    - `instance.develop` is set to `develop`.
+    - `instance.develop == develop`.
+    - `logging.raiseExceptions == develop`.
+
+    ## Classes and Methods
+
+    - `Log.develop` (setter)
+    """
+    with does_not_raise():
+        instance = Log()
+        instance.develop = develop
+    assert instance.develop == develop
+    assert logging.raiseExceptions == develop
+
+
+def test_setup_logging_00010(tmp_path, monkeypatch) -> None:
     """
     # Summary
 
@@ -569,7 +833,7 @@ def test_setup_logging_00010(tmp_path) -> None:
     with open(config_file, "w", encoding="UTF-8") as fp:
         json.dump(config, fp)
 
-    environ["ND_LOGGING_CONFIG"] = str(config_file)
+    monkeypatch.setenv("ND_LOGGING_CONFIG", str(config_file))
 
     mock_module = MagicMock()
 
@@ -580,7 +844,7 @@ def test_setup_logging_00010(tmp_path) -> None:
     mock_module.fail_json.assert_not_called()
 
 
-def test_setup_logging_00020() -> None:
+def test_setup_logging_00020(monkeypatch) -> None:
     """
     # Summary
 
@@ -596,7 +860,7 @@ def test_setup_logging_00020() -> None:
     - setup_logging()
     """
     config_file = "DOES_NOT_EXIST.json"
-    environ["ND_LOGGING_CONFIG"] = config_file
+    monkeypatch.setenv("ND_LOGGING_CONFIG", config_file)
 
     mock_module = MagicMock()
     mock_module.fail_json.side_effect = SystemExit
@@ -607,3 +871,30 @@ def test_setup_logging_00020() -> None:
     mock_module.fail_json.assert_called_once()
     call_kwargs = mock_module.fail_json.call_args.kwargs
     assert "error reading logging config" in call_kwargs["msg"]
+
+
+def test_setup_logging_00030(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `setup_logging()` returns a `Log` instance with logging disabled when `ND_LOGGING_CONFIG` is not set.
+
+    ## Test
+
+    - `ND_LOGGING_CONFIG` is not set.
+    - `setup_logging()` returns a `Log` instance.
+    - `module.fail_json()` is not called.
+
+    ## Classes and Methods
+
+    - `setup_logging()`
+    """
+    monkeypatch.delenv("ND_LOGGING_CONFIG", raising=False)
+
+    mock_module = MagicMock()
+
+    with does_not_raise():
+        result = setup_logging(mock_module)
+
+    assert isinstance(result, Log)
+    mock_module.fail_json.assert_not_called()
