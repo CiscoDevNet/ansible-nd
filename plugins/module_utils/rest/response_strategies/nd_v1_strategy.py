@@ -52,8 +52,8 @@ class NdV1Strategy:
 
     1. raw_response: Non-JSON response stored in DATA.raw_response
     2. code/message: DATA.code and DATA.message
-    3. messages array: DATA.messages[0].{code, severity, message}
-    4. errors array: DATA.errors[0]
+    3. messages array: all DATA.messages[].{code, severity, message} joined with "; "
+    4. errors array: all DATA.errors[] joined with "; "
     5. Connection failure: No DATA with REQUEST_PATH and MESSAGE
     6. Non-dict DATA: Stringified DATA value
     7. Unknown: Fallback with RETURN_CODE
@@ -150,8 +150,8 @@ class NdV1Strategy:
         1. Connection failure (no DATA)
         2. Non-JSON response (raw_response in DATA)
         3. code/message dict
-        4. messages array with code/severity/message
-        5. errors array
+        4. messages array with code/severity/message (all items joined)
+        5. errors array (all items joined)
         6. Unknown dict format
         7. Non-dict DATA
 
@@ -191,13 +191,16 @@ class NdV1Strategy:
 
             # messages array format
             if msg is None and "messages" in data_dict and len(data_dict.get("messages", [])) > 0:
-                first_msg = data_dict["messages"][0]
-                if all(k in first_msg for k in ("code", "severity", "message")):
-                    msg = f"ND Error {first_msg['code']} ({first_msg['severity']}): {first_msg['message']}"
+                parts = []
+                for m in data_dict["messages"]:
+                    if all(k in m for k in ("code", "severity", "message")):
+                        parts.append(f"ND Error {m['code']} ({m['severity']}): {m['message']}")
+                if parts:
+                    msg = "; ".join(parts)
 
             # errors array format
             if msg is None and "errors" in data_dict and len(data_dict.get("errors", [])) > 0:
-                msg = f"ND Error: {data_dict['errors'][0]}"
+                msg = f"ND Error: {'; '.join(str(e) for e in data_dict['errors'])}"
 
             # Unknown dict format - fallback
             if msg is None:
