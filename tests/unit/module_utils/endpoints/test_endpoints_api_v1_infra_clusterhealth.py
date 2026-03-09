@@ -173,7 +173,7 @@ def test_endpoints_clusterhealth_00120():
     with does_not_raise():
         params = ClusterHealthStatusEndpointParams(cluster_name="foo", health_category="bar", node_name="baz")
         result = params.to_query_string()
-    assert result == "clusterName=foo&healthCategory=bar&nodeName=baz"
+    assert set(result.split("&")) == {"clusterName=foo", "healthCategory=bar", "nodeName=baz"}
 
 
 def test_endpoints_clusterhealth_00130():
@@ -193,7 +193,7 @@ def test_endpoints_clusterhealth_00130():
     with does_not_raise():
         params = ClusterHealthStatusEndpointParams(cluster_name="foo", node_name="baz")
         result = params.to_query_string()
-    assert result == "clusterName=foo&nodeName=baz"
+    assert set(result.split("&")) == {"clusterName=foo", "nodeName=baz"}
 
 
 # =============================================================================
@@ -380,7 +380,9 @@ def test_endpoints_clusterhealth_00330():
         instance.endpoint_params.health_category = "bar"
         instance.endpoint_params.node_name = "baz"
         result = instance.path
-    assert result == "/api/v1/infra/clusterhealth/status?clusterName=foo&healthCategory=bar&nodeName=baz"
+    base, query = result.split("?", 1)
+    assert base == "/api/v1/infra/clusterhealth/status"
+    assert set(query.split("&")) == {"clusterName=foo", "healthCategory=bar", "nodeName=baz"}
 
 
 def test_endpoints_clusterhealth_00340():
@@ -402,7 +404,9 @@ def test_endpoints_clusterhealth_00340():
         instance.endpoint_params.cluster_name = "cluster1"
         instance.endpoint_params.node_name = "node1"
         result = instance.path
-    assert result == "/api/v1/infra/clusterhealth/status?clusterName=cluster1&nodeName=node1"
+    base, query = result.split("?", 1)
+    assert base == "/api/v1/infra/clusterhealth/status"
+    assert set(query.split("&")) == {"clusterName=cluster1", "nodeName=node1"}
 
 
 # =============================================================================

@@ -14,13 +14,18 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ClusterNameMixin,
+    HealthCategoryMixin,
+    NodeNameMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
@@ -34,7 +39,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 
 
-class ClusterHealthConfigEndpointParams(EndpointQueryParams):
+class ClusterHealthConfigEndpointParams(ClusterNameMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -42,7 +47,7 @@ class ClusterHealthConfigEndpointParams(EndpointQueryParams):
 
     ## Parameters
 
-    - cluster_name: Cluster name (optional)
+    - cluster_name: Cluster name (optional, from `ClusterNameMixin`)
 
     ## Usage
 
@@ -53,10 +58,8 @@ class ClusterHealthConfigEndpointParams(EndpointQueryParams):
     ```
     """
 
-    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Cluster name")
 
-
-class ClusterHealthStatusEndpointParams(EndpointQueryParams):
+class ClusterHealthStatusEndpointParams(ClusterNameMixin, HealthCategoryMixin, NodeNameMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -64,9 +67,9 @@ class ClusterHealthStatusEndpointParams(EndpointQueryParams):
 
     ## Parameters
 
-    - cluster_name: Cluster name (optional)
-    - health_category: Health category (optional)
-    - node_name: Node name (optional)
+    - cluster_name: Cluster name (optional, from `ClusterNameMixin`)
+    - health_category: Health category (optional, from `HealthCategoryMixin`)
+    - node_name: Node name (optional, from `NodeNameMixin`)
 
     ## Usage
 
@@ -80,10 +83,6 @@ class ClusterHealthStatusEndpointParams(EndpointQueryParams):
     # Returns: "clusterName=my-cluster&healthCategory=cpu&nodeName=node1"
     ```
     """
-
-    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Cluster name")
-    health_category: Optional[str] = Field(default=None, min_length=1, description="Health category")
-    node_name: Optional[str] = Field(default=None, min_length=1, description="Node name")
 
 
 class EpInfraClusterhealthConfigGet(NDEndpointBaseModel):
