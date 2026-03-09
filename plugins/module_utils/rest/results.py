@@ -367,8 +367,6 @@ class Results:
         # Final result (built on demand)
         self._final_result: Optional[FinalResultData] = None
 
-        # Legacy: response_data list for backward compatibility
-        self._response_data: list[dict[str, Any]] = []
 
         msg = f"ENTERED {self.class_name}():"
         self.log.debug(msg)
@@ -377,28 +375,16 @@ class Results:
         """
         # Summary
 
-        Add a dict to the response_data list.
+        No-op. Formerly added a dict to the response_data list.
 
         .. deprecated::
 
-            `add_response_data()` is deprecated and may be removed in a future release.
+            `add_response_data()` is deprecated and may be removed in a future release. Use `register_api_call()` instead; response data is now derived from registered tasks.
 
         ## Raises
 
-        ### TypeError
-
-        - If `value` is not a dict
-
-        ## See also
-
-        `@response_data` property
+        None
         """
-        method_name: str = "add_response_data"
-        if not isinstance(value, dict):
-            msg = f"{self.class_name}.{method_name}: "
-            msg += f"instance.add_response_data must be a dict. Got {value}"
-            raise TypeError(msg)
-        self._response_data.append(copy.deepcopy(value))
 
     def _increment_task_sequence_number(self) -> None:
         """
@@ -962,7 +948,7 @@ class Results:
 
         `add_response_data()` method to add to the response_data list.
         """
-        return self._response_data
+        return self.response
 
     @property
     def result(self) -> list[dict[str, Any]]:
