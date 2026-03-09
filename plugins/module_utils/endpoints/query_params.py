@@ -15,10 +15,19 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Optional, Union
+from typing import Optional
 from urllib.parse import quote
+
+try:
+    from typing import Protocol
+except ImportError:
+    try:
+        from typing_extensions import Protocol  # type: ignore[assignment]
+    except ImportError:
+
+        class Protocol:  # type: ignore[no-redef]
+            """Stub for Python < 3.8 without typing_extensions."""
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
@@ -27,16 +36,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 
 
-class QueryParams(ABC):
+class QueryParams(Protocol):
     """
     # Summary
 
-    Abstract Base Class for Query Parameters
+    Protocol for Query Parameters
 
     ## Description
 
-    Base class for all query parameter types. Subclasses implement
-    `to_query_string()` to convert their parameters to URL query string format.
+    Structural type for all query parameter types. Any class implementing `to_query_string()` and `is_empty()` satisfies this protocol without explicit inheritance.
 
     ## Design
 
@@ -47,7 +55,6 @@ class QueryParams(ABC):
     - Future parameter types can be added without changing existing code
     """
 
-    @abstractmethod
     def to_query_string(self) -> str:
         """
         # Summary
@@ -65,6 +72,7 @@ class QueryParams(ABC):
         "forceShowRun=true&ticketId=12345"
         ```
         """
+        ...
 
     def is_empty(self) -> bool:
         """
@@ -77,7 +85,7 @@ class QueryParams(ABC):
         - True if no parameters are set
         - False if at least one parameter is set
         """
-        return len(self.to_query_string()) == 0
+        ...
 
 
 class EndpointQueryParams(BaseModel):
@@ -265,9 +273,9 @@ class CompositeQueryParams:
     """
 
     def __init__(self) -> None:
-        self._param_groups: list[Union[EndpointQueryParams, LuceneQueryParams]] = []
+        self._param_groups: list[QueryParams] = []
 
-    def add(self, params: Union[EndpointQueryParams, LuceneQueryParams]) -> "CompositeQueryParams":
+    def add(self, params: QueryParams) -> "CompositeQueryParams":
         """
         # Summary
 
@@ -275,7 +283,7 @@ class CompositeQueryParams:
 
         ## Parameters
 
-        - params: EndpointQueryParams or LuceneQueryParams instance
+        - params: Any object satisfying the `QueryParams` protocol
 
         ## Returns
 
