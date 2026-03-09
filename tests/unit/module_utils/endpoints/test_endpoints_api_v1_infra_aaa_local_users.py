@@ -3,7 +3,7 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """
-Unit tests for ep_api_v1_infra_aaa.py
+Unit tests for infra_aaa_local_users.py
 
 Tests the ND Infra AAA endpoint classes
 """
@@ -15,7 +15,7 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 import pytest  # pylint: disable=unused-import
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra_aaa import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra_aaa_local_users import (
     EpInfraAaaLocalUsersDelete,
     EpInfraAaaLocalUsersGet,
     EpInfraAaaLocalUsersPost,

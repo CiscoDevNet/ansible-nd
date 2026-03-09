@@ -4,9 +4,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """
-ND Infra AAA endpoint models.
+ND Infra AAA Local Users endpoint models.
 
-This module contains endpoint definitions for AAA-related operations
+This module contains endpoint definitions for AAA Local Users operations
 in the ND Infra API.
 """
 
