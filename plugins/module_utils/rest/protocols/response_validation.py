@@ -99,19 +99,6 @@ class ResponseValidationStrategy(Protocol):
         """
         ...
 
-    @property
-    def error_codes(self) -> set[int]:
-        """
-        # Summary
-
-        Return set of HTTP status codes considered errors.
-
-        ## Returns
-
-        - Set of integers representing error status codes
-        """
-        ...
-
     def is_success(self, return_code: int) -> bool:
         """
         # Summary
@@ -145,26 +132,6 @@ class ResponseValidationStrategy(Protocol):
         ## Returns
 
         - True if code matches not_found_code, False otherwise
-
-        ## Raises
-
-        None
-        """
-        ...
-
-    def is_error(self, return_code: int) -> bool:
-        """
-        # Summary
-
-        Check if return code indicates error.
-
-        ## Parameters
-
-        - return_code: HTTP status code to check
-
-        ## Returns
-
-        - True if code is in error_codes, False otherwise
 
         ## Raises
 

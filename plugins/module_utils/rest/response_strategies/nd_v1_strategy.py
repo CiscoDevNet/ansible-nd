@@ -46,7 +46,7 @@ class NdV1Strategy:
 
     - Success: 200, 201, 202, 204, 207
     - Not Found: 404 (treated as success for GET)
-    - Error: 405, 409
+    - Error: anything not in success codes and not 404
 
     ## Error Formats Supported
 
@@ -97,23 +97,6 @@ class NdV1Strategy:
         """
         return 404
 
-    @property
-    def error_codes(self) -> set[int]:
-        """
-        # Summary
-
-        Return v1 error codes.
-
-        ## Returns
-
-        - Set of integers: {405, 409}
-
-        ## Raises
-
-        None
-        """
-        return {405, 409}
-
     def is_success(self, return_code: int) -> bool:
         """
         # Summary
@@ -153,26 +136,6 @@ class NdV1Strategy:
         None
         """
         return return_code == self.not_found_code
-
-    def is_error(self, return_code: int) -> bool:
-        """
-        # Summary
-
-        Check if return code indicates error (v1).
-
-        ## Parameters
-
-        - return_code: HTTP status code to check
-
-        ## Returns
-
-        - True if code is in error_codes, False otherwise
-
-        ## Raises
-
-        None
-        """
-        return return_code in self.error_codes
 
     def extract_error_message(self, response: dict) -> Optional[str]:
         """
