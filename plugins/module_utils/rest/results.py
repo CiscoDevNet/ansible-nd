@@ -364,10 +364,6 @@ class Results:
         # Current task being built (mutable)
         self._current: PendingApiCall = PendingApiCall()
 
-        # Aggregated state (derived from tasks)
-        self._changed: set[bool] = set()
-        self._failed: set[bool] = set()
-
         # Final result (built on demand)
         self._final_result: Optional[FinalResultData] = None
 
@@ -548,8 +544,6 @@ class Results:
 
         # Register the task
         self._tasks.append(task_data)
-        self._changed.add(changed)
-        self._failed.add(failed)
 
         # Reset current task for next task
         self._current = PendingApiCall()
@@ -600,7 +594,7 @@ class Results:
         method_name: str = "build_final_result"
 
         msg = f"{self.class_name}.{method_name}: "
-        msg += f"changed={self._changed}, failed={self._failed}"
+        msg += f"changed={self.changed}, failed={self.failed}"
         self.log.debug(msg)
 
         # Aggregate data from all tasks
@@ -612,8 +606,8 @@ class Results:
         # Create FinalResultData with validation
         try:
             self._final_result = FinalResultData(
-                changed=True in self._changed,
-                failed=True in self._failed,
+                changed=True in self.changed,
+                failed=True in self.failed,
                 diff=diff_list,
                 response=response_list,
                 result=result_list,
@@ -762,6 +756,8 @@ class Results:
 
         Returns a set() containing boolean values indicating whether anything changed.
 
+        Derived from the `changed` attribute of all registered `ApiCallResult` tasks.
+
         ## Raises
 
         None
@@ -772,9 +768,9 @@ class Results:
 
         ## See also
 
-        -  `register_api_call()` method to register tasks and update the changed set.
+        -  `register_api_call()` method to register tasks.
         """
-        return self._changed
+        return {task.changed for task in self._tasks}
 
     @property
     def check_mode(self) -> bool:
@@ -844,7 +840,9 @@ class Results:
         """
         # Summary
 
-        A set() of boolean values indicating whether any tasks failed
+        A set() of boolean values indicating whether any tasks failed.
+
+        Derived from the `failed` attribute of all registered `ApiCallResult` tasks.
 
         - If the set contains True, at least one task failed.
         - If the set contains only False all tasks succeeded.
@@ -855,9 +853,9 @@ class Results:
 
         ## See also
 
-        -  `register_api_call()` method to register tasks and update the failed set.
+        -  `register_api_call()` method to register tasks.
         """
-        return self._failed
+        return {task.failed for task in self._tasks}
 
     @property
     def metadata(self) -> list[dict[str, Any]]:
