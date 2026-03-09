@@ -97,25 +97,45 @@ class NdV1Strategy:
         """
         return 404
 
-    def is_success(self, return_code: int) -> bool:
+    def is_success(self, response: dict) -> bool:
         """
         # Summary
 
-        Check if return code indicates success (v1).
+        Check if the full response indicates success (v1).
+
+        ## Description
+
+        Returns True only when both conditions hold:
+
+        1. `RETURN_CODE` is in `success_codes`
+        2. The response body contains no embedded error indicators
+
+        Embedded error indicators checked:
+
+        - Top-level `ERROR` key is present
+        - `DATA.error` key is present
 
         ## Parameters
 
-        - return_code: HTTP status code to check
+        - response: Response dict with keys RETURN_CODE, MESSAGE, DATA, etc.
 
         ## Returns
 
-        - True if code is in success_codes, False otherwise
+        - True if the response is fully successful, False otherwise
 
         ## Raises
 
         None
         """
-        return return_code in self.success_codes
+        return_code = response.get("RETURN_CODE", -1)
+        if return_code not in self.success_codes:
+            return False
+        if response.get("ERROR") is not None:
+            return False
+        data = response.get("DATA")
+        if isinstance(data, dict) and data.get("error") is not None:
+            return False
+        return True
 
     def is_not_found(self, return_code: int) -> bool:
         """

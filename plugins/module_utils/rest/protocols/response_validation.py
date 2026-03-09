@@ -99,19 +99,25 @@ class ResponseValidationStrategy(Protocol):
         """
         ...
 
-    def is_success(self, return_code: int) -> bool:
+    def is_success(self, response: dict) -> bool:
         """
         # Summary
 
-        Check if return code indicates success.
+        Check if the full response indicates success.
+
+        ## Description
+
+        Implementations must check both the HTTP status code and any embedded error
+        indicators in the response body, since some ND API endpoints return a
+        successful status code (e.g. 200) while embedding an error in the payload.
 
         ## Parameters
 
-        - return_code: HTTP status code to check
+        - response: Response dict with keys RETURN_CODE, MESSAGE, DATA, etc.
 
         ## Returns
 
-        - True if code is in success_codes, False otherwise
+        - True if the response is fully successful (good status code and no embedded error), False otherwise
 
         ## Raises
 
