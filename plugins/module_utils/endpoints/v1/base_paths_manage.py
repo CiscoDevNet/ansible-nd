@@ -46,11 +46,11 @@ class BasePath:
     from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_paths_manage import BasePath
 
     # Get a complete base path for ND Manage
-    path = BasePath.nd_manage("inventory", "switches")
+    path = BasePath.path("inventory", "switches")
     # Returns: /api/v1/manage/inventory/switches
 
     # Leverage a convenience method
-    path = BasePath.nd_manage_inventory("switches")
+    path = BasePath.inventory("switches")
     # Returns: /api/v1/manage/inventory/switches
     ```
 
@@ -65,7 +65,7 @@ class BasePath:
     API: Final = ApiPath.MANAGE.value
 
     @classmethod
-    def nd_manage(cls, *segments: str) -> str:
+    def path(cls, *segments: str) -> str:
         """
         # Summary
 
@@ -82,7 +82,7 @@ class BasePath:
         ## Example
 
         ```python
-        path = BasePath.nd_manage("inventory", "switches")
+        path = BasePath.path("inventory", "switches")
         # Returns: /api/v1/manage/inventory/switches
         ```
         """
@@ -91,7 +91,7 @@ class BasePath:
         return f"{cls.API}/{'/'.join(segments)}"
 
     @classmethod
-    def nd_manage_inventory(cls, *segments: str) -> str:
+    def inventory(cls, *segments: str) -> str:
         """
         # Summary
 
@@ -108,8 +108,8 @@ class BasePath:
         ## Example
 
         ```python
-        path = BasePath.nd_manage_inventory("switches")
+        path = BasePath.inventory("switches")
         # Returns: /api/v1/manage/inventory/switches
         ```
         """
-        return cls.nd_manage("inventory", *segments)
+        return cls.path("inventory", *segments)

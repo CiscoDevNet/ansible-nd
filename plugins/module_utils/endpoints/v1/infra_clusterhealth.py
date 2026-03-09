@@ -139,7 +139,7 @@ class EpInfraClusterhealthConfigGet(NDEndpointBaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        base_path = BasePath.nd_infra_clusterhealth("config")
+        base_path = BasePath.clusterhealth("config")
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
@@ -214,7 +214,7 @@ class EpInfraClusterhealthStatusGet(NDEndpointBaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        base_path = BasePath.nd_infra_clusterhealth("status")
+        base_path = BasePath.clusterhealth("status")
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"

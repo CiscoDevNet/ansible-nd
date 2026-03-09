@@ -62,7 +62,7 @@ class NDEndpointBaseModel(BaseModel, ABC):
 
         @property
         def path(self) -> str:
-            return BasePath.nd_infra("login")
+            return BasePath.path("login")
 
         @property
         def verb(self) -> HttpVerbEnum:

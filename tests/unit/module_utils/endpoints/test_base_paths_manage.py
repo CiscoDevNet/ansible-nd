@@ -56,7 +56,7 @@ def test_base_paths_manage_00010():
 
 
 # =============================================================================
-# Test: nd_manage() method
+# Test: path() method
 # =============================================================================
 
 
@@ -64,18 +64,18 @@ def test_base_paths_manage_00100():
     """
     # Summary
 
-    Verify nd_manage() with no segments returns API root
+    Verify path() with no segments returns API root
 
     ## Test
 
-    - nd_manage() returns "/api/v1/manage"
+    - path() returns "/api/v1/manage"
 
     ## Classes and Methods
 
-    - BasePath.nd_manage()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_manage()
+        result = BasePath.path()
     assert result == "/api/v1/manage"
 
 
@@ -83,18 +83,18 @@ def test_base_paths_manage_00110():
     """
     # Summary
 
-    Verify nd_manage() with single segment
+    Verify path() with single segment
 
     ## Test
 
-    - nd_manage("inventory") returns "/api/v1/manage/inventory"
+    - path("inventory") returns "/api/v1/manage/inventory"
 
     ## Classes and Methods
 
-    - BasePath.nd_manage()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_manage("inventory")
+        result = BasePath.path("inventory")
     assert result == "/api/v1/manage/inventory"
 
 
@@ -102,18 +102,18 @@ def test_base_paths_manage_00120():
     """
     # Summary
 
-    Verify nd_manage() with multiple segments
+    Verify path() with multiple segments
 
     ## Test
 
-    - nd_manage("inventory", "switches") returns "/api/v1/manage/inventory/switches"
+    - path("inventory", "switches") returns "/api/v1/manage/inventory/switches"
 
     ## Classes and Methods
 
-    - BasePath.nd_manage()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_manage("inventory", "switches")
+        result = BasePath.path("inventory", "switches")
     assert result == "/api/v1/manage/inventory/switches"
 
 
@@ -121,23 +121,23 @@ def test_base_paths_manage_00130():
     """
     # Summary
 
-    Verify nd_manage() with three segments
+    Verify path() with three segments
 
     ## Test
 
-    - nd_manage("inventory", "switches", "fabric1") returns correct path
+    - path("inventory", "switches", "fabric1") returns correct path
 
     ## Classes and Methods
 
-    - BasePath.nd_manage()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_manage("inventory", "switches", "fabric1")
+        result = BasePath.path("inventory", "switches", "fabric1")
     assert result == "/api/v1/manage/inventory/switches/fabric1"
 
 
 # =============================================================================
-# Test: nd_manage_inventory() method
+# Test: inventory() method
 # =============================================================================
 
 
@@ -145,18 +145,18 @@ def test_base_paths_manage_00200():
     """
     # Summary
 
-    Verify nd_manage_inventory() with no segments
+    Verify inventory() with no segments
 
     ## Test
 
-    - nd_manage_inventory() returns "/api/v1/manage/inventory"
+    - inventory() returns "/api/v1/manage/inventory"
 
     ## Classes and Methods
 
-    - BasePath.nd_manage_inventory()
+    - BasePath.inventory()
     """
     with does_not_raise():
-        result = BasePath.nd_manage_inventory()
+        result = BasePath.inventory()
     assert result == "/api/v1/manage/inventory"
 
 
@@ -164,18 +164,18 @@ def test_base_paths_manage_00210():
     """
     # Summary
 
-    Verify nd_manage_inventory() with single segment
+    Verify inventory() with single segment
 
     ## Test
 
-    - nd_manage_inventory("switches") returns "/api/v1/manage/inventory/switches"
+    - inventory("switches") returns "/api/v1/manage/inventory/switches"
 
     ## Classes and Methods
 
-    - BasePath.nd_manage_inventory()
+    - BasePath.inventory()
     """
     with does_not_raise():
-        result = BasePath.nd_manage_inventory("switches")
+        result = BasePath.inventory("switches")
     assert result == "/api/v1/manage/inventory/switches"
 
 
@@ -183,18 +183,18 @@ def test_base_paths_manage_00220():
     """
     # Summary
 
-    Verify nd_manage_inventory() with multiple segments
+    Verify inventory() with multiple segments
 
     ## Test
 
-    - nd_manage_inventory("switches", "fabric1") returns correct path
+    - inventory("switches", "fabric1") returns correct path
 
     ## Classes and Methods
 
-    - BasePath.nd_manage_inventory()
+    - BasePath.inventory()
     """
     with does_not_raise():
-        result = BasePath.nd_manage_inventory("switches", "fabric1")
+        result = BasePath.inventory("switches", "fabric1")
     assert result == "/api/v1/manage/inventory/switches/fabric1"
 
 
@@ -207,20 +207,20 @@ def test_base_paths_manage_00300():
     """
     # Summary
 
-    Verify nd_manage_inventory() uses nd_manage() internally
+    Verify inventory() uses path() internally
 
     ## Test
 
-    - nd_manage_inventory("switches") equals nd_manage("inventory", "switches")
+    - inventory("switches") equals path("inventory", "switches")
 
     ## Classes and Methods
 
-    - BasePath.nd_manage()
-    - BasePath.nd_manage_inventory()
+    - BasePath.path()
+    - BasePath.inventory()
     """
     with does_not_raise():
-        result1 = BasePath.nd_manage_inventory("switches")
-        result2 = BasePath.nd_manage("inventory", "switches")
+        result1 = BasePath.inventory("switches")
+        result2 = BasePath.path("inventory", "switches")
     assert result1 == result2
 
 
@@ -232,16 +232,16 @@ def test_base_paths_manage_00310():
 
     ## Test
 
-    - nd_manage_inventory("switches", "summary") equals nd_manage("inventory", "switches", "summary")
+    - inventory("switches", "summary") equals path("inventory", "switches", "summary")
 
     ## Classes and Methods
 
-    - BasePath.nd_manage()
-    - BasePath.nd_manage_inventory()
+    - BasePath.path()
+    - BasePath.inventory()
     """
     with does_not_raise():
-        result1 = BasePath.nd_manage_inventory("switches", "summary")
-        result2 = BasePath.nd_manage("inventory", "switches", "summary")
+        result1 = BasePath.inventory("switches", "summary")
+        result2 = BasePath.path("inventory", "switches", "summary")
     assert result1 == result2
 
 
@@ -258,15 +258,15 @@ def test_base_paths_manage_00400():
 
     ## Test
 
-    - nd_manage("inventory", "", "switches") creates path with empty segment
+    - path("inventory", "", "switches") creates path with empty segment
     - This creates double slashes (expected behavior)
 
     ## Classes and Methods
 
-    - BasePath.nd_manage()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_manage("inventory", "", "switches")
+        result = BasePath.path("inventory", "", "switches")
     assert result == "/api/v1/manage/inventory//switches"
 
 
@@ -278,14 +278,14 @@ def test_base_paths_manage_00410():
 
     ## Test
 
-    - nd_manage_inventory("fabric-name_123") handles hyphens and underscores
+    - inventory("fabric-name_123") handles hyphens and underscores
 
     ## Classes and Methods
 
-    - BasePath.nd_manage_inventory()
+    - BasePath.inventory()
     """
     with does_not_raise():
-        result = BasePath.nd_manage_inventory("fabric-name_123")
+        result = BasePath.inventory("fabric-name_123")
     assert result == "/api/v1/manage/inventory/fabric-name_123"
 
 
@@ -302,8 +302,8 @@ def test_base_paths_manage_00420():
 
     ## Classes and Methods
 
-    - BasePath.nd_manage()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_manage("my path")
+        result = BasePath.path("my path")
     assert result == "/api/v1/manage/my path"

@@ -46,11 +46,11 @@ class BasePath:
     from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_paths_infra import BasePath
 
     # Get a complete base path for ND Infra
-    path = BasePath.nd_infra("aaa", "localUsers")
+    path = BasePath.path("aaa", "localUsers")
     # Returns: /api/v1/infra/aaa/localUsers
 
     # Leverage a convenience method
-    path = BasePath.nd_infra_aaa("localUsers")
+    path = BasePath.aaa("localUsers")
     # Returns: /api/v1/infra/aaa/localUsers
     ```
 
@@ -65,7 +65,7 @@ class BasePath:
     API: Final = ApiPath.INFRA.value
 
     @classmethod
-    def nd_infra(cls, *segments: str) -> str:
+    def path(cls, *segments: str) -> str:
         """
         # Summary
 
@@ -82,7 +82,7 @@ class BasePath:
         ## Example
 
         ```python
-        path = BasePath.nd_infra("aaa", "localUsers")
+        path = BasePath.path("aaa", "localUsers")
         # Returns: /api/v1/infra/aaa/localUsers
         ```
         """
@@ -91,7 +91,7 @@ class BasePath:
         return f"{cls.API}/{'/'.join(segments)}"
 
     @classmethod
-    def nd_infra_aaa(cls, *segments: str) -> str:
+    def aaa(cls, *segments: str) -> str:
         """
         # Summary
 
@@ -108,14 +108,14 @@ class BasePath:
         ## Example
 
         ```python
-        path = BasePath.nd_infra_aaa("localUsers")
+        path = BasePath.aaa("localUsers")
         # Returns: /api/v1/infra/aaa/localUsers
         ```
         """
-        return cls.nd_infra("aaa", *segments)
+        return cls.path("aaa", *segments)
 
     @classmethod
-    def nd_infra_clusterhealth(cls, *segments: str) -> str:
+    def clusterhealth(cls, *segments: str) -> str:
         """
         # Summary
 
@@ -132,8 +132,8 @@ class BasePath:
         ## Example
 
         ```python
-        path = BasePath.nd_infra_clusterhealth("config")
+        path = BasePath.clusterhealth("config")
         # Returns: /api/v1/infra/clusterhealth/config
         ```
         """
-        return cls.nd_infra("clusterhealth", *segments)
+        return cls.path("clusterhealth", *segments)

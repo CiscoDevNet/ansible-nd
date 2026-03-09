@@ -80,7 +80,7 @@ class EpInfraLoginPost(NDEndpointBaseModel):
 
         None
         """
-        return BasePath.nd_infra("login")
+        return BasePath.path("login")
 
     @property
     def verb(self) -> HttpVerbEnum:

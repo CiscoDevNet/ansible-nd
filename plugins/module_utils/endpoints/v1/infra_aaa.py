@@ -56,8 +56,8 @@ class _EpInfraAaaLocalUsersBase(LoginIdMixin, NDEndpointBaseModel):
         - Complete endpoint path string, optionally including login_id
         """
         if self.login_id is not None:
-            return BasePath.nd_infra_aaa("localUsers", self.login_id)
-        return BasePath.nd_infra_aaa("localUsers")
+            return BasePath.aaa("localUsers", self.login_id)
+        return BasePath.aaa("localUsers")
 
 
 class EpInfraAaaLocalUsersGet(_EpInfraAaaLocalUsersBase):

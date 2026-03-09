@@ -56,7 +56,7 @@ def test_base_paths_infra_00010():
 
 
 # =============================================================================
-# Test: nd_infra() method
+# Test: path() method
 # =============================================================================
 
 
@@ -64,18 +64,18 @@ def test_base_paths_infra_00100():
     """
     # Summary
 
-    Verify nd_infra() with no segments returns API root
+    Verify path() with no segments returns API root
 
     ## Test
 
-    - nd_infra() returns "/api/v1/infra"
+    - path() returns "/api/v1/infra"
 
     ## Classes and Methods
 
-    - BasePath.nd_infra()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_infra()
+        result = BasePath.path()
     assert result == "/api/v1/infra"
 
 
@@ -83,18 +83,18 @@ def test_base_paths_infra_00110():
     """
     # Summary
 
-    Verify nd_infra() with single segment
+    Verify path() with single segment
 
     ## Test
 
-    - nd_infra("aaa") returns "/api/v1/infra/aaa"
+    - path("aaa") returns "/api/v1/infra/aaa"
 
     ## Classes and Methods
 
-    - BasePath.nd_infra()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_infra("aaa")
+        result = BasePath.path("aaa")
     assert result == "/api/v1/infra/aaa"
 
 
@@ -102,18 +102,18 @@ def test_base_paths_infra_00120():
     """
     # Summary
 
-    Verify nd_infra() with multiple segments
+    Verify path() with multiple segments
 
     ## Test
 
-    - nd_infra("aaa", "localUsers") returns "/api/v1/infra/aaa/localUsers"
+    - path("aaa", "localUsers") returns "/api/v1/infra/aaa/localUsers"
 
     ## Classes and Methods
 
-    - BasePath.nd_infra()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_infra("aaa", "localUsers")
+        result = BasePath.path("aaa", "localUsers")
     assert result == "/api/v1/infra/aaa/localUsers"
 
 
@@ -121,23 +121,23 @@ def test_base_paths_infra_00130():
     """
     # Summary
 
-    Verify nd_infra() with three segments
+    Verify path() with three segments
 
     ## Test
 
-    - nd_infra("aaa", "localUsers", "user1") returns correct path
+    - path("aaa", "localUsers", "user1") returns correct path
 
     ## Classes and Methods
 
-    - BasePath.nd_infra()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_infra("aaa", "localUsers", "user1")
+        result = BasePath.path("aaa", "localUsers", "user1")
     assert result == "/api/v1/infra/aaa/localUsers/user1"
 
 
 # =============================================================================
-# Test: nd_infra_aaa() method
+# Test: aaa() method
 # =============================================================================
 
 
@@ -145,18 +145,18 @@ def test_base_paths_infra_00200():
     """
     # Summary
 
-    Verify nd_infra_aaa() with no segments
+    Verify aaa() with no segments
 
     ## Test
 
-    - nd_infra_aaa() returns "/api/v1/infra/aaa"
+    - aaa() returns "/api/v1/infra/aaa"
 
     ## Classes and Methods
 
-    - BasePath.nd_infra_aaa()
+    - BasePath.aaa()
     """
     with does_not_raise():
-        result = BasePath.nd_infra_aaa()
+        result = BasePath.aaa()
     assert result == "/api/v1/infra/aaa"
 
 
@@ -164,18 +164,18 @@ def test_base_paths_infra_00210():
     """
     # Summary
 
-    Verify nd_infra_aaa() with single segment
+    Verify aaa() with single segment
 
     ## Test
 
-    - nd_infra_aaa("localUsers") returns "/api/v1/infra/aaa/localUsers"
+    - aaa("localUsers") returns "/api/v1/infra/aaa/localUsers"
 
     ## Classes and Methods
 
-    - BasePath.nd_infra_aaa()
+    - BasePath.aaa()
     """
     with does_not_raise():
-        result = BasePath.nd_infra_aaa("localUsers")
+        result = BasePath.aaa("localUsers")
     assert result == "/api/v1/infra/aaa/localUsers"
 
 
@@ -183,23 +183,23 @@ def test_base_paths_infra_00220():
     """
     # Summary
 
-    Verify nd_infra_aaa() with multiple segments
+    Verify aaa() with multiple segments
 
     ## Test
 
-    - nd_infra_aaa("localUsers", "user1") returns correct path
+    - aaa("localUsers", "user1") returns correct path
 
     ## Classes and Methods
 
-    - BasePath.nd_infra_aaa()
+    - BasePath.aaa()
     """
     with does_not_raise():
-        result = BasePath.nd_infra_aaa("localUsers", "user1")
+        result = BasePath.aaa("localUsers", "user1")
     assert result == "/api/v1/infra/aaa/localUsers/user1"
 
 
 # =============================================================================
-# Test: nd_infra_clusterhealth() method
+# Test: clusterhealth() method
 # =============================================================================
 
 
@@ -207,18 +207,18 @@ def test_base_paths_infra_00300():
     """
     # Summary
 
-    Verify nd_infra_clusterhealth() with no segments
+    Verify clusterhealth() with no segments
 
     ## Test
 
-    - nd_infra_clusterhealth() returns "/api/v1/infra/clusterhealth"
+    - clusterhealth() returns "/api/v1/infra/clusterhealth"
 
     ## Classes and Methods
 
-    - BasePath.nd_infra_clusterhealth()
+    - BasePath.clusterhealth()
     """
     with does_not_raise():
-        result = BasePath.nd_infra_clusterhealth()
+        result = BasePath.clusterhealth()
     assert result == "/api/v1/infra/clusterhealth"
 
 
@@ -226,18 +226,18 @@ def test_base_paths_infra_00310():
     """
     # Summary
 
-    Verify nd_infra_clusterhealth() with "config" segment
+    Verify clusterhealth() with "config" segment
 
     ## Test
 
-    - nd_infra_clusterhealth("config") returns "/api/v1/infra/clusterhealth/config"
+    - clusterhealth("config") returns "/api/v1/infra/clusterhealth/config"
 
     ## Classes and Methods
 
-    - BasePath.nd_infra_clusterhealth()
+    - BasePath.clusterhealth()
     """
     with does_not_raise():
-        result = BasePath.nd_infra_clusterhealth("config")
+        result = BasePath.clusterhealth("config")
     assert result == "/api/v1/infra/clusterhealth/config"
 
 
@@ -245,18 +245,18 @@ def test_base_paths_infra_00320():
     """
     # Summary
 
-    Verify nd_infra_clusterhealth() with "status" segment
+    Verify clusterhealth() with "status" segment
 
     ## Test
 
-    - nd_infra_clusterhealth("status") returns "/api/v1/infra/clusterhealth/status"
+    - clusterhealth("status") returns "/api/v1/infra/clusterhealth/status"
 
     ## Classes and Methods
 
-    - BasePath.nd_infra_clusterhealth()
+    - BasePath.clusterhealth()
     """
     with does_not_raise():
-        result = BasePath.nd_infra_clusterhealth("status")
+        result = BasePath.clusterhealth("status")
     assert result == "/api/v1/infra/clusterhealth/status"
 
 
@@ -264,18 +264,18 @@ def test_base_paths_infra_00330():
     """
     # Summary
 
-    Verify nd_infra_clusterhealth() with multiple segments
+    Verify clusterhealth() with multiple segments
 
     ## Test
 
-    - nd_infra_clusterhealth("config", "cluster1") returns correct path
+    - clusterhealth("config", "cluster1") returns correct path
 
     ## Classes and Methods
 
-    - BasePath.nd_infra_clusterhealth()
+    - BasePath.clusterhealth()
     """
     with does_not_raise():
-        result = BasePath.nd_infra_clusterhealth("config", "cluster1")
+        result = BasePath.clusterhealth("config", "cluster1")
     assert result == "/api/v1/infra/clusterhealth/config/cluster1"
 
 
@@ -288,20 +288,20 @@ def test_base_paths_infra_00400():
     """
     # Summary
 
-    Verify nd_infra_aaa() uses nd_infra() internally
+    Verify aaa() uses path() internally
 
     ## Test
 
-    - nd_infra_aaa("localUsers") equals nd_infra("aaa", "localUsers")
+    - aaa("localUsers") equals path("aaa", "localUsers")
 
     ## Classes and Methods
 
-    - BasePath.nd_infra()
-    - BasePath.nd_infra_aaa()
+    - BasePath.path()
+    - BasePath.aaa()
     """
     with does_not_raise():
-        result1 = BasePath.nd_infra_aaa("localUsers")
-        result2 = BasePath.nd_infra("aaa", "localUsers")
+        result1 = BasePath.aaa("localUsers")
+        result2 = BasePath.path("aaa", "localUsers")
     assert result1 == result2
 
 
@@ -309,20 +309,20 @@ def test_base_paths_infra_00410():
     """
     # Summary
 
-    Verify nd_infra_clusterhealth() uses nd_infra() internally
+    Verify clusterhealth() uses path() internally
 
     ## Test
 
-    - nd_infra_clusterhealth("config") equals nd_infra("clusterhealth", "config")
+    - clusterhealth("config") equals path("clusterhealth", "config")
 
     ## Classes and Methods
 
-    - BasePath.nd_infra()
-    - BasePath.nd_infra_clusterhealth()
+    - BasePath.path()
+    - BasePath.clusterhealth()
     """
     with does_not_raise():
-        result1 = BasePath.nd_infra_clusterhealth("config")
-        result2 = BasePath.nd_infra("clusterhealth", "config")
+        result1 = BasePath.clusterhealth("config")
+        result2 = BasePath.path("clusterhealth", "config")
     assert result1 == result2
 
 
@@ -339,15 +339,15 @@ def test_base_paths_infra_00500():
 
     ## Test
 
-    - nd_infra("aaa", "", "localUsers") creates path with empty segment
+    - path("aaa", "", "localUsers") creates path with empty segment
     - This creates double slashes (expected behavior)
 
     ## Classes and Methods
 
-    - BasePath.nd_infra()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_infra("aaa", "", "localUsers")
+        result = BasePath.path("aaa", "", "localUsers")
     assert result == "/api/v1/infra/aaa//localUsers"
 
 
@@ -359,14 +359,14 @@ def test_base_paths_infra_00510():
 
     ## Test
 
-    - nd_infra_aaa("user-name_123") handles hyphens and underscores
+    - aaa("user-name_123") handles hyphens and underscores
 
     ## Classes and Methods
 
-    - BasePath.nd_infra_aaa()
+    - BasePath.aaa()
     """
     with does_not_raise():
-        result = BasePath.nd_infra_aaa("user-name_123")
+        result = BasePath.aaa("user-name_123")
     assert result == "/api/v1/infra/aaa/user-name_123"
 
 
@@ -383,8 +383,8 @@ def test_base_paths_infra_00520():
 
     ## Classes and Methods
 
-    - BasePath.nd_infra()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.nd_infra("my path")
+        result = BasePath.path("my path")
     assert result == "/api/v1/infra/my path"
