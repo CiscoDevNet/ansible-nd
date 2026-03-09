@@ -19,6 +19,9 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from typing import Literal
 
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
 )
@@ -27,13 +30,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_i
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    BaseModel,
-    ConfigDict,
     Field,
 )
-
-# Common config for basic validation
-COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
 
 class ClusterHealthConfigEndpointParams(EndpointQueryParams):
@@ -88,7 +86,7 @@ class ClusterHealthStatusEndpointParams(EndpointQueryParams):
     node_name: Optional[str] = Field(default=None, min_length=1, description="Node name")
 
 
-class EpInfraClusterhealthConfigGet(BaseModel):
+class EpInfraClusterhealthConfigGet(NDEndpointBaseModel):
     """
     # Summary
 
@@ -125,12 +123,6 @@ class EpInfraClusterhealthConfigGet(BaseModel):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
-
     class_name: Literal["EpInfraClusterhealthConfigGet"] = Field(default="EpInfraClusterhealthConfigGet", description="Class name for backward compatibility")
 
     endpoint_params: ClusterHealthConfigEndpointParams = Field(
@@ -160,7 +152,7 @@ class EpInfraClusterhealthConfigGet(BaseModel):
         return HttpVerbEnum.GET
 
 
-class EpInfraClusterhealthStatusGet(BaseModel):
+class EpInfraClusterhealthStatusGet(NDEndpointBaseModel):
     """
     # Summary
 
@@ -205,12 +197,6 @@ class EpInfraClusterhealthStatusGet(BaseModel):
     # Path will be: /api/v1/infra/clusterhealth/status?clusterName=foo&healthCategory=bar&nodeName=baz
     ```
     """
-
-    model_config = COMMON_CONFIG
-
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     class_name: Literal["EpInfraClusterhealthStatusGet"] = Field(default="EpInfraClusterhealthStatusGet", description="Class name for backward compatibility")
 
