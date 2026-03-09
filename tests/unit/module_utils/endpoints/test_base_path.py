@@ -5,7 +5,7 @@
 """
 Unit tests for base_path.py
 
-Tests the root API path constants defined in base_path.py
+Tests the ApiPath enum defined in base_path.py
 """
 
 from __future__ import absolute_import, annotations, division, print_function
@@ -15,21 +15,15 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_path import (
-    LOGIN,
-    ND_ANALYZE_API,
-    ND_INFRA_API,
-    ND_MANAGE_API,
-    ND_MSO_API,
-    ND_ONEMANAGE_API,
-    NDFC_API,
     ApiPath,
 )
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
     does_not_raise,
 )
 
+
 # =============================================================================
-# Test: Root API Path Constants
+# Test: ApiPath Enum Values
 # =============================================================================
 
 
@@ -37,18 +31,18 @@ def test_base_path_00010():
     """
     # Summary
 
-    Verify ND_ANALYZE_API constant value
+    Verify ApiPath.ANALYZE value
 
     ## Test
 
-    - ND_ANALYZE_API equals "/api/v1/analyze"
+    - ApiPath.ANALYZE equals "/api/v1/analyze"
 
     ## Classes and Methods
 
-    - base_path.ND_ANALYZE_API
+    - ApiPath.ANALYZE
     """
     with does_not_raise():
-        result = ND_ANALYZE_API
+        result = ApiPath.ANALYZE.value
     assert result == "/api/v1/analyze"
 
 
@@ -56,18 +50,18 @@ def test_base_path_00020():
     """
     # Summary
 
-    Verify ND_INFRA_API constant value
+    Verify ApiPath.INFRA value
 
     ## Test
 
-    - ND_INFRA_API equals "/api/v1/infra"
+    - ApiPath.INFRA equals "/api/v1/infra"
 
     ## Classes and Methods
 
-    - base_path.ND_INFRA_API
+    - ApiPath.INFRA
     """
     with does_not_raise():
-        result = ND_INFRA_API
+        result = ApiPath.INFRA.value
     assert result == "/api/v1/infra"
 
 
@@ -75,18 +69,18 @@ def test_base_path_00030():
     """
     # Summary
 
-    Verify ND_MANAGE_API constant value
+    Verify ApiPath.MANAGE value
 
     ## Test
 
-    - ND_MANAGE_API equals "/api/v1/manage"
+    - ApiPath.MANAGE equals "/api/v1/manage"
 
     ## Classes and Methods
 
-    - base_path.ND_MANAGE_API
+    - ApiPath.MANAGE
     """
     with does_not_raise():
-        result = ND_MANAGE_API
+        result = ApiPath.MANAGE.value
     assert result == "/api/v1/manage"
 
 
@@ -94,80 +88,23 @@ def test_base_path_00040():
     """
     # Summary
 
-    Verify ND_ONEMANAGE_API constant value
+    Verify ApiPath.ONEMANAGE value
 
     ## Test
 
-    - ND_ONEMANAGE_API equals "/api/v1/onemanage"
+    - ApiPath.ONEMANAGE equals "/api/v1/onemanage"
 
     ## Classes and Methods
 
-    - base_path.ND_ONEMANAGE_API
+    - ApiPath.ONEMANAGE
     """
     with does_not_raise():
-        result = ND_ONEMANAGE_API
+        result = ApiPath.ONEMANAGE.value
     assert result == "/api/v1/onemanage"
 
 
-def test_base_path_00050():
-    """
-    # Summary
-
-    Verify ND_MSO_API constant value
-
-    ## Test
-
-    - ND_MSO_API equals "/mso"
-
-    ## Classes and Methods
-
-    - base_path.ND_MSO_API
-    """
-    with does_not_raise():
-        result = ND_MSO_API
-    assert result == "/mso"
-
-
-def test_base_path_00060():
-    """
-    # Summary
-
-    Verify NDFC_API constant value
-
-    ## Test
-
-    - NDFC_API equals "/appcenter/cisco/ndfc/api"
-
-    ## Classes and Methods
-
-    - base_path.NDFC_API
-    """
-    with does_not_raise():
-        result = NDFC_API
-    assert result == "/appcenter/cisco/ndfc/api"
-
-
-def test_base_path_00070():
-    """
-    # Summary
-
-    Verify LOGIN constant value
-
-    ## Test
-
-    - LOGIN equals "/login"
-
-    ## Classes and Methods
-
-    - base_path.LOGIN
-    """
-    with does_not_raise():
-        result = LOGIN
-    assert result == "/login"
-
-
 # =============================================================================
-# Test: Constant Immutability (Final types)
+# Test: ApiPath Enum Properties
 # =============================================================================
 
 
@@ -175,31 +112,22 @@ def test_base_path_00100():
     """
     # Summary
 
-    Verify constants are strings
+    Verify ApiPath enum members are strings
 
     ## Test
 
-    - All constants are string types
-    - This ensures they can be used in path building
+    - ApiPath enum extends str
+    - Enum members can be used directly in string operations
 
     ## Classes and Methods
 
-    - base_path.ND_ANALYZE_API
-    - base_path.ND_INFRA_API
-    - base_path.ND_MANAGE_API
-    - base_path.ND_ONEMANAGE_API
-    - base_path.ND_MSO_API
-    - base_path.NDFC_API
-    - base_path.LOGIN
+    - ApiPath
     """
     with does_not_raise():
-        assert isinstance(ND_ANALYZE_API, str)
-        assert isinstance(ND_INFRA_API, str)
-        assert isinstance(ND_MANAGE_API, str)
-        assert isinstance(ND_ONEMANAGE_API, str)
-        assert isinstance(ND_MSO_API, str)
-        assert isinstance(NDFC_API, str)
-        assert isinstance(LOGIN, str)
+        assert isinstance(ApiPath.INFRA, str)
+        assert isinstance(ApiPath.MANAGE, str)
+        assert isinstance(ApiPath.ANALYZE, str)
+        assert isinstance(ApiPath.ONEMANAGE, str)
 
 
 def test_base_path_00110():
@@ -210,27 +138,16 @@ def test_base_path_00110():
 
     ## Test
 
-    - All API path constants start with "/"
+    - All ApiPath values start with "/"
     - This ensures proper path concatenation
 
     ## Classes and Methods
 
-    - base_path.ND_ANALYZE_API
-    - base_path.ND_INFRA_API
-    - base_path.ND_MANAGE_API
-    - base_path.ND_ONEMANAGE_API
-    - base_path.ND_MSO_API
-    - base_path.NDFC_API
-    - base_path.LOGIN
+    - ApiPath
     """
     with does_not_raise():
-        assert ND_ANALYZE_API.startswith("/")
-        assert ND_INFRA_API.startswith("/")
-        assert ND_MANAGE_API.startswith("/")
-        assert ND_ONEMANAGE_API.startswith("/")
-        assert ND_MSO_API.startswith("/")
-        assert NDFC_API.startswith("/")
-        assert LOGIN.startswith("/")
+        for member in ApiPath:
+            assert member.value.startswith("/"), f"{member.name} does not start with /"
 
 
 def test_base_path_00120():
@@ -241,131 +158,19 @@ def test_base_path_00120():
 
     ## Test
 
-    - No API path constants end with "/"
+    - No ApiPath values end with "/"
     - This prevents double slashes when building paths
 
     ## Classes and Methods
 
-    - base_path.ND_ANALYZE_API
-    - base_path.ND_INFRA_API
-    - base_path.ND_MANAGE_API
-    - base_path.ND_ONEMANAGE_API
-    - base_path.ND_MSO_API
-    - base_path.NDFC_API
-    - base_path.LOGIN
+    - ApiPath
     """
     with does_not_raise():
-        assert not ND_ANALYZE_API.endswith("/")
-        assert not ND_INFRA_API.endswith("/")
-        assert not ND_MANAGE_API.endswith("/")
-        assert not ND_ONEMANAGE_API.endswith("/")
-        assert not ND_MSO_API.endswith("/")
-        assert not NDFC_API.endswith("/")
-        assert not LOGIN.endswith("/")
+        for member in ApiPath:
+            assert not member.value.endswith("/"), f"{member.name} ends with /"
 
 
-# =============================================================================
-# Test: ND API Path Structure
-# =============================================================================
-
-
-def test_base_path_00200():
-    """
-    # Summary
-
-    Verify ND API paths follow /api/v1/<service> pattern
-
-    ## Test
-
-    - ND_ANALYZE_API follows the pattern
-    - ND_INFRA_API follows the pattern
-    - ND_MANAGE_API follows the pattern
-    - ND_ONEMANAGE_API follows the pattern
-
-    ## Classes and Methods
-
-    - base_path.ND_ANALYZE_API
-    - base_path.ND_INFRA_API
-    - base_path.ND_MANAGE_API
-    - base_path.ND_ONEMANAGE_API
-    """
-    with does_not_raise():
-        assert ND_ANALYZE_API.startswith("/api/v1/")
-        assert ND_INFRA_API.startswith("/api/v1/")
-        assert ND_MANAGE_API.startswith("/api/v1/")
-        assert ND_ONEMANAGE_API.startswith("/api/v1/")
-
-
-def test_base_path_00210():
-    """
-    # Summary
-
-    Verify non-ND API paths have different structure
-
-    ## Test
-
-    - ND_MSO_API does not follow /api/v1/ pattern
-    - NDFC_API does not follow /api/v1/ pattern
-    - LOGIN does not follow /api/v1/ pattern
-
-    ## Classes and Methods
-
-    - base_path.ND_MSO_API
-    - base_path.NDFC_API
-    - base_path.LOGIN
-    """
-    with does_not_raise():
-        assert not ND_MSO_API.startswith("/api/v1/")
-        assert not NDFC_API.startswith("/api/v1/")
-        assert not LOGIN.startswith("/api/v1/")
-
-
-# =============================================================================
-# Test: Path Uniqueness
-# =============================================================================
-
-
-def test_base_path_00300():
-    """
-    # Summary
-
-    Verify all API path constants are unique
-
-    ## Test
-
-    - Each constant has a different value
-    - No duplicate paths exist
-
-    ## Classes and Methods
-
-    - base_path.ND_ANALYZE_API
-    - base_path.ND_INFRA_API
-    - base_path.ND_MANAGE_API
-    - base_path.ND_ONEMANAGE_API
-    - base_path.ND_MSO_API
-    - base_path.NDFC_API
-    - base_path.LOGIN
-    """
-    with does_not_raise():
-        paths = [
-            ND_ANALYZE_API,
-            ND_INFRA_API,
-            ND_MANAGE_API,
-            ND_ONEMANAGE_API,
-            ND_MSO_API,
-            NDFC_API,
-            LOGIN,
-        ]
-        # Convert to set and check length matches
-        assert len(paths) == len(set(paths)), "Duplicate paths found"
-
-
-# =============================================================================
-# Test: ApiPath Enum
-# =============================================================================
-
-
-def test_base_path_00400():
+def test_base_path_00130():
     """
     # Summary
 
@@ -373,72 +178,67 @@ def test_base_path_00400():
 
     ## Test
 
-    - All 7 API paths available as enum members
-    - Enum members have correct string values
+    - All 4 API paths available as enum members
     - Enum is iterable
 
     ## Classes and Methods
 
-    - base_path.ApiPath
+    - ApiPath
     """
     with does_not_raise():
         paths = list(ApiPath)
 
-    assert len(paths) == 7
+    assert len(paths) == 4
     assert ApiPath.ANALYZE in paths
     assert ApiPath.INFRA in paths
     assert ApiPath.MANAGE in paths
     assert ApiPath.ONEMANAGE in paths
-    assert ApiPath.MSO in paths
-    assert ApiPath.NDFC in paths
-    assert ApiPath.LOGIN in paths
 
 
-def test_base_path_00410():
+# =============================================================================
+# Test: Path Uniqueness
+# =============================================================================
+
+
+def test_base_path_00200():
     """
     # Summary
 
-    Verify ApiPath enum values match backward compat constants
+    Verify all ApiPath values are unique
 
     ## Test
 
-    - ApiPath.ANALYZE.value equals ND_ANALYZE_API
-    - ApiPath.INFRA.value equals ND_INFRA_API
-    - ApiPath.MANAGE.value equals ND_MANAGE_API
-    - All enum values match corresponding constants
+    - Each enum member has a different value
+    - No duplicate paths exist
 
     ## Classes and Methods
 
-    - base_path.ApiPath
+    - ApiPath
     """
     with does_not_raise():
-        assert ApiPath.ANALYZE.value == ND_ANALYZE_API
-        assert ApiPath.INFRA.value == ND_INFRA_API
-        assert ApiPath.MANAGE.value == ND_MANAGE_API
-        assert ApiPath.ONEMANAGE.value == ND_ONEMANAGE_API
-        assert ApiPath.MSO.value == ND_MSO_API
-        assert ApiPath.NDFC.value == NDFC_API
-        assert ApiPath.LOGIN.value == LOGIN
+        values = [member.value for member in ApiPath]
+        assert len(values) == len(set(values)), "Duplicate paths found"
 
 
-def test_base_path_00420():
+# =============================================================================
+# Test: ND API Path Structure
+# =============================================================================
+
+
+def test_base_path_00300():
     """
     # Summary
 
-    Verify ApiPath enum members are strings
+    Verify all ApiPath members follow /api/v1/<service> pattern
 
     ## Test
 
-    - ApiPath enum extends str
-    - Enum members can be used directly in string operations
-    - String conversion works correctly
+    - All ApiPath values start with "/api/v1/"
 
     ## Classes and Methods
 
-    - base_path.ApiPath
+    - ApiPath
     """
     with does_not_raise():
-        assert isinstance(ApiPath.INFRA, str)
-        assert isinstance(ApiPath.MANAGE, str)
-        assert ApiPath.INFRA == "/api/v1/infra"
-        assert ApiPath.MANAGE == "/api/v1/manage"
+        for member in ApiPath:
+            assert member.value.startswith("/api/v1/"), f"{member.name} does not follow /api/v1/<service> pattern"

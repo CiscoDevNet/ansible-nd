@@ -16,7 +16,6 @@ __metaclass__ = type
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_path import (
-    ND_MANAGE_API,
     ApiPath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import (
@@ -35,13 +34,12 @@ def test_base_paths_manage_00010():
     """
     # Summary
 
-    Verify API constant equals ND_MANAGE_API and ApiPath.MANAGE
+    Verify API constant equals ApiPath.MANAGE
 
     ## Test
 
     - BasePath.API equals "/api/v1/manage"
     - BasePath.API uses ApiPath.MANAGE.value
-    - Backward compat constant still works
 
     ## Classes and Methods
 
@@ -50,7 +48,6 @@ def test_base_paths_manage_00010():
     """
     with does_not_raise():
         result = BasePath.API
-    assert result == ND_MANAGE_API
     assert result == ApiPath.MANAGE.value
     assert result == "/api/v1/manage"
 

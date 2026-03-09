@@ -23,11 +23,6 @@ def build_endpoint(api_base: ApiPath, path: str) -> str:
 # IDE autocomplete works
 endpoint = build_endpoint(ApiPath.INFRA, "aaa/localUsers")
 ```
-
-## Backward Compatibility
-
-Legacy constants (ND_INFRA_API, etc.) are maintained for backward compatibility
-but are deprecated. New code should use the ApiPath enum.
 """
 
 from __future__ import absolute_import, annotations, division, print_function
@@ -37,10 +32,6 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 from enum import Enum
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from typing import Final
 
 
 class ApiPath(str, Enum):
@@ -63,9 +54,3 @@ class ApiPath(str, Enum):
     INFRA = "/api/v1/infra"
     MANAGE = "/api/v1/manage"
     ONEMANAGE = "/api/v1/onemanage"
-
-
-ND_ANALYZE_API: Final = ApiPath.ANALYZE.value
-ND_INFRA_API: Final = ApiPath.INFRA.value
-ND_MANAGE_API: Final = ApiPath.MANAGE.value
-ND_ONEMANAGE_API: Final = ApiPath.ONEMANAGE.value
