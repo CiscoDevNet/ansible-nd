@@ -157,6 +157,41 @@ class NdV1Strategy:
         """
         return return_code == self.not_found_code
 
+    def is_changed(self, response: dict) -> bool:
+        """
+        # Summary
+
+        Check if a successful mutation request actually changed state (v1).
+
+        ## Description
+
+        ND API v1 may include a `modified` response header (forwarded by the HttpAPI
+        plugin as a lowercase key in the response dict) with string values `"true"` or
+        `"false"`. When present, this header is the authoritative signal for whether
+        the operation mutated any state on the controller.
+
+        When the header is absent the method defaults to `True`, preserving the
+        historical behaviour for verbs (DELETE, POST, PUT) where ND does not send it.
+
+        ## Parameters
+
+        - response: Response dict with keys RETURN_CODE, MESSAGE, DATA, and any HTTP
+          response headers (lowercased) forwarded by the HttpAPI plugin.
+
+        ## Returns
+
+        - False if the `modified` header is present and equals `"false"` (case-insensitive)
+        - True otherwise
+
+        ## Raises
+
+        None
+        """
+        modified = response.get("modified")
+        if modified is None:
+            return True
+        return str(modified).lower() != "false"
+
     def extract_error_message(self, response: dict) -> Optional[str]:
         """
         # Summary

@@ -145,6 +145,37 @@ class ResponseValidationStrategy(Protocol):
         """
         ...
 
+    def is_changed(self, response: dict) -> bool:
+        """
+        # Summary
+
+        Check if a successful mutation request actually changed state.
+
+        ## Description
+
+        Some ND API endpoints include a `modified` response header (string `"true"` or
+        `"false"`) that explicitly signals whether the operation mutated any state.
+        Implementations should honour this header when present and default to `True`
+        when it is absent (matching the historical behaviour for PUT/POST/DELETE).
+
+        This method should only be called after `is_success` has returned `True`.
+
+        ## Parameters
+
+        - response: Response dict with keys RETURN_CODE, MESSAGE, DATA, and any HTTP
+          response headers (lowercased) forwarded by the HttpAPI plugin.
+
+        ## Returns
+
+        - True if the operation changed state (or if the `modified` header is absent)
+        - False if the `modified` header is explicitly `"false"`
+
+        ## Raises
+
+        None
+        """
+        ...
+
     def extract_error_message(self, response: dict) -> Optional[str]:
         """
         # Summary

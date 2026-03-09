@@ -221,10 +221,12 @@ class ResponseHandler:
         """
         result = {}
 
-        # Success codes with no embedded error indicate the operation completed
+        # Success codes with no embedded error indicate the operation completed.
+        # Use the modified header (when present) as the authoritative signal for
+        # whether state was actually changed, falling back to True when absent.
         if self._strategy.is_success(self.response):
             result["success"] = True
-            result["changed"] = True
+            result["changed"] = self._strategy.is_changed(self.response)
         else:
             result["success"] = False
             result["changed"] = False
