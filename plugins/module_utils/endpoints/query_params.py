@@ -219,7 +219,7 @@ class LuceneQueryParams(BaseModel):
 
     def is_empty(self) -> bool:
         """Check if any filter parameters are set."""
-        return all(v is None for v in self.model_dump().values())
+        return not self.model_dump(exclude_none=True)
 
 
 class CompositeQueryParams:
