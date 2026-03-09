@@ -379,9 +379,15 @@ class Results:
 
         Add a dict to the response_data list.
 
+        .. deprecated::
+
+            `add_response_data()` is deprecated and may be removed in a future release.
+
         ## Raises
 
-        -   `TypeError`: if value is not a dict
+        ### TypeError
+
+        - If `value` is not a dict
 
         ## See also
 
@@ -942,8 +948,11 @@ class Results:
         """
         # Summary
 
-        Return a `list` of `dict`, where each `dict` contains the contents of the DATA key
-        within the responses that have been added.
+        Return a `list` of `dict`, where each `dict` contains the contents of the DATA key within the responses that have been added.
+
+        .. deprecated::
+
+            `response_data` is deprecated and may be removed in a future release. Use the `response` property instead.
 
         ## Raises
 
