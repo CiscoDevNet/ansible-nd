@@ -191,7 +191,7 @@ class LuceneQueryParams(BaseModel):
 
     @field_validator("sort")
     @classmethod
-    def validate_sort(cls, value):
+    def _validate_sort(cls, value):
         """Validate sort format: field:direction."""
         if value is not None and ":" in value:
             parts = value.split(":")
