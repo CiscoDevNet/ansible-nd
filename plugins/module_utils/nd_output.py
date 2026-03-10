@@ -9,13 +9,12 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from typing import Dict, Any, Optional, List, Union
-from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 
 
 class NDOutput:
-    def __init__(self, module: AnsibleModule):
-        self._output_level: str = module.params.get("output_level", "normal")
+    def __init__(self, output_level: str):
+        self._output_level: str = output_level
         self._changed: bool = False
         self._before: Union[NDConfigCollection, List] = []
         self._after: Union[NDConfigCollection, List] = []
@@ -24,7 +23,7 @@ class NDOutput:
         self._logs: List = []
         self._extra: Dict[str, Any] = {}
 
-    def format(self, **kwargs):
+    def format(self, **kwargs) -> Dict[str, Any]:
         if isinstance(self._before, NDConfigCollection) and isinstance(self._after, NDConfigCollection) and self._before.get_diff_collection(self._after):
             self._changed = True
 
