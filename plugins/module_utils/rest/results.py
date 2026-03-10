@@ -367,7 +367,6 @@ class Results:
         # Final result (built on demand)
         self._final_result: Optional[FinalResultData] = None
 
-
         msg = f"ENTERED {self.class_name}():"
         self.log.debug(msg)
 
@@ -379,7 +378,8 @@ class Results:
 
         .. deprecated::
 
-            `add_response_data()` is deprecated and may be removed in a future release. Use `register_api_call()` instead; response data is now derived from registered tasks.
+            `add_response_data()` is deprecated and may be removed in a future release.
+            Use `register_api_call()` instead; response data is now derived from registered tasks.
 
         ## Raises
 
