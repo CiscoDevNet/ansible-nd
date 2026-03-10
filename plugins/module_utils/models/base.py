@@ -72,7 +72,7 @@ class NDBaseModel(BaseModel, ABC):
         """
         Convert model to API payload format.
         """
-        return self.model_dump(by_alias=True, exclude_none=True, **kwargs)
+        return self.model_dump(by_alias=True, exclude_none=True, mode="json", **kwargs)
 
     def to_config(self, **kwargs) -> Dict[str, Any]:
         """
@@ -140,7 +140,7 @@ class NDBaseModel(BaseModel, ABC):
         """
         Export for diff comparison (excludes sensitive fields).
         """
-        return self.model_dump(by_alias=True, exclude_none=True, exclude=set(self.exclude_from_diff), **kwargs)
+        return self.model_dump(by_alias=True, exclude_none=True, exclude=set(self.exclude_from_diff), mode="json", **kwargs)
 
     # NOTE: initialize and return a deep copy of the instance?
     def merge(self, other_model: "NDBaseModel", **kwargs) -> "NDBaseModel":
