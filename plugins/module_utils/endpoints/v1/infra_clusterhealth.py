@@ -122,7 +122,7 @@ class EpInfraClusterhealthConfigGet(NDEndpointBaseModel):
     ```
     """
 
-    class_name: Literal["EpInfraClusterhealthConfigGet"] = Field(default="EpInfraClusterhealthConfigGet", description="Class name for backward compatibility")
+    class_name: Literal["EpInfraClusterhealthConfigGet"] = Field(default="EpInfraClusterhealthConfigGet", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: ClusterHealthConfigEndpointParams = Field(
         default_factory=ClusterHealthConfigEndpointParams, description="Endpoint-specific query parameters"
@@ -197,7 +197,7 @@ class EpInfraClusterhealthStatusGet(NDEndpointBaseModel):
     ```
     """
 
-    class_name: Literal["EpInfraClusterhealthStatusGet"] = Field(default="EpInfraClusterhealthStatusGet", description="Class name for backward compatibility")
+    class_name: Literal["EpInfraClusterhealthStatusGet"] = Field(default="EpInfraClusterhealthStatusGet", frozen=True, description="Class name for backward compatibility")
 
     endpoint_params: ClusterHealthStatusEndpointParams = Field(
         default_factory=ClusterHealthStatusEndpointParams, description="Endpoint-specific query parameters"

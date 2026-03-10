@@ -96,7 +96,7 @@ class EpInfraAaaLocalUsersGet(_EpInfraAaaLocalUsersBase):
     ```
     """
 
-    class_name: Literal["EpInfraAaaLocalUsersGet"] = Field(default="EpInfraAaaLocalUsersGet", description="Class name for backward compatibility")
+    class_name: Literal["EpInfraAaaLocalUsersGet"] = Field(default="EpInfraAaaLocalUsersGet", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -131,7 +131,7 @@ class EpInfraAaaLocalUsersPost(_EpInfraAaaLocalUsersBase):
     ```
     """
 
-    class_name: Literal["EpInfraAaaLocalUsersPost"] = Field(default="EpInfraAaaLocalUsersPost", description="Class name for backward compatibility")
+    class_name: Literal["EpInfraAaaLocalUsersPost"] = Field(default="EpInfraAaaLocalUsersPost", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -167,7 +167,7 @@ class EpInfraAaaLocalUsersPut(_EpInfraAaaLocalUsersBase):
     ```
     """
 
-    class_name: Literal["EpInfraAaaLocalUsersPut"] = Field(default="EpInfraAaaLocalUsersPut", description="Class name for backward compatibility")
+    class_name: Literal["EpInfraAaaLocalUsersPut"] = Field(default="EpInfraAaaLocalUsersPut", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -203,7 +203,7 @@ class EpInfraAaaLocalUsersDelete(_EpInfraAaaLocalUsersBase):
     ```
     """
 
-    class_name: Literal["EpInfraAaaLocalUsersDelete"] = Field(default="EpInfraAaaLocalUsersDelete", description="Class name for backward compatibility")
+    class_name: Literal["EpInfraAaaLocalUsersDelete"] = Field(default="EpInfraAaaLocalUsersDelete", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
