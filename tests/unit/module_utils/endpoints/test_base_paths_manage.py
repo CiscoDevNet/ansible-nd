@@ -15,9 +15,6 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 import pytest  # pylint: disable=unused-import
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_path import (
-    ApiPath,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import (
     BasePath,
 )
@@ -34,21 +31,18 @@ def test_base_paths_manage_00010():
     """
     # Summary
 
-    Verify API constant equals ApiPath.MANAGE
+    Verify API constant equals "/api/v1/manage"
 
     ## Test
 
     - BasePath.API equals "/api/v1/manage"
-    - BasePath.API uses ApiPath.MANAGE.value
 
     ## Classes and Methods
 
     - BasePath.API
-    - ApiPath.MANAGE
     """
     with does_not_raise():
         result = BasePath.API
-    assert result == ApiPath.MANAGE.value
     assert result == "/api/v1/manage"
 
 

@@ -24,10 +24,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Final
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_path import (
-    ApiPath,
-)
-
 
 class BasePath:
     """
@@ -62,7 +58,7 @@ class BasePath:
     - If ND Manage changes base API paths, only this class needs updating
     """
 
-    API: Final = ApiPath.MANAGE.value
+    API: Final = "/api/v1/manage"
 
     @classmethod
     def path(cls, *segments: str) -> str:
