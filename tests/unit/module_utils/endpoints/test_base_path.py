@@ -21,7 +21,6 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
     does_not_raise,
 )
 
-
 # =============================================================================
 # Test: ApiPath Enum Values
 # =============================================================================

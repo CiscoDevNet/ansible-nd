@@ -29,6 +29,7 @@ except ImportError:
         class Protocol:  # type: ignore[no-redef]
             """Stub for Python < 3.8 without typing_extensions."""
 
+
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
     Field,
