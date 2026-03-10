@@ -8,13 +8,14 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from typing import List, Dict, Any, Type
+from typing import Type
 from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import ValidationError
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 
 
 class NDStateMachine:
@@ -31,7 +32,7 @@ class NDStateMachine:
         self.nd_module = NDModule(self.module)
 
         # Operation tracking
-        self.output = NDOutput(self.module)
+        self.output = NDOutput(output_level=module.params.get("output_level", "normal"))
 
         # Configuration
         self.model_orchestrator = model_orchestrator(sender=self.nd_module)
@@ -57,11 +58,10 @@ class NDStateMachine:
                     item = self.model_class.from_config(config)
                     self.proposed.add(item)
                 except ValidationError as e:
-                    self.fail_json(msg=f"Invalid configuration: {e}", config=config, validation_errors=e.errors())
-                    return
+                    raise NDStateMachineError(f"Invalid configuration. for config {config}: {str(e)}")
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
         except Exception as e:
-            self.fail_json(msg=f"NDStateMachine initialization failed: {str(e)}", error=str(e))
+            raise NDStateMachineError(f"Initialization failed: {str(e)}")
 
     # State Management (core function)
     def manage_state(self) -> None:
@@ -78,9 +78,8 @@ class NDStateMachine:
         elif self.state == "deleted":
             self._manage_delete_state()
 
-        # TODO: boil down an Exception instead of using `fail_json` method
         else:
-            self.fail_json(msg=f"Invalid state: {self.state}")
+            raise NDStateMachineError(f"Invalid state: {self.state}")
 
     def _manage_create_update_state(self) -> None:
         """
@@ -125,8 +124,7 @@ class NDStateMachine:
             except Exception as e:
                 error_msg = f"Failed to process {identifier}: {e}"
                 if not self.module.params.get("ignore_errors", False):
-                    self.fail_json(msg=error_msg, identifier=str(identifier), error=str(e))
-                    return
+                    raise NDStateMachineError(error_msg)
 
     def _manage_override_deletions(self) -> None:
         """
@@ -152,10 +150,8 @@ class NDStateMachine:
 
             except Exception as e:
                 error_msg = f"Failed to delete {identifier}: {e}"
-
                 if not self.module.params.get("ignore_errors", False):
-                    self.fail_json(msg=error_msg, identifier=str(identifier), error=str(e))
-                    return
+                    raise NDStateMachineError(error_msg)
 
     def _manage_delete_state(self) -> None:
         """Handle deleted state."""
@@ -179,15 +175,5 @@ class NDStateMachine:
 
             except Exception as e:
                 error_msg = f"Failed to delete {identifier}: {e}"
-
                 if not self.module.params.get("ignore_errors", False):
-                    self.fail_json(msg=error_msg, identifier=str(identifier), error=str(e))
-                    return
-
-    # Module Exit Methods
-
-    def fail_json(self, msg: str, **kwargs) -> None:
-        """
-        Exit module with failure.
-        """
-        self.module.fail_json(msg=msg)
+                    raise NDStateMachineError(error_msg)
