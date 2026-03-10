@@ -20,16 +20,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
-    NDEndpointBaseModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_infra import (
-    BasePath,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.base_path import (
+    BasePath,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
 class EpInfraLoginPost(NDEndpointBaseModel):

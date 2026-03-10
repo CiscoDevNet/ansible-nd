@@ -39,7 +39,7 @@ class BasePath:
     ## Usage
 
     ```python
-    from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_paths_manage import BasePath
+    from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 
     # Get a complete base path for ND Manage
     path = BasePath.path("inventory", "switches")

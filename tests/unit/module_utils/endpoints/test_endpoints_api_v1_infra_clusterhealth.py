@@ -15,7 +15,7 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 import pytest  # pylint: disable=unused-import
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra_clusterhealth import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.clusterhealth import (
     ClusterHealthConfigEndpointParams,
     ClusterHealthStatusEndpointParams,
     EpInfraClusterhealthConfigGet,

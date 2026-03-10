@@ -30,7 +30,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     LoginIdMixin,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_infra import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.base_path import (
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
