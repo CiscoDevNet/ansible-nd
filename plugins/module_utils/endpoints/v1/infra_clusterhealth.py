@@ -19,6 +19,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Literal
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
@@ -34,9 +37,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_i
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    Field,
-)
 
 
 class ClusterHealthConfigEndpointParams(ClusterNameMixin, EndpointQueryParams):
@@ -122,7 +122,9 @@ class EpInfraClusterhealthConfigGet(NDEndpointBaseModel):
     ```
     """
 
-    class_name: Literal["EpInfraClusterhealthConfigGet"] = Field(default="EpInfraClusterhealthConfigGet", frozen=True, description="Class name for backward compatibility")
+    class_name: Literal["EpInfraClusterhealthConfigGet"] = Field(
+        default="EpInfraClusterhealthConfigGet", frozen=True, description="Class name for backward compatibility"
+    )
 
     endpoint_params: ClusterHealthConfigEndpointParams = Field(
         default_factory=ClusterHealthConfigEndpointParams, description="Endpoint-specific query parameters"
@@ -139,7 +141,7 @@ class EpInfraClusterhealthConfigGet(NDEndpointBaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        base_path = BasePath.clusterhealth("config")
+        base_path = BasePath.path("clusterhealth", "config")
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
@@ -197,7 +199,9 @@ class EpInfraClusterhealthStatusGet(NDEndpointBaseModel):
     ```
     """
 
-    class_name: Literal["EpInfraClusterhealthStatusGet"] = Field(default="EpInfraClusterhealthStatusGet", frozen=True, description="Class name for backward compatibility")
+    class_name: Literal["EpInfraClusterhealthStatusGet"] = Field(
+        default="EpInfraClusterhealthStatusGet", frozen=True, description="Class name for backward compatibility"
+    )
 
     endpoint_params: ClusterHealthStatusEndpointParams = Field(
         default_factory=ClusterHealthStatusEndpointParams, description="Endpoint-specific query parameters"
@@ -214,7 +218,7 @@ class EpInfraClusterhealthStatusGet(NDEndpointBaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        base_path = BasePath.clusterhealth("status")
+        base_path = BasePath.path("clusterhealth", "status")
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"

@@ -128,115 +128,6 @@ def test_base_paths_manage_00130():
 
 
 # =============================================================================
-# Test: inventory() method
-# =============================================================================
-
-
-def test_base_paths_manage_00200():
-    """
-    # Summary
-
-    Verify inventory() with no segments
-
-    ## Test
-
-    - inventory() returns "/api/v1/manage/inventory"
-
-    ## Classes and Methods
-
-    - BasePath.inventory()
-    """
-    with does_not_raise():
-        result = BasePath.inventory()
-    assert result == "/api/v1/manage/inventory"
-
-
-def test_base_paths_manage_00210():
-    """
-    # Summary
-
-    Verify inventory() with single segment
-
-    ## Test
-
-    - inventory("switches") returns "/api/v1/manage/inventory/switches"
-
-    ## Classes and Methods
-
-    - BasePath.inventory()
-    """
-    with does_not_raise():
-        result = BasePath.inventory("switches")
-    assert result == "/api/v1/manage/inventory/switches"
-
-
-def test_base_paths_manage_00220():
-    """
-    # Summary
-
-    Verify inventory() with multiple segments
-
-    ## Test
-
-    - inventory("switches", "fabric1") returns correct path
-
-    ## Classes and Methods
-
-    - BasePath.inventory()
-    """
-    with does_not_raise():
-        result = BasePath.inventory("switches", "fabric1")
-    assert result == "/api/v1/manage/inventory/switches/fabric1"
-
-
-# =============================================================================
-# Test: Method composition
-# =============================================================================
-
-
-def test_base_paths_manage_00300():
-    """
-    # Summary
-
-    Verify inventory() uses path() internally
-
-    ## Test
-
-    - inventory("switches") equals path("inventory", "switches")
-
-    ## Classes and Methods
-
-    - BasePath.path()
-    - BasePath.inventory()
-    """
-    with does_not_raise():
-        result1 = BasePath.inventory("switches")
-        result2 = BasePath.path("inventory", "switches")
-    assert result1 == result2
-
-
-def test_base_paths_manage_00310():
-    """
-    # Summary
-
-    Verify method composition with multiple segments
-
-    ## Test
-
-    - inventory("switches", "summary") equals path("inventory", "switches", "summary")
-
-    ## Classes and Methods
-
-    - BasePath.path()
-    - BasePath.inventory()
-    """
-    with does_not_raise():
-        result1 = BasePath.inventory("switches", "summary")
-        result2 = BasePath.path("inventory", "switches", "summary")
-    assert result1 == result2
-
-
-# =============================================================================
 # Test: Edge cases
 # =============================================================================
 
@@ -269,14 +160,14 @@ def test_base_paths_manage_00410():
 
     ## Test
 
-    - inventory("fabric-name_123") handles hyphens and underscores
+    - path("inventory", "fabric-name_123") handles hyphens and underscores
 
     ## Classes and Methods
 
-    - BasePath.inventory()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.inventory("fabric-name_123")
+        result = BasePath.path("inventory", "fabric-name_123")
     assert result == "/api/v1/manage/inventory/fabric-name_123"
 
 

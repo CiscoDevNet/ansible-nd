@@ -127,194 +127,80 @@ def test_base_paths_infra_00130():
     assert result == "/api/v1/infra/aaa/localUsers/user1"
 
 
-# =============================================================================
-# Test: aaa() method
-# =============================================================================
-
-
-def test_base_paths_infra_00200():
+def test_base_paths_infra_00140():
     """
     # Summary
 
-    Verify aaa() with no segments
+    Verify path() builds clusterhealth paths
 
     ## Test
 
-    - aaa() returns "/api/v1/infra/aaa"
+    - path("clusterhealth") returns "/api/v1/infra/clusterhealth"
 
     ## Classes and Methods
 
-    - BasePath.aaa()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.aaa()
-    assert result == "/api/v1/infra/aaa"
-
-
-def test_base_paths_infra_00210():
-    """
-    # Summary
-
-    Verify aaa() with single segment
-
-    ## Test
-
-    - aaa("localUsers") returns "/api/v1/infra/aaa/localUsers"
-
-    ## Classes and Methods
-
-    - BasePath.aaa()
-    """
-    with does_not_raise():
-        result = BasePath.aaa("localUsers")
-    assert result == "/api/v1/infra/aaa/localUsers"
-
-
-def test_base_paths_infra_00220():
-    """
-    # Summary
-
-    Verify aaa() with multiple segments
-
-    ## Test
-
-    - aaa("localUsers", "user1") returns correct path
-
-    ## Classes and Methods
-
-    - BasePath.aaa()
-    """
-    with does_not_raise():
-        result = BasePath.aaa("localUsers", "user1")
-    assert result == "/api/v1/infra/aaa/localUsers/user1"
-
-
-# =============================================================================
-# Test: clusterhealth() method
-# =============================================================================
-
-
-def test_base_paths_infra_00300():
-    """
-    # Summary
-
-    Verify clusterhealth() with no segments
-
-    ## Test
-
-    - clusterhealth() returns "/api/v1/infra/clusterhealth"
-
-    ## Classes and Methods
-
-    - BasePath.clusterhealth()
-    """
-    with does_not_raise():
-        result = BasePath.clusterhealth()
+        result = BasePath.path("clusterhealth")
     assert result == "/api/v1/infra/clusterhealth"
 
 
-def test_base_paths_infra_00310():
+def test_base_paths_infra_00150():
     """
     # Summary
 
-    Verify clusterhealth() with "config" segment
+    Verify path() builds clusterhealth config path
 
     ## Test
 
-    - clusterhealth("config") returns "/api/v1/infra/clusterhealth/config"
+    - path("clusterhealth", "config") returns "/api/v1/infra/clusterhealth/config"
 
     ## Classes and Methods
 
-    - BasePath.clusterhealth()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.clusterhealth("config")
+        result = BasePath.path("clusterhealth", "config")
     assert result == "/api/v1/infra/clusterhealth/config"
 
 
-def test_base_paths_infra_00320():
+def test_base_paths_infra_00160():
     """
     # Summary
 
-    Verify clusterhealth() with "status" segment
+    Verify path() builds clusterhealth status path
 
     ## Test
 
-    - clusterhealth("status") returns "/api/v1/infra/clusterhealth/status"
+    - path("clusterhealth", "status") returns "/api/v1/infra/clusterhealth/status"
 
     ## Classes and Methods
 
-    - BasePath.clusterhealth()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.clusterhealth("status")
+        result = BasePath.path("clusterhealth", "status")
     assert result == "/api/v1/infra/clusterhealth/status"
 
 
-def test_base_paths_infra_00330():
+def test_base_paths_infra_00170():
     """
     # Summary
 
-    Verify clusterhealth() with multiple segments
+    Verify path() builds clusterhealth path with multiple segments
 
     ## Test
 
-    - clusterhealth("config", "cluster1") returns correct path
+    - path("clusterhealth", "config", "cluster1") returns correct path
 
     ## Classes and Methods
 
-    - BasePath.clusterhealth()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.clusterhealth("config", "cluster1")
+        result = BasePath.path("clusterhealth", "config", "cluster1")
     assert result == "/api/v1/infra/clusterhealth/config/cluster1"
-
-
-# =============================================================================
-# Test: Method composition
-# =============================================================================
-
-
-def test_base_paths_infra_00400():
-    """
-    # Summary
-
-    Verify aaa() uses path() internally
-
-    ## Test
-
-    - aaa("localUsers") equals path("aaa", "localUsers")
-
-    ## Classes and Methods
-
-    - BasePath.path()
-    - BasePath.aaa()
-    """
-    with does_not_raise():
-        result1 = BasePath.aaa("localUsers")
-        result2 = BasePath.path("aaa", "localUsers")
-    assert result1 == result2
-
-
-def test_base_paths_infra_00410():
-    """
-    # Summary
-
-    Verify clusterhealth() uses path() internally
-
-    ## Test
-
-    - clusterhealth("config") equals path("clusterhealth", "config")
-
-    ## Classes and Methods
-
-    - BasePath.path()
-    - BasePath.clusterhealth()
-    """
-    with does_not_raise():
-        result1 = BasePath.clusterhealth("config")
-        result2 = BasePath.path("clusterhealth", "config")
-    assert result1 == result2
 
 
 # =============================================================================
@@ -350,14 +236,14 @@ def test_base_paths_infra_00510():
 
     ## Test
 
-    - aaa("user-name_123") handles hyphens and underscores
+    - path("aaa", "user-name_123") handles hyphens and underscores
 
     ## Classes and Methods
 
-    - BasePath.aaa()
+    - BasePath.path()
     """
     with does_not_raise():
-        result = BasePath.aaa("user-name_123")
+        result = BasePath.path("aaa", "user-name_123")
     assert result == "/api/v1/infra/aaa/user-name_123"
 
 

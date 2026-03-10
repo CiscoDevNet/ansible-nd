@@ -44,10 +44,6 @@ class BasePath:
     # Get a complete base path for ND Manage
     path = BasePath.path("inventory", "switches")
     # Returns: /api/v1/manage/inventory/switches
-
-    # Leverage a convenience method
-    path = BasePath.inventory("switches")
-    # Returns: /api/v1/manage/inventory/switches
     ```
 
     ## Design Notes
@@ -85,27 +81,3 @@ class BasePath:
         if not segments:
             return cls.API
         return f"{cls.API}/{'/'.join(segments)}"
-
-    @classmethod
-    def inventory(cls, *segments: str) -> str:
-        """
-        # Summary
-
-        Build ND manage inventory API path.
-
-        ## Parameters
-
-        - segments: Path segments to append after inventory (e.g., "switches")
-
-        ## Returns
-
-        - Complete ND manage inventory path
-
-        ## Example
-
-        ```python
-        path = BasePath.inventory("switches")
-        # Returns: /api/v1/manage/inventory/switches
-        ```
-        """
-        return cls.path("inventory", *segments)

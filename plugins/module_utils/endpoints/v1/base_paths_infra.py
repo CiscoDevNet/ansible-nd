@@ -44,10 +44,6 @@ class BasePath:
     # Get a complete base path for ND Infra
     path = BasePath.path("aaa", "localUsers")
     # Returns: /api/v1/infra/aaa/localUsers
-
-    # Leverage a convenience method
-    path = BasePath.aaa("localUsers")
-    # Returns: /api/v1/infra/aaa/localUsers
     ```
 
     ## Design Notes
@@ -85,51 +81,3 @@ class BasePath:
         if not segments:
             return cls.API
         return f"{cls.API}/{'/'.join(segments)}"
-
-    @classmethod
-    def aaa(cls, *segments: str) -> str:
-        """
-        # Summary
-
-        Build ND infra AAA API path.
-
-        ## Parameters
-
-        - segments: Path segments to append after aaa (e.g., "localUsers")
-
-        ## Returns
-
-        - Complete ND infra AAA path
-
-        ## Example
-
-        ```python
-        path = BasePath.aaa("localUsers")
-        # Returns: /api/v1/infra/aaa/localUsers
-        ```
-        """
-        return cls.path("aaa", *segments)
-
-    @classmethod
-    def clusterhealth(cls, *segments: str) -> str:
-        """
-        # Summary
-
-        Build ND infra clusterhealth API path.
-
-        ## Parameters
-
-        - segments: Path segments to append after clusterhealth (e.g., "config", "status")
-
-        ## Returns
-
-        - Complete ND infra clusterhealth path
-
-        ## Example
-
-        ```python
-        path = BasePath.clusterhealth("config")
-        # Returns: /api/v1/infra/clusterhealth/config
-        ```
-        """
-        return cls.path("clusterhealth", *segments)

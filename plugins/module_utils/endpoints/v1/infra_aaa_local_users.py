@@ -21,6 +21,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Literal
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
@@ -31,9 +34,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_i
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    Field,
-)
 
 
 class _EpInfraAaaLocalUsersBase(LoginIdMixin, NDEndpointBaseModel):
@@ -56,8 +56,8 @@ class _EpInfraAaaLocalUsersBase(LoginIdMixin, NDEndpointBaseModel):
         - Complete endpoint path string, optionally including login_id
         """
         if self.login_id is not None:
-            return BasePath.aaa("localUsers", self.login_id)
-        return BasePath.aaa("localUsers")
+            return BasePath.path("aaa", "localUsers", self.login_id)
+        return BasePath.path("aaa", "localUsers")
 
 
 class EpInfraAaaLocalUsersGet(_EpInfraAaaLocalUsersBase):
@@ -131,7 +131,9 @@ class EpInfraAaaLocalUsersPost(_EpInfraAaaLocalUsersBase):
     ```
     """
 
-    class_name: Literal["EpInfraAaaLocalUsersPost"] = Field(default="EpInfraAaaLocalUsersPost", frozen=True, description="Class name for backward compatibility")
+    class_name: Literal["EpInfraAaaLocalUsersPost"] = Field(
+        default="EpInfraAaaLocalUsersPost", frozen=True, description="Class name for backward compatibility"
+    )
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -203,7 +205,9 @@ class EpInfraAaaLocalUsersDelete(_EpInfraAaaLocalUsersBase):
     ```
     """
 
-    class_name: Literal["EpInfraAaaLocalUsersDelete"] = Field(default="EpInfraAaaLocalUsersDelete", frozen=True, description="Class name for backward compatibility")
+    class_name: Literal["EpInfraAaaLocalUsersDelete"] = Field(
+        default="EpInfraAaaLocalUsersDelete", frozen=True, description="Class name for backward compatibility"
+    )
 
     @property
     def verb(self) -> HttpVerbEnum:
