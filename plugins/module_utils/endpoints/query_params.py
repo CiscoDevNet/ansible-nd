@@ -45,7 +45,8 @@ class QueryParams(Protocol):
 
     ## Description
 
-    Structural type for all query parameter types. Any class implementing `to_query_string()` and `is_empty()` satisfies this protocol without explicit inheritance.
+    Structural type for all query parameter types. Any class implementing `to_query_string()` and `is_empty()` satisfies this protocol without explicit
+    inheritance.
 
     ## Design
 
@@ -73,6 +74,7 @@ class QueryParams(Protocol):
         "forceShowRun=true&ticketId=12345"
         ```
         """
+        # pylint: disable=unnecessary-ellipsis
         ...
 
     def is_empty(self) -> bool:
@@ -86,6 +88,7 @@ class QueryParams(Protocol):
         - True if no parameters are set
         - False if at least one parameter is set
         """
+        # pylint: disable=unnecessary-ellipsis
         ...
 
 
