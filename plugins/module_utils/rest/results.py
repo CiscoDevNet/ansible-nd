@@ -29,8 +29,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     ConfigDict,
     Field,
     ValidationError,
+    field_validator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 
 
 class ApiCallResult(BaseModel):
@@ -50,6 +51,10 @@ class ApiCallResult(BaseModel):
     ## Attributes
 
     - `sequence_number`: Unique sequence number for this task (required, >= 1)
+    - `path`: API endpoint path (required)
+    - `verb`: HTTP verb as string (required)
+    - `payload`: Request payload dict, or None for GET requests
+    - `verbosity_level`: Verbosity level for output filtering (required, 1-6)
     - `response`: Controller response dict (required)
     - `result`: Handler result dict (required)
     - `diff`: Changes dict (required, can be empty)
@@ -61,12 +66,24 @@ class ApiCallResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     sequence_number: int = Field(ge=1)
+    path: str
+    verb: str
+    payload: Optional[dict[str, Any]] = None
+    verbosity_level: int = Field(ge=1, le=6)
     response: dict[str, Any]
     result: dict[str, Any]
     diff: dict[str, Any]
     metadata: dict[str, Any]
     changed: bool
     failed: bool
+
+    @field_validator("verb", mode="before")
+    @classmethod
+    def _coerce_verb_to_str(cls, value: Any) -> str:
+        """Coerce HttpVerbEnum to string."""
+        if isinstance(value, HttpVerbEnum):
+            return value.value
+        return value
 
 
 class FinalResultData(BaseModel):
@@ -87,9 +104,13 @@ class FinalResultData(BaseModel):
     - `changed`: Overall changed status across all tasks (required)
     - `failed`: Overall failed status across all tasks (required)
     - `diff`: List of all diff dicts (default empty list)
+    - `metadata`: List of all metadata dicts (default empty list)
+    - `path`: List of all API endpoint paths (default empty list)
+    - `payload`: List of all request payloads (default empty list)
     - `response`: List of all response dicts (default empty list)
     - `result`: List of all result dicts (default empty list)
-    - `metadata`: List of all metadata dicts (default empty list)
+    - `verb`: List of all HTTP verbs (default empty list)
+    - `verbosity_level`: List of all verbosity levels (default empty list)
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -97,9 +118,13 @@ class FinalResultData(BaseModel):
     changed: bool
     failed: bool
     diff: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: list[dict[str, Any]] = Field(default_factory=list)
+    path: list[str] = Field(default_factory=list)
+    payload: list[Optional[dict[str, Any]]] = Field(default_factory=list)
     response: list[dict[str, Any]] = Field(default_factory=list)
     result: list[dict[str, Any]] = Field(default_factory=list)
-    metadata: list[dict[str, Any]] = Field(default_factory=list)
+    verb: list[str] = Field(default_factory=list)
+    verbosity_level: list[int] = Field(default_factory=list)
 
 
 class PendingApiCall(BaseModel):
@@ -125,6 +150,10 @@ class PendingApiCall(BaseModel):
     - `state`: Ansible state for metadata (default empty string)
     - `check_mode`: Check mode flag for metadata (default False)
     - `operation_type`: Operation type determining if changes might occur (default QUERY)
+    - `path`: API endpoint path (default empty string)
+    - `verb`: HTTP verb (default GET)
+    - `payload`: Request payload dict, or None for GET requests
+    - `verbosity_level`: Verbosity level for output filtering (default 3, range 1-6)
     """
 
     model_config = ConfigDict(extra="allow", validate_assignment=True)
@@ -136,6 +165,10 @@ class PendingApiCall(BaseModel):
     state: str = ""
     check_mode: bool = False
     operation_type: OperationType = OperationType.QUERY
+    path: str = ""
+    verb: HttpVerbEnum = HttpVerbEnum.GET
+    payload: Optional[dict[str, Any]] = None
+    verbosity_level: int = Field(default=3, ge=1, le=6)
 
 
 class Results:
@@ -522,6 +555,10 @@ class Results:
         try:
             task_data = ApiCallResult(
                 sequence_number=self.task_sequence_number,
+                path=self._current.path,
+                verb=self._current.verb,
+                payload=copy.deepcopy(self._current.payload) if self._current.payload is not None else None,
+                verbosity_level=self._current.verbosity_level,
                 response=response,
                 result=result,
                 diff=diff,
@@ -591,9 +628,13 @@ class Results:
 
         # Aggregate data from all tasks
         diff_list = [task.diff for task in self._tasks]
+        metadata_list = [task.metadata for task in self._tasks]
+        path_list = [task.path for task in self._tasks]
+        payload_list = [task.payload for task in self._tasks]
         response_list = [task.response for task in self._tasks]
         result_list = [task.result for task in self._tasks]
-        metadata_list = [task.metadata for task in self._tasks]
+        verb_list = [task.verb for task in self._tasks]
+        verbosity_level_list = [task.verbosity_level for task in self._tasks]
 
         # Create FinalResultData with validation
         try:
@@ -601,9 +642,13 @@ class Results:
                 changed=True in self.changed,
                 failed=True in self.failed,
                 diff=diff_list,
+                metadata=metadata_list,
+                path=path_list,
+                payload=payload_list,
                 response=response_list,
                 result=result_list,
-                metadata=metadata_list,
+                verb=verb_list,
+                verbosity_level=verbosity_level_list,
             )
         except ValidationError as error:
             msg = f"{self.class_name}.{method_name}: "
@@ -1010,3 +1055,164 @@ class Results:
             msg += f"value must be a string. Got {type(value).__name__}."
             raise TypeError(msg)
         self._current.state = value
+
+    @property
+    def path(self) -> list[str]:
+        """
+        # Summary
+
+        A list of API endpoint paths across all registered tasks.
+
+        ## Raises
+
+        None
+
+        ## Returns
+
+        - `list[str]`: List of path strings from all registered tasks
+        """
+        return [task.path for task in self._tasks]
+
+    @property
+    def path_current(self) -> str:
+        """
+        # Summary
+
+        The API endpoint path for the current task.
+
+        ## Raises
+
+        -   setter: `TypeError` if value is not a string
+        """
+        return self._current.path
+
+    @path_current.setter
+    def path_current(self, value: str) -> None:
+        method_name: str = "path_current"
+        if not isinstance(value, str):
+            msg = f"{self.class_name}.{method_name}: "
+            msg += f"value must be a string. Got {type(value).__name__}."
+            raise TypeError(msg)
+        self._current.path = value
+
+    @property
+    def verb(self) -> list[str]:
+        """
+        # Summary
+
+        A list of HTTP verbs across all registered tasks.
+
+        ## Raises
+
+        None
+
+        ## Returns
+
+        - `list[str]`: List of verb strings from all registered tasks
+        """
+        return [task.verb for task in self._tasks]
+
+    @property
+    def verb_current(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        The HTTP verb for the current task.
+
+        ## Raises
+
+        -   setter: `TypeError` if value is not an `HttpVerbEnum` instance
+        """
+        return self._current.verb
+
+    @verb_current.setter
+    def verb_current(self, value: HttpVerbEnum) -> None:
+        method_name: str = "verb_current"
+        if not isinstance(value, HttpVerbEnum):
+            msg = f"{self.class_name}.{method_name}: "
+            msg += f"value must be an HttpVerbEnum instance. Got {type(value).__name__}."
+            raise TypeError(msg)
+        self._current.verb = value
+
+    @property
+    def payload(self) -> list[Optional[dict[str, Any]]]:
+        """
+        # Summary
+
+        A list of request payloads across all registered tasks.
+
+        ## Raises
+
+        None
+
+        ## Returns
+
+        - `list[Optional[dict[str, Any]]]`: List of payload dicts (or None) from all registered tasks
+        """
+        return [task.payload for task in self._tasks]
+
+    @property
+    def payload_current(self) -> Optional[dict[str, Any]]:
+        """
+        # Summary
+
+        The request payload for the current task.
+
+        ## Raises
+
+        -   setter: `TypeError` if value is not a dict or None
+        """
+        return self._current.payload
+
+    @payload_current.setter
+    def payload_current(self, value: Optional[dict[str, Any]]) -> None:
+        method_name: str = "payload_current"
+        if value is not None and not isinstance(value, dict):
+            msg = f"{self.class_name}.{method_name}: "
+            msg += f"value must be a dict or None. Got {type(value).__name__}."
+            raise TypeError(msg)
+        self._current.payload = value
+
+    @property
+    def verbosity_level(self) -> list[int]:
+        """
+        # Summary
+
+        A list of verbosity levels across all registered tasks.
+
+        ## Raises
+
+        None
+
+        ## Returns
+
+        - `list[int]`: List of verbosity levels from all registered tasks
+        """
+        return [task.verbosity_level for task in self._tasks]
+
+    @property
+    def verbosity_level_current(self) -> int:
+        """
+        # Summary
+
+        The verbosity level for the current task.
+
+        ## Raises
+
+        -   setter: `TypeError` if value is not an int
+        -   setter: `ValueError` if value is not in range 1-6
+        """
+        return self._current.verbosity_level
+
+    @verbosity_level_current.setter
+    def verbosity_level_current(self, value: int) -> None:
+        method_name: str = "verbosity_level_current"
+        if isinstance(value, bool) or not isinstance(value, int):
+            msg = f"{self.class_name}.{method_name}: "
+            msg += f"value must be an int. Got {type(value).__name__}."
+            raise TypeError(msg)
+        if value < 1 or value > 6:
+            msg = f"{self.class_name}.{method_name}: "
+            msg += f"value must be between 1 and 6. Got {value}."
+            raise ValueError(msg)
+        self._current.verbosity_level = value

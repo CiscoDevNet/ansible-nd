@@ -121,6 +121,7 @@ class RestSend:
         self.log.debug(msg)
 
         self._check_mode: bool = False
+        self._committed_payload: Optional[dict] = None
         self._path: Optional[str] = None
         self._payload: Optional[dict] = None
         self._response: list[dict[str, Any]] = []
@@ -296,6 +297,7 @@ class RestSend:
             self.result_current = self.response_handler.result
             self._response.append(self.response_current)
             self._result.append(self.result_current)
+            self._committed_payload = copy.deepcopy(self._payload)
         except (TypeError, ValueError) as error:
             msg = f"{self.class_name}.{method_name}: "
             msg += "Error building response/result. "
@@ -374,6 +376,7 @@ class RestSend:
 
         self._response.append(self.response_current)
         self._result.append(self.result_current)
+        self._committed_payload = copy.deepcopy(self._payload)
         self._payload = None
 
     @property
@@ -416,6 +419,25 @@ class RestSend:
             msg += f"{method_name} must be a boolean. Got {value}."
             raise TypeError(msg)
         self._check_mode = value
+
+    @property
+    def committed_payload(self) -> Optional[dict]:
+        """
+        # Summary
+
+        Return the payload that was sent in the most recent commit, or None.
+
+        ## Raises
+
+        None
+
+        ## Description
+
+        After `commit()`, `self.payload` is reset to None. This property
+        preserves the payload that was actually sent, so consumers can
+        read it for registration in Results.
+        """
+        return self._committed_payload
 
     @property
     def failed_result(self) -> dict:
