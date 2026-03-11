@@ -1,0 +1,143 @@
+# -*- coding: utf-8 -*-
+
+# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""nd_manage_switches models package.
+
+Re-exports all model classes, enums, and validators from their individual
+modules so that consumers can import directly from the package:
+
+    from .models.nd_manage_switches import SwitchConfigModel, SwitchRole, ...
+"""
+
+from __future__ import absolute_import, division, print_function
+
+__metaclass__ = type
+
+# --- Enums ---
+from .enums import (  # noqa: F401
+    AdvisoryLevel,
+    AnomalyLevel,
+    ConfigSyncStatus,
+    DiscoveryStatus,
+    PlatformType,
+    RemoteCredentialStore,
+    SnmpV3AuthProtocol,
+    SwitchRole,
+    SystemMode,
+    VpcRole,
+)
+
+# --- Validators ---
+from .validators import SwitchValidators  # noqa: F401
+
+# --- Nested / shared models ---
+from .switch_data_models import (  # noqa: F401
+    AdditionalAciSwitchData,
+    AdditionalSwitchData,
+    Metadata,
+    SwitchMetadata,
+    TelemetryIpCollection,
+    VpcData,
+)
+
+# --- Discovery models ---
+from .discovery_models import (  # noqa: F401
+    AddSwitchesRequestModel,
+    ShallowDiscoveryRequestModel,
+    SwitchDiscoveryModel,
+)
+
+# --- Switch data models ---
+from .switch_data_models import (  # noqa: F401
+    SwitchDataModel,
+)
+
+# --- Bootstrap models ---
+from .bootstrap_models import (  # noqa: F401
+    BootstrapBaseData,
+    BootstrapBaseModel,
+    BootstrapCredentialModel,
+    BootstrapImportSpecificModel,
+    BootstrapImportSwitchModel,
+    ImportBootstrapSwitchesRequestModel,
+)
+
+# --- Preprovision models ---
+from .preprovision_models import (  # noqa: F401
+    PreProvisionSwitchesRequestModel,
+    PreProvisionSwitchModel,
+)
+
+# --- RMA models ---
+from .rma_models import (  # noqa: F401
+    RMASpecificModel,
+    RMASwitchModel,
+)
+
+# --- Switch actions models ---
+from .switch_actions_models import (  # noqa: F401
+    ChangeSwitchSerialNumberRequestModel,
+    SwitchCredentialsRequestModel,
+)
+
+# --- Config / playbook models ---
+from .config_models import (  # noqa: F401
+    ConfigDataModel,
+    POAPConfigModel,
+    RMAConfigModel,
+    SwitchConfigModel,
+)
+
+
+__all__ = [
+    # Enums
+    "AdvisoryLevel",
+    "AnomalyLevel",
+    "ConfigSyncStatus",
+    "DiscoveryStatus",
+    "PlatformType",
+    "RemoteCredentialStore",
+    "SnmpV3AuthProtocol",
+    "SwitchRole",
+    "SystemMode",
+    "VpcRole",
+    # Validators
+    "SwitchValidators",
+    # Nested models
+    "AdditionalAciSwitchData",
+    "AdditionalSwitchData",
+    "Metadata",
+    "SwitchMetadata",
+    "TelemetryIpCollection",
+    "VpcData",
+    # Discovery models
+    "AddSwitchesRequestModel",
+    "ShallowDiscoveryRequestModel",
+    "SwitchDiscoveryModel",
+    # Switch data models
+    "SwitchDataModel",
+    # Bootstrap models
+    "BootstrapBaseData",
+    "BootstrapBaseModel",
+    "BootstrapCredentialModel",
+    "BootstrapImportSpecificModel",
+    "BootstrapImportSwitchModel",
+    "ImportBootstrapSwitchesRequestModel",
+    # Preprovision models
+    "PreProvisionSwitchesRequestModel",
+    "PreProvisionSwitchModel",
+    # RMA models
+    "RMASpecificModel",
+    "RMASwitchModel",
+    # Switch actions models
+    "ChangeSwitchSerialNumberRequestModel",
+    "SwitchCredentialsRequestModel",
+    # Config models
+    "ConfigDataModel",
+    "POAPConfigModel",
+    "RMAConfigModel",
+    "SwitchConfigModel",
+]

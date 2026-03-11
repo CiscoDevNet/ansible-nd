@@ -1,0 +1,290 @@
+# -*- coding: utf-8 -*-
+
+# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+"""
+ND Manage Fabric Switches endpoint models.
+
+This module contains endpoint definitions for switch CRUD operations
+within fabrics in the ND Manage API.
+
+Endpoints covered:
+- List switches in a fabric
+- Add switches to a fabric
+"""
+
+from __future__ import absolute_import, annotations, division, print_function
+
+# pylint: disable=invalid-name
+__metaclass__ = type
+__author__ = "Akshayanat Chengam Saravanan"
+# pylint: enable=invalid-name
+
+from typing import Literal, Optional
+
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    FabricNameMixin,
+    SwitchSerialNumberMixin,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    EndpointQueryParams,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import (
+    BasePath,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    BaseModel,
+    ConfigDict,
+    Field,
+)
+
+# Common config for basic validation
+COMMON_CONFIG = ConfigDict(validate_assignment=True)
+
+
+class FabricSwitchesGetEndpointParams(EndpointQueryParams):
+    """
+    # Summary
+
+    Endpoint-specific query parameters for list fabric switches endpoint.
+
+    ## Parameters
+
+    - hostname: Filter by switch hostname (optional)
+    - max: Maximum number of results (optional)
+    - offset: Pagination offset (optional)
+    - filter: Lucene filter expression (optional)
+
+    ## Usage
+
+    ```python
+    params = FabricSwitchesGetEndpointParams(hostname="leaf1", max=100)
+    query_string = params.to_query_string()
+    # Returns: "hostname=leaf1&max=100"
+    ```
+    """
+
+    hostname: Optional[str] = Field(default=None, min_length=1, description="Filter by switch hostname")
+    max: Optional[int] = Field(default=None, ge=1, description="Maximum number of results")
+    offset: Optional[int] = Field(default=None, ge=0, description="Pagination offset")
+    filter: Optional[str] = Field(default=None, min_length=1, description="Lucene filter expression")
+
+
+class FabricSwitchesAddEndpointParams(EndpointQueryParams):
+    """
+    # Summary
+
+    Endpoint-specific query parameters for add switches to fabric endpoint.
+
+    ## Parameters
+
+    - cluster_name: Target cluster name for multi-cluster deployments (optional)
+    - ticket_id: Change control ticket ID (optional)
+
+    ## Usage
+
+    ```python
+    params = FabricSwitchesAddEndpointParams(cluster_name="cluster1", ticket_id="CHG12345")
+    query_string = params.to_query_string()
+    # Returns: "clusterName=cluster1&ticketId=CHG12345"
+    ```
+    """
+
+    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Target cluster name")
+    ticket_id: Optional[str] = Field(default=None, min_length=1, description="Change control ticket ID")
+
+
+class _V1ManageFabricSwitchesBase(FabricNameMixin, BaseModel):
+    """
+    Base class for Fabric Switches endpoints.
+
+    Provides common functionality for all HTTP methods on the
+    /api/v1/manage/fabrics/{fabricName}/switches endpoint.
+    """
+
+    model_config = COMMON_CONFIG
+
+    @property
+    def _base_path(self) -> str:
+        """Build the base endpoint path."""
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        return BasePath.nd_manage("fabrics", self.fabric_name, "switches")
+
+
+class V1ManageFabricSwitchesGet(_V1ManageFabricSwitchesBase):
+    """
+    # Summary
+
+    List Fabric Switches Endpoint
+
+    ## Description
+
+    Endpoint to list all switches in a specific fabric with optional filtering.
+
+    ## Path
+
+    - /api/v1/manage/fabrics/{fabricName}/switches
+    - /api/v1/manage/fabrics/{fabricName}/switches?hostname=leaf1&max=100
+
+    ## Verb
+
+    - GET
+
+    ## Query Parameters
+
+    - hostname: Filter by switch hostname (optional)
+    - max: Maximum number of results (optional)
+    - offset: Pagination offset (optional)
+    - filter: Lucene filter expression (optional)
+
+    ## Usage
+
+    ```python
+    # List all switches
+    request = V1ManageFabricSwitchesGet()
+    request.fabric_name = "MyFabric"
+    path = request.path
+    verb = request.verb
+
+    # List with filtering
+    request = V1ManageFabricSwitchesGet()
+    request.fabric_name = "MyFabric"
+    request.endpoint_params.hostname = "leaf1"
+    request.endpoint_params.max = 100
+    path = request.path
+    verb = request.verb
+    # Path will be: /api/v1/manage/fabrics/MyFabric/switches?hostname=leaf1&max=100
+    ```
+    """
+
+    # Version metadata
+    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
+    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
+
+    class_name: Literal["V1ManageFabricSwitchesGet"] = Field(
+        default="V1ManageFabricSwitchesGet", description="Class name for backward compatibility"
+    )
+    endpoint_params: FabricSwitchesGetEndpointParams = Field(
+        default_factory=FabricSwitchesGetEndpointParams, description="Endpoint-specific query parameters"
+    )
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the endpoint path with optional query string.
+
+        ## Returns
+
+        - Complete endpoint path string, optionally including query parameters
+        """
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{self._base_path}?{query_string}"
+        return self._base_path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.GET
+
+
+class V1ManageFabricSwitchesPost(_V1ManageFabricSwitchesBase):
+    """
+    # Summary
+
+    Add Switches to Fabric Endpoint
+
+    ## Description
+
+    Endpoint to add switches to a specific fabric.
+
+    ## Path
+
+    - /api/v1/manage/fabrics/{fabricName}/switches
+    - /api/v1/manage/fabrics/{fabricName}/switches?clusterName=cluster1&ticketId=CHG12345
+
+    ## Verb
+
+    - POST
+
+    ## Query Parameters
+
+    - cluster_name: Target cluster name for multi-cluster deployments (optional)
+    - ticket_id: Change control ticket ID (optional)
+
+    ## Usage
+
+    ```python
+    # Add switches
+    request = V1ManageFabricSwitchesPost()
+    request.fabric_name = "MyFabric"
+    path = request.path
+    verb = request.verb
+
+    # Add switches with cluster and ticket
+    request = V1ManageFabricSwitchesPost()
+    request.fabric_name = "MyFabric"
+    request.endpoint_params.cluster_name = "cluster1"
+    request.endpoint_params.ticket_id = "CHG12345"
+    path = request.path
+    verb = request.verb
+    # Path will be: /api/v1/manage/fabrics/MyFabric/switches?clusterName=cluster1&ticketId=CHG12345
+    ```
+    """
+
+    # Version metadata
+    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
+    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
+
+    class_name: Literal["V1ManageFabricSwitchesPost"] = Field(
+        default="V1ManageFabricSwitchesPost", description="Class name for backward compatibility"
+    )
+    endpoint_params: FabricSwitchesAddEndpointParams = Field(
+        default_factory=FabricSwitchesAddEndpointParams, description="Endpoint-specific query parameters"
+    )
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the endpoint path with optional query string.
+
+        ## Returns
+
+        - Complete endpoint path string, optionally including query parameters
+        """
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{self._base_path}?{query_string}"
+        return self._base_path
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.POST
+
+
+class _V1ManageFabricSwitchBase(FabricNameMixin, SwitchSerialNumberMixin, BaseModel):
+    """
+    Base class for single switch endpoints.
+
+    Provides common functionality for all HTTP methods on the
+    /api/v1/manage/fabrics/{fabricName}/switches/{switchSn} endpoint.
+    """
+
+    model_config = COMMON_CONFIG
+
+    @property
+    def _base_path(self) -> str:
+        """Build the base endpoint path."""
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        if self.switch_sn is None:
+            raise ValueError("switch_sn must be set before accessing path")
+        return BasePath.nd_manage("fabrics", self.fabric_name, "switches", self.switch_sn)
