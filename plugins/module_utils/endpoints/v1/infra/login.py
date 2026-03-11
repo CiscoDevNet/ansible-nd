@@ -63,7 +63,7 @@ class EpInfraLoginPost(NDEndpointBaseModel):
     None
     """
 
-    class_name: Literal["EpInfraLoginPost"] = Field(default="EpInfraLoginPost", description="Class name for backward compatibility")
+    class_name: Literal["EpInfraLoginPost"] = Field(default="EpInfraLoginPost", frozen=True, description="Class name for backward compatibility")
 
     @property
     def path(self) -> str:
