@@ -1,0 +1,49 @@
+---
+# This nd_vpc_pair test data structure is auto-generated
+# DO NOT EDIT MANUALLY
+#
+# Template: nd_vpc_pair_conf.j2
+# Variables: vpc_pair_conf (list of dicts)
+
+{% if vpc_pair_conf is iterable %}
+{% set pair_list = [] %}
+{% for pair in vpc_pair_conf %}
+{% set pair_item = {} %}
+{% if pair.peer1_switch_id is defined %}
+{% set _ = pair_item.update({'peer1_switch_id': pair.peer1_switch_id}) %}
+{% endif %}
+{% if pair.peer2_switch_id is defined %}
+{% set _ = pair_item.update({'peer2_switch_id': pair.peer2_switch_id}) %}
+{% endif %}
+{% if pair.use_virtual_peer_link is defined %}
+{% set _ = pair_item.update({'use_virtual_peer_link': pair.use_virtual_peer_link}) %}
+{% endif %}
+{% if pair.vpc_pair_details is defined %}
+{% set details_item = {} %}
+{% if pair.vpc_pair_details.type is defined %}
+{% set _ = details_item.update({'type': pair.vpc_pair_details.type}) %}
+{% endif %}
+{% if pair.vpc_pair_details.domain_id is defined %}
+{% set _ = details_item.update({'domain_id': pair.vpc_pair_details.domain_id}) %}
+{% endif %}
+{% if pair.vpc_pair_details.switch_keep_alive_local_ip is defined %}
+{% set _ = details_item.update({'switch_keep_alive_local_ip': pair.vpc_pair_details.switch_keep_alive_local_ip}) %}
+{% endif %}
+{% if pair.vpc_pair_details.peer_switch_keep_alive_local_ip is defined %}
+{% set _ = details_item.update({'peer_switch_keep_alive_local_ip': pair.vpc_pair_details.peer_switch_keep_alive_local_ip}) %}
+{% endif %}
+{% if pair.vpc_pair_details.keep_alive_vrf is defined %}
+{% set _ = details_item.update({'keep_alive_vrf': pair.vpc_pair_details.keep_alive_vrf}) %}
+{% endif %}
+{% if pair.vpc_pair_details.template_name is defined %}
+{% set _ = details_item.update({'template_name': pair.vpc_pair_details.template_name}) %}
+{% endif %}
+{% if pair.vpc_pair_details.template_config is defined %}
+{% set _ = details_item.update({'template_config': pair.vpc_pair_details.template_config}) %}
+{% endif %}
+{% set _ = pair_item.update({'vpc_pair_details': details_item}) %}
+{% endif %}
+{% set _ = pair_list.append(pair_item) %}
+{% endfor %}
+{{ pair_list | to_nice_yaml(indent=2) }}
+{% endif %}
