@@ -40,6 +40,8 @@ if TYPE_CHECKING:
         model_validator,
         validator,
         computed_field,
+        FieldSerializationInfo,
+        SerializationInfo,
     )
 else:
     # Runtime: try to import, with fallback
@@ -60,6 +62,8 @@ else:
             model_validator,
             validator,
             computed_field,
+            FieldSerializationInfo,
+            SerializationInfo,
         )
     except ImportError:
         HAS_PYDANTIC = False  # pylint: disable=invalid-name
@@ -215,4 +219,6 @@ __all__ = [
     "model_validator",
     "validator",
     "computed_field",
+    "FieldSerializationInfo",
+    "SerializationInfo",
 ]
