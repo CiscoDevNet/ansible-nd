@@ -46,15 +46,125 @@
           - name: all
     state: merged
   check_mode: true
-  register: cm_create_local_user
+  register: cm_create_local_users
 
 - name: Create local users with full and minimum configuration (normal mode)
   cisco.nd.nd_local_user:
     <<: *create_local_user
-  register: nm_create_local_user
+  register: nm_create_local_users
+
+- name: Asserts for local users creation tasks
+  ansible.builtin.assert:
+    that:
+      - cm_create_local_users is changed
+      - cm_create_local_users.after | length == 3
+      - cm_create_local_users.after.0.login_id == "admin"
+      - cm_create_local_users.after.0.first_name == "admin"
+      - cm_create_local_users.after.0.remote_user_authorization == false
+      - cm_create_local_users.after.0.reuse_limitation == 0
+      - cm_create_local_users.after.0.security_domains | length == 1
+      - cm_create_local_users.after.0.security_domains.0.name == "all"
+      - cm_create_local_users.after.0.security_domains.0.roles | length == 1
+      - cm_create_local_users.after.0.security_domains.0.roles.0 == "super_admin"
+      - cm_create_local_users.after.0.time_interval_limitation == 0
+      - cm_create_local_users.after.1.email == "ansibleuser@example.com"
+      - cm_create_local_users.after.1.first_name == "Ansible first name"
+      - cm_create_local_users.after.1.last_name == "Ansible last name"
+      - cm_create_local_users.after.1.login_id == "ansible_local_user"
+      - cm_create_local_users.after.1.remote_id_claim == "ansible_remote_user"
+      - cm_create_local_users.after.1.remote_user_authorization == true
+      - cm_create_local_users.after.1.reuse_limitation == 20
+      - cm_create_local_users.after.1.security_domains | length == 1
+      - cm_create_local_users.after.1.security_domains.0.name == "all"
+      - cm_create_local_users.after.1.security_domains.0.roles | length == 2
+      - cm_create_local_users.after.1.security_domains.0.roles.0 == "observer"
+      - cm_create_local_users.after.1.security_domains.0.roles.1 == "support_engineer"
+      - cm_create_local_users.after.1.time_interval_limitation == 10
+      - cm_create_local_users.after.2.login_id == "ansible_local_user_2"
+      - cm_create_local_users.after.2.security_domains | length == 1
+      - cm_create_local_users.after.2.security_domains.0.name == "all"
+      - cm_create_local_users.before | length == 1
+      - cm_create_local_users.before.0.login_id == "admin"
+      - cm_create_local_users.before.0.first_name == "admin"
+      - cm_create_local_users.before.0.remote_user_authorization == false
+      - cm_create_local_users.before.0.reuse_limitation == 0
+      - cm_create_local_users.before.0.security_domains | length == 1
+      - cm_create_local_users.before.0.security_domains.0.name == "all"
+      - cm_create_local_users.before.0.security_domains.0.roles | length == 1
+      - cm_create_local_users.before.0.security_domains.0.roles.0 == "super_admin"
+      - cm_create_local_users.before.0.time_interval_limitation == 0
+      - cm_create_local_users.diff == []
+      - cm_create_local_users.proposed.0.email == "ansibleuser@example.com"
+      - cm_create_local_users.proposed.0.first_name == "Ansible first name"
+      - cm_create_local_users.proposed.0.last_name == "Ansible last name"
+      - cm_create_local_users.proposed.0.login_id == "ansible_local_user"
+      - cm_create_local_users.proposed.0.remote_id_claim == "ansible_remote_user"
+      - cm_create_local_users.proposed.0.remote_user_authorization == true
+      - cm_create_local_users.proposed.0.reuse_limitation == 20
+      - cm_create_local_users.proposed.0.security_domains | length == 1
+      - cm_create_local_users.proposed.0.security_domains.0.name == "all"
+      - cm_create_local_users.proposed.0.security_domains.0.roles | length == 2
+      - cm_create_local_users.proposed.0.security_domains.0.roles.0 == "observer"
+      - cm_create_local_users.proposed.0.security_domains.0.roles.1 == "support_engineer"
+      - cm_create_local_users.proposed.0.time_interval_limitation == 10
+      - cm_create_local_users.proposed.1.login_id == "ansible_local_user_2"
+      - cm_create_local_users.proposed.1.security_domains | length == 1
+      - cm_create_local_users.proposed.1.security_domains.0.name == "all"
+      - nm_create_local_users is changed
+      - nm_create_local_users.after.0.first_name == "admin"
+      - nm_create_local_users.after.0.remote_user_authorization == false
+      - nm_create_local_users.after.0.reuse_limitation == 0
+      - nm_create_local_users.after.0.security_domains | length == 1
+      - nm_create_local_users.after.0.security_domains.0.name == "all"
+      - nm_create_local_users.after.0.security_domains.0.roles | length == 1
+      - nm_create_local_users.after.0.security_domains.0.roles.0 == "super_admin"
+      - nm_create_local_users.after.0.time_interval_limitation == 0
+      - nm_create_local_users.after.1.email == "ansibleuser@example.com"
+      - nm_create_local_users.after.1.first_name == "Ansible first name"
+      - nm_create_local_users.after.1.last_name == "Ansible last name"
+      - nm_create_local_users.after.1.login_id == "ansible_local_user"
+      - nm_create_local_users.after.1.remote_id_claim == "ansible_remote_user"
+      - nm_create_local_users.after.1.remote_user_authorization == true
+      - nm_create_local_users.after.1.reuse_limitation == 20
+      - nm_create_local_users.after.1.security_domains | length == 1
+      - nm_create_local_users.after.1.security_domains.0.name == "all"
+      - nm_create_local_users.after.1.security_domains.0.roles | length == 2
+      - nm_create_local_users.after.1.security_domains.0.roles.0 == "observer"
+      - nm_create_local_users.after.1.security_domains.0.roles.1 == "support_engineer"
+      - nm_create_local_users.after.1.time_interval_limitation == 10
+      - nm_create_local_users.after.2.login_id == "ansible_local_user_2"
+      - nm_create_local_users.after.2.security_domains | length == 1
+      - nm_create_local_users.after.2.security_domains.0.name == "all"
+      - nm_create_local_users.before | length == 1
+      - nm_create_local_users.before.0.login_id == "admin"
+      - nm_create_local_users.before.0.first_name == "admin"
+      - nm_create_local_users.before.0.remote_user_authorization == false
+      - nm_create_local_users.before.0.reuse_limitation == 0
+      - nm_create_local_users.before.0.security_domains | length == 1
+      - nm_create_local_users.before.0.security_domains.0.name == "all"
+      - nm_create_local_users.before.0.security_domains.0.roles | length == 1
+      - nm_create_local_users.before.0.security_domains.0.roles.0 == "super_admin"
+      - nm_create_local_users.before.0.time_interval_limitation == 0
+      - nm_create_local_users.diff == []
+      - nm_create_local_users.proposed.0.email == "ansibleuser@example.com"
+      - nm_create_local_users.proposed.0.first_name == "Ansible first name"
+      - nm_create_local_users.proposed.0.last_name == "Ansible last name"
+      - nm_create_local_users.proposed.0.login_id == "ansible_local_user"
+      - nm_create_local_users.proposed.0.remote_id_claim == "ansible_remote_user"
+      - nm_create_local_users.proposed.0.remote_user_authorization == true
+      - nm_create_local_users.proposed.0.reuse_limitation == 20
+      - nm_create_local_users.proposed.0.security_domains | length == 1
+      - nm_create_local_users.proposed.0.security_domains.0.name == "all"
+      - nm_create_local_users.proposed.0.security_domains.0.roles | length == 2
+      - nm_create_local_users.proposed.0.security_domains.0.roles.0 == "observer"
+      - nm_create_local_users.proposed.0.security_domains.0.roles.1 == "support_engineer"
+      - nm_create_local_users.proposed.0.time_interval_limitation == 10
+      - nm_create_local_users.proposed.1.login_id == "ansible_local_user_2"
+      - nm_create_local_users.proposed.1.security_domains | length == 1
+      - nm_create_local_users.proposed.1.security_domains.0.name == "all"
 
 # UPDATE
-- name: Update all ansible_local_user's attributes (check mode)
+- name: Replace all ansible_local_user's attributes (check mode)
   cisco.nd.nd_local_user: &update_first_local_user
     <<: *nd_info
     config:
@@ -72,12 +182,12 @@
         remote_user_authorization: false
     state: replaced
   check_mode: true
-  register: cm_update_local_user
+  register: cm_replace_local_user
 
-- name: Update local user (normal mode)
+- name: Replace all ansible_local_user's attributes (normal mode)
   cisco.nd.nd_local_user:
     <<: *update_first_local_user
-  register: nm_update_local_user
+  register: nm_replace_local_user
 
 - name: Update all ansible_local_user_2's attributes except password
   cisco.nd.nd_local_user: &update_second_local_user
@@ -95,12 +205,178 @@
         remote_id_claim: ansible_remote_user_2
         remote_user_authorization: true
     state: merged
-  register: nm_update_local_user_2
+  register: nm_merge_local_user_2
 
 - name: Update all ansible_local_user_2's attributes except password again (idempotency)
   cisco.nd.nd_local_user:
     <<: *update_second_local_user
-  register: nm_update_local_user_2_again
+  register: nm_merge_local_user_2_again
+
+
+- name: Override local users with minimum configuration
+  cisco.nd.nd_local_user:
+    <<: *nd_info
+    config:
+      - login_id: admin
+        first_name: admin
+        remote_user_authorization: false
+        reuse_limitation: 0
+        time_interval_limitation: 0
+        security_domains:
+          - name: all
+            roles:
+              - super_admin
+      - email: overrideansibleuser@example.com
+        login_id: ansible_local_user
+        first_name: Overridden Ansible first name
+        last_name: Overriden Ansible last name
+        user_password: overideansibleLocalUserPassword1%
+        reuse_limitation: 15
+        time_interval_limitation: 5
+        security_domains:
+          - name: all
+            roles:
+              - observer
+        remote_id_claim: ansible_remote_user
+        remote_user_authorization: true
+      - login_id: ansible_local_user_3
+        user_password: ansibleLocalUser3Password1%Test
+        security_domains:
+          - name: all
+    state: overridden
+  register: nm_override_local_users
+
+- name: Asserts for local users update tasks
+  ansible.builtin.assert:
+    that:
+      - cm_replace_local_user is changed
+      - cm_replace_local_user.after | length == 3
+      - cm_replace_local_user.after.0.login_id == "ansible_local_user_2"
+      - cm_replace_local_user.after.0.security_domains | length == 1
+      - cm_replace_local_user.after.0.security_domains.0.name == "all"
+      - cm_replace_local_user.after.1.email == "updatedansibleuser@example.com""
+      - cm_replace_local_user.after.1.first_name == "Updated Ansible first name"
+      - cm_replace_local_user.after.1.last_name == "Updated Ansible last name"
+      - cm_replace_local_user.after.1.login_id == "ansible_local_user"
+      - cm_replace_local_user.after.1.remote_id_claim == ""
+      - cm_replace_local_user.after.1.remote_user_authorization == false
+      - cm_replace_local_user.after.1.reuse_limitation == 25
+      - cm_replace_local_user.after.1.security_domains | length == 1
+      - cm_replace_local_user.after.1.security_domains.0.name == "all"
+      - cm_replace_local_user.after.1.security_domains.0.roles | length == 1
+      - cm_replace_local_user.after.1.security_domains.0.roles.0 == "super_admin"
+      - cm_replace_local_user.after.1.time_interval_limitation == 15
+      - cm_replace_local_user.after.2.login_id == "admin"
+      - cm_replace_local_user.after.2.first_name == "admin"
+      - cm_replace_local_user.after.2.remote_user_authorization == false
+      - cm_replace_local_user.after.2.reuse_limitation == 0
+      - cm_replace_local_user.after.2.security_domains | length == 1
+      - cm_replace_local_user.after.2.security_domains.0.name == "all"
+      - cm_replace_local_user.after.2.security_domains.0.roles | length == 1
+      - cm_replace_local_user.after.2.security_domains.0.roles.0 == "super_admin"
+      - cm_replace_local_user.after.2.time_interval_limitation == 0
+      - cm_replace_local_user.before | length == 3
+      - cm_replace_local_user.before.2.first_name == "admin"
+      - cm_replace_local_user.before.2.remote_user_authorization == false
+      - cm_replace_local_user.before.2.reuse_limitation == 0
+      - cm_replace_local_user.before.2.security_domains | length == 1
+      - cm_replace_local_user.before.2.security_domains.0.name == "all"
+      - cm_replace_local_user.before.2.security_domains.0.roles | length == 1
+      - cm_replace_local_user.before.2.security_domains.0.roles.0 == "super_admin"
+      - cm_replace_local_user.before.2.time_interval_limitation == 0
+      - cm_replace_local_user.before.1.email == "ansibleuser@example.com"
+      - cm_replace_local_user.before.1.first_name == "Ansible first name"
+      - cm_replace_local_user.before.1.last_name == "Ansible last name"
+      - cm_replace_local_user.before.1.login_id == "ansible_local_user"
+      - cm_replace_local_user.before.1.remote_id_claim == "ansible_remote_user"
+      - cm_replace_local_user.before.1.remote_user_authorization == true
+      - cm_replace_local_user.before.1.reuse_limitation == 20
+      - cm_replace_local_user.before.1.security_domains | length == 1
+      - cm_replace_local_user.before.1.security_domains.0.name == "all"
+      - cm_replace_local_user.before.1.security_domains.0.roles | length == 2
+      - cm_replace_local_user.before.1.security_domains.0.roles.0 == "observer"
+      - cm_replace_local_user.before.1.security_domains.0.roles.1 == "support_engineer"
+      - cm_replace_local_user.before.1.time_interval_limitation == 10
+      - cm_replace_local_user.before.0.login_id == "ansible_local_user_2"
+      - cm_replace_local_user.before.0.security_domains | length == 1
+      - cm_replace_local_user.before.0.security_domains.0.name == "all"
+      - cm_replace_local_user.diff == []
+      - cm_replace_local_user.proposed.0.email == "updatedansibleuser@example.com""
+      - cm_replace_local_user.proposed.0.first_name == "Updated Ansible first name"
+      - cm_replace_local_user.proposed.0.last_name == "Updated Ansible last name"
+      - cm_replace_local_user.proposed.0.login_id == "ansible_local_user"
+      - cm_replace_local_user.proposed.0.remote_id_claim == ""
+      - cm_replace_local_user.proposed.0.remote_user_authorization == false
+      - cm_replace_local_user.proposed.0.reuse_limitation == 25
+      - cm_replace_local_user.proposed.0.security_domains | length == 1
+      - cm_replace_local_user.proposed.0.security_domains.0.name == "all"
+      - cm_replace_local_user.proposed.0.security_domains.0.roles | length == 1
+      - cm_replace_local_user.proposed.0.security_domains.0.roles.0 == "super_admin"
+      - cm_replace_local_user.proposed.0.time_interval_limitation == 15
+      - nm_replace_local_user is changed
+      - nm_replace_local_user.after | length == 3
+      - nm_replace_local_user.after.0.login_id == "ansible_local_user_2"
+      - nm_replace_local_user.after.0.security_domains | length == 1
+      - nm_replace_local_user.after.0.security_domains.0.name == "all"
+      - nm_replace_local_user.after.1.email == "updatedansibleuser@example.com""
+      - nm_replace_local_user.after.1.first_name == "Updated Ansible first name"
+      - nm_replace_local_user.after.1.last_name == "Updated Ansible last name"
+      - nm_replace_local_user.after.1.login_id == "ansible_local_user"
+      - nm_replace_local_user.after.1.remote_id_claim == ""
+      - nm_replace_local_user.after.1.remote_user_authorization == false
+      - nm_replace_local_user.after.1.reuse_limitation == 25
+      - nm_replace_local_user.after.1.security_domains | length == 1
+      - nm_replace_local_user.after.1.security_domains.0.name == "all"
+      - nm_replace_local_user.after.1.security_domains.0.roles | length == 1
+      - nm_replace_local_user.after.1.security_domains.0.roles.0 == "super_admin"
+      - nm_replace_local_user.after.1.time_interval_limitation == 15
+      - nm_replace_local_user.after.2.login_id == "admin"
+      - nm_replace_local_user.after.2.first_name == "admin"
+      - nm_replace_local_user.after.2.remote_user_authorization == false
+      - nm_replace_local_user.after.2.reuse_limitation == 0
+      - nm_replace_local_user.after.2.security_domains | length == 1
+      - nm_replace_local_user.after.2.security_domains.0.name == "all"
+      - nm_replace_local_user.after.2.security_domains.0.roles | length == 1
+      - nm_replace_local_user.after.2.security_domains.0.roles.0 == "super_admin"
+      - nm_replace_local_user.after.2.time_interval_limitation == 0
+      - nm_replace_local_user.before | length == 3
+      - nm_replace_local_user.before.2.first_name == "admin"
+      - nm_replace_local_user.before.2.remote_user_authorization == false
+      - nm_replace_local_user.before.2.reuse_limitation == 0
+      - nm_replace_local_user.before.2.security_domains | length == 1
+      - nm_replace_local_user.before.2.security_domains.0.name == "all"
+      - nm_replace_local_user.before.2.security_domains.0.roles | length == 1
+      - nm_replace_local_user.before.2.security_domains.0.roles.0 == "super_admin"
+      - nm_replace_local_user.before.2.time_interval_limitation == 0
+      - nm_replace_local_user.before.1.email == "ansibleuser@example.com"
+      - nm_replace_local_user.before.1.first_name == "Ansible first name"
+      - nm_replace_local_user.before.1.last_name == "Ansible last name"
+      - nm_replace_local_user.before.1.login_id == "ansible_local_user"
+      - nm_replace_local_user.before.1.remote_id_claim == "ansible_remote_user"
+      - nm_replace_local_user.before.1.remote_user_authorization == true
+      - nm_replace_local_user.before.1.reuse_limitation == 20
+      - nm_replace_local_user.before.1.security_domains | length == 1
+      - nm_replace_local_user.before.1.security_domains.0.name == "all"
+      - nm_replace_local_user.before.1.security_domains.0.roles | length == 2
+      - nm_replace_local_user.before.1.security_domains.0.roles.0 == "observer"
+      - nm_replace_local_user.before.1.security_domains.0.roles.1 == "support_engineer"
+      - nm_replace_local_user.before.1.time_interval_limitation == 10
+      - nm_replace_local_user.before.0.login_id == "ansible_local_user_2"
+      - nm_replace_local_user.before.0.security_domains | length == 1
+      - nm_replace_local_user.before.0.security_domains.0.name == "all"
+      - nm_replace_local_user.diff == []
+      - nm_replace_local_user.proposed.0.email == "updatedansibleuser@example.com""
+      - nm_replace_local_user.proposed.0.first_name == "Updated Ansible first name"
+      - nm_replace_local_user.proposed.0.last_name == "Updated Ansible last name"
+      - nm_replace_local_user.proposed.0.login_id == "ansible_local_user"
+      - nm_replace_local_user.proposed.0.remote_id_claim == ""
+      - nm_replace_local_user.proposed.0.remote_user_authorization == false
+      - nm_replace_local_user.proposed.0.reuse_limitation == 25
+      - nm_replace_local_user.proposed.0.security_domains | length == 1
+      - nm_replace_local_user.proposed.0.security_domains.0.name == "all"
+      - nm_replace_local_user.proposed.0.security_domains.0.roles | length == 1
+      - nm_replace_local_user.proposed.0.security_domains.0.roles.0 == "super_admin"
+      - nm_replace_local_user.proposed.0.time_interval_limitation == 15
 
 
 # DELETE
@@ -123,6 +399,9 @@
     <<: *delete_local_user
   register: nm_delete_local_user_again
 
+- name: Asserts for local users deletion tasks
+  ansible.builtin.assert:
+    that:
 
 # CLEAN UP
 - name: Ensure local users do not exist
@@ -131,4 +410,5 @@
     config:
       - login_id: ansible_local_user
       - login_id: ansible_local_user_2
+      - login_id: ansible_local_user_3
     state: deleted
