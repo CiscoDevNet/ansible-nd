@@ -11,7 +11,7 @@ __author__ = "Sivakami S"
 
 DOCUMENTATION = """
 ---
-module: nd_vpc_pair
+module: nd_manage_vpc_pair
 short_description: Manage vPC pairs in Nexus devices.
 version_added: "1.0.0"
 description:
@@ -100,7 +100,7 @@ notes:
 EXAMPLES = """
 # Create a new vPC pair
 - name: Create vPC pair
-  cisco.nd.nd_vpc_pair:
+  cisco.nd.nd_manage_vpc_pair:
     fabric_name: myFabric
     state: merged
     config:
@@ -110,7 +110,7 @@ EXAMPLES = """
 
 # Delete a vPC pair
 - name: Delete vPC pair
-  cisco.nd.nd_vpc_pair:
+  cisco.nd.nd_manage_vpc_pair:
     fabric_name: myFabric
     state: deleted
     config:
@@ -119,13 +119,13 @@ EXAMPLES = """
 
 # Gather existing vPC pairs
 - name: Gather all vPC pairs
-  cisco.nd.nd_vpc_pair:
+  cisco.nd.nd_manage_vpc_pair:
     fabric_name: myFabric
     state: gathered
 
 # Create and deploy
 - name: Create vPC pair and deploy
-  cisco.nd.nd_vpc_pair:
+  cisco.nd.nd_manage_vpc_pair:
     fabric_name: myFabric
     state: merged
     deploy: true
@@ -135,7 +135,7 @@ EXAMPLES = """
 
 # Dry run to see what would change
 - name: Dry run vPC pair creation
-  cisco.nd.nd_vpc_pair:
+  cisco.nd.nd_manage_vpc_pair:
     fabric_name: myFabric
     state: merged
     dry_run: true
@@ -664,7 +664,7 @@ class VpcPairEndpoints:
 
 class VpcPairModel(NDNestedModel):
     """
-    Pydantic model for VPC pair configuration specific to nd_vpc_pair module.
+    Pydantic model for VPC pair configuration specific to nd_manage_vpc_pair module.
 
     Uses composite identifier: (switch_id, peer_switch_id)
 
