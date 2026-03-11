@@ -105,12 +105,12 @@ class FinalResultData(BaseModel):
     - `failed`: Overall failed status across all tasks (required)
     - `diff`: List of all diff dicts (default empty list)
     - `metadata`: List of all metadata dicts (default empty list)
-    - `path`: List of all API endpoint paths (default empty list)
-    - `payload`: List of all request payloads (default empty list)
+    - `path`: List of API endpoint paths per API call (default empty list)
+    - `payload`: List of request payloads per API call (default empty list)
     - `response`: List of all response dicts (default empty list)
     - `result`: List of all result dicts (default empty list)
-    - `verb`: List of all HTTP verbs (default empty list)
-    - `verbosity_level`: List of all verbosity levels (default empty list)
+    - `verb`: List of HTTP verbs per API call (default empty list)
+    - `verbosity_level`: List of verbosity levels per API call (default empty list)
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1061,7 +1061,7 @@ class Results:
         """
         # Summary
 
-        A list of API endpoint paths across all registered tasks.
+        A list of API endpoint paths across all registered API calls.
 
         ## Raises
 
@@ -1069,7 +1069,7 @@ class Results:
 
         ## Returns
 
-        - `list[str]`: List of path strings from all registered tasks
+        - `list[str]`: List of path strings from all registered API calls
         """
         return [task.path for task in self._tasks]
 
@@ -1100,7 +1100,7 @@ class Results:
         """
         # Summary
 
-        A list of HTTP verbs across all registered tasks.
+        A list of HTTP verbs across all registered API calls.
 
         ## Raises
 
@@ -1108,7 +1108,7 @@ class Results:
 
         ## Returns
 
-        - `list[str]`: List of verb strings from all registered tasks
+        - `list[str]`: List of verb strings from all registered API calls
         """
         return [task.verb for task in self._tasks]
 
@@ -1139,7 +1139,7 @@ class Results:
         """
         # Summary
 
-        A list of request payloads across all registered tasks.
+        A list of request payloads across all registered API calls.
 
         ## Raises
 
@@ -1147,7 +1147,7 @@ class Results:
 
         ## Returns
 
-        - `list[Optional[dict[str, Any]]]`: List of payload dicts (or None) from all registered tasks
+        - `list[Optional[dict[str, Any]]]`: List of payload dicts (or None) from all registered API calls
         """
         return [task.payload for task in self._tasks]
 
@@ -1178,7 +1178,7 @@ class Results:
         """
         # Summary
 
-        A list of verbosity levels across all registered tasks.
+        A list of verbosity levels across all registered API calls.
 
         ## Raises
 
@@ -1186,7 +1186,7 @@ class Results:
 
         ## Returns
 
-        - `list[int]`: List of verbosity levels from all registered tasks
+        - `list[int]`: List of verbosity levels from all registered API calls
         """
         return [task.verbosity_level for task in self._tasks]
 
