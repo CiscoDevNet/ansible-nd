@@ -10,9 +10,6 @@ fields to endpoint models without duplication.
 
 from __future__ import absolute_import, annotations, division, print_function
 
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
 
 from typing import Optional
 

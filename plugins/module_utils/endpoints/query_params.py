@@ -11,9 +11,6 @@ filtering with type safety via Pydantic.
 
 from __future__ import absolute_import, annotations, division, print_function
 
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
 
 from enum import Enum
 from typing import Optional, Protocol
