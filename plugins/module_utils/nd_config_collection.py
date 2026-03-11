@@ -143,10 +143,7 @@ class NDConfigCollection(Generic[ModelType]):
         if existing is None:
             return "new"
 
-        # TODO: make a diff class level method for NDBaseModel (high priority)
-        existing_data = existing.to_diff_dict()
-        new_data = new_item.to_diff_dict()
-        is_subset = issubset(new_data, existing_data)
+        is_subset = existing.get_diff(new_item)
 
         return "no_diff" if is_subset else "changed"
 
