@@ -15,10 +15,12 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 import pytest  # pylint: disable=unused-import
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.clusterhealth import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.clusterhealth_config import (
     ClusterHealthConfigEndpointParams,
-    ClusterHealthStatusEndpointParams,
     EpInfraClusterhealthConfigGet,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.clusterhealth_status import (
+    ClusterHealthStatusEndpointParams,
     EpInfraClusterhealthStatusGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
