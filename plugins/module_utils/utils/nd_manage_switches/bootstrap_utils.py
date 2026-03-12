@@ -14,7 +14,7 @@ __metaclass__ = type
 import logging
 from typing import Any, Dict, List, Optional
 
-from ...endpoints.v1.nd_manage_switches.manage_fabric_bootstrap import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_bootstrap import (
     V1ManageFabricBootstrapGet,
 )
 

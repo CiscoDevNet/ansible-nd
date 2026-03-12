@@ -31,7 +31,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -111,7 +111,7 @@ class _V1ManageFabricSwitchesBase(FabricNameMixin, BaseModel):
         """Build the base endpoint path."""
         if self.fabric_name is None:
             raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.nd_manage("fabrics", self.fabric_name, "switches")
+        return BasePath.path("fabrics", self.fabric_name, "switches")
 
 
 class V1ManageFabricSwitchesGet(_V1ManageFabricSwitchesBase):
@@ -287,4 +287,4 @@ class _V1ManageFabricSwitchBase(FabricNameMixin, SwitchSerialNumberMixin, BaseMo
             raise ValueError("fabric_name must be set before accessing path")
         if self.switch_sn is None:
             raise ValueError("switch_sn must be set before accessing path")
-        return BasePath.nd_manage("fabrics", self.fabric_name, "switches", self.switch_sn)
+        return BasePath.path("fabrics", self.fabric_name, "switches", self.switch_sn)

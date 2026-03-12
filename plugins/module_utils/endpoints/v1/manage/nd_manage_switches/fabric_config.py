@@ -32,7 +32,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -69,7 +69,25 @@ class FabricConfigDeployEndpointParams(EndpointQueryParams):
     incl_all_msd_switches: Optional[bool] = Field(default=None, description="Include all MSD fabric switches")
 
 
-class V1ManageFabricConfigSavePost(FabricNameMixin, BaseModel):
+class _V1ManageFabricConfigBase(FabricNameMixin, BaseModel):
+    """
+    Base class for Fabric Config endpoints.
+
+    Provides common functionality for all HTTP methods on the
+    /api/v1/manage/fabrics/{fabricName} endpoint family.
+    """
+
+    model_config = COMMON_CONFIG
+
+    @property
+    def _base_path(self) -> str:
+        """Build the base endpoint path."""
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        return BasePath.path("fabrics", self.fabric_name)
+
+
+class V1ManageFabricConfigSavePost(_V1ManageFabricConfigBase):
     """
     # Summary
 
@@ -97,8 +115,6 @@ class V1ManageFabricConfigSavePost(FabricNameMixin, BaseModel):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -110,9 +126,7 @@ class V1ManageFabricConfigSavePost(FabricNameMixin, BaseModel):
     @property
     def path(self) -> str:
         """Build the endpoint path."""
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.nd_manage("fabrics", self.fabric_name, "actions", "configSave")
+        return f"{self._base_path}/actions/configSave"
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -120,7 +134,7 @@ class V1ManageFabricConfigSavePost(FabricNameMixin, BaseModel):
         return HttpVerbEnum.POST
 
 
-class V1ManageFabricConfigDeployPost(FabricNameMixin, BaseModel):
+class V1ManageFabricConfigDeployPost(_V1ManageFabricConfigBase):
     """
     # Summary
 
@@ -163,8 +177,6 @@ class V1ManageFabricConfigDeployPost(FabricNameMixin, BaseModel):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -187,13 +199,11 @@ class V1ManageFabricConfigDeployPost(FabricNameMixin, BaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        base_path = BasePath.nd_manage("fabrics", self.fabric_name, "actions", "configDeploy")
+        base = f"{self._base_path}/actions/configDeploy"
         query_string = self.endpoint_params.to_query_string()
         if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
+            return f"{base}?{query_string}"
+        return base
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -201,7 +211,7 @@ class V1ManageFabricConfigDeployPost(FabricNameMixin, BaseModel):
         return HttpVerbEnum.POST
 
 
-class V1ManageFabricGet(FabricNameMixin, BaseModel):
+class V1ManageFabricGet(_V1ManageFabricConfigBase):
     """
     # Summary
 
@@ -229,8 +239,6 @@ class V1ManageFabricGet(FabricNameMixin, BaseModel):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -242,9 +250,7 @@ class V1ManageFabricGet(FabricNameMixin, BaseModel):
     @property
     def path(self) -> str:
         """Build the endpoint path."""
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.nd_manage("fabrics", self.fabric_name)
+        return self._base_path
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -252,7 +258,7 @@ class V1ManageFabricGet(FabricNameMixin, BaseModel):
         return HttpVerbEnum.GET
 
 
-class V1ManageFabricInventoryDiscoverGet(FabricNameMixin, BaseModel):
+class V1ManageFabricInventoryDiscoverGet(_V1ManageFabricConfigBase):
     """
     # Summary
 
@@ -280,8 +286,6 @@ class V1ManageFabricInventoryDiscoverGet(FabricNameMixin, BaseModel):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -293,9 +297,7 @@ class V1ManageFabricInventoryDiscoverGet(FabricNameMixin, BaseModel):
     @property
     def path(self) -> str:
         """Build the endpoint path."""
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.nd_manage("fabrics", self.fabric_name, "inventory", "discover")
+        return f"{self._base_path}/inventory/discover"
 
     @property
     def verb(self) -> HttpVerbEnum:

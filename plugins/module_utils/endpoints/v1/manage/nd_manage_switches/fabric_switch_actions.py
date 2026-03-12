@@ -35,7 +35,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -128,7 +128,25 @@ class SwitchActionsImportEndpointParams(EndpointQueryParams):
 # ============================================================================
 
 
-class V1ManageFabricSwitchActionsRemovePost(FabricNameMixin, BaseModel):
+class _V1ManageFabricSwitchActionsBase(FabricNameMixin, BaseModel):
+    """
+    Base class for Fabric Switch Actions endpoints.
+
+    Provides common functionality for all HTTP methods on the
+    /api/v1/manage/fabrics/{fabricName}/switchActions endpoint.
+    """
+
+    model_config = COMMON_CONFIG
+
+    @property
+    def _base_path(self) -> str:
+        """Build the base endpoint path."""
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        return BasePath.path("fabrics", self.fabric_name, "switchActions")
+
+
+class V1ManageFabricSwitchActionsRemovePost(_V1ManageFabricSwitchActionsBase):
     """
     # Summary
 
@@ -172,8 +190,6 @@ class V1ManageFabricSwitchActionsRemovePost(FabricNameMixin, BaseModel):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -196,13 +212,11 @@ class V1ManageFabricSwitchActionsRemovePost(FabricNameMixin, BaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        base_path = BasePath.nd_manage("fabrics", self.fabric_name, "switchActions", "remove")
+        base = f"{self._base_path}/remove"
         query_string = self.endpoint_params.to_query_string()
         if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
+            return f"{base}?{query_string}"
+        return base
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -210,7 +224,7 @@ class V1ManageFabricSwitchActionsRemovePost(FabricNameMixin, BaseModel):
         return HttpVerbEnum.POST
 
 
-class V1ManageFabricSwitchActionsChangeRolesPost(FabricNameMixin, BaseModel):
+class V1ManageFabricSwitchActionsChangeRolesPost(_V1ManageFabricSwitchActionsBase):
     """
     # Summary
 
@@ -252,8 +266,6 @@ class V1ManageFabricSwitchActionsChangeRolesPost(FabricNameMixin, BaseModel):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -277,13 +289,11 @@ class V1ManageFabricSwitchActionsChangeRolesPost(FabricNameMixin, BaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        base_path = BasePath.nd_manage("fabrics", self.fabric_name, "switchActions", "changeRoles")
+        base = f"{self._base_path}/changeRoles"
         query_string = self.endpoint_params.to_query_string()
         if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
+            return f"{base}?{query_string}"
+        return base
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -291,7 +301,7 @@ class V1ManageFabricSwitchActionsChangeRolesPost(FabricNameMixin, BaseModel):
         return HttpVerbEnum.POST
 
 
-class V1ManageFabricSwitchActionsImportBootstrapPost(FabricNameMixin, BaseModel):
+class V1ManageFabricSwitchActionsImportBootstrapPost(_V1ManageFabricSwitchActionsBase):
     """
     # Summary
 
@@ -335,8 +345,6 @@ class V1ManageFabricSwitchActionsImportBootstrapPost(FabricNameMixin, BaseModel)
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -359,13 +367,11 @@ class V1ManageFabricSwitchActionsImportBootstrapPost(FabricNameMixin, BaseModel)
 
         - Complete endpoint path string, optionally including query parameters
         """
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        base_path = BasePath.nd_manage("fabrics", self.fabric_name, "switchActions", "importBootstrap")
+        base = f"{self._base_path}/importBootstrap"
         query_string = self.endpoint_params.to_query_string()
         if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
+            return f"{base}?{query_string}"
+        return base
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -378,7 +384,7 @@ class V1ManageFabricSwitchActionsImportBootstrapPost(FabricNameMixin, BaseModel)
 # ============================================================================
 
 
-class V1ManageFabricSwitchActionsPreProvisionPost(FabricNameMixin, BaseModel):
+class V1ManageFabricSwitchActionsPreProvisionPost(_V1ManageFabricSwitchActionsBase):
     """
     # Summary
 
@@ -425,8 +431,6 @@ class V1ManageFabricSwitchActionsPreProvisionPost(FabricNameMixin, BaseModel):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -450,13 +454,11 @@ class V1ManageFabricSwitchActionsPreProvisionPost(FabricNameMixin, BaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        base_path = BasePath.nd_manage("fabrics", self.fabric_name, "switchActions", "preProvision")
+        base = f"{self._base_path}/preProvision"
         query_string = self.endpoint_params.to_query_string()
         if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
+            return f"{base}?{query_string}"
+        return base
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -469,7 +471,27 @@ class V1ManageFabricSwitchActionsPreProvisionPost(FabricNameMixin, BaseModel):
 # ============================================================================
 
 
-class V1ManageFabricSwitchProvisionRMAPost(FabricNameMixin, SwitchSerialNumberMixin, BaseModel):
+class _V1ManageFabricSwitchActionsPerSwitchBase(FabricNameMixin, SwitchSerialNumberMixin, BaseModel):
+    """
+    Base class for per-switch action endpoints.
+
+    Provides common functionality for all HTTP methods on the
+    /api/v1/manage/fabrics/{fabricName}/switches/{switchSn}/actions endpoint.
+    """
+
+    model_config = COMMON_CONFIG
+
+    @property
+    def _base_path(self) -> str:
+        """Build the base endpoint path."""
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        if self.switch_sn is None:
+            raise ValueError("switch_sn must be set before accessing path")
+        return BasePath.path("fabrics", self.fabric_name, "switches", self.switch_sn, "actions")
+
+
+class V1ManageFabricSwitchProvisionRMAPost(_V1ManageFabricSwitchActionsPerSwitchBase):
     """
     # Summary
 
@@ -513,8 +535,6 @@ class V1ManageFabricSwitchProvisionRMAPost(FabricNameMixin, SwitchSerialNumberMi
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -537,17 +557,11 @@ class V1ManageFabricSwitchProvisionRMAPost(FabricNameMixin, SwitchSerialNumberMi
 
         - Complete endpoint path string, optionally including query parameters
         """
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        if self.switch_sn is None:
-            raise ValueError("switch_sn must be set before accessing path")
-        base_path = BasePath.nd_manage(
-            "fabrics", self.fabric_name, "switches", self.switch_sn, "actions", "provisionRMA"
-        )
+        base = f"{self._base_path}/provisionRMA"
         query_string = self.endpoint_params.to_query_string()
         if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
+            return f"{base}?{query_string}"
+        return base
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -582,7 +596,7 @@ class SwitchActionsClusterEndpointParams(EndpointQueryParams):
     cluster_name: Optional[str] = Field(default=None, min_length=1, description="Target cluster name")
 
 
-class V1ManageFabricSwitchChangeSerialNumberPost(FabricNameMixin, SwitchSerialNumberMixin, BaseModel):
+class V1ManageFabricSwitchChangeSerialNumberPost(_V1ManageFabricSwitchActionsPerSwitchBase):
     """
     # Summary
 
@@ -626,8 +640,6 @@ class V1ManageFabricSwitchChangeSerialNumberPost(FabricNameMixin, SwitchSerialNu
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -650,17 +662,11 @@ class V1ManageFabricSwitchChangeSerialNumberPost(FabricNameMixin, SwitchSerialNu
 
         - Complete endpoint path string, optionally including query parameters
         """
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        if self.switch_sn is None:
-            raise ValueError("switch_sn must be set before accessing path")
-        base_path = BasePath.nd_manage(
-            "fabrics", self.fabric_name, "switches", self.switch_sn, "actions", "changeSwitchSerialNumber"
-        )
+        base = f"{self._base_path}/changeSwitchSerialNumber"
         query_string = self.endpoint_params.to_query_string()
         if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
+            return f"{base}?{query_string}"
+        return base
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -673,7 +679,7 @@ class V1ManageFabricSwitchChangeSerialNumberPost(FabricNameMixin, SwitchSerialNu
 # ============================================================================
 
 
-class V1ManageFabricSwitchActionsRediscoverPost(FabricNameMixin, BaseModel):
+class V1ManageFabricSwitchActionsRediscoverPost(_V1ManageFabricSwitchActionsBase):
     """
     # Summary
 
@@ -715,8 +721,6 @@ class V1ManageFabricSwitchActionsRediscoverPost(FabricNameMixin, BaseModel):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -740,13 +744,11 @@ class V1ManageFabricSwitchActionsRediscoverPost(FabricNameMixin, BaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        base_path = BasePath.nd_manage("fabrics", self.fabric_name, "switchActions", "rediscover")
+        base = f"{self._base_path}/rediscover"
         query_string = self.endpoint_params.to_query_string()
         if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
+            return f"{base}?{query_string}"
+        return base
 
     @property
     def verb(self) -> HttpVerbEnum:

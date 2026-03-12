@@ -29,7 +29,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -68,7 +68,25 @@ class FabricBootstrapEndpointParams(EndpointQueryParams):
     filter: Optional[str] = Field(default=None, min_length=1, description="Lucene filter expression")
 
 
-class V1ManageFabricBootstrapGet(FabricNameMixin, BaseModel):
+class _V1ManageFabricBootstrapBase(FabricNameMixin, BaseModel):
+    """
+    Base class for Fabric Bootstrap endpoints.
+
+    Provides common functionality for all HTTP methods on the
+    /api/v1/manage/fabrics/{fabricName}/bootstrap endpoint.
+    """
+
+    model_config = COMMON_CONFIG
+
+    @property
+    def _base_path(self) -> str:
+        """Build the base endpoint path."""
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        return BasePath.path("fabrics", self.fabric_name, "bootstrap")
+
+
+class V1ManageFabricBootstrapGet(_V1ManageFabricBootstrapBase):
     """
     # Summary
 
@@ -113,8 +131,6 @@ class V1ManageFabricBootstrapGet(FabricNameMixin, BaseModel):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -137,13 +153,10 @@ class V1ManageFabricBootstrapGet(FabricNameMixin, BaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        base_path = BasePath.nd_manage("fabrics", self.fabric_name, "bootstrap")
         query_string = self.endpoint_params.to_query_string()
         if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
+            return f"{self._base_path}?{query_string}"
+        return self._base_path
 
     @property
     def verb(self) -> HttpVerbEnum:

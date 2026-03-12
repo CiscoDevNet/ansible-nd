@@ -26,7 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     FabricNameMixin,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -39,7 +39,25 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
 
-class V1ManageFabricShallowDiscoveryPost(FabricNameMixin, BaseModel):
+class _V1ManageFabricDiscoveryBase(FabricNameMixin, BaseModel):
+    """
+    Base class for Fabric Discovery endpoints.
+
+    Provides common functionality for all HTTP methods on the
+    /api/v1/manage/fabrics/{fabricName}/actions/shallowDiscovery endpoint.
+    """
+
+    model_config = COMMON_CONFIG
+
+    @property
+    def _base_path(self) -> str:
+        """Build the base endpoint path."""
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        return BasePath.path("fabrics", self.fabric_name, "actions", "shallowDiscovery")
+
+
+class V1ManageFabricShallowDiscoveryPost(_V1ManageFabricDiscoveryBase):
     """
     # Summary
 
@@ -67,8 +85,6 @@ class V1ManageFabricShallowDiscoveryPost(FabricNameMixin, BaseModel):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     # Version metadata
     api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
     min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
@@ -80,9 +96,7 @@ class V1ManageFabricShallowDiscoveryPost(FabricNameMixin, BaseModel):
     @property
     def path(self) -> str:
         """Build the endpoint path."""
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.nd_manage("fabrics", self.fabric_name, "actions", "shallowDiscovery")
+        return self._base_path
 
     @property
     def verb(self) -> HttpVerbEnum:

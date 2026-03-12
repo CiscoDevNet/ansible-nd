@@ -17,7 +17,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import socket
-from ipaddress import ip_address, ip_interface
+from ipaddress import ip_address
 from pydantic import Field, ValidationInfo, computed_field, field_validator, model_validator
 from typing import Any, Dict, List, Optional, ClassVar, Literal, Union
 from typing_extensions import Self
@@ -58,11 +58,7 @@ class ConfigDataModel(NDNestedModel):
         """Validate gateway is a valid CIDR."""
         if not v or not v.strip():
             raise ValueError("gateway cannot be empty")
-        try:
-            ip_interface(v.strip())
-        except ValueError as e:
-            raise ValueError(f"Invalid gateway IP address with mask: {v}") from e
-        return v.strip()
+        return SwitchValidators.validate_cidr(v)
 
 
 class POAPConfigModel(NDNestedModel):
@@ -209,9 +205,7 @@ class POAPConfigModel(NDNestedModel):
     @classmethod
     def validate_serial_numbers(cls, v: Optional[str]) -> Optional[str]:
         """Validate serial numbers are not empty strings."""
-        if v is not None and not v.strip():
-            raise ValueError("Serial number cannot be empty")
-        return v
+        return SwitchValidators.validate_serial_number(v)
 
 
 class RMAConfigModel(NDNestedModel):
@@ -280,9 +274,10 @@ class RMAConfigModel(NDNestedModel):
     @classmethod
     def validate_serial_numbers(cls, v: str) -> str:
         """Validate serial numbers are not empty."""
-        if not v or not v.strip():
+        result = SwitchValidators.validate_serial_number(v)
+        if result is None:
             raise ValueError("Serial number cannot be empty")
-        return v.strip()
+        return result
 
     @model_validator(mode='after')
     def validate_discovery_credentials_pair(self) -> Self:

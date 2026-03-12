@@ -29,7 +29,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.base_paths_manage import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -77,7 +77,7 @@ class _V1ManageCredentialsSwitchesBase(BaseModel):
     @property
     def _base_path(self) -> str:
         """Build the base endpoint path."""
-        return BasePath.nd_manage("credentials", "switches")
+        return BasePath.path("credentials", "switches")
 
 
 class V1ManageCredentialsSwitchesPost(_V1ManageCredentialsSwitchesBase):

@@ -14,13 +14,13 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.nd_manage_switches.manage_fabric_config import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_config import (
     V1ManageFabricInventoryDiscoverGet,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.nd_manage_switches.manage_fabric_switches import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_switches import (
     V1ManageFabricSwitchesGet,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.nd_manage_switches.manage_fabric_switch_actions import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_switch_actions import (
     V1ManageFabricSwitchActionsRediscoverPost,
 )
 
