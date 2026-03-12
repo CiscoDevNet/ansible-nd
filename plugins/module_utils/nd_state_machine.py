@@ -27,7 +27,6 @@ class NDStateMachine:
         """
         Initialize the Network Resource Module.
         """
-        # TODO: Revisit Module initialization and configuration with rest_send
         self.module = module
         self.nd_module = NDModule(self.module)
 
@@ -37,7 +36,6 @@ class NDStateMachine:
         # Configuration
         self.model_orchestrator = model_orchestrator(sender=self.nd_module)
         self.model_class = self.model_orchestrator.model_class
-        # TODO: Revisit these class variables when udpating Module intialization and configuration (low priority)
         self.state = self.module.params["state"]
 
         # Initialize collections

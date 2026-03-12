@@ -131,9 +131,7 @@ class NDEndpointBaseModel(BaseModel, ABC):
 
         None
         """
-    
-    # TODO: Maybe to be modifed to be more Pydantic (low priority)
-    # TODO: Maybe change function's name (low priority)
+
     # NOTE: function to set endpoints attribute fields from identifiers -> acts as the bridge between Models and Endpoints for API Request Orchestration
     @abstractmethod
     def set_identifiers(self, identifier: IdentifierKey = None):
