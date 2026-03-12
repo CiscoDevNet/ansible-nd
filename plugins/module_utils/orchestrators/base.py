@@ -12,7 +12,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import Ba
 from typing import ClassVar, Type, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseEndpoint
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
@@ -27,11 +27,11 @@ class NDBaseOrchestrator(BaseModel):
     model_class: ClassVar[Type[NDBaseModel]] = Type[NDBaseModel]
 
     # NOTE: if not defined by subclasses, return an error as they are required
-    create_endpoint: Type[NDBaseEndpoint]
-    update_endpoint: Type[NDBaseEndpoint]
-    delete_endpoint: Type[NDBaseEndpoint]
-    query_one_endpoint: Type[NDBaseEndpoint]
-    query_all_endpoint: Type[NDBaseEndpoint]
+    create_endpoint: Type[NDEndpointBaseModel]
+    update_endpoint: Type[NDEndpointBaseModel]
+    delete_endpoint: Type[NDEndpointBaseModel]
+    query_one_endpoint: Type[NDEndpointBaseModel]
+    query_all_endpoint: Type[NDEndpointBaseModel]
 
     # NOTE: Module Field is always required
     sender: NDModule
@@ -70,7 +70,7 @@ class NDBaseOrchestrator(BaseModel):
 
     def query_all(self, model_instance: Optional[NDBaseModel] = None, **kwargs) -> ResponseType:
         try:
-            result = self.sender.query_obj(self.query_all_endpoint.path)
+            result = self.sender.query_obj(self.query_all_endpoint().path)
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
