@@ -37,7 +37,8 @@ class ManageFabricOrchestrator(NDBaseOrchestrator):
         Custom query_all action to extract 'fabrics' from response.
         """
         try:
-            result = self.sender.query_obj(self.query_all_endpoint.base_path)
+            api_endpoint = self.query_all_endpoint()
+            result = self.sender.query_obj(api_endpoint.path)
             return result.get("fabrics", []) or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
