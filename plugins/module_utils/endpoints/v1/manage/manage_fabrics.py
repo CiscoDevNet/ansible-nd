@@ -36,9 +36,12 @@ __metaclass__ = type
 from typing import Literal, Optional, Final
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_paths_manage import BasePath
+
+# from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_paths_manage import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
+
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.endpoint_mixins import FabricNameMixin
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseEndpoint, NDBasePath
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict, Field
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
@@ -83,7 +86,8 @@ class _EpApiV1ManageFabricsBase(FabricNameMixin, BaseModel):
     """
 
     # TODO: Remove it
-    base_path: Final = BasePath.nd_manage_fabrics()
+    # base_path: Final = BasePath.nd_manage_fabrics()
+    base_path: Final = BasePath.path("fabrics")
 
     def set_identifiers(self, identifier: IdentifierKey = None):
         self.fabric_name = identifier
@@ -160,7 +164,8 @@ class EpApiV1ManageFabricsGet(_EpApiV1ManageFabricsBase):
         """
         if self.fabric_name is None:
             raise ValueError(f"{self.class_name}.path: fabric_name must be set before accessing path.")
-        base_path = BasePath.nd_manage_fabrics(self.fabric_name)
+        # base_path = BasePath.nd_manage_fabrics(self.fabric_name)
+        base_path = BasePath.path("fabrics", self.fabric_name)
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
@@ -297,7 +302,8 @@ class EpApiV1ManageFabricsListGet(_EpApiV1ManageFabricsBase):
 
         - None
         """
-        base_path = BasePath.nd_manage_fabrics()
+        # base_path = BasePath.nd_manage_fabrics()
+        base_path = BasePath.path("fabrics")
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
@@ -384,7 +390,8 @@ class EpApiV1ManageFabricsPost(BaseModel):
 
         - None
         """
-        base_path = BasePath.nd_manage_fabrics()
+        # base_path = BasePath.nd_manage_fabrics()
+        base_path = BasePath.path("fabrics")
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
@@ -467,7 +474,8 @@ class EpApiV1ManageFabricsPut(_EpApiV1ManageFabricsBase):
         """
         if self.fabric_name is None:
             raise ValueError(f"{self.class_name}.path: fabric_name must be set before accessing path.")
-        base_path = BasePath.nd_manage_fabrics(self.fabric_name)
+        # base_path = BasePath.nd_manage_fabrics(self.fabric_name)
+        base_path = BasePath.path("fabrics", self.fabric_name)
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
@@ -540,7 +548,8 @@ class EpApiV1ManageFabricsDelete(_EpApiV1ManageFabricsBase):
         """
         if self.fabric_name is None:
             raise ValueError(f"{self.class_name}.path: fabric_name must be set before accessing path.")
-        base_path = BasePath.nd_manage_fabrics(self.fabric_name)
+        # base_path = BasePath.nd_manage_fabrics(self.fabric_name)
+        base_path = BasePath.path("fabrics", self.fabric_name)
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
@@ -614,7 +623,8 @@ class EpApiV1ManageFabricsSummaryGet(_EpApiV1ManageFabricsBase):
         """
         if self.fabric_name is None:
             raise ValueError(f"{self.class_name}.path: fabric_name must be set before accessing path.")
-        base_path = BasePath.nd_manage_fabrics(self.fabric_name, "summary")
+        # base_path = BasePath.nd_manage_fabrics(self.fabric_name, "summary")
+        base_path = BasePath.path("fabrics", self.fabric_name, "summary")
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"

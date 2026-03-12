@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2025, Gaspard Micol (@gmicol) <gmicol@cisco.com>
+# Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -9,7 +9,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from typing import Type
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import ValidationError
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -27,7 +27,6 @@ class NDStateMachine:
         """
         Initialize the Network Resource Module.
         """
-        # TODO: Revisit Module initialization and configuration with rest_send
         self.module = module
         self.nd_module = NDModule(self.module)
 
@@ -37,21 +36,19 @@ class NDStateMachine:
         # Configuration
         self.model_orchestrator = model_orchestrator(sender=self.nd_module)
         self.model_class = self.model_orchestrator.model_class
-        # TODO: Revisit these class variables when udpating Module intialization and configuration (low priority)
         self.state = self.module.params["state"]
 
         # Initialize collections
-        self.nd_config_collection = NDConfigCollection[self.model_class]
         try:
             response_data = self.model_orchestrator.query_all()
             # State of configuration objects in ND before change execution
-            self.before = self.nd_config_collection.from_api_response(response_data=response_data, model_class=self.model_class)
+            self.before = NDConfigCollection.from_api_response(response_data=response_data, model_class=self.model_class)
             # State of current configuration objects in ND during change execution
             self.existing = self.before.copy()
             # Ongoing collection of configuration objects that were changed
-            self.sent = self.nd_config_collection(model_class=self.model_class)
+            self.sent = NDConfigCollection(model_class=self.model_class)
             # Collection of configuration objects given by user
-            self.proposed = self.nd_config_collection(model_class=self.model_class)
+            self.proposed = NDConfigCollection(model_class=self.model_class)
             for config in self.module.params.get("config", []):
                 try:
                     # Parse config into model
@@ -59,7 +56,6 @@ class NDStateMachine:
                     self.proposed.add(item)
                 except ValidationError as e:
                     raise NDStateMachineError(f"Invalid configuration. for config {config}: {str(e)}")
-                    return
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}")

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2025, Gaspard Micol (@gmicol) <gmicol@cisco.com>
+# Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -56,7 +56,6 @@ def issubset(subset: Any, superset: Any) -> bool:
     return True
 
 
-# TODO: Might not necessary with Pydantic validation and serialization built-in methods (see models/local_user)
 def remove_unwanted_keys(data: Dict, unwanted_keys: List[Union[str, List[str]]]) -> Dict:
     """Remove unwanted keys from dict (supports nested paths)."""
     data = deepcopy(data)

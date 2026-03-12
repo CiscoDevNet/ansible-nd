@@ -9,154 +9,221 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from abc import ABC
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
-from typing import List, Dict, Any, ClassVar, Tuple, Union, Literal, Optional
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
+from typing import List, Dict, Any, ClassVar, Set, Tuple, Union, Literal, Optional
+from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 
-# TODO: Revisit identifiers strategy (low priority)
-# NOTE: what about List of NestedModels? -> make it a separate Sub Model
 class NDBaseModel(BaseModel, ABC):
     """
     Base model for all Nexus Dashboard API objects.
 
-    Supports three identifier strategies:
-    - single: One unique required field (e.g., ["login_id"])
-    - composite: Multiple required fields as tuple (e.g., ["device", "interface"])
-    - hierarchical: Priority-ordered fields (e.g., ["uuid", "name"])
-    - singleton: no identifiers required (e.g., only a single instance can exist in Nexus Dasboard)
+    Class-level configuration attributes:
+        identifiers: List of field names used to uniquely identify this object.
+        identifier_strategy: How identifiers are interpreted.
+        exclude_from_diff: Fields excluded from diff comparisons.
+        unwanted_keys: Keys to strip from API responses before processing.
+        payload_nested_fields: Mapping of {payload_key: [field_names]} for fields
+            that should be grouped under a nested key in payload mode but remain
+            flat in config mode.
+        payload_exclude_fields: Fields to exclude from payload output
+            (e.g., because they are restructured into nested keys).
+        config_exclude_fields: Fields to exclude from config output
+            (e.g., computed payload-only structures).
     """
 
-    # TODO: revisit initial Model Configurations (low priority)
     model_config = ConfigDict(
         str_strip_whitespace=True,
         use_enum_values=True,
         validate_assignment=True,
         populate_by_name=True,
         arbitrary_types_allowed=True,
-        extra="allow",  # NOTE: enabled extra: allows to add extra Field infos for generating Ansible argument_spec and Module Docs
+        extra="ignore",
     )
 
-    # TODO: Revisit identifiers strategy (low priority)
+    # --- Identifier Configuration ---
+
     identifiers: ClassVar[Optional[List[str]]] = None
-    # TODO: Revisit no identifiers strategy naming (`singleton` -> `unique`, `unnamed`) (low priority)
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
 
-    # Optional: fields to exclude from diffs (e.g., passwords)
-    exclude_from_diff: ClassVar[List] = []
-    # TODO: To be removed in the future (see local_user model)
+    # --- Serialization Configuration ---
+
+    exclude_from_diff: ClassVar[Set[str]] = set()
     unwanted_keys: ClassVar[List] = []
 
-    # TODO: Revisit it with identifiers strategy (low priority)
+    # Declarative nested-field grouping for payload mode
+    # e.g., {"passwordPolicy": ["reuse_limitation", "time_interval_limitation"]}
+    # means: in payload mode, remove these fields from top level and nest them
+    # under "passwordPolicy" with their alias names.
+    payload_nested_fields: ClassVar[Dict[str, List[str]]] = {}
+
+    # Fields to explicitly exclude per mode
+    payload_exclude_fields: ClassVar[Set[str]] = set()
+    config_exclude_fields: ClassVar[Set[str]] = set()
+
+    # --- Subclass Validation ---
+
     def __init_subclass__(cls, **kwargs):
-        """
-        Enforce configuration for identifiers definition.
-        """
         super().__init_subclass__(**kwargs)
 
         # Skip enforcement for nested models
-        if cls.__name__ in ["NDNestedModel"] or any(base.__name__ == "NDNestedModel" for base in cls.__mro__):
+        if cls.__name__ == "NDNestedModel" or any(base.__name__ == "NDNestedModel" for base in cls.__mro__):
             return
 
         if not hasattr(cls, "identifiers") or cls.identifiers is None:
-            raise ValueError(
-                f"Class {cls.__name__} must define 'identifiers' and 'identifier_strategy'."
-                f"Example: `identifiers: ClassVar[Optional[List[str]]] = ['login_id']`"
-            )
+            raise ValueError(f"Class {cls.__name__} must define 'identifiers'. " f"Example: identifiers: ClassVar[Optional[List[str]]] = ['login_id']")
         if not hasattr(cls, "identifier_strategy") or cls.identifier_strategy is None:
-            raise ValueError(
-                f"Class {cls.__name__} must define 'identifiers' and 'identifier_strategy'."
-                f"Example: `identifier_strategy: ClassVar[Optional[Literal['single', 'composite', 'hierarchical', 'singleton']]] = 'single'`"
-            )
+            raise ValueError(f"Class {cls.__name__} must define 'identifier_strategy'. " f"Example: identifier_strategy: ClassVar[...] = 'single'")
+
+    # --- Core Serialization ---
+
+    def _build_payload_nested(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Apply payload_nested_fields: pull specified fields out of the top-level
+        dict and group them under their declared parent key.
+        """
+        if not self.payload_nested_fields:
+            return data
+
+        result = dict(data)
+
+        for nested_key, field_names in self.payload_nested_fields.items():
+            nested_dict = {}
+            for field_name in field_names:
+                # Resolve the alias for this field
+                field_info = self.__class__.model_fields.get(field_name)
+                if field_info is None:
+                    continue
+
+                alias = field_info.alias or field_name
+
+                # Pull value from the serialized data (which uses aliases in payload mode)
+                if alias in result:
+                    nested_dict[alias] = result.pop(alias)
+
+            if nested_dict:
+                result[nested_key] = nested_dict
+
+        return result
 
     def to_payload(self, **kwargs) -> Dict[str, Any]:
-        """
-        Convert model to API payload format.
-        """
-        return self.model_dump(by_alias=True, exclude_none=True, mode="json", **kwargs)
+        """Convert model to API payload format (aliased keys, nested structures)."""
+        data = self.model_dump(
+            by_alias=True,
+            exclude_none=True,
+            mode="json",
+            context={"mode": "payload"},
+            exclude=self.payload_exclude_fields or None,
+            **kwargs,
+        )
+        return self._build_payload_nested(data)
 
     def to_config(self, **kwargs) -> Dict[str, Any]:
-        """
-        Convert model to Ansible config format.
-        """
-        return self.model_dump(by_alias=False, exclude_none=True, **kwargs)
+        """Convert model to Ansible config format (Python field names, flat structure)."""
+        return self.model_dump(
+            by_alias=False,
+            exclude_none=True,
+            context={"mode": "config"},
+            exclude=self.config_exclude_fields or None,
+            **kwargs,
+        )
+
+    # --- Core Deserialization ---
 
     @classmethod
     def from_response(cls, response: Dict[str, Any], **kwargs) -> "NDBaseModel":
+        """Create model instance from API response dict."""
         return cls.model_validate(response, by_alias=True, **kwargs)
 
     @classmethod
     def from_config(cls, ansible_config: Dict[str, Any], **kwargs) -> "NDBaseModel":
+        """Create model instance from Ansible config dict."""
         return cls.model_validate(ansible_config, by_name=True, **kwargs)
 
-    # TODO: Revisit this function when revisiting identifier strategy (low priority)
-    def get_identifier_value(self, **kwargs) -> Union[str, int, Tuple[Any, ...]]:
-        """
-        Extract identifier value(s) from this instance:
-        - single identifier: Returns field value.
-        - composite identifiers: Returns tuple of all field values.
-        - hierarchical identifiers: Returns tuple of (field_name, value) for first non-None field.
-        """
-        if not self.identifiers and self.identifier_strategy != "singleton":
-            raise ValueError(f"{self.__class__.__name__} must have identifiers defined with its current identifier strategy: `{self.identifier_strategy}`")
+    # --- Identifier Access ---
 
-        if self.identifier_strategy == "single":
+    def get_identifier_value(self) -> Optional[Union[str, int, Tuple[Any, ...]]]:
+        """
+        Extract identifier value(s) based on the configured strategy.
+
+        Returns:
+            - single: The field value
+            - composite: Tuple of all field values
+            - hierarchical: Tuple of (field_name, value) for first non-None field
+            - singleton: None
+        """
+        strategy = self.identifier_strategy
+
+        if strategy == "singleton":
+            return None
+
+        if not self.identifiers:
+            raise ValueError(f"{self.__class__.__name__} has strategy '{strategy}' but no identifiers defined.")
+
+        if strategy == "single":
             value = getattr(self, self.identifiers[0], None)
             if value is None:
                 raise ValueError(f"Single identifier field '{self.identifiers[0]}' is None")
             return value
 
-        elif self.identifier_strategy == "composite":
+        elif strategy == "composite":
             values = []
             missing = []
-
             for field in self.identifiers:
                 value = getattr(self, field, None)
                 if value is None:
                     missing.append(field)
                 values.append(value)
-
-            # NOTE: might be redefined with Pydantic (low priority)
             if missing:
                 raise ValueError(f"Composite identifier fields {missing} are None. " f"All required: {self.identifiers}")
-
             return tuple(values)
 
-        elif self.identifier_strategy == "hierarchical":
+        elif strategy == "hierarchical":
             for field in self.identifiers:
                 value = getattr(self, field, None)
                 if value is not None:
                     return (field, value)
-
             raise ValueError(f"No non-None value in hierarchical fields {self.identifiers}")
 
-        # TODO: Revisit condition when there is no identifiers (low priority)
-        elif self.identifier_strategy == "singleton":
-            return None
-
         else:
-            raise ValueError(f"Unknown identifier strategy: {self.identifier_strategy}")
+            raise ValueError(f"Unknown identifier strategy: {strategy}")
+
+    # --- Diff & Merge ---
 
     def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
-        """
-        Export for diff comparison (excludes sensitive fields).
-        """
-        return self.model_dump(by_alias=True, exclude_none=True, exclude=set(self.exclude_from_diff), mode="json", **kwargs)
+        """Export for diff comparison, excluding sensitive fields."""
+        return self.model_dump(
+            by_alias=True,
+            exclude_none=True,
+            exclude=self.exclude_from_diff or None,
+            mode="json",
+            **kwargs,
+        )
 
-    # NOTE: initialize and return a deep copy of the instance?
-    def merge(self, other_model: "NDBaseModel", **kwargs) -> "NDBaseModel":
-        if not isinstance(other_model, type(self)):
-            return TypeError(
-                f"NDBaseModel.merge method requires models of the same type. self of type {type(self)} and other_model of type {type(other_model)}"
-            )
+    def get_diff(self, other: "NDBaseModel") -> bool:
+        """Diff comparison."""
+        self_data = self.to_diff_dict()
+        other_data = other.to_diff_dict()
+        return issubset(other_data, self_data)
 
-        for field, value in other_model:
+    def merge(self, other: "NDBaseModel") -> "NDBaseModel":
+        """
+        Merge another model's non-None values into this instance.
+        Recursively merges nested NDBaseModel fields.
+
+        Returns self for chaining.
+        """
+        if not isinstance(other, type(self)):
+            raise TypeError(f"Cannot merge {type(other).__name__} into {type(self).__name__}. " f"Both must be the same type.")
+
+        for field_name, value in other:
             if value is None:
                 continue
 
-            current_value = getattr(self, field)
-            if isinstance(current_value, NDBaseModel) and isinstance(value, NDBaseModel):
-                setattr(self, field, current_value.merge(value))
-
+            current = getattr(self, field_name)
+            if isinstance(current, NDBaseModel) and isinstance(value, NDBaseModel):
+                current.merge(value)
             else:
-                setattr(self, field, value)
+                setattr(self, field_name, value)
+
         return self

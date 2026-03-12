@@ -12,9 +12,9 @@ from typing import Type
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.manage_fabric_ibgp import FabricModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseEndpoint
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage_fabrics import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
     EpApiV1ManageFabricsGet,
     EpApiV1ManageFabricsListGet,
     EpApiV1ManageFabricsPost,
@@ -26,11 +26,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage_fabri
 class ManageFabricOrchestrator(NDBaseOrchestrator):
     model_class: Type[NDBaseModel] = FabricModel
 
-    create_endpoint: Type[NDBaseEndpoint] = EpApiV1ManageFabricsPost
-    update_endpoint: Type[NDBaseEndpoint] = EpApiV1ManageFabricsPut
-    delete_endpoint: Type[NDBaseEndpoint] = EpApiV1ManageFabricsDelete
-    query_one_endpoint: Type[NDBaseEndpoint] = EpApiV1ManageFabricsGet
-    query_all_endpoint: Type[NDBaseEndpoint] = EpApiV1ManageFabricsListGet
+    create_endpoint: Type[NDEndpointBaseModel] = EpApiV1ManageFabricsPost
+    update_endpoint: Type[NDEndpointBaseModel] = EpApiV1ManageFabricsPut
+    delete_endpoint: Type[NDEndpointBaseModel] = EpApiV1ManageFabricsDelete
+    query_one_endpoint: Type[NDEndpointBaseModel] = EpApiV1ManageFabricsGet
+    query_all_endpoint: Type[NDEndpointBaseModel] = EpApiV1ManageFabricsListGet
 
     def query_all(self) -> ResponseType:
         """

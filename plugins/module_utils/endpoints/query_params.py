@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
@@ -13,28 +11,29 @@ filtering with type safety via Pydantic.
 
 from __future__ import absolute_import, annotations, division, print_function
 
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
 
-from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Optional, Union
+from typing import Optional, Protocol
 from urllib.parse import quote
 
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, Field, field_validator
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    BaseModel,
+    Field,
+    field_validator,
+)
 
 
-class QueryParams(ABC):
+class QueryParams(Protocol):
     """
     # Summary
 
-    Abstract Base Class for Query Parameters
+    Protocol for Query Parameters
 
     ## Description
 
-    Base class for all query parameter types. Subclasses implement
-    `to_query_string()` to convert their parameters to URL query string format.
+    Structural type for all query parameter types. Any class implementing `to_query_string()` and `is_empty()` satisfies this protocol without explicit
+    inheritance.
 
     ## Design
 
@@ -45,7 +44,6 @@ class QueryParams(ABC):
     - Future parameter types can be added without changing existing code
     """
 
-    @abstractmethod
     def to_query_string(self) -> str:
         """
         # Summary
@@ -63,6 +61,8 @@ class QueryParams(ABC):
         "forceShowRun=true&ticketId=12345"
         ```
         """
+        # pylint: disable=unnecessary-ellipsis
+        ...
 
     def is_empty(self) -> bool:
         """
@@ -75,7 +75,8 @@ class QueryParams(ABC):
         - True if no parameters are set
         - False if at least one parameter is set
         """
-        return len(self.to_query_string()) == 0
+        # pylint: disable=unnecessary-ellipsis
+        ...
 
 
 class EndpointQueryParams(BaseModel):
@@ -189,7 +190,7 @@ class LuceneQueryParams(BaseModel):
 
     @field_validator("sort")
     @classmethod
-    def validate_sort(cls, value):
+    def _validate_sort(cls, value):
         """Validate sort format: field:direction."""
         if value is not None and ":" in value:
             parts = value.split(":")
@@ -217,7 +218,7 @@ class LuceneQueryParams(BaseModel):
 
     def is_empty(self) -> bool:
         """Check if any filter parameters are set."""
-        return all(v is None for v in self.model_dump().values())
+        return not self.model_dump(exclude_none=True)
 
 
 class CompositeQueryParams:
@@ -263,9 +264,9 @@ class CompositeQueryParams:
     """
 
     def __init__(self) -> None:
-        self._param_groups: list[Union[EndpointQueryParams, LuceneQueryParams]] = []
+        self._param_groups: list[QueryParams] = []
 
-    def add(self, params: Union[EndpointQueryParams, LuceneQueryParams]) -> "CompositeQueryParams":
+    def add(self, params: QueryParams) -> "CompositeQueryParams":
         """
         # Summary
 
@@ -273,7 +274,7 @@ class CompositeQueryParams:
 
         ## Parameters
 
-        - params: EndpointQueryParams or LuceneQueryParams instance
+        - params: Any object satisfying the `QueryParams` protocol
 
         ## Returns
 

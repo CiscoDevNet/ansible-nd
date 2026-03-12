@@ -8,11 +8,11 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
 from typing import ClassVar, Type, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseEndpoint
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
@@ -27,18 +27,16 @@ class NDBaseOrchestrator(BaseModel):
     model_class: ClassVar[Type[NDBaseModel]] = Type[NDBaseModel]
 
     # NOTE: if not defined by subclasses, return an error as they are required
-    create_endpoint: Type[NDBaseEndpoint]
-    update_endpoint: Type[NDBaseEndpoint]
-    delete_endpoint: Type[NDBaseEndpoint]
-    query_one_endpoint: Type[NDBaseEndpoint]
-    query_all_endpoint: Type[NDBaseEndpoint]
+    create_endpoint: Type[NDEndpointBaseModel]
+    update_endpoint: Type[NDEndpointBaseModel]
+    delete_endpoint: Type[NDEndpointBaseModel]
+    query_one_endpoint: Type[NDEndpointBaseModel]
+    query_all_endpoint: Type[NDEndpointBaseModel]
 
     # NOTE: Module Field is always required
-    # TODO: Replace it with future sender (low priority)
     sender: NDModule
 
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
-    # TODO: Explore new ways to make them even more general -> e.g., create a general API operation function (low priority)
     def create(self, model_instance: NDBaseModel, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.create_endpoint()
@@ -72,7 +70,8 @@ class NDBaseOrchestrator(BaseModel):
 
     def query_all(self, model_instance: Optional[NDBaseModel] = None, **kwargs) -> ResponseType:
         try:
-            result = self.sender.query_obj(self.query_all_endpoint.path)
+            api_endpoint = self.query_all_endpoint()
+            result = self.sender.query_obj(api_endpoint.path)
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e

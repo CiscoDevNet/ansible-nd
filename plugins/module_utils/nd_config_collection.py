@@ -8,36 +8,32 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from typing import TypeVar, Generic, Optional, List, Dict, Any, Literal
+from typing import Optional, List, Dict, Any, Literal
 from copy import deepcopy
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
-# Type aliases
-ModelType = TypeVar("ModelType", bound=NDBaseModel)
 
-
-class NDConfigCollection(Generic[ModelType]):
+class NDConfigCollection:
     """
     Nexus Dashboard configuration collection for NDBaseModel instances.
     """
 
-    def __init__(self, model_class: ModelType, items: Optional[List[ModelType]] = None):
+    def __init__(self, model_class: NDBaseModel, items: Optional[List[NDBaseModel]] = None):
         """
         Initialize collection.
         """
-        self._model_class: ModelType = model_class
+        self._model_class: NDBaseModel = model_class
 
         # Dual storage
-        self._items: List[ModelType] = []
+        self._items: List[NDBaseModel] = []
         self._index: Dict[IdentifierKey, int] = {}
 
         if items:
             for item in items:
                 self.add(item)
 
-    def _extract_key(self, item: ModelType) -> IdentifierKey:
+    def _extract_key(self, item: NDBaseModel) -> IdentifierKey:
         """
         Extract identifier key from item.
         """
@@ -46,7 +42,6 @@ class NDConfigCollection(Generic[ModelType]):
         except Exception as e:
             raise ValueError(f"Failed to extract identifier: {e}") from e
 
-    # TODO: optimize it -> only needed for delete method (low priority)
     def _rebuild_index(self) -> None:
         """Rebuild index from scratch (O(n) operation)."""
         self._index.clear()
@@ -56,7 +51,7 @@ class NDConfigCollection(Generic[ModelType]):
 
     # Core Operations
 
-    def add(self, item: ModelType) -> IdentifierKey:
+    def add(self, item: NDBaseModel) -> IdentifierKey:
         """
         Add item to collection (O(1) operation).
         """
@@ -74,14 +69,14 @@ class NDConfigCollection(Generic[ModelType]):
 
         return key
 
-    def get(self, key: IdentifierKey) -> Optional[ModelType]:
+    def get(self, key: IdentifierKey) -> Optional[NDBaseModel]:
         """
         Get item by identifier key (O(1) operation).
         """
         index = self._index.get(key)
         return self._items[index] if index is not None else None
 
-    def replace(self, item: ModelType) -> bool:
+    def replace(self, item: NDBaseModel) -> bool:
         """
         Replace existing item with same identifier (O(1) operation).
         """
@@ -97,7 +92,7 @@ class NDConfigCollection(Generic[ModelType]):
         self._items[index] = item
         return True
 
-    def merge(self, item: ModelType) -> ModelType:
+    def merge(self, item: NDBaseModel) -> NDBaseModel:
         """
         Merge item with existing, or add if not present.
         """
@@ -129,7 +124,7 @@ class NDConfigCollection(Generic[ModelType]):
     # Diff Operations
 
     # NOTE: Maybe add a similar one in the NDBaseModel (-> but is it necessary?)
-    def get_diff_config(self, new_item: ModelType) -> Literal["new", "no_diff", "changed"]:
+    def get_diff_config(self, new_item: NDBaseModel) -> Literal["new", "no_diff", "changed"]:
         """
         Compare single item against collection.
         """
@@ -143,14 +138,11 @@ class NDConfigCollection(Generic[ModelType]):
         if existing is None:
             return "new"
 
-        # TODO: make a diff class level method for NDBaseModel (high priority)
-        existing_data = existing.to_diff_dict()
-        new_data = new_item.to_diff_dict()
-        is_subset = issubset(new_data, existing_data)
+        is_subset = existing.get_diff(new_item)
 
         return "no_diff" if is_subset else "changed"
 
-    def get_diff_collection(self, other: "NDConfigCollection[ModelType]") -> bool:
+    def get_diff_collection(self, other: "NDConfigCollection") -> bool:
         """
         Check if two collections differ.
         """
@@ -170,7 +162,7 @@ class NDConfigCollection(Generic[ModelType]):
 
         return False
 
-    def get_diff_identifiers(self, other: "NDConfigCollection[ModelType]") -> List[IdentifierKey]:
+    def get_diff_identifiers(self, other: "NDConfigCollection") -> List[IdentifierKey]:
         """
         Get identifiers in self but not in other.
         """
@@ -192,7 +184,7 @@ class NDConfigCollection(Generic[ModelType]):
         """Get all identifier keys."""
         return list(self._index.keys())
 
-    def copy(self) -> "NDConfigCollection[ModelType]":
+    def copy(self) -> "NDConfigCollection":
         """Create deep copy of collection."""
         return NDConfigCollection(model_class=self._model_class, items=deepcopy(self._items))
 
@@ -211,7 +203,7 @@ class NDConfigCollection(Generic[ModelType]):
         return [item.to_payload(**kwargs) for item in self._items]
 
     @classmethod
-    def from_ansible_config(cls, data: List[Dict], model_class: type[ModelType], **kwargs) -> "NDConfigCollection[ModelType]":
+    def from_ansible_config(cls, data: List[Dict], model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
         """
         Create collection from Ansible config.
         """
@@ -219,7 +211,7 @@ class NDConfigCollection(Generic[ModelType]):
         return cls(model_class=model_class, items=items)
 
     @classmethod
-    def from_api_response(cls, response_data: List[Dict[str, Any]], model_class: type[ModelType], **kwargs) -> "NDConfigCollection[ModelType]":
+    def from_api_response(cls, response_data: List[Dict[str, Any]], model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
         """
         Create collection from API response.
         """

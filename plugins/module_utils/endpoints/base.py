@@ -1,178 +1,140 @@
-# -*- coding: utf-8 -*-
-
-# Copyright: (c) 2026, Allen Robel (@allenrobel) <arobel@cisco.com>
+# Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 # Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+"""
+Base endpoint model for all ND API endpoints.
 
-from __future__ import absolute_import, division, print_function
+Provides ``NDEndpointBaseModel``, the required base class for every
+concrete endpoint definition.  It centralizes ``model_config``,
+version metadata, and enforces that subclasses define ``path``,
+``verb``, and ``class_name``.
+"""
 
-__metaclass__ = type
+from __future__ import absolute_import, annotations, division, print_function
+
 
 from abc import ABC, abstractmethod
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
-from typing import Final
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Literal
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    BaseModel,
+    ConfigDict,
+    Field,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
-# NOTE: This is a very minimalist endpoint package -> needs to be enhanced
-class NDBaseEndpoint(BaseModel, ABC):
-    model_config = ConfigDict(validate_assignment=True)
-
-    # TODO: to remove
-    base_path: str
-
-    @property
-    @abstractmethod
-    def path(self) -> str:
-        pass
-
-    @property
-    @abstractmethod
-    def verb(self) -> str:
-        pass
-
-    # TODO: Maybe to be modifed to be more Pydantic (low priority)
-    # TODO: Maybe change function's name (low priority)
-    # NOTE: function to set endpoints attribute fields from identifiers -> acts as the bridge between Models and Endpoints for API Request Orchestration
-    @abstractmethod
-    def set_identifiers(self, identifier: IdentifierKey = None):
-        pass
-
-
-class NDBasePath:
+class NDEndpointBaseModel(BaseModel, ABC):
     """
     # Summary
 
-    Centralized API Base Paths
+    Abstract base model for all ND API endpoint definitions.
 
     ## Description
 
-    Provides centralized base path definitions for all ND API endpoints.
-    This allows API path changes to be managed in a single location.
+    Centralizes common configuration and version metadata that every endpoint shares. Subclasses **must** define `path`, `verb`, and `class_name`.
+
+    ## Fields (inherited by all endpoints)
+
+    - `api_version` — API version string (default `"v1"`)
+    - `min_controller_version` — minimum ND controller version (default `"3.0.0"`)
+
+    ## Abstract members (must be defined by subclasses)
+
+    - `path` — `@property` returning the endpoint URL path
+    - `verb` — `@property` returning the `HttpVerbEnum` for this endpoint
+    - `class_name` — Pydantic field (typically a `Literal` type) identifying the concrete class
 
     ## Usage
 
     ```python
-    # Get a complete base path
-    path = BasePath.control_fabrics("MyFabric", "config-deploy")
-    # Returns: /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/fabrics/MyFabric/config-deploy
+    class EpInfraLoginPost(NDEndpointBaseModel):
+        class_name: Literal["EpInfraLoginPost"] = Field(
+            default="EpInfraLoginPost",
+            description="Class name for backward compatibility",
+        )
 
-    # Build custom paths
-    path = BasePath.v1("custom", "endpoint")
-    # Returns: /appcenter/cisco/ndfc/api/v1/custom/endpoint
+        @property
+        def path(self) -> str:
+            return BasePath.path("login")
+
+        @property
+        def verb(self) -> HttpVerbEnum:
+            return HttpVerbEnum.POST
     ```
-
-    ## Design Notes
-
-    - All base paths are defined as class constants for easy modification
-    - Helper methods compose paths from base constants
-    - Use these methods in Pydantic endpoint models to ensure consistency
-    - If NDFC changes base API paths, only this class needs updating
     """
 
-    # Root API paths
-    NDFC_API: Final = "/appcenter/cisco/ndfc/api"
-    ND_INFRA_API: Final = "/api/v1/infra"
-    ONEMANAGE: Final = "/onemanage"
-    LOGIN: Final = "/login"
+    model_config = ConfigDict(validate_assignment=True)
 
-    @classmethod
-    def api(cls, *segments: str) -> str:
+    def __init_subclass__(cls, **kwargs: object) -> None:
         """
         # Summary
 
-        Build path from NDFC API root.
+        Enforce that concrete subclasses define a `class_name` field.
 
-        ## Parameters
+        ## Description
 
-        - segments: Path segments to append
+        Fires at class definition time. Skips abstract subclasses (those with remaining abstract methods) and only checks concrete endpoint classes.
 
-        ## Returns
+        ## Raises
 
-        - Complete path string
+        ### TypeError
 
-        ## Example
-
-        ```python
-        path = BasePath.api("custom", "endpoint")
-        # Returns: /appcenter/cisco/ndfc/api/custom/endpoint
-        ```
+        - If a concrete subclass does not define a `class_name` field in its annotations
         """
-        if not segments:
-            return cls.NDFC_API
-        return f"{cls.NDFC_API}/{'/'.join(segments)}"
+        super().__init_subclass__(**kwargs)
+        # Compute abstract methods manually because __abstractmethods__
+        # is not yet set on cls when __init_subclass__ fires (ABCMeta
+        # sets it after type.__new__ returns).
+        abstracts = {name for name, value in vars(cls).items() if getattr(value, "__isabstractmethod__", False)}
+        for base in cls.__bases__:
+            for name in getattr(base, "__abstractmethods__", set()):
+                if getattr(getattr(cls, name, None), "__isabstractmethod__", False):
+                    abstracts.add(name)
+        if abstracts:
+            return
+        if "class_name" not in getattr(cls, "__annotations__", {}):
+            raise TypeError(
+                f"{cls.__name__} must define a 'class_name' field. "
+                f'Example: class_name: Literal["{cls.__name__}"] = '
+                f'Field(default="{cls.__name__}", frozen=True, description="...")'
+            )
 
-    @classmethod
-    def v1(cls, *segments: str) -> str:
-        """
-        # Summary
+    # Version metadata — shared by all endpoints
+    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
+    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
-        Build v1 API path.
-
-        ## Parameters
-
-        - segments: Path segments to append after v1
-
-        ## Returns
-
-        - Complete v1 API path
-
-        ## Example
-
-        ```python
-        path = BasePath.v1("lan-fabric", "rest")
-        # Returns: /appcenter/cisco/ndfc/api/v1/lan-fabric/rest
-        ```
-        """
-        return cls.api("v1", *segments)
-
-    @classmethod
-    def nd_infra(cls, *segments: str) -> str:
+    @property
+    @abstractmethod
+    def path(self) -> str:
         """
         # Summary
 
-        Build ND infra API path.
+        Return the endpoint URL path.
 
-        ## Parameters
+        ## Raises
 
-        - segments: Path segments to append after /api/v1/infra
-
-        ## Returns
-
-        - Complete ND infra API path
-
-        ## Example
-
-        ```python
-        path = BasePath.nd_infra("aaa", "localUsers")
-        # Returns: /api/v1/infra/aaa/localUsers
-        ```
+        None
         """
-        if not segments:
-            return cls.ND_INFRA_API
-        return f"{cls.ND_INFRA_API}/{'/'.join(segments)}"
 
-    @classmethod
-    def nd_infra_aaa(cls, *segments: str) -> str:
+    @property
+    @abstractmethod
+    def verb(self) -> HttpVerbEnum:
         """
         # Summary
 
-        Build ND infra AAA API path.
+        Return the HTTP verb for this endpoint.
 
-        ## Parameters
+        ## Raises
 
-        - segments: Path segments to append after aaa (e.g., "localUsers")
-
-        ## Returns
-
-        - Complete ND infra AAA path
-
-        ## Example
-
-        ```python
-        path = BasePath.nd_infra_aaa("localUsers")
-        # Returns: /api/v1/infra/aaa/localUsers
-        ```
+        None
         """
-        return cls.nd_infra("aaa", *segments)
+
+    # NOTE: function to set endpoints attribute fields from identifiers -> acts as the bridge between Models and Endpoints for API Request Orchestration
+    def set_identifiers(self, identifier: IdentifierKey = None):
+        pass

@@ -12,31 +12,32 @@ from typing import Type
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.local_user import LocalUserModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDBaseEndpoint
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra_aaa_local_users import (
-    V1InfraAaaLocalUsersPost,
-    V1InfraAaaLocalUsersPut,
-    V1InfraAaaLocalUsersDelete,
-    V1InfraAaaLocalUsersGet,
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.aaa_local_users import (
+    EpInfraAaaLocalUsersPost,
+    EpInfraAaaLocalUsersPut,
+    EpInfraAaaLocalUsersDelete,
+    EpInfraAaaLocalUsersGet,
 )
 
 
 class LocalUserOrchestrator(NDBaseOrchestrator):
     model_class: Type[NDBaseModel] = LocalUserModel
 
-    create_endpoint: Type[NDBaseEndpoint] = V1InfraAaaLocalUsersPost
-    update_endpoint: Type[NDBaseEndpoint] = V1InfraAaaLocalUsersPut
-    delete_endpoint: Type[NDBaseEndpoint] = V1InfraAaaLocalUsersDelete
-    query_one_endpoint: Type[NDBaseEndpoint] = V1InfraAaaLocalUsersGet
-    query_all_endpoint: Type[NDBaseEndpoint] = V1InfraAaaLocalUsersGet
+    create_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersPost
+    update_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersPut
+    delete_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersDelete
+    query_one_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersGet
+    query_all_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersGet
 
     def query_all(self) -> ResponseType:
         """
         Custom query_all action to extract 'localusers' from response.
         """
         try:
-            result = self.sender.query_obj(self.query_all_endpoint.base_path)
+            api_endpoint = self.query_all_endpoint()
+            result = self.sender.query_obj(api_endpoint.path)
             return result.get("localusers", []) or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e

@@ -14,7 +14,12 @@ Enum definitions for Nexus Dashboard Ansible modules.
 - OperationType: Enum for operation types used by Results to determine if changes have occurred.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+# isort: off
+# fmt: off
+from __future__ import (absolute_import, division, print_function)
+from __future__ import annotations
+# fmt: on
+# isort: on
 
 # pylint: disable=invalid-name
 __metaclass__ = type
