@@ -2639,7 +2639,7 @@ def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
             "DATA": {},
         }
         results.result_current = {"success": True, "changed": True}
-        results.register_task_result()
+        results.register_api_call()
 
     except NDModuleError as error:
         if _is_non_fatal_config_save_error(error):
@@ -2654,7 +2654,7 @@ def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
                 "DATA": {},
             }
             results.result_current = {"success": True, "changed": False}
-            results.register_task_result()
+            results.register_api_call()
         else:
             # Unknown config-save failures are fatal.
             results.response_current = {
@@ -2665,7 +2665,7 @@ def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
                 "DATA": {},
             }
             results.result_current = {"success": False, "changed": False}
-            results.register_task_result()
+            results.register_api_call()
             results.build_final_result()
             final_result = dict(results.final_result)
             final_msg = final_result.pop("msg", f"Config save failed: {error.msg}")
@@ -2685,7 +2685,7 @@ def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
             "DATA": {},
         }
         results.result_current = {"success": True, "changed": True}
-        results.register_task_result()
+        results.register_api_call()
 
     except NDModuleError as error:
         results.response_current = {
@@ -2696,7 +2696,7 @@ def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
             "DATA": {},
         }
         results.result_current = {"success": False, "changed": False}
-        results.register_task_result()
+        results.register_api_call()
 
         # Build final result and fail
         results.build_final_result()
