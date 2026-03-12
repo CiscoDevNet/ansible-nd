@@ -192,6 +192,20 @@ else:
 
             return decorator
 
+        # Fallback: FieldSerializationInfo placeholder class that does nothing
+        class FieldSerializationInfo:
+            """Pydantic FieldSerializationInfo fallback when pydantic is not available."""
+
+            def __init__(self, **kwargs):
+                pass
+
+        # Fallback: SerializationInfo placeholder class that does nothing
+        class SerializationInfo:
+            """Pydantic SerializationInfo fallback when pydantic is not available."""
+
+            def __init__(self, **kwargs):
+                pass
+
     else:
         HAS_PYDANTIC = True  # pylint: disable=invalid-name
         PYDANTIC_IMPORT_ERROR = None  # pylint: disable=invalid-name
