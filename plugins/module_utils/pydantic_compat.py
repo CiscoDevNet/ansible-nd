@@ -157,6 +157,10 @@ else:
         # Fallback: SecretStr
         SecretStr = str
 
+        # Fallback: IPvAnyAddress and IPvAnyNetwork
+        IPvAnyAddress = str
+        IPvAnyNetwork = str
+
         # Fallback: ValidationError
         class ValidationError(Exception):
             """
