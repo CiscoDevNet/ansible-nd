@@ -831,7 +831,7 @@ class Results:
         self._current.check_mode = value
 
     @property
-    def diff(self) -> list[dict[str, Any]]:
+    def diffs(self) -> list[dict[str, Any]]:
         """
         # Summary
 
@@ -954,7 +954,7 @@ class Results:
         self._current.response = value
 
     @property
-    def response(self) -> list[dict[str, Any]]:
+    def responses(self) -> list[dict[str, Any]]:
         """
         # Summary
 
@@ -980,7 +980,7 @@ class Results:
 
         .. deprecated::
 
-            `response_data` is deprecated and may be removed in a future release. Use the `response` property instead.
+            `response_data` is deprecated and may be removed in a future release. Use the `responses` property instead.
 
         ## Raises
 
@@ -990,10 +990,10 @@ class Results:
 
         `add_response_data()` method to add to the response_data list.
         """
-        return self.response
+        return self.responses
 
     @property
-    def result(self) -> list[dict[str, Any]]:
+    def results(self) -> list[dict[str, Any]]:
         """
         # Summary
 

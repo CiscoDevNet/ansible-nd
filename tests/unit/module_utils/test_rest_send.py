@@ -662,8 +662,8 @@ def test_rest_send_00400():
     assert instance.result_current["found"] is True
 
     # Verify response and result lists
-    assert len(instance.response) == 1
-    assert len(instance.result) == 1
+    assert len(instance.responses) == 1
+    assert len(instance.results) == 1
 
 
 def test_rest_send_00410():
@@ -1109,8 +1109,8 @@ def test_rest_send_00700():
         instance.commit()
 
     assert instance.response_current["DATA"]["id"] == 1
-    assert len(instance.response) == 1
-    assert len(instance.result) == 1
+    assert len(instance.responses) == 1
+    assert len(instance.results) == 1
 
     # Second commit - GET
     with does_not_raise():
@@ -1119,8 +1119,8 @@ def test_rest_send_00700():
         instance.commit()
 
     assert instance.response_current["DATA"]["id"] == 2
-    assert len(instance.response) == 2
-    assert len(instance.result) == 2
+    assert len(instance.responses) == 2
+    assert len(instance.results) == 2
 
     # Third commit - POST
     with does_not_raise():
@@ -1131,8 +1131,8 @@ def test_rest_send_00700():
 
     assert instance.response_current["DATA"]["id"] == 3
     assert instance.response_current["DATA"]["status"] == "created"
-    assert len(instance.response) == 3
-    assert len(instance.result) == 3
+    assert len(instance.responses) == 3
+    assert len(instance.results) == 3
 
 
 # =============================================================================
@@ -1348,8 +1348,8 @@ def test_rest_send_00900():
     instance.commit()
 
     # Get response and result
-    response_copy = instance.response
-    result_copy = instance.result
+    response_copy = instance.responses
+    result_copy = instance.results
     response_current_copy = instance.response_current
     result_current_copy = instance.result_current
 
@@ -1443,3 +1443,109 @@ def test_rest_send_01000():
     match = r"Simulated sender error"
     with pytest.raises(ValueError, match=match):
         instance.commit()
+
+
+# =============================================================================
+# Test: RestSend.add_response()
+# =============================================================================
+
+
+def test_rest_send_add_response_success():
+    """
+    # Summary
+
+    Verify add_response() appends a valid dict to the response list.
+
+    ## Test
+
+    - add_response() with a valid dict appends to the response list
+
+    ## Classes and Methods
+
+    - RestSend.add_response
+    """
+    params = {"check_mode": False}
+    instance = RestSend(params)
+
+    with does_not_raise():
+        instance.add_response({"RETURN_CODE": 200})
+        instance.add_response({"RETURN_CODE": 404})
+
+    assert len(instance.responses) == 2
+    assert instance.responses[0] == {"RETURN_CODE": 200}
+    assert instance.responses[1] == {"RETURN_CODE": 404}
+
+
+def test_rest_send_add_response_type_error():
+    """
+    # Summary
+
+    Verify add_response() raises TypeError for non-dict value.
+
+    ## Test
+
+    - add_response() raises TypeError if value is not a dict
+
+    ## Classes and Methods
+
+    - RestSend.add_response
+    """
+    params = {"check_mode": False}
+    instance = RestSend(params)
+
+    match = r"RestSend\.add_response:.*value must be a dict"
+    with pytest.raises(TypeError, match=match):
+        instance.add_response("invalid")  # type: ignore[arg-type]
+
+
+# =============================================================================
+# Test: RestSend.add_result()
+# =============================================================================
+
+
+def test_rest_send_add_result_success():
+    """
+    # Summary
+
+    Verify add_result() appends a valid dict to the result list.
+
+    ## Test
+
+    - add_result() with a valid dict appends to the result list
+
+    ## Classes and Methods
+
+    - RestSend.add_result
+    """
+    params = {"check_mode": False}
+    instance = RestSend(params)
+
+    with does_not_raise():
+        instance.add_result({"changed": True})
+        instance.add_result({"changed": False})
+
+    assert len(instance.results) == 2
+    assert instance.results[0] == {"changed": True}
+    assert instance.results[1] == {"changed": False}
+
+
+def test_rest_send_add_result_type_error():
+    """
+    # Summary
+
+    Verify add_result() raises TypeError for non-dict value.
+
+    ## Test
+
+    - add_result() raises TypeError if value is not a dict
+
+    ## Classes and Methods
+
+    - RestSend.add_result
+    """
+    params = {"check_mode": False}
+    instance = RestSend(params)
+
+    match = r"RestSend\.add_result:.*value must be a dict"
+    with pytest.raises(TypeError, match=match):
+        instance.add_result("invalid")  # type: ignore[arg-type]

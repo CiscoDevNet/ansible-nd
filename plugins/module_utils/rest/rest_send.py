@@ -48,11 +48,11 @@ class RestSend:
             -   `check_mode` is not a `bool`
             -   `path` is not a `str`
             -   `payload` is not a `dict`
-            -   `response` is not a `dict`
+            -   `add_response()` value is not a `dict`
             -   `response_current` is not a `dict`
             -   `response_handler` is not an instance of
                 `ResponseHandler()`
-            -   `result` is not a `dict`
+            -   `add_result()` value is not a `dict`
             -   `result_current` is not a `dict`
             -   `send_interval` is not an `int`
             -   `sender` is not an instance of `SenderProtocol`
@@ -97,11 +97,11 @@ class RestSend:
         # Handle error
 
     # list of responses from the controller for this session
-    response = rest_send.response
+    responses = rest_send.responses
     # dict containing the current controller response
     response_current = rest_send.response_current
     # list of results from the controller for this session
-    result = rest_send.result
+    results = rest_send.results
     # dict containing the current controller result
     result_current = rest_send.result_current
     ```
@@ -257,8 +257,6 @@ class RestSend:
             -   ResponseHandler() raises `TypeError` or `ValueError`
             -   self.response_current raises `TypeError`
             -   self.result_current raises `TypeError`
-            -   self.response raises `TypeError`
-            -   self.result raises `TypeError`
 
 
         ## Properties read:
@@ -515,27 +513,30 @@ class RestSend:
         self._response_current = value
 
     @property
-    def response(self) -> list[dict]:
+    def responses(self) -> list[dict]:
         """
         # Summary
 
         The aggregated list of responses from the controller.
 
         `commit()` must be called first.
-
-        ## Raises
-
-        -   setter: `TypeError` if value is not a `dict`
-
         """
         return copy.deepcopy(self._response)
 
-    @response.setter
-    def response(self, value: dict):
-        method_name = "response"
+    def add_response(self, value: dict) -> None:
+        """
+        # Summary
+
+        Append a response dict to the response list.
+
+        ## Raises
+
+        -   `TypeError` if value is not a `dict`
+        """
+        method_name = "add_response"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
-            msg += f"{method_name} must be a dict. "
+            msg += "value must be a dict. "
             msg += f"Got type {type(value).__name__}, "
             msg += f"Value: {value}."
             raise TypeError(msg)
@@ -600,28 +601,30 @@ class RestSend:
         self._response_handler = value
 
     @property
-    def result(self) -> list[dict]:
+    def results(self) -> list[dict]:
         """
         # Summary
 
         The aggregated list of results from the controller.
 
         `commit()` must be called first.
-
-        ## Raises
-
-        -   setter: `TypeError` if:
-                -   value is not a `dict`.
-
         """
         return copy.deepcopy(self._result)
 
-    @result.setter
-    def result(self, value: dict):
-        method_name = "result"
+    def add_result(self, value: dict) -> None:
+        """
+        # Summary
+
+        Append a result dict to the result list.
+
+        ## Raises
+
+        -   `TypeError` if value is not a `dict`
+        """
+        method_name = "add_result"
         if not isinstance(value, dict):
             msg = f"{self.class_name}.{method_name}: "
-            msg += f"{method_name} must be a dict. "
+            msg += "value must be a dict. "
             msg += f"Got type {type(value).__name__}, "
             msg += f"Value: {value}."
             raise TypeError(msg)
