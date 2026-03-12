@@ -24,7 +24,7 @@ Rather than importing directly from pydantic, import from this module:
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel
 ```
 
-This ensures that Ansible sanity tests will not fail due to missing Pydantic dependencies.
+This ensure that Ansible sanity tests will not fail due to missing Pydantic dependencies.
 """
 
 # isort: off
