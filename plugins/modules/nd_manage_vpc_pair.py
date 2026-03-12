@@ -286,18 +286,16 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage_vpc_p
 # Static imports so Ansible's AnsiballZ packager includes these files in the
 # module zip. Keep them optional when framework files are intentionally absent.
 try:
-    from ansible_collections.cisco.nd.plugins.module_utils import nd_config_collection as _nd_config_collection  # noqa: F401
-    from ansible_collections.cisco.nd.plugins.module_utils import utils as _nd_utils  # noqa: F401
+    from ansible_collections.cisco.nd.plugins.module_utils import nd_config_collection as _nd_config_collection
+    from ansible_collections.cisco.nd.plugins.module_utils import utils as _nd_utils
 except Exception:  # pragma: no cover - compatibility for stripped framework trees
     _nd_config_collection = None  # noqa: F841
     _nd_utils = None  # noqa: F841
 
 try:
-    # pre-PR172 layout
     from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDNestedModel
 except Exception:
     try:
-        # PR172 layout
         from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
     except Exception:
         from pydantic import BaseModel as NDNestedModel
@@ -1096,6 +1094,95 @@ def _extract_vpc_pairs_from_list_response(vpc_pairs_response: Any) -> List[Dict[
     return extracted_pairs
 
 
+def _enrich_pairs_from_direct_vpc(
+    nd_v2,
+    fabric_name: str,
+    pairs: List[Dict[str, Any]],
+    timeout: int = 5,
+) -> List[Dict[str, Any]]:
+    """
+    Enrich pair fields from per-switch /vpcPair endpoint when available.
+
+    The /vpcPairs list response may omit fields like useVirtualPeerLink.
+    This helper preserves lightweight list discovery while improving field
+    accuracy for gathered output.
+    """
+    if not pairs:
+        return []
+
+    enriched_pairs: List[Dict[str, Any]] = []
+    for pair in pairs:
+        enriched = dict(pair)
+        switch_id = enriched.get(VpcFieldNames.SWITCH_ID)
+        if not switch_id:
+            enriched_pairs.append(enriched)
+            continue
+
+        direct_vpc = None
+        path = VpcPairEndpoints.switch_vpc_pair(fabric_name, switch_id)
+        rest_send = nd_v2._get_rest_send()
+        rest_send.save_settings()
+        rest_send.timeout = timeout
+        try:
+            direct_vpc = nd_v2.request(path, HttpVerbEnum.GET)
+        except (NDModuleError, Exception):
+            direct_vpc = None
+        finally:
+            rest_send.restore_settings()
+
+        if isinstance(direct_vpc, dict):
+            peer_switch_id = direct_vpc.get(VpcFieldNames.PEER_SWITCH_ID)
+            if peer_switch_id:
+                enriched[VpcFieldNames.PEER_SWITCH_ID] = peer_switch_id
+
+            use_virtual_peer_link = _get_api_field_value(
+                direct_vpc,
+                "useVirtualPeerLink",
+                enriched.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK),
+            )
+            if use_virtual_peer_link is not None:
+                enriched[VpcFieldNames.USE_VIRTUAL_PEER_LINK] = use_virtual_peer_link
+
+        enriched_pairs.append(enriched)
+
+    return enriched_pairs
+
+
+def _filter_stale_vpc_pairs(
+    nd_v2,
+    fabric_name: str,
+    pairs: List[Dict[str, Any]],
+    module,
+) -> List[Dict[str, Any]]:
+    """
+    Remove stale pairs using overview membership checks.
+
+    `/vpcPairs` can briefly lag after unpair operations. We perform a lightweight
+    best-effort membership check and drop entries that are explicitly reported as
+    not part of a vPC pair.
+    """
+    if not pairs:
+        return []
+
+    pruned_pairs: List[Dict[str, Any]] = []
+    for pair in pairs:
+        switch_id = pair.get(VpcFieldNames.SWITCH_ID)
+        if not switch_id:
+            pruned_pairs.append(pair)
+            continue
+
+        membership = _is_switch_in_vpc_pair(nd_v2, fabric_name, switch_id, timeout=5)
+        if membership is False:
+            module.warn(
+                f"Excluding stale vPC pair entry for switch {switch_id} "
+                "because overview reports it is not in a vPC pair."
+            )
+            continue
+        pruned_pairs.append(pair)
+
+    return pruned_pairs
+
+
 def _get_pairing_support_details(
     nd_v2,
     fabric_name: str,
@@ -1770,6 +1857,18 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
             if list_query_succeeded:
                 if state == "gathered":
                     have = _filter_vpc_pairs_by_requested_config(have, config)
+                    have = _enrich_pairs_from_direct_vpc(
+                        nd_v2=nd_v2,
+                        fabric_name=fabric_name,
+                        pairs=have,
+                        timeout=5,
+                    )
+                have = _filter_stale_vpc_pairs(
+                    nd_v2=nd_v2,
+                    fabric_name=fabric_name,
+                    pairs=have,
+                    module=nrm.module,
+                )
                 return _set_lightweight_context(have)
 
             nrm.module.warn(

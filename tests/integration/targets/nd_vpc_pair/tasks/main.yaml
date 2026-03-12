@@ -6,23 +6,27 @@
 #   ansible-playbook -i hosts.yaml tasks/main.yaml -e testcase=nd_vpc_pair_merge  # run one
 #   ansible-playbook -i hosts.yaml tasks/main.yaml --tags merge    # run by tag
 
-- name: Discover nd_vpc_pair test cases
-  ansible.builtin.find:
-    paths: "{{ role_path }}/tests/nd"
-    patterns: "{{ testcase | default('nd_vpc_pair_*') }}.yaml"
-  connection: local
-  register: nd_vpc_pair_testcases
+- name: nd_vpc_pair integration tests
+  hosts: nd
+  gather_facts: false
+  tasks:
+    - name: Discover nd_vpc_pair test cases
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/../tests/nd"
+        patterns: "{{ testcase | default('nd_vpc_pair_*') }}.yaml"
+      connection: local
+      register: nd_vpc_pair_testcases
 
-- name: Build list of test items
-  ansible.builtin.set_fact:
-    test_items: "{{ nd_vpc_pair_testcases.files | map(attribute='path') | list }}"
+    - name: Build list of test items
+      ansible.builtin.set_fact:
+        test_items: "{{ nd_vpc_pair_testcases.files | map(attribute='path') | list }}"
 
-- name: Display discovered tests
-  ansible.builtin.debug:
-    msg: "Discovered {{ test_items | length }} test file(s): {{ test_items | map('basename') | list }}"
+    - name: Display discovered tests
+      ansible.builtin.debug:
+        msg: "Discovered {{ test_items | length }} test file(s): {{ test_items | map('basename') | list }}"
 
-- name: Run nd_vpc_pair test cases
-  ansible.builtin.include_tasks: "{{ test_case_to_run }}"
-  with_items: "{{ test_items }}"
-  loop_control:
-    loop_var: test_case_to_run
+    - name: Run nd_vpc_pair test cases
+      ansible.builtin.include_tasks: "{{ test_case_to_run }}"
+      with_items: "{{ test_items }}"
+      loop_control:
+        loop_var: test_case_to_run
