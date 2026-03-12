@@ -8,7 +8,7 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import BaseModel, ConfigDict
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
 from typing import ClassVar, Type, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
@@ -70,7 +70,8 @@ class NDBaseOrchestrator(BaseModel):
 
     def query_all(self, model_instance: Optional[NDBaseModel] = None, **kwargs) -> ResponseType:
         try:
-            result = self.sender.query_obj(self.query_all_endpoint().path)
+            api_endpoint = self.query_all_endpoint()
+            result = self.sender.query_obj(api_endpoint.path)
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
