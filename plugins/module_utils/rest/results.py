@@ -16,9 +16,6 @@ from __future__ import annotations
 # fmt: on
 # isort: on
 
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
 
 import copy
 import logging
