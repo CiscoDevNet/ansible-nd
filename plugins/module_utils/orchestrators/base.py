@@ -34,11 +34,9 @@ class NDBaseOrchestrator(BaseModel):
     query_all_endpoint: Type[NDBaseEndpoint]
 
     # NOTE: Module Field is always required
-    # TODO: Replace it with future sender (low priority)
     sender: NDModule
 
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
-    # TODO: Explore new ways to make them even more general -> e.g., create a general API operation function (low priority)
     def create(self, model_instance: NDBaseModel, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.create_endpoint()

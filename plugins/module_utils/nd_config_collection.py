@@ -42,7 +42,6 @@ class NDConfigCollection:
         except Exception as e:
             raise ValueError(f"Failed to extract identifier: {e}") from e
 
-    # TODO: optimize it -> only needed for delete method (low priority)
     def _rebuild_index(self) -> None:
         """Rebuild index from scratch (O(n) operation)."""
         self._index.clear()
