@@ -36,10 +36,7 @@ __metaclass__ = type
 from typing import Literal, Optional, Final
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-
-# from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base_paths_manage import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
-
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
@@ -77,7 +74,7 @@ class FabricsEndpointParams(EndpointQueryParams):
     )
 
 
-class _EpApiV1ManageFabricsBase(FabricNameMixin, BaseModel):
+class _EpManageFabricsBase(FabricNameMixin, BaseModel):
     """
     Base class for ND Manage Fabrics endpoints.
 
@@ -92,7 +89,7 @@ class _EpApiV1ManageFabricsBase(FabricNameMixin, BaseModel):
     def set_identifiers(self, identifier: IdentifierKey = None):
         self.fabric_name = identifier
 
-class EpApiV1ManageFabricsGet(_EpApiV1ManageFabricsBase):
+class EpManageFabricsGet(_EpManageFabricsBase):
     """
     # Summary
 
@@ -235,7 +232,7 @@ class FabricsListEndpointParams(EndpointQueryParams):
     )
 
 
-class EpApiV1ManageFabricsListGet(_EpApiV1ManageFabricsBase):
+class EpManageFabricsListGet(_EpManageFabricsBase):
     """
     # Summary
 
@@ -315,7 +312,7 @@ class EpApiV1ManageFabricsListGet(_EpApiV1ManageFabricsBase):
         return HttpVerbEnum.GET
 
 
-class EpApiV1ManageFabricsPost(BaseModel):
+class EpManageFabricsPost(BaseModel):
     """
     # Summary
 
@@ -403,7 +400,7 @@ class EpApiV1ManageFabricsPost(BaseModel):
         return HttpVerbEnum.POST
 
 
-class EpApiV1ManageFabricsPut(_EpApiV1ManageFabricsBase):
+class EpManageFabricsPut(_EpManageFabricsBase):
     """
     # Summary
 
@@ -487,7 +484,7 @@ class EpApiV1ManageFabricsPut(_EpApiV1ManageFabricsBase):
         return HttpVerbEnum.PUT
 
 
-class EpApiV1ManageFabricsDelete(_EpApiV1ManageFabricsBase):
+class EpManageFabricsDelete(_EpManageFabricsBase):
     """
     # Summary
 
@@ -561,7 +558,7 @@ class EpApiV1ManageFabricsDelete(_EpApiV1ManageFabricsBase):
         return HttpVerbEnum.DELETE
 
 
-class EpApiV1ManageFabricsSummaryGet(_EpApiV1ManageFabricsBase):
+class EpManageFabricsSummaryGet(_EpManageFabricsBase):
     """
     # Summary
 

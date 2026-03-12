@@ -15,26 +15,26 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.m
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
-    EpApiV1ManageFabricsGet,
-    EpApiV1ManageFabricsListGet,
-    EpApiV1ManageFabricsPost,
-    EpApiV1ManageFabricsPut,
-    EpApiV1ManageFabricsDelete,
+    EpManageFabricsGet,
+    EpManageFabricsListGet,
+    EpManageFabricsPost,
+    EpManageFabricsPut,
+    EpManageFabricsDelete,
 )
 
 
 class ManageFabricOrchestrator(NDBaseOrchestrator):
     model_class: Type[NDBaseModel] = FabricModel
 
-    create_endpoint: Type[NDEndpointBaseModel] = EpApiV1ManageFabricsPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpApiV1ManageFabricsPut
-    delete_endpoint: Type[NDEndpointBaseModel] = EpApiV1ManageFabricsDelete
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpApiV1ManageFabricsGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpApiV1ManageFabricsListGet
+    create_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsPost
+    update_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsPut
+    delete_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsDelete
+    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsGet
+    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsListGet
 
     def query_all(self) -> ResponseType:
         """
-        Custom query_all action to extract 'localusers' from response.
+        Custom query_all action to extract 'fabrics' from response.
         """
         try:
             result = self.sender.query_obj(self.query_all_endpoint.base_path)

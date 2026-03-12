@@ -15,9 +15,9 @@ DOCUMENTATION = r"""
 ---
 module: nd_manage_fabric_ibgp
 version_added: "1.4.0"
-short_description: Manage iBGP VXLAN fabrics on Cisco Nexus Dashboard Fabric Controller
+short_description: Manage iBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
-- Manage iBGP VXLAN fabrics on Cisco Nexus Dashboard Fabric Controller (NDFC).
+- Manage iBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
 - It supports creating, updating, replacing, and deleting iBGP VXLAN fabrics.
 author:
 - Mike Wiebe (@mwiebe)
@@ -1379,9 +1379,6 @@ def main():
         )
 
         # Manage state
-        # TODO: return module output class object:
-        # output = nd_state_machine.manage_state()
-        # module.exit_json(**output)
         nd_state_machine.manage_state()
 
         module.exit_json(**nd_state_machine.output.format())
