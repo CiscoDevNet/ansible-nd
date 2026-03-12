@@ -382,10 +382,6 @@ class SwitchDataModel(NDBaseModel):
         default=None,
         alias="switchRole"
     )
-    mode: Optional[str] = Field(
-        default=None,
-        description="Switch mode (Normal, Migration, etc.)"
-    )
     system_up_time: Optional[str] = Field(
         default=None,
         alias="systemUpTime",

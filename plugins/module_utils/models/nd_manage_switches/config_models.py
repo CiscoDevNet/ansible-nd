@@ -16,6 +16,7 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
+import socket
 from ipaddress import ip_address, ip_interface
 from pydantic import Field, ValidationInfo, computed_field, field_validator, model_validator
 from typing import Any, Dict, List, Optional, ClassVar, Literal, Union
@@ -526,24 +527,37 @@ class SwitchConfigModel(NDBaseModel):
     @field_validator('seed_ip', mode='before')
     @classmethod
     def validate_seed_ip(cls, v: str) -> str:
-        """Validate seed IP is valid IP address or DNS name."""
+        """Resolve seed_ip to an IP address.
+
+        Accepts IPv4, IPv6, or a DNS name / hostname.  When the input
+        is not a valid IP address a DNS lookup is performed and the
+        resolved IPv4 address is returned so that downstream code
+        always works with a clean IP.
+        """
         if not v or not v.strip():
             raise ValueError("seed_ip cannot be empty")
 
         v = v.strip()
 
-        # Try to validate as IP address first
+        # Fast path: already a valid IP address
         try:
             ip_address(v)
             return v
         except ValueError:
             pass
 
-        # If not an IP, assume it's a DNS name - basic validation
-        if not v.replace('-', '').replace('.', '').replace('_', '').isalnum():
-            raise ValueError(f"Invalid seed_ip: {v}. Must be a valid IP address or DNS name")
+        # Not an IP — attempt DNS resolution (IPv4 first, then IPv6)
+        for family in (socket.AF_INET, socket.AF_INET6):
+            try:
+                addr_info = socket.getaddrinfo(v, None, family)
+                if addr_info:
+                    return addr_info[0][4][0]
+            except socket.gaierror:
+                continue
 
-        return v
+        raise ValueError(
+            f"'{v}' is not a valid IP address and could not be resolved via DNS"
+        )
 
     @field_validator('poap', 'rma', mode='before')
     @classmethod

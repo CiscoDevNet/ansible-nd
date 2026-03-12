@@ -30,6 +30,7 @@ from .models.nd_manage_switches import (
     PlatformType,
     DiscoveryStatus,
     SystemMode,
+    ConfigSyncStatus,
     SwitchDiscoveryModel,
     SwitchDataModel,
     AddSwitchesRequestModel,
@@ -232,6 +233,7 @@ class SwitchDiffEngine:
         changes: Dict[str, list] = {
             "to_add": [],
             "to_update": [],
+            "role_change": [],
             "to_delete": [],
             "migration_mode": [],
             "idempotent": [],
@@ -257,12 +259,13 @@ class SwitchDiffEngine:
                 changes["to_add"].append(prop_sw)
                 continue
 
+            log.debug(f"Switch {ip} (id={sid}) found in existing with {match_key} match {existing_sw}")
             log.debug(
                 f"Switch {ip} matched existing by {match_key} "
                 f"(existing_id={existing_sw.switch_id})"
             )
 
-            if existing_sw.mode == "Migration":
+            if existing_sw.additional_data.system_mode == SystemMode.MIGRATION:
                 log.info(
                     f"Switch {ip} ({existing_sw.switch_id}) is in Migration mode"
                 )
@@ -284,16 +287,24 @@ class SwitchDiffEngine:
                     k for k in set(prop_dict) | set(existing_dict)
                     if prop_dict.get(k) != existing_dict.get(k)
                 }
-                log.info(
-                    f"Switch {ip} has differences — marking to_update. "
-                    f"Changed fields: {diff_keys}"
-                )
-                log.debug(
-                    f"Switch {ip} diff detail — "
-                    f"proposed: { {k: prop_dict.get(k) for k in diff_keys} }, "
-                    f"existing: { {k: existing_dict.get(k) for k in diff_keys} }"
-                )
-                changes["to_update"].append(prop_sw)
+                if diff_keys == {"switch_role"}:
+                    log.info(
+                        f"Switch {ip} has role-only difference — marking role_change. "
+                        f"proposed: {prop_dict.get('switch_role')}, "
+                        f"existing: {existing_dict.get('switch_role')}"
+                    )
+                    changes["role_change"].append(prop_sw)
+                else:
+                    log.info(
+                        f"Switch {ip} has differences — marking to_update. "
+                        f"Changed fields: {diff_keys}"
+                    )
+                    log.debug(
+                        f"Switch {ip} diff detail — "
+                        f"proposed: { {k: prop_dict.get(k) for k in diff_keys} }, "
+                        f"existing: { {k: existing_dict.get(k) for k in diff_keys} }"
+                    )
+                    changes["to_update"].append(prop_sw)
 
         # Switches in existing but not in proposed (for overridden state)
         proposed_ids = {sw.switch_id for sw in proposed}
@@ -309,6 +320,7 @@ class SwitchDiffEngine:
             f"Compute changes summary: "
             f"to_add={len(changes['to_add'])}, "
             f"to_update={len(changes['to_update'])}, "
+            f"role_change={len(changes['role_change'])}, "
             f"to_delete={len(changes['to_delete'])}, "
             f"migration_mode={len(changes['migration_mode'])}, "
             f"idempotent={len(changes['idempotent'])}"
@@ -2273,21 +2285,16 @@ class NDSwitchResourceModule():
             return
 
         config_by_ip = {sw.seed_ip: sw for sw in proposed_config}
+        existing_by_ip = {sw.fabric_management_ip: sw for sw in self.existing}
 
-        # Phase 1: Log idempotent switches
-        for sw in diff.get("idempotent", []):
-            self.log.info(
-                f"Switch {sw.fabric_management_ip} ({sw.switch_id}) "
-                f"is idempotent - no changes needed"
-            )
+        # Phase 1: Handle role-change switches
+        self._merged_handle_role_changes(diff, config_by_ip, existing_by_ip)
 
-        # Phase 2: Warn about to_update (merged state doesn't support updates)
-        if diff.get("to_update"):
-            ips = [sw.fabric_management_ip for sw in diff["to_update"]]
-            self.log.warning(
-                f"Switches require updates which is not supported in merged state. "
-                f"Use overridden state for updates. Affected switches: {ips}"
-            )
+        # Phase 2: Handle idempotent switches that may need config sync
+        self._merged_handle_idempotent(diff, existing_by_ip)
+
+        # Phase 3: Fail on to_update (merged state doesn't support updates)
+        self._merged_handle_to_update(diff)
 
         switches_to_add = diff.get("to_add", [])
         migration_switches = diff.get("migration_mode", [])
@@ -2317,7 +2324,7 @@ class NDSwitchResourceModule():
         # Collect (serial_number, SwitchConfigModel) pairs for post-processing
         switch_actions: List[Tuple[str, SwitchConfigModel]] = []
 
-        # Phase 3: Bulk add new switches to fabric
+        # Phase 4: Bulk add new switches to fabric
         if switches_to_add and discovered_data:
             add_configs = []
             for sw in switches_to_add:
@@ -2361,7 +2368,8 @@ class NDSwitchResourceModule():
                             switch_actions.append((sn, cfg))
                             self._log_operation("add", cfg.seed_ip)
 
-        # Phase 4: Collect migration switches for post-processing
+        # Phase 5: Collect migration switches for post-processing
+        # Migration mode switches get role updates during post-add processing.
         for mig_sw in migration_switches:
             cfg = config_by_ip.get(mig_sw.fabric_management_ip)
             if cfg and mig_sw.switch_id:
@@ -2396,6 +2404,140 @@ class NDSwitchResourceModule():
 
         self.log.debug("EXIT: _handle_merged_state() - completed")
 
+    # -----------------------------------------------------------------
+    # Merged-state sub-handlers (modular phases)
+    # -----------------------------------------------------------------
+
+    def _merged_handle_role_changes(
+        self,
+        diff: Dict[str, List[SwitchDataModel]],
+        config_by_ip: Dict[str, SwitchConfigModel],
+        existing_by_ip: Dict[str, SwitchDataModel],
+    ) -> None:
+        """Handle role-change switches in merged state.
+
+        Role changes are only allowed when configSyncStatus is notApplicable.
+        Any other status fails the module.
+
+        Args:
+            diff: Categorized switch diff output.
+            config_by_ip: Config lookup by seed IP.
+            existing_by_ip: Existing switch lookup by management IP.
+
+        Returns:
+            None.
+        """
+        role_change_switches = diff.get("role_change", [])
+        if not role_change_switches:
+            return
+
+        # Validate configSyncStatus for every role-change switch
+        for sw in role_change_switches:
+            existing_sw = existing_by_ip.get(sw.fabric_management_ip)
+            status = (
+                existing_sw.additional_data.config_sync_status
+                if existing_sw and existing_sw.additional_data
+                else None
+            )
+            if status != ConfigSyncStatus.NOT_APPLICABLE:
+                self.nd.module.fail_json(
+                    msg=(
+                        f"Role change not possible for switch "
+                        f"{sw.fabric_management_ip} ({sw.switch_id}). "
+                        f"configSyncStatus is "
+                        f"'{status.value if status else 'unknown'}', "
+                        f"expected '{ConfigSyncStatus.NOT_APPLICABLE.value}'."
+                    )
+                )
+
+        # Build (switch_id, SwitchConfigModel) pairs and apply role change
+        role_actions: List[Tuple[str, SwitchConfigModel]] = []
+        for sw in role_change_switches:
+            cfg = config_by_ip.get(sw.fabric_management_ip)
+            if cfg and sw.switch_id:
+                role_actions.append((sw.switch_id, cfg))
+
+        if role_actions:
+            self.log.info(
+                f"Performing role change for {len(role_actions)} switch(es)"
+            )
+            self.fabric_ops.bulk_update_roles(role_actions)
+            self.fabric_ops.finalize()
+
+    def _merged_handle_idempotent(
+        self,
+        diff: Dict[str, List[SwitchDataModel]],
+        existing_by_ip: Dict[str, SwitchDataModel],
+    ) -> None:
+        """Handle idempotent switches that may need config save and deploy.
+
+        If configSyncStatus is anything other than inSync, run config save
+        and deploy to bring the switch back in sync.
+
+        Args:
+            diff: Categorized switch diff output.
+            existing_by_ip: Existing switch lookup by management IP.
+
+        Returns:
+            None.
+        """
+        idempotent_switches = diff.get("idempotent", [])
+        if not idempotent_switches:
+            return
+
+        finalize_needed = False
+        for sw in idempotent_switches:
+            existing_sw = existing_by_ip.get(sw.fabric_management_ip)
+            status = (
+                existing_sw.additional_data.config_sync_status
+                if existing_sw and existing_sw.additional_data
+                else None
+            )
+            if status != ConfigSyncStatus.IN_SYNC:
+                self.log.info(
+                    f"Switch {sw.fabric_management_ip} ({sw.switch_id}) is "
+                    f"config-idempotent but configSyncStatus is "
+                    f"'{status.value if status else 'unknown'}' — "
+                    f"will run config save and deploy"
+                )
+                finalize_needed = True
+            else:
+                self.log.info(
+                    f"Switch {sw.fabric_management_ip} ({sw.switch_id}) "
+                    f"is idempotent — no changes needed"
+                )
+
+        if finalize_needed:
+            self.fabric_ops.finalize()
+
+    def _merged_handle_to_update(
+        self,
+        diff: Dict[str, List[SwitchDataModel]],
+    ) -> None:
+        """Fail the module if switches require field-level updates.
+
+        Merged state does not support in-place updates beyond role changes.
+        Use overridden state which performs delete-and-re-add.
+
+        Args:
+            diff: Categorized switch diff output.
+
+        Returns:
+            None.
+        """
+        to_update = diff.get("to_update", [])
+        if not to_update:
+            return
+
+        ips = [sw.fabric_management_ip for sw in to_update]
+        self.nd.module.fail_json(
+            msg=(
+                f"Switches require updates that are not supported in merged state. "
+                f"Use 'overridden' state for in-place updates. "
+                f"Affected switches: {ips}"
+            )
+        )
+
     def _handle_overridden_state(
         self,
         diff: Dict[str, List[SwitchDataModel]],
@@ -2418,6 +2560,10 @@ class NDSwitchResourceModule():
         if not self.proposed:
             self.log.warning("No configurations provided for overridden state")
             return
+
+        # Merge role_change into to_update — overridden uses delete-and-re-add
+        diff["to_update"].extend(diff.get("role_change", []))
+        diff["role_change"] = []
 
         # Check mode — preview only
         if self.nd.module.check_mode:
