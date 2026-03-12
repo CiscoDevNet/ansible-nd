@@ -400,22 +400,6 @@ class Results:
         msg = f"ENTERED {self.class_name}():"
         self.log.debug(msg)
 
-    def add_response_data(self, value: dict[str, Any]) -> None:
-        """
-        # Summary
-
-        No-op. Formerly added a dict to the response_data list.
-
-        .. deprecated::
-
-            `add_response_data()` is deprecated and may be removed in a future release.
-            Use `register_api_call()` instead; response data is now derived from registered tasks.
-
-        ## Raises
-
-        None
-        """
-
     def _increment_task_sequence_number(self) -> None:
         """
         # Summary
@@ -970,27 +954,6 @@ class Results:
         - `list[dict[str, Any]]`: List of response dictionaries from all registered tasks
         """
         return [task.response for task in self._tasks]
-
-    @property
-    def response_data(self) -> list[dict[str, Any]]:
-        """
-        # Summary
-
-        Return a `list` of `dict`, where each `dict` contains the contents of the DATA key within the responses that have been added.
-
-        .. deprecated::
-
-            `response_data` is deprecated and may be removed in a future release. Use the `responses` property instead.
-
-        ## Raises
-
-        None
-
-        ## See also
-
-        `add_response_data()` method to add to the response_data list.
-        """
-        return self.responses
 
     @property
     def results(self) -> list[dict[str, Any]]:
