@@ -21,10 +21,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from pydantic import ValidationError
 
-from .nd_v2 import NDModule
-from .enums import OperationType
-from .rest.results import Results
-from .models.nd_manage_switches import (
+from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches import (
     SwitchRole,
     SnmpV3AuthProtocol,
     PlatformType,
@@ -46,7 +46,7 @@ from .models.nd_manage_switches import (
     POAPConfigModel,
     RMAConfigModel,
 )
-from .utils.nd_manage_switches import (
+from ansible_collections.cisco.nd.plugins.module_utils.utils.nd_manage_switches import (
     FabricUtils,
     SwitchWaitUtils,
     SwitchOperationError,
@@ -57,12 +57,14 @@ from .utils.nd_manage_switches import (
     build_bootstrap_index,
     build_poap_data_block,
 )
-from .endpoints.v1.nd_manage_switches.manage_fabric_switches import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_switches import (
     V1ManageFabricSwitchesGet,
     V1ManageFabricSwitchesPost,
 )
-from .endpoints.v1.nd_manage_switches.manage_fabric_discovery import V1ManageFabricShallowDiscoveryPost
-from .endpoints.v1.nd_manage_switches.manage_fabric_switch_actions import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_discovery import ( 
+    V1ManageFabricShallowDiscoveryPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_switch_actions import (
     V1ManageFabricSwitchProvisionRMAPost,
     V1ManageFabricSwitchActionsImportBootstrapPost,
     V1ManageFabricSwitchActionsPreProvisionPost,
@@ -70,7 +72,9 @@ from .endpoints.v1.nd_manage_switches.manage_fabric_switch_actions import (
     V1ManageFabricSwitchActionsChangeRolesPost,
     V1ManageFabricSwitchChangeSerialNumberPost,
 )
-from .endpoints.v1.nd_manage_switches.manage_credentials import V1ManageCredentialsSwitchesPost
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.credentials import ( 
+    V1ManageCredentialsSwitchesPost,
+)
 
 
 # =========================================================================
