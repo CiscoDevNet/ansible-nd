@@ -99,7 +99,6 @@ def test_base_model_00200():
     with pytest.raises(TypeError, match=match):
 
         class _BadEndpoint(NDEndpointBaseModel):
-
             @property
             def path(self) -> str:
                 return "/api/v1/test/bad"
@@ -132,7 +131,6 @@ def test_base_model_00300():
     """
 
     class _MiddleABC(NDEndpointBaseModel, ABC):
-
         @property
         @abstractmethod
         def extra(self) -> str:
@@ -182,7 +180,6 @@ def test_base_model_00310():
     """
 
     class _MiddleABC2(NDEndpointBaseModel, ABC):
-
         @property
         @abstractmethod
         def extra(self) -> str:
@@ -192,7 +189,6 @@ def test_base_model_00310():
     with pytest.raises(TypeError, match=match):
 
         class _BadConcreteFromMiddle(_MiddleABC2):
-
             @property
             def path(self) -> str:
                 return "/api/v1/test/bad-middle"
@@ -229,7 +225,6 @@ def test_base_model_00400():
     with pytest.raises(TypeError, match=r'Literal\["_ExampleEndpoint"\]') as exc_info:
 
         class _ExampleEndpoint(NDEndpointBaseModel):
-
             @property
             def path(self) -> str:
                 return "/api/v1/test/example"
