@@ -10,15 +10,7 @@ This module contains endpoint definitions for AAA Local Users operations in the 
 
 from __future__ import absolute_import, annotations, division, print_function
 
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from typing import Literal
-
+from typing import Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import LoginIdMixin
@@ -49,7 +41,7 @@ class _EpInfraAaaLocalUsersBase(LoginIdMixin, NDEndpointBaseModel):
         if self.login_id is not None:
             return BasePath.path("aaa", "localUsers", self.login_id)
         return BasePath.path("aaa", "localUsers")
-    
+
     def set_identifiers(self, identifier: IdentifierKey = None):
         self.login_id = identifier
 

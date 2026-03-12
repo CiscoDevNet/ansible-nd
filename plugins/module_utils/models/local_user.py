@@ -9,7 +9,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from typing import List, Dict, Any, Optional, ClassVar, Literal
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     SecretStr,
     model_serializer,
