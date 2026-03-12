@@ -23,7 +23,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
 
-
 USER_ROLES_MAPPING = NDConstantMapping(
     {
         "fabric_admin": "fabric-admin",
