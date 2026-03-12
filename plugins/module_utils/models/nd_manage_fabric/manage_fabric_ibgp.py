@@ -17,7 +17,7 @@ from typing import List, Dict, Any, Optional, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.pydantic_compat import (
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
     ConfigDict,
     Field,
