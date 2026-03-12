@@ -21,7 +21,6 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import (
     ApiCallResult,
-    FinalResultData,
     PendingApiCall,
     Results,
 )
