@@ -1,0 +1,191 @@
+# Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""
+Unit tests for base_paths_manage.py
+
+Tests the BasePath class methods for building ND Manage API paths
+"""
+
+from __future__ import absolute_import, annotations, division, print_function
+
+# pylint: disable=invalid-name
+__metaclass__ = type
+# pylint: enable=invalid-name
+
+import pytest  # pylint: disable=unused-import
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
+    BasePath,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
+    does_not_raise,
+)
+
+# =============================================================================
+# Test: BasePath.API constant
+# =============================================================================
+
+
+def test_base_paths_manage_00010():
+    """
+    # Summary
+
+    Verify API constant equals "/api/v1/manage"
+
+    ## Test
+
+    - BasePath.API equals "/api/v1/manage"
+
+    ## Classes and Methods
+
+    - BasePath.API
+    """
+    with does_not_raise():
+        result = BasePath.API
+    assert result == "/api/v1/manage"
+
+
+# =============================================================================
+# Test: path() method
+# =============================================================================
+
+
+def test_base_paths_manage_00100():
+    """
+    # Summary
+
+    Verify path() with no segments returns API root
+
+    ## Test
+
+    - path() returns "/api/v1/manage"
+
+    ## Classes and Methods
+
+    - BasePath.path()
+    """
+    with does_not_raise():
+        result = BasePath.path()
+    assert result == "/api/v1/manage"
+
+
+def test_base_paths_manage_00110():
+    """
+    # Summary
+
+    Verify path() with single segment
+
+    ## Test
+
+    - path("inventory") returns "/api/v1/manage/inventory"
+
+    ## Classes and Methods
+
+    - BasePath.path()
+    """
+    with does_not_raise():
+        result = BasePath.path("inventory")
+    assert result == "/api/v1/manage/inventory"
+
+
+def test_base_paths_manage_00120():
+    """
+    # Summary
+
+    Verify path() with multiple segments
+
+    ## Test
+
+    - path("inventory", "switches") returns "/api/v1/manage/inventory/switches"
+
+    ## Classes and Methods
+
+    - BasePath.path()
+    """
+    with does_not_raise():
+        result = BasePath.path("inventory", "switches")
+    assert result == "/api/v1/manage/inventory/switches"
+
+
+def test_base_paths_manage_00130():
+    """
+    # Summary
+
+    Verify path() with three segments
+
+    ## Test
+
+    - path("inventory", "switches", "fabric1") returns correct path
+
+    ## Classes and Methods
+
+    - BasePath.path()
+    """
+    with does_not_raise():
+        result = BasePath.path("inventory", "switches", "fabric1")
+    assert result == "/api/v1/manage/inventory/switches/fabric1"
+
+
+# =============================================================================
+# Test: Edge cases
+# =============================================================================
+
+
+def test_base_paths_manage_00400():
+    """
+    # Summary
+
+    Verify empty string segment is handled
+
+    ## Test
+
+    - path("inventory", "", "switches") creates path with empty segment
+    - This creates double slashes (expected behavior)
+
+    ## Classes and Methods
+
+    - BasePath.path()
+    """
+    with does_not_raise():
+        result = BasePath.path("inventory", "", "switches")
+    assert result == "/api/v1/manage/inventory//switches"
+
+
+def test_base_paths_manage_00410():
+    """
+    # Summary
+
+    Verify segments with special characters
+
+    ## Test
+
+    - path("inventory", "fabric-name_123") handles hyphens and underscores
+
+    ## Classes and Methods
+
+    - BasePath.path()
+    """
+    with does_not_raise():
+        result = BasePath.path("inventory", "fabric-name_123")
+    assert result == "/api/v1/manage/inventory/fabric-name_123"
+
+
+def test_base_paths_manage_00420():
+    """
+    # Summary
+
+    Verify segments with spaces (no URL encoding)
+
+    ## Test
+
+    - BasePath does not URL-encode spaces
+    - URL encoding is caller's responsibility
+
+    ## Classes and Methods
+
+    - BasePath.path()
+    """
+    with does_not_raise():
+        result = BasePath.path("my path")
+    assert result == "/api/v1/manage/my path"
