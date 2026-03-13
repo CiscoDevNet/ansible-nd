@@ -2415,11 +2415,20 @@ def main():
     normalized_config = []
 
     for item in config:
+        switch_id = item.get("peer1_switch_id") or item.get("switch_id")
+        peer_switch_id = item.get("peer2_switch_id") or item.get("peer_switch_id")
+        use_virtual_peer_link = item.get("use_virtual_peer_link", True)
+        vpc_pair_details = item.get("vpc_pair_details")
         normalized = {
-            "switch_id": item.get("peer1_switch_id") or item.get("switch_id"),
-            "peer_switch_id": item.get("peer2_switch_id") or item.get("peer_switch_id"),
-            "use_virtual_peer_link": item.get("use_virtual_peer_link", True),
-            "vpc_pair_details": item.get("vpc_pair_details"),
+            "switch_id": switch_id,
+            "peer_switch_id": peer_switch_id,
+            "use_virtual_peer_link": use_virtual_peer_link,
+            "vpc_pair_details": vpc_pair_details,
+            # Defensive dual-shape normalization for state-machine/model variants.
+            VpcFieldNames.SWITCH_ID: switch_id,
+            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
+            VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_virtual_peer_link,
+            VpcFieldNames.VPC_PAIR_DETAILS: vpc_pair_details,
         }
         normalized_config.append(normalized)
 
