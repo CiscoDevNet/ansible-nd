@@ -43,9 +43,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params im
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, Field
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
-# Common config for basic validation
-COMMON_CONFIG = ConfigDict(validate_assignment=True)
-
 
 class FabricsEndpointParams(EndpointQueryParams):
     """
@@ -74,7 +71,7 @@ class FabricsEndpointParams(EndpointQueryParams):
     )
 
 
-class _EpManageFabricsBase(FabricNameMixin, BaseModel):
+class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for ND Manage Fabrics endpoints.
 
@@ -174,8 +171,6 @@ class EpManageFabricsGet(_EpManageFabricsBase):
     # Path will be: /api/v1/manage/fabrics/my-fabric?clusterName=cluster1
     ```
     """
-
-    model_config = COMMON_CONFIG
 
     class_name: Literal["EpApiV1ManageFabricsGet"] = Field(
         default="EpApiV1ManageFabricsGet", description="Class name for backward compatibility"
@@ -293,8 +288,6 @@ class EpManageFabricsListGet(_EpManageFabricsBase):
 
     _require_fabric_name: ClassVar[bool] = False
 
-    model_config = COMMON_CONFIG
-
     class_name: Literal["EpApiV1ManageFabricsListGet"] = Field(
         default="EpApiV1ManageFabricsListGet", description="Class name for backward compatibility"
     )
@@ -361,8 +354,6 @@ class EpManageFabricsPost(_EpManageFabricsBase):
 
     _require_fabric_name: ClassVar[bool] = False
 
-    model_config = COMMON_CONFIG
-
     class_name: Literal["EpApiV1ManageFabricsPost"] = Field(
         default="EpApiV1ManageFabricsPost", description="Class name for backward compatibility"
     )
@@ -421,8 +412,6 @@ class EpManageFabricsPut(_EpManageFabricsBase):
     ```
     """
 
-    model_config = COMMON_CONFIG
-
     class_name: Literal["EpApiV1ManageFabricsPut"] = Field(
         default="EpApiV1ManageFabricsPut", description="Class name for backward compatibility"
     )
@@ -470,8 +459,6 @@ class EpManageFabricsDelete(_EpManageFabricsBase):
     rest_send.verb = ep.verb
     ```
     """
-
-    model_config = COMMON_CONFIG
 
     class_name: Literal["EpApiV1ManageFabricsDelete"] = Field(
         default="EpApiV1ManageFabricsDelete", description="Class name for backward compatibility"
@@ -521,8 +508,6 @@ class EpManageFabricsSummaryGet(_EpManageFabricsBase):
     # Path: /api/v1/manage/fabrics/my-fabric/summary
     ```
     """
-
-    model_config = COMMON_CONFIG
 
     class_name: Literal["EpApiV1ManageFabricsSummaryGet"] = Field(
         default="EpApiV1ManageFabricsSummaryGet", description="Class name for backward compatibility"
