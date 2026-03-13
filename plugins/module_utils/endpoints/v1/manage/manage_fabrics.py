@@ -33,7 +33,7 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=inFinal, valid-name
 
-from typing import Literal, Optional, Final
+from typing import ClassVar, Literal, Optional, Final
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
@@ -80,14 +80,55 @@ class _EpManageFabricsBase(FabricNameMixin, BaseModel):
 
     Provides common functionality for all HTTP methods on the
     /api/v1/manage/fabrics endpoint.
+
+    Subclasses may override:
+    - ``_require_fabric_name``: set to ``False`` for collection-level endpoints
+      (list, create) that do not include a fabric name in the path.
+    - ``_path_suffix``: set to a non-empty string to append an extra segment
+      after the fabric name (e.g. ``"summary"``).  Only used when
+      ``_require_fabric_name`` is ``True``.
     """
 
-    # TODO: Remove it
-    # base_path: Final = BasePath.nd_manage_fabrics()
-    base_path: Final = BasePath.path("fabrics")
+    _require_fabric_name: ClassVar[bool] = True
+    _path_suffix: ClassVar[Optional[str]] = None
+
+    endpoint_params: EndpointQueryParams = Field(
+        default_factory=EndpointQueryParams, description="Endpoint-specific query parameters"
+    )
 
     def set_identifiers(self, identifier: IdentifierKey = None):
         self.fabric_name = identifier
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the endpoint path with optional fabric name, path suffix, and
+        query string.
+
+        ## Returns
+
+        - Complete endpoint path string
+
+        ## Raises
+
+        - `ValueError` if `fabric_name` is required but not set
+        """
+        if self._require_fabric_name and self.fabric_name is None:
+            raise ValueError(
+                f"{type(self).__name__}.path: fabric_name must be set before accessing path."
+            )
+        segments = ["fabrics"]
+        if self.fabric_name is not None:
+            segments.append(self.fabric_name)
+        if self._path_suffix:
+            segments.append(self._path_suffix)
+        base_path = BasePath.path(*segments)
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{base_path}?{query_string}"
+        return base_path
 
 class EpManageFabricsGet(_EpManageFabricsBase):
     """
@@ -143,30 +184,6 @@ class EpManageFabricsGet(_EpManageFabricsBase):
     endpoint_params: FabricsEndpointParams = Field(
         default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters"
     )
-
-    @property
-    def path(self) -> str:
-        """
-        # Summary
-
-        Build the endpoint path with the fabric name and optional query string.
-
-        ## Returns
-
-        - Complete endpoint path string including fabric_name and optional query parameters
-
-        ## Raises
-
-        - `ValueError` if `fabric_name` is None
-        """
-        if self.fabric_name is None:
-            raise ValueError(f"{self.class_name}.path: fabric_name must be set before accessing path.")
-        # base_path = BasePath.nd_manage_fabrics(self.fabric_name)
-        base_path = BasePath.path("fabrics", self.fabric_name)
-        query_string = self.endpoint_params.to_query_string()
-        if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -274,6 +291,8 @@ class EpManageFabricsListGet(_EpManageFabricsBase):
     ```
     """
 
+    _require_fabric_name: ClassVar[bool] = False
+
     model_config = COMMON_CONFIG
 
     class_name: Literal["EpApiV1ManageFabricsListGet"] = Field(
@@ -285,34 +304,12 @@ class EpManageFabricsListGet(_EpManageFabricsBase):
     )
 
     @property
-    def path(self) -> str:
-        """
-        # Summary
-
-        Build the endpoint path with optional query string.
-
-        ## Returns
-
-        - Complete endpoint path string including optional query parameters
-
-        ## Raises
-
-        - None
-        """
-        # base_path = BasePath.nd_manage_fabrics()
-        base_path = BasePath.path("fabrics")
-        query_string = self.endpoint_params.to_query_string()
-        if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
-
-    @property
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.GET
 
 
-class EpManageFabricsPost(BaseModel):
+class EpManageFabricsPost(_EpManageFabricsBase):
     """
     # Summary
 
@@ -362,6 +359,8 @@ class EpManageFabricsPost(BaseModel):
     ```
     """
 
+    _require_fabric_name: ClassVar[bool] = False
+
     model_config = COMMON_CONFIG
 
     class_name: Literal["EpApiV1ManageFabricsPost"] = Field(
@@ -371,28 +370,6 @@ class EpManageFabricsPost(BaseModel):
     endpoint_params: FabricsEndpointParams = Field(
         default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters"
     )
-
-    @property
-    def path(self) -> str:
-        """
-        # Summary
-
-        Build the endpoint path with optional query string.
-
-        ## Returns
-
-        - Complete endpoint path string
-
-        ## Raises
-
-        - None
-        """
-        # base_path = BasePath.nd_manage_fabrics()
-        base_path = BasePath.path("fabrics")
-        query_string = self.endpoint_params.to_query_string()
-        if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -455,30 +432,6 @@ class EpManageFabricsPut(_EpManageFabricsBase):
     )
 
     @property
-    def path(self) -> str:
-        """
-        # Summary
-
-        Build the endpoint path with the fabric name and optional query string.
-
-        ## Returns
-
-        - Complete endpoint path string
-
-        ## Raises
-
-        - `ValueError` if `fabric_name` is None
-        """
-        if self.fabric_name is None:
-            raise ValueError(f"{self.class_name}.path: fabric_name must be set before accessing path.")
-        # base_path = BasePath.nd_manage_fabrics(self.fabric_name)
-        base_path = BasePath.path("fabrics", self.fabric_name)
-        query_string = self.endpoint_params.to_query_string()
-        if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
-
-    @property
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.PUT
@@ -529,30 +482,6 @@ class EpManageFabricsDelete(_EpManageFabricsBase):
     )
 
     @property
-    def path(self) -> str:
-        """
-        # Summary
-
-        Build the endpoint path with the fabric name and optional query string.
-
-        ## Returns
-
-        - Complete endpoint path string
-
-        ## Raises
-
-        - `ValueError` if `fabric_name` is None
-        """
-        if self.fabric_name is None:
-            raise ValueError(f"{self.class_name}.path: fabric_name must be set before accessing path.")
-        # base_path = BasePath.nd_manage_fabrics(self.fabric_name)
-        base_path = BasePath.path("fabrics", self.fabric_name)
-        query_string = self.endpoint_params.to_query_string()
-        if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
-
-    @property
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.DELETE
@@ -599,33 +528,11 @@ class EpManageFabricsSummaryGet(_EpManageFabricsBase):
         default="EpApiV1ManageFabricsSummaryGet", description="Class name for backward compatibility"
     )
 
+    _path_suffix: ClassVar[Optional[str]] = "summary"
+
     endpoint_params: FabricsEndpointParams = Field(
         default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters"
     )
-
-    @property
-    def path(self) -> str:
-        """
-        # Summary
-
-        Build the endpoint path with the fabric name and optional query string.
-
-        ## Returns
-
-        - Complete endpoint path string
-
-        ## Raises
-
-        - `ValueError` if `fabric_name` is None
-        """
-        if self.fabric_name is None:
-            raise ValueError(f"{self.class_name}.path: fabric_name must be set before accessing path.")
-        # base_path = BasePath.nd_manage_fabrics(self.fabric_name, "summary")
-        base_path = BasePath.path("fabrics", self.fabric_name, "summary")
-        query_string = self.endpoint_params.to_query_string()
-        if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
 
     @property
     def verb(self) -> HttpVerbEnum:
