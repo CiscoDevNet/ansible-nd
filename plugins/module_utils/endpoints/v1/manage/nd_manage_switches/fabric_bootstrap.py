@@ -25,6 +25,9 @@ from typing import Literal, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     FabricNameMixin,
+    FilterMixin,
+    MaxMixin,
+    OffsetMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
@@ -33,16 +36,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    BaseModel,
-    ConfigDict,
     Field,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 
-# Common config for basic validation
-COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
-
-class FabricBootstrapEndpointParams(EndpointQueryParams):
+class FabricBootstrapEndpointParams(FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -50,9 +51,9 @@ class FabricBootstrapEndpointParams(EndpointQueryParams):
 
     ## Parameters
 
-    - max: Maximum number of results to return (optional)
-    - offset: Pagination offset (optional)
-    - filter: Lucene filter expression (optional)
+    - max: Maximum number of results to return (optional, from `MaxMixin`)
+    - offset: Pagination offset (optional, from `OffsetMixin`)
+    - filter: Lucene filter expression (optional, from `FilterMixin`)
 
     ## Usage
 
@@ -63,20 +64,14 @@ class FabricBootstrapEndpointParams(EndpointQueryParams):
     ```
     """
 
-    max: Optional[int] = Field(default=None, ge=1, description="Maximum number of results")
-    offset: Optional[int] = Field(default=None, ge=0, description="Pagination offset")
-    filter: Optional[str] = Field(default=None, min_length=1, description="Lucene filter expression")
 
-
-class _V1ManageFabricBootstrapBase(FabricNameMixin, BaseModel):
+class _V1ManageFabricBootstrapBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for Fabric Bootstrap endpoints.
 
     Provides common functionality for all HTTP methods on the
     /api/v1/manage/fabrics/{fabricName}/bootstrap endpoint.
     """
-
-    model_config = COMMON_CONFIG
 
     @property
     def _base_path(self) -> str:
@@ -130,10 +125,6 @@ class V1ManageFabricBootstrapGet(_V1ManageFabricBootstrapBase):
     # Path will be: /api/v1/manage/fabrics/MyFabric/bootstrap?max=50&offset=0
     ```
     """
-
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     class_name: Literal["V1ManageFabricBootstrapGet"] = Field(
         default="V1ManageFabricBootstrapGet", description="Class name for backward compatibility"

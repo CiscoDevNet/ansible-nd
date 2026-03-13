@@ -23,9 +23,12 @@ __metaclass__ = type
 __author__ = "Akshayanat Chengam Saravanan"
 # pylint: enable=invalid-name
 
-from typing import Literal, Optional
+from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    TicketIdMixin,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
 )
@@ -33,16 +36,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    BaseModel,
-    ConfigDict,
     Field,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 
-# Common config for basic validation
-COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
-
-class CredentialsSwitchesEndpointParams(EndpointQueryParams):
+class CredentialsSwitchesEndpointParams(TicketIdMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -50,7 +51,7 @@ class CredentialsSwitchesEndpointParams(EndpointQueryParams):
 
     ## Parameters
 
-    - ticket_id: Change control ticket ID (optional)
+    - ticket_id: Change control ticket ID (optional, from `TicketIdMixin`)
 
     ## Usage
 
@@ -61,18 +62,14 @@ class CredentialsSwitchesEndpointParams(EndpointQueryParams):
     ```
     """
 
-    ticket_id: Optional[str] = Field(default=None, min_length=1, description="Change control ticket ID")
 
-
-class _V1ManageCredentialsSwitchesBase(BaseModel):
+class _V1ManageCredentialsSwitchesBase(NDEndpointBaseModel):
     """
     Base class for Credentials Switches endpoints.
 
     Provides common functionality for all HTTP methods on the
     /api/v1/manage/credentials/switches endpoint.
     """
-
-    model_config = COMMON_CONFIG
 
     @property
     def _base_path(self) -> str:
@@ -119,10 +116,6 @@ class V1ManageCredentialsSwitchesPost(_V1ManageCredentialsSwitchesBase):
     # Path will be: /api/v1/manage/credentials/switches?ticketId=CHG12345
     ```
     """
-
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     class_name: Literal["V1ManageCredentialsSwitchesPost"] = Field(
         default="V1ManageCredentialsSwitchesPost", description="Class name for backward compatibility"

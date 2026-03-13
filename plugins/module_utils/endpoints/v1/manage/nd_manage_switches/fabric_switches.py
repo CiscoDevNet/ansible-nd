@@ -25,8 +25,12 @@ from typing import Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ClusterNameMixin,
     FabricNameMixin,
-    SwitchSerialNumberMixin,
+    FilterMixin,
+    MaxMixin,
+    OffsetMixin,
+    TicketIdMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
@@ -35,16 +39,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    BaseModel,
-    ConfigDict,
     Field,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 
-# Common config for basic validation
-COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
-
-class FabricSwitchesGetEndpointParams(EndpointQueryParams):
+class FabricSwitchesGetEndpointParams(FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -53,9 +55,9 @@ class FabricSwitchesGetEndpointParams(EndpointQueryParams):
     ## Parameters
 
     - hostname: Filter by switch hostname (optional)
-    - max: Maximum number of results (optional)
-    - offset: Pagination offset (optional)
-    - filter: Lucene filter expression (optional)
+    - max: Maximum number of results (optional, from `MaxMixin`)
+    - offset: Pagination offset (optional, from `OffsetMixin`)
+    - filter: Lucene filter expression (optional, from `FilterMixin`)
 
     ## Usage
 
@@ -67,12 +69,9 @@ class FabricSwitchesGetEndpointParams(EndpointQueryParams):
     """
 
     hostname: Optional[str] = Field(default=None, min_length=1, description="Filter by switch hostname")
-    max: Optional[int] = Field(default=None, ge=1, description="Maximum number of results")
-    offset: Optional[int] = Field(default=None, ge=0, description="Pagination offset")
-    filter: Optional[str] = Field(default=None, min_length=1, description="Lucene filter expression")
 
 
-class FabricSwitchesAddEndpointParams(EndpointQueryParams):
+class FabricSwitchesAddEndpointParams(ClusterNameMixin, TicketIdMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -80,8 +79,8 @@ class FabricSwitchesAddEndpointParams(EndpointQueryParams):
 
     ## Parameters
 
-    - cluster_name: Target cluster name for multi-cluster deployments (optional)
-    - ticket_id: Change control ticket ID (optional)
+    - cluster_name: Target cluster name for multi-cluster deployments (optional, from `ClusterNameMixin`)
+    - ticket_id: Change control ticket ID (optional, from `TicketIdMixin`)
 
     ## Usage
 
@@ -92,19 +91,14 @@ class FabricSwitchesAddEndpointParams(EndpointQueryParams):
     ```
     """
 
-    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Target cluster name")
-    ticket_id: Optional[str] = Field(default=None, min_length=1, description="Change control ticket ID")
 
-
-class _V1ManageFabricSwitchesBase(FabricNameMixin, BaseModel):
+class _V1ManageFabricSwitchesBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for Fabric Switches endpoints.
 
     Provides common functionality for all HTTP methods on the
     /api/v1/manage/fabrics/{fabricName}/switches endpoint.
     """
-
-    model_config = COMMON_CONFIG
 
     @property
     def _base_path(self) -> str:
@@ -159,10 +153,6 @@ class V1ManageFabricSwitchesGet(_V1ManageFabricSwitchesBase):
     # Path will be: /api/v1/manage/fabrics/MyFabric/switches?hostname=leaf1&max=100
     ```
     """
-
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     class_name: Literal["V1ManageFabricSwitchesGet"] = Field(
         default="V1ManageFabricSwitchesGet", description="Class name for backward compatibility"
@@ -237,10 +227,6 @@ class V1ManageFabricSwitchesPost(_V1ManageFabricSwitchesBase):
     ```
     """
 
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
-
     class_name: Literal["V1ManageFabricSwitchesPost"] = Field(
         default="V1ManageFabricSwitchesPost", description="Class name for backward compatibility"
     )
@@ -268,23 +254,3 @@ class V1ManageFabricSwitchesPost(_V1ManageFabricSwitchesBase):
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.POST
-
-
-class _V1ManageFabricSwitchBase(FabricNameMixin, SwitchSerialNumberMixin, BaseModel):
-    """
-    Base class for single switch endpoints.
-
-    Provides common functionality for all HTTP methods on the
-    /api/v1/manage/fabrics/{fabricName}/switches/{switchSn} endpoint.
-    """
-
-    model_config = COMMON_CONFIG
-
-    @property
-    def _base_path(self) -> str:
-        """Build the base endpoint path."""
-        if self.fabric_name is None:
-            raise ValueError("fabric_name must be set before accessing path")
-        if self.switch_sn is None:
-            raise ValueError("switch_sn must be set before accessing path")
-        return BasePath.path("fabrics", self.fabric_name, "switches", self.switch_sn)

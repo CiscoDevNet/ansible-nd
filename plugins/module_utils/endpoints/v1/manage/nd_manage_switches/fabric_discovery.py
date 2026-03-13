@@ -30,24 +30,20 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    BaseModel,
-    ConfigDict,
     Field,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 
-# Common config for basic validation
-COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
-
-class _V1ManageFabricDiscoveryBase(FabricNameMixin, BaseModel):
+class _V1ManageFabricDiscoveryBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for Fabric Discovery endpoints.
 
     Provides common functionality for all HTTP methods on the
     /api/v1/manage/fabrics/{fabricName}/actions/shallowDiscovery endpoint.
     """
-
-    model_config = COMMON_CONFIG
 
     @property
     def _base_path(self) -> str:
@@ -84,10 +80,6 @@ class V1ManageFabricShallowDiscoveryPost(_V1ManageFabricDiscoveryBase):
     verb = request.verb
     ```
     """
-
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     class_name: Literal["V1ManageFabricShallowDiscoveryPost"] = Field(
         default="V1ManageFabricShallowDiscoveryPost", description="Class name for backward compatibility"

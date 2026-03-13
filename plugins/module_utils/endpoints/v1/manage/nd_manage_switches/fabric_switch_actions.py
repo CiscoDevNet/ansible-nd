@@ -29,8 +29,10 @@ from typing import Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ClusterNameMixin,
     FabricNameMixin,
     SwitchSerialNumberMixin,
+    TicketIdMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     EndpointQueryParams,
@@ -39,13 +41,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    BaseModel,
-    ConfigDict,
     Field,
 )
-
-# Common config for basic validation
-COMMON_CONFIG = ConfigDict(validate_assignment=True)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 
 
 # ============================================================================
@@ -53,7 +53,7 @@ COMMON_CONFIG = ConfigDict(validate_assignment=True)
 # ============================================================================
 
 
-class SwitchActionsRemoveEndpointParams(EndpointQueryParams):
+class SwitchActionsRemoveEndpointParams(TicketIdMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -74,10 +74,9 @@ class SwitchActionsRemoveEndpointParams(EndpointQueryParams):
     """
 
     force: Optional[bool] = Field(default=None, description="Force removal of switches")
-    ticket_id: Optional[str] = Field(default=None, min_length=1, description="Change control ticket ID")
 
 
-class SwitchActionsTicketEndpointParams(EndpointQueryParams):
+class SwitchActionsTicketEndpointParams(TicketIdMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -96,10 +95,8 @@ class SwitchActionsTicketEndpointParams(EndpointQueryParams):
     ```
     """
 
-    ticket_id: Optional[str] = Field(default=None, min_length=1, description="Change control ticket ID")
 
-
-class SwitchActionsImportEndpointParams(EndpointQueryParams):
+class SwitchActionsImportEndpointParams(ClusterNameMixin, TicketIdMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -107,8 +104,8 @@ class SwitchActionsImportEndpointParams(EndpointQueryParams):
 
     ## Parameters
 
-    - cluster_name: Target cluster name for multi-cluster deployments (optional)
-    - ticket_id: Change control ticket ID (optional)
+    - cluster_name: Target cluster name for multi-cluster deployments (optional, from `ClusterNameMixin`)
+    - ticket_id: Change control ticket ID (optional, from `TicketIdMixin`)
 
     ## Usage
 
@@ -119,24 +116,19 @@ class SwitchActionsImportEndpointParams(EndpointQueryParams):
     ```
     """
 
-    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Target cluster name")
-    ticket_id: Optional[str] = Field(default=None, min_length=1, description="Change control ticket ID")
-
 
 # ============================================================================
 # Switch Actions Endpoints
 # ============================================================================
 
 
-class _V1ManageFabricSwitchActionsBase(FabricNameMixin, BaseModel):
+class _V1ManageFabricSwitchActionsBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for Fabric Switch Actions endpoints.
 
     Provides common functionality for all HTTP methods on the
     /api/v1/manage/fabrics/{fabricName}/switchActions endpoint.
     """
-
-    model_config = COMMON_CONFIG
 
     @property
     def _base_path(self) -> str:
@@ -189,10 +181,6 @@ class V1ManageFabricSwitchActionsRemovePost(_V1ManageFabricSwitchActionsBase):
     # Path will be: /api/v1/manage/fabrics/MyFabric/switchActions/remove?force=true&ticketId=CHG12345
     ```
     """
-
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     class_name: Literal["V1ManageFabricSwitchActionsRemovePost"] = Field(
         default="V1ManageFabricSwitchActionsRemovePost", description="Class name for backward compatibility"
@@ -265,10 +253,6 @@ class V1ManageFabricSwitchActionsChangeRolesPost(_V1ManageFabricSwitchActionsBas
     # Path will be: /api/v1/manage/fabrics/MyFabric/switchActions/changeRoles?ticketId=CHG12345
     ```
     """
-
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     class_name: Literal["V1ManageFabricSwitchActionsChangeRolesPost"] = Field(
         default="V1ManageFabricSwitchActionsChangeRolesPost",
@@ -344,10 +328,6 @@ class V1ManageFabricSwitchActionsImportBootstrapPost(_V1ManageFabricSwitchAction
     # Path will be: /api/v1/manage/fabrics/MyFabric/switchActions/importBootstrap?clusterName=cluster1&ticketId=CHG12345
     ```
     """
-
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     class_name: Literal["V1ManageFabricSwitchActionsImportBootstrapPost"] = Field(
         default="V1ManageFabricSwitchActionsImportBootstrapPost", description="Class name for backward compatibility"
@@ -431,10 +411,6 @@ class V1ManageFabricSwitchActionsPreProvisionPost(_V1ManageFabricSwitchActionsBa
     ```
     """
 
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
-
     class_name: Literal["V1ManageFabricSwitchActionsPreProvisionPost"] = Field(
         default="V1ManageFabricSwitchActionsPreProvisionPost",
         description="Class name for backward compatibility",
@@ -471,15 +447,13 @@ class V1ManageFabricSwitchActionsPreProvisionPost(_V1ManageFabricSwitchActionsBa
 # ============================================================================
 
 
-class _V1ManageFabricSwitchActionsPerSwitchBase(FabricNameMixin, SwitchSerialNumberMixin, BaseModel):
+class _V1ManageFabricSwitchActionsPerSwitchBase(FabricNameMixin, SwitchSerialNumberMixin, NDEndpointBaseModel):
     """
     Base class for per-switch action endpoints.
 
     Provides common functionality for all HTTP methods on the
     /api/v1/manage/fabrics/{fabricName}/switches/{switchSn}/actions endpoint.
     """
-
-    model_config = COMMON_CONFIG
 
     @property
     def _base_path(self) -> str:
@@ -535,10 +509,6 @@ class V1ManageFabricSwitchProvisionRMAPost(_V1ManageFabricSwitchActionsPerSwitch
     ```
     """
 
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
-
     class_name: Literal["V1ManageFabricSwitchProvisionRMAPost"] = Field(
         default="V1ManageFabricSwitchProvisionRMAPost", description="Class name for backward compatibility"
     )
@@ -574,7 +544,7 @@ class V1ManageFabricSwitchProvisionRMAPost(_V1ManageFabricSwitchActionsPerSwitch
 # ============================================================================
 
 
-class SwitchActionsClusterEndpointParams(EndpointQueryParams):
+class SwitchActionsClusterEndpointParams(ClusterNameMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -582,7 +552,7 @@ class SwitchActionsClusterEndpointParams(EndpointQueryParams):
 
     ## Parameters
 
-    - cluster_name: Target cluster name for multi-cluster deployments (optional)
+    - cluster_name: Target cluster name for multi-cluster deployments (optional, from `ClusterNameMixin`)
 
     ## Usage
 
@@ -592,8 +562,6 @@ class SwitchActionsClusterEndpointParams(EndpointQueryParams):
     # Returns: "clusterName=cluster1"
     ```
     """
-
-    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Target cluster name")
 
 
 class V1ManageFabricSwitchChangeSerialNumberPost(_V1ManageFabricSwitchActionsPerSwitchBase):
@@ -639,10 +607,6 @@ class V1ManageFabricSwitchChangeSerialNumberPost(_V1ManageFabricSwitchActionsPer
     # Path will be: /api/v1/manage/fabrics/MyFabric/switches/SAL1948TRTT/actions/changeSwitchSerialNumber?clusterName=cluster1
     ```
     """
-
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     class_name: Literal["V1ManageFabricSwitchChangeSerialNumberPost"] = Field(
         default="V1ManageFabricSwitchChangeSerialNumberPost", description="Class name for backward compatibility"
@@ -720,10 +684,6 @@ class V1ManageFabricSwitchActionsRediscoverPost(_V1ManageFabricSwitchActionsBase
     # Path will be: /api/v1/manage/fabrics/MyFabric/switchActions/rediscover?ticketId=CHG12345
     ```
     """
-
-    # Version metadata
-    api_version: Literal["v1"] = Field(default="v1", description="ND API version for this endpoint")
-    min_controller_version: str = Field(default="3.0.0", description="Minimum ND version supporting this endpoint")
 
     class_name: Literal["V1ManageFabricSwitchActionsRediscoverPost"] = Field(
         default="V1ManageFabricSwitchActionsRediscoverPost",
