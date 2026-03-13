@@ -78,8 +78,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_ma
 
 
 # =========================================================================
-# Shared Dependency Container
+# Constants & Globals
 # =========================================================================
+
+# Max hops is not supported by the module.
+_DISCOVERY_MAX_HOPS: int = 0
+
 
 @dataclass
 class SwitchServiceContext:
@@ -431,7 +435,7 @@ class SwitchDiscoveryService:
         seed_ips = [switch.seed_ip for switch in switches]
         log.debug(f"Seed IPs: {seed_ips}")
 
-        max_hops = switches[0].max_hops if hasattr(switches[0], 'max_hops') else 0
+        max_hops = _DISCOVERY_MAX_HOPS
 
         discovery_request = ShallowDiscoveryRequestModel(
             seedIpCollection=seed_ips,
@@ -558,7 +562,7 @@ class SwitchDiscoveryService:
 
             if discovered:
                 if cfg.role is not None:
-                    discovered["role"] = cfg.role
+                    discovered = {**discovered, "role": cfg.role}
                 proposed.append(
                     SwitchDataModel.from_response(discovered)
                 )
@@ -1854,21 +1858,21 @@ class RMAHandler:
                     )
                 )
 
-            if ad.discovery_status != DiscoveryStatus.UNREACHABLE.value:
+            if ad.discovery_status != DiscoveryStatus.UNREACHABLE:
                 nd.module.fail_json(
                     msg=(
                         f"RMA: Switch '{old_serial}' has discovery status "
-                        f"'{ad.discovery_status or 'unknown'}', "
+                        f"'{ad.discovery_status.value if ad.discovery_status else 'unknown'}', "
                         f"expected 'unreachable'. The old switch must be "
                         f"unreachable before RMA can proceed."
                     )
                 )
 
-            if ad.system_mode != SystemMode.MAINTENANCE.value:
+            if ad.system_mode != SystemMode.MAINTENANCE:
                 nd.module.fail_json(
                     msg=(
                         f"RMA: Switch '{old_serial}' is in "
-                        f"'{ad.system_mode or 'unknown'}' "
+                        f"'{ad.system_mode.value if ad.system_mode else 'unknown'}' "
                         f"mode, expected 'maintenance'. Put the switch in "
                         f"maintenance mode before initiating RMA."
                     )
