@@ -73,6 +73,13 @@ fabric = FabricModel(**fabric_data)
 ```
 """
 
+# Regex from OpenAPI schema: bgpAsn accepts plain integers (1-4294967295) and
+# dotted four-byte ASN notation (1-65535).(0-65535)
+_BGP_ASN_RE = re.compile(
+    r"^(([1-9]{1}[0-9]{0,8}|[1-3]{1}[0-9]{1,9}|[4]{1}([0-1]{1}[0-9]{8}|[2]{1}([0-8]{1}[0-9]{7}|[9]{1}([0-3]{1}[0-9]{6}|[4]{1}([0-8]{1}[0-9]{5}|[9]{1}([0-5]{1}[0-9]{4}|[6]{1}([0-6]{1}[0-9]{3}|[7]{1}([0-1]{1}[0-9]{2}|[2]{1}([0-8]{1}[0-9]{1}|[9]{1}[0-5]{1})))))))))|([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])(\.([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]|0))?)$"
+)
+
+
 class LocationModel(NDNestedModel):
     """
     # Summary
@@ -535,7 +542,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     type: Literal[FabricTypeEnum.VXLAN_IBGP] = Field(description="Fabric management type", default=FabricTypeEnum.VXLAN_IBGP)
 
     # Core iBGP Configuration
-    bgp_asn: str = Field(alias="bgpAsn", description="BGP Autonomous System Number")
+    bgp_asn: str = Field(alias="bgpAsn", description="BGP Autonomous System Number 1-4294967295 | 1-65535[.0-65535]")
     site_id: Optional[str] = Field(alias="siteId", description="Site identifier for the fabric", default="")
 
     # Missing Fields
@@ -1134,17 +1141,21 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
         Validate BGP ASN format and range.
 
+        ## Description
+
+        Accepts either a plain integer ASN (1-4294967295) or dotted four-byte
+        ASN notation in the form ``MMMM.NNNN`` where both parts are in the
+        range 1-65535 / 0-65535 respectively.
+
         ## Raises
 
-        - `ValueError` - If ASN is not numeric or outside valid range (1-4294967295)
+        - `ValueError` - If the value does not match the expected ASN format
         """
-        if not value.isdigit():
-            raise ValueError(f"BGP ASN must be numeric, got: {value}")
-
-        asn_int = int(value)
-        if not (1 <= asn_int <= 4294967295):
-            raise ValueError(f"BGP ASN must be between 1 and 4294967295, got: {asn_int}")
-
+        if not _BGP_ASN_RE.match(value):
+            raise ValueError(
+                f"Invalid BGP ASN '{value}'. "
+                "Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535)."
+            )
         return value
 
     @field_validator("site_id")
@@ -1159,12 +1170,17 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
         - `ValueError` - If site ID is not numeric or outside valid range
         """
+
+        # If value is empty string (default), skip validation (will be set to BGP ASN later if still empty)
+        if value == "":
+            return value
+
         if not value.isdigit():
             raise ValueError(f"Site ID must be numeric, got: {value}")
 
         site_id_int = int(value)
-        if not (1 <= site_id_int <= 65535):
-            raise ValueError(f"Site ID must be between 1 and 65535, got: {site_id_int}")
+        if not (1 <= site_id_int <= 281474976710655):
+            raise ValueError(f"Site ID must be between 1 and 281474976710655, got: {site_id_int}")
 
         return value
 
@@ -1278,9 +1294,16 @@ class FabricModel(NDBaseModel):
         if self.management is not None:
             self.management.name = self.name
 
-        # Propgate BGP ASN to Site ID management model if not set
+        # Propagate BGP ASN to Site ID management model if not set
         if self.management is not None and self.management.site_id == "":
-            self.management.site_id = self.management.bgp_asn  # Default site ID to BGP ASN if not provided
+            bgp_asn = self.management.bgp_asn
+            if "." in bgp_asn:
+                # asdot notation (High.Low) → convert to asplain decimal: (High × 65536) + Low
+                high, low = bgp_asn.split(".")
+                self.management.site_id = str(int(high) * 65536 + int(low))
+            else:
+                # Already plain decimal
+                self.management.site_id = bgp_asn
 
         # Validate telemetry consistency
         if self.telemetry_collection and self.telemetry_settings is None:
