@@ -12,10 +12,7 @@ This module contains the endpoint definition for the ND Infra login operation.
 from __future__ import absolute_import, annotations, division, print_function
 
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from typing import Literal
+from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,

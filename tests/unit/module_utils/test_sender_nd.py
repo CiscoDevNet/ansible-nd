@@ -600,7 +600,7 @@ def test_sender_nd_00700():
     instance.verb = HttpVerbEnum.GET
 
     with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.sender_nd.Connection",
+        "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
         return_value=mock_connection,
     ):
         with does_not_raise():
@@ -643,7 +643,7 @@ def test_sender_nd_00710():
     instance.payload = {"name": "test"}
 
     with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.sender_nd.Connection",
+        "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
         return_value=mock_connection,
     ):
         with does_not_raise():
@@ -686,7 +686,7 @@ def test_sender_nd_00720():
     instance.verb = HttpVerbEnum.GET
 
     with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.sender_nd.Connection",
+        "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
         return_value=mock_connection,
     ):
         match = r"Sender\.commit:.*ConnectionError occurred"
@@ -722,7 +722,7 @@ def test_sender_nd_00730():
     instance.verb = HttpVerbEnum.GET
 
     with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.sender_nd.Connection",
+        "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
         return_value=mock_connection,
     ):
         match = r"Sender\.commit:.*Unexpected error occurred"
@@ -758,7 +758,7 @@ def test_sender_nd_00740():
     }
 
     with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.sender_nd.Connection",
+        "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
         return_value=mock_connection,
     ) as mock_conn_class:
         instance = Sender()
@@ -809,7 +809,7 @@ def test_sender_nd_00750():
     instance.verb = HttpVerbEnum.GET
 
     with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.sender_nd.Connection",
+        "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
         return_value=mock_connection,
     ):
         with does_not_raise():
@@ -851,7 +851,7 @@ def test_sender_nd_00760():
     instance.payload = {"status": "active"}
 
     with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.sender_nd.Connection",
+        "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
         return_value=mock_connection,
     ):
         with does_not_raise():
@@ -896,7 +896,7 @@ def test_sender_nd_00770():
     instance.verb = HttpVerbEnum.DELETE
 
     with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.sender_nd.Connection",
+        "ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd.Connection",
         return_value=mock_connection,
     ):
         with does_not_raise():
