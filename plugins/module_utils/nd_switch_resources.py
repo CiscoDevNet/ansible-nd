@@ -1185,6 +1185,10 @@ class POAPHandler:
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
 
+            # Validate user-supplied fields against bootstrap data (if provided)
+            # and warn about any fields that will be pulled from the API.
+            self._validate_bootstrap_fields(poap_cfg, bootstrap_data, log)
+
             model = self._build_bootstrap_import_model(
                 switch_cfg, poap_cfg, bootstrap_data
             )
@@ -1215,6 +1219,90 @@ class POAPHandler:
 
         log.debug("EXIT: _handle_poap_bootstrap()")
 
+    def _validate_bootstrap_fields(
+        self,
+        poap_cfg: POAPConfigModel,
+        bootstrap_data: Dict[str, Any],
+        log: logging.Logger,
+    ) -> None:
+        """Validate user-supplied bootstrap fields against the bootstrap API response.
+
+        If a field is provided in the playbook config, it must match what the
+        bootstrap API reports.  Fields that are omitted are silently filled in
+        from the API at import time — no error is raised for those.
+
+        Args:
+            poap_cfg: POAP config entry from the playbook.
+            bootstrap_data: Matching entry from the bootstrap GET API.
+            log: Logger instance.
+
+        Returns:
+            None.
+        """
+        serial = poap_cfg.serial_number
+        bs_data = bootstrap_data.get("data") or {}
+        mismatches: List[str] = []
+
+        if poap_cfg.model and poap_cfg.model != bootstrap_data.get("model"):
+            mismatches.append(
+                f"model: provided '{poap_cfg.model}', "
+                f"bootstrap reports '{bootstrap_data.get('model')}'"
+            )
+
+        if poap_cfg.version and poap_cfg.version != bootstrap_data.get("softwareVersion"):
+            mismatches.append(
+                f"version: provided '{poap_cfg.version}', "
+                f"bootstrap reports '{bootstrap_data.get('softwareVersion')}'"
+            )
+
+        if poap_cfg.config_data:
+            bs_gateway = (
+                bootstrap_data.get("gatewayIpMask")
+                or bs_data.get("gatewayIpMask")
+            )
+            if poap_cfg.config_data.gateway and poap_cfg.config_data.gateway != bs_gateway:
+                mismatches.append(
+                    f"config_data.gateway: provided '{poap_cfg.config_data.gateway}', "
+                    f"bootstrap reports '{bs_gateway}'"
+                )
+
+            bs_models = bs_data.get("models", [])
+            if (
+                poap_cfg.config_data.models
+                and sorted(poap_cfg.config_data.models) != sorted(bs_models)
+            ):
+                mismatches.append(
+                    f"config_data.models: provided {poap_cfg.config_data.models}, "
+                    f"bootstrap reports {bs_models}"
+                )
+
+        if mismatches:
+            self.ctx.nd.module.fail_json(
+                msg=(
+                    f"Bootstrap field mismatch for serial '{serial}'. "
+                    f"The following provided values do not match the "
+                    f"bootstrap API data:\n"
+                    + "\n".join(f"  - {m}" for m in mismatches)
+                )
+            )
+
+        # Log which fields will be sourced from the bootstrap API
+        pulled: List[str] = []
+        if not poap_cfg.model:
+            pulled.append("model")
+        if not poap_cfg.version:
+            pulled.append("version")
+        if not poap_cfg.hostname:
+            pulled.append("hostname")
+        if not poap_cfg.config_data:
+            pulled.append("config_data (gateway + models)")
+        if pulled:
+            log.info(
+                f"Bootstrap serial '{serial}': the following fields were not "
+                f"provided and will be sourced from the bootstrap API: "
+                f"{', '.join(pulled)}"
+            )
+
     def _build_bootstrap_import_model(
         self,
         switch_cfg: SwitchConfigModel,
@@ -1237,30 +1325,47 @@ class POAPHandler:
         )
 
         bs = bootstrap_data or {}
+        bs_data = bs.get("data") or {}
 
-        # User config fields
         serial_number = poap_cfg.serial_number
-        hostname = poap_cfg.hostname
         ip = switch_cfg.seed_ip
-        model = poap_cfg.model
-        version = poap_cfg.version
-        image_policy = poap_cfg.image_policy
-        gateway_ip_mask = poap_cfg.config_data.gateway if poap_cfg.config_data else None
         switch_role = switch_cfg.role
         password = switch_cfg.password
         auth_proto = SnmpV3AuthProtocol.MD5  # POAP/bootstrap always uses MD5
+        image_policy = poap_cfg.image_policy
 
         discovery_username = getattr(poap_cfg, "discovery_username", None)
         discovery_password = getattr(poap_cfg, "discovery_password", None)
+
+        # Use user-provided values when available; fall back to bootstrap API data.
+        model = poap_cfg.model or bs.get("model", "")
+        version = poap_cfg.version or bs.get("softwareVersion", "")
+        hostname = poap_cfg.hostname or bs.get("hostname", "")
+
+        gateway_ip_mask = (
+            (poap_cfg.config_data.gateway if poap_cfg.config_data else None)
+            or bs.get("gatewayIpMask")
+            or bs_data.get("gatewayIpMask")
+        )
+        data_models = (
+            (poap_cfg.config_data.models if poap_cfg.config_data else None)
+            or bs_data.get("models", [])
+        )
+
+        # Build the data block from resolved values (replaces build_poap_data_block)
+        data_block: Optional[Dict[str, Any]] = None
+        if gateway_ip_mask or data_models:
+            data_block = {}
+            if gateway_ip_mask:
+                data_block["gatewayIpMask"] = gateway_ip_mask
+            if data_models:
+                data_block["models"] = data_models
 
         # Bootstrap API response fields
         fingerprint = bs.get("fingerPrint", bs.get("fingerprint", ""))
         public_key = bs.get("publicKey", "")
         re_add = bs.get("reAdd", False)
         in_inventory = bs.get("inInventory", False)
-
-        # Shared data block builder
-        data_block = build_poap_data_block(poap_cfg)
 
         bootstrap_model = BootstrapImportSwitchModel(
             serialNumber=serial_number,

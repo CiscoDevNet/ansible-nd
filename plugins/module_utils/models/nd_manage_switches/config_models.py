@@ -52,6 +52,29 @@ class ConfigDataModel(NDNestedModel):
         description="Gateway IP with mask for the switch (e.g., 192.168.0.1/24)"
     )
 
+    @field_validator('models', mode='before')
+    @classmethod
+    def validate_models_list(cls, v: Any) -> List[str]:
+        """Validate models is a non-empty list of strings."""
+        if v is None:
+            raise ValueError(
+                "'models' is required in config_data. "
+                "Provide a list of module model strings, "
+                "e.g. models: [N9K-X9364v, N9K-vSUP]"
+            )
+        if not isinstance(v, list):
+            raise ValueError(
+                f"'models' must be a list of module model strings, got: {type(v).__name__}. "
+                f"e.g. models: [N9K-X9364v, N9K-vSUP]"
+            )
+        if len(v) == 0:
+            raise ValueError(
+                "'models' list cannot be empty. "
+                "Provide at least one module model string, "
+                "e.g. models: [N9K-X9364v, N9K-vSUP]"
+            )
+        return v
+
     @field_validator('gateway', mode='before')
     @classmethod
     def validate_gateway(cls, v: str) -> str:
@@ -149,21 +172,25 @@ class POAPConfigModel(NDNestedModel):
 
     @model_validator(mode='after')
     def validate_required_fields_for_non_swap(self) -> Self:
-        """Validate model/version/hostname/config_data are all provided for non-swap POAP.
+        """Validate model/version/hostname/config_data for pre-provision operations.
 
-        For Bootstrap (serial_number only) or Pre-provision (preprovision_serial only)
-        all four descriptor fields are mandatory.  This mirrors the
-        dcnm_inventory.py check:
-          if only one serial provided → model, version, hostname, config_data required.
+        Pre-provision (preprovision_serial only):
+          model, version, hostname, config_data are all mandatory because the
+          controller has no physical switch to pull these values from.
 
-        When both serials are present (swap mode), these fields are not
-        required because the swap API only needs the new serial number.
+        Bootstrap (serial_number only):
+          These fields are optional — they can be omitted and the module will
+          pull them from the bootstrap GET API response at runtime.  If
+          provided, they are validated against the bootstrap data before import.
+
+        Swap (both serials present):
+          No check needed — the swap API only requires the new serial number.
         """
         has_serial = bool(self.serial_number)
         has_preprov = bool(self.preprovision_serial)
 
-        # XOR: exactly one serial → non-swap case
-        if has_serial != has_preprov:
+        # Pre-provision only: all four descriptor fields are mandatory
+        if has_preprov and not has_serial:
             missing = []
             if not self.model:
                 missing.append("model")
@@ -174,10 +201,9 @@ class POAPConfigModel(NDNestedModel):
             if not self.config_data:
                 missing.append("config_data")
             if missing:
-                op = "Bootstrap" if has_serial else "Pre-provisioning"
                 raise ValueError(
                     f"model, version, hostname and config_data are required for "
-                    f"{op} a switch. Missing: {', '.join(missing)}"
+                    f"Pre-provisioning a switch. Missing: {', '.join(missing)}"
                 )
         return self
 
