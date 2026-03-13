@@ -31,9 +31,12 @@ class FabricTypeEnum(str, Enum):
     ## Values
 
     - `VXLAN_IBGP` - VXLAN fabric with iBGP overlay
+    - `VXLAN_EBGP` - VXLAN fabric with eBGP overlay
     """
 
     VXLAN_IBGP = "vxlanIbgp"
+    VXLAN_EBGP = "vxlanEbgp"
+    VXLAN_EXTERNAL = "vxlanExternal"
 
 
 class AlertSuspendEnum(str, Enum):
@@ -201,3 +204,48 @@ class VpcPeerKeepAliveOptionEnum(str, Enum):
 
     LOOPBACK = "loopback"
     MANAGEMENT = "management"
+
+
+class DhcpProtocolVersionEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for DHCP protocol version options.
+    """
+
+    DHCPV4 = "dhcpv4"
+    DHCPV6 = "dhcpv6"
+
+
+class PowerRedundancyModeEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for power redundancy mode options.
+    """
+
+    REDUNDANT = "redundant"
+    COMBINED = "combined"
+    INPUT_SRC_REDUNDANT = "inputSrcRedundant"
+
+
+class BgpAsModeEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for eBGP BGP AS mode options.
+    """
+
+    MULTI_AS = "multiAS"
+    SAME_TIER_AS = "sameTierAS"
+
+
+class FirstHopRedundancyProtocolEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for first-hop redundancy protocol options.
+    """
+
+    HSRP = "hsrp"
+    VRRP = "vrrp"

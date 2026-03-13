@@ -55,7 +55,6 @@ iBGP VXLAN fabrics through the Nexus Dashboard Fabric Controller (NDFC) API.
 - `NetflowMonitorModel` - Netflow monitor configuration
 - `NetflowSettingsModel` - Complete netflow settings
 - `BootstrapSubnetModel` - Bootstrap subnet configuration
-- `FabricDesignSettingsModel` - Fabric designer settings
 - `TelemetryFlowCollectionModel` - Telemetry flow collection settings
 - `TelemetrySettingsModel` - Complete telemetry configuration
 - `ExternalStreamingSettingsModel` - External streaming configuration
@@ -247,66 +246,6 @@ class BootstrapSubnetModel(NDNestedModel):
     end_ip: str = Field(alias="endIp", description="Ending IP address of the bootstrap range")
     default_gateway: str = Field(alias="defaultGateway", description="Default gateway for bootstrap subnet")
     subnet_prefix: int = Field(alias="subnetPrefix", description="Subnet prefix length", ge=8, le=30)
-
-
-class FabricDesignSettingsModel(NDNestedModel):
-    """
-    # Summary
-
-    Fabric designer settings for automated fabric deployment.
-
-    ## Raises
-
-    - `ValueError` - If leaf/spine/border counts are invalid
-    """
-
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
-
-    link_capacity: str = Field(alias="linkCapacity", description="Link capacity (e.g., '400Gb')", default="400Gb")
-    leaf_count: int = Field(alias="leafCount", description="Number of leaf switches", ge=1, le=128)
-    leaf_model: str = Field(alias="leafModel", description="Leaf switch model")
-    spine_count: int = Field(alias="spineCount", description="Number of spine switches", ge=1, le=32)
-    spine_model: str = Field(alias="spineModel", description="Spine switch model")
-    border_count: int = Field(alias="borderCount", description="Number of border switches", ge=0, le=32, default=0)
-    border_model: Optional[str] = Field(alias="borderModel", description="Border switch model", default=None)
-    leaf_vpc_pair_policy: str = Field(
-        alias="leafVpcPairPolicy",
-        description="Leaf vPC pairing policy",
-        default="pairWithPhysicalPeerLink"
-    )
-    border_vpc_pair_policy: str = Field(
-        alias="borderVpcPairPolicy",
-        description="Border vPC pairing policy",
-        default="pairWithPhysicalPeerLink"
-    )
-    designer_management_ip_pool: str = Field(
-        alias="designerManagementIPPool",
-        description="Management IP pool for designer"
-    )
-    designer_management_gateway: str = Field(
-        alias="designerManagementGateway",
-        description="Management gateway for designer"
-    )
-    spine_to_leaf_distance: int = Field(
-        alias="spineToLeafDistance",
-        description="Cable distance from spine to leaf",
-        ge=1,
-        le=100,
-        default=20
-    )
-    airflow_direction: str = Field(alias="airflowDirection", description="Airflow direction", default="frontToBack")
-    breakout_spine_interfaces: bool = Field(
-        alias="breakoutSpineInterfaces",
-        description="Enable spine interface breakout",
-        default=False
-    )
-    cabling_type: str = Field(alias="cablingType", description="Cabling type", default="fiber")
-    designer_password: Optional[str] = Field(alias="designerPassword", description="Designer password", default=None)
 
 
 class TelemetryFlowCollectionModel(NDNestedModel):
@@ -552,15 +491,15 @@ class VxlanIbgpManagementModel(NDNestedModel):
     bgp_asn: str = Field(alias="bgpAsn", description="BGP Autonomous System Number 1-4294967295 | 1-65535[.0-65535]")
     site_id: Optional[str] = Field(alias="siteId", description="Site identifier for the fabric", default="")
 
-    # Missing Fields
+    # Name under management section is optional for backward compatibility, but if provided must be non-empty string
     name: Optional[str] = Field(description="Fabric name", min_length=1, max_length=64, default="")
-    border_count: Optional[int] = Field(alias="borderCount", description="Number of border switches", ge=0, le=32, default=0)
-    breakout_spine_interfaces: Optional[bool] = Field(alias="breakoutSpineInterfaces", description="Enable breakout spine interfaces", default=False)
-    designer_use_robot_password: Optional[bool] = Field(alias="designerUseRobotPassword", description="Use robot password for designer", default=False)
-    leaf_count: Optional[int] = Field(alias="leafCount", description="Number of leaf switches", ge=1, le=128, default=1)
-    spine_count: Optional[int] = Field(alias="spineCount", description="Number of spine switches", ge=1, le=32, default=1)
-    vrf_lite_ipv6_subnet_range: Optional[str] = Field(alias="vrfLiteIpv6SubnetRange", description="VRF Lite IPv6 subnet range", default="fd00::a33:0/112")
-    vrf_lite_ipv6_subnet_target_mask: Optional[int] = Field(alias="vrfLiteIpv6SubnetTargetMask", description="VRF Lite IPv6 subnet target mask", ge=112, le=128, default=126)
+    # border_count: Optional[int] = Field(alias="borderCount", description="Number of border switches", ge=0, le=32, default=0)
+    # breakout_spine_interfaces: Optional[bool] = Field(alias="breakoutSpineInterfaces", description="Enable breakout spine interfaces", default=False)
+    # designer_use_robot_password: Optional[bool] = Field(alias="designerUseRobotPassword", description="Use robot password for designer", default=False)
+    # leaf_count: Optional[int] = Field(alias="leafCount", description="Number of leaf switches", ge=1, le=128, default=1)
+    # spine_count: Optional[int] = Field(alias="spineCount", description="Number of spine switches", ge=1, le=32, default=1)
+    # vrf_lite_ipv6_subnet_range: Optional[str] = Field(alias="vrfLiteIpv6SubnetRange", description="VRF Lite IPv6 subnet range", default="fd00::a33:0/112")
+    # vrf_lite_ipv6_subnet_target_mask: Optional[int] = Field(alias="vrfLiteIpv6SubnetTargetMask", description="VRF Lite IPv6 subnet target mask", ge=112, le=128, default=126)
 
 
     # Network Addressing
@@ -1352,47 +1291,6 @@ class FabricModel(NDBaseModel):
     )
 
 
-class FabricDeleteModel(BaseModel):
-    """
-    # Summary
-
-    Model for deleting an iBGP VXLAN fabric.
-
-    Only requires the fabric name for identification.
-
-    ## Raises
-
-    - `ValueError` - If fabric name is invalid
-    """
-
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
-
-    name: str = Field(description="Name of the fabric to delete", min_length=1, max_length=64)
-
-    @field_validator("name")
-    @classmethod
-    def validate_fabric_name(cls, value: str) -> str:
-        """
-        # Summary
-
-        Validate fabric name format for deletion.
-
-        ## Raises
-
-        - `ValueError` - If name format is invalid
-        """
-        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
-            raise ValueError(f"Fabric name can only contain letters, numbers, underscores, and hyphens, got: {value}")
-
-        return value
-
-
-
 # Export all models for external use
 __all__ = [
     "LocationModel",
@@ -1401,7 +1299,6 @@ __all__ = [
     "NetflowMonitorModel",
     "NetflowSettingsModel",
     "BootstrapSubnetModel",
-    "FabricDesignSettingsModel",
     "TelemetryFlowCollectionModel",
     "TelemetryMicroburstModel",
     "TelemetryAnalysisSettingsModel",
