@@ -739,12 +739,12 @@
     success_msg: "✓ SNMP Trap correctly enabled"
   tags: [test_replaced, test_replaced_validation]
 
-- name: "VALIDATION 2: Verify Greenfield Debug Flag was enabled"
+- name: "VALIDATION 2: Verify Greenfield Debug Flag was disabled"
   assert:
     that:
-      - replaced_fabric_config.management.greenfieldDebugFlag == "enable"
-    fail_msg: "Greenfield Debug Flag validation failed. Expected: enable, Actual: {{ replaced_fabric_config.management.greenfieldDebugFlag }}"
-    success_msg: "✓ Greenfield Debug Flag correctly enabled"
+      - replaced_fabric_config.management.greenfieldDebugFlag == "disable"
+    fail_msg: "Greenfield Debug Flag validation failed. Expected: disable, Actual: {{ replaced_fabric_config.management.greenfieldDebugFlag }}"
+    success_msg: "✓ Greenfield Debug Flag correctly disabled"
   tags: [test_replaced, test_replaced_validation]
 
 - name: "VALIDATION 2: Verify NXAPI HTTP was enabled"
@@ -1138,9 +1138,9 @@
 - name: "TEST SUMMARY: Display test results"
   debug:
     msg: |
-      ========================================
+      ========================================================
       TEST SUMMARY for cisco.nd.nd_manage_fabric_ibgp module:
-      ========================================
+      ========================================================
       ✓ TEST 1: STATE MERGED
         - Create fabric: {{ 'PASSED' if merged_result_1 is changed else 'FAILED' }}
         - Idempotency: {{ 'PASSED' if merged_result_2 is not changed else 'FAILED' }}

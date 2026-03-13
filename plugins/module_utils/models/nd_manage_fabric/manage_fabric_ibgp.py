@@ -31,6 +31,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.e
     OverlayModeEnum,
     ReplicationModeEnum,
     LinkStateRoutingProtocolEnum,
+    CoppPolicyEnum,
+    FabricInterfaceTypeEnum,
+    GreenfieldDebugFlagEnum,
+    IsisLevelEnum,
+    SecurityGroupStatusEnum,
+    StpRootOptionEnum,
+    VpcPeerKeepAliveOptionEnum,
 )
 
 
@@ -621,7 +628,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         default=LinkStateRoutingProtocolEnum.OSPF
     )
     ospf_area_id: str = Field(alias="ospfAreaId", description="OSPF area ID", default="0.0.0.0")
-    fabric_interface_type: str = Field(alias="fabricInterfaceType", description="Fabric interface type", default="p2p")
+    fabric_interface_type: FabricInterfaceTypeEnum = Field(alias="fabricInterfaceType", description="Fabric interface type", default=FabricInterfaceTypeEnum.P2P)
 
     # Advanced Features
     target_subnet_mask: int = Field(alias="targetSubnetMask", description="Target subnet mask", ge=24, le=31, default=30)
@@ -647,10 +654,10 @@ class VxlanIbgpManagementModel(NDNestedModel):
         description="Enable native VLAN on vPC peer link",
         default=False
     )
-    vpc_peer_keep_alive_option: str = Field(
+    vpc_peer_keep_alive_option: VpcPeerKeepAliveOptionEnum = Field(
         alias="vpcPeerKeepAliveOption",
         description="vPC peer keep-alive option",
-        default="loopback"
+        default=VpcPeerKeepAliveOptionEnum.MANAGEMENT
     )
     vpc_auto_recovery_timer: int = Field(
         alias="vpcAutoRecoveryTimer",
@@ -714,7 +721,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # Management Settings
     nxapi: bool = Field(description="Enable NX-API", default=False)
-    nxapi_http: bool = Field(alias="nxapiHttp", description="Enable NX-API HTTP", default=True)
+    nxapi_http: bool = Field(alias="nxapiHttp", description="Enable NX-API HTTP", default=False)
     nxapi_https_port: int = Field(alias="nxapiHttpsPort", description="NX-API HTTPS port", ge=1, le=65535, default=443)
     nxapi_http_port: int = Field(alias="nxapiHttpPort", description="NX-API HTTP port", ge=1, le=65535, default=80)
 
@@ -906,7 +913,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     ospf_authentication_key: str = Field(alias="ospfAuthenticationKey", description="OSPF authentication key", default="")
 
     # IS-IS
-    isis_level: str = Field(alias="isisLevel", description="IS-IS level", default="level-2")
+    isis_level: IsisLevelEnum = Field(alias="isisLevel", description="IS-IS level", default=IsisLevelEnum.LEVEL_2)
     isis_area_number: str = Field(alias="isisAreaNumber", description="IS-IS area number", default="0001")
     isis_point_to_point: bool = Field(alias="isisPointToPoint", description="IS-IS point-to-point", default=True)
     isis_authentication: bool = Field(alias="isisAuthentication", description="Enable IS-IS authentication", default=False)
@@ -985,7 +992,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     security_group_tag_preprovision: bool = Field(
         alias="securityGroupTagPreprovision", description="Enable SGT preprovision", default=False
     )
-    security_group_status: str = Field(alias="securityGroupStatus", description="Security group status", default="enabled")
+    security_group_status: SecurityGroupStatusEnum = Field(alias="securityGroupStatus", description="Security group status", default=SecurityGroupStatusEnum.DISABLED)
 
     # Queuing / QoS
     default_queuing_policy: bool = Field(alias="defaultQueuingPolicy", description="Enable default queuing policy", default=False)
@@ -1025,9 +1032,9 @@ class VxlanIbgpManagementModel(NDNestedModel):
     ptp_vlan_id: int = Field(alias="ptpVlanId", description="PTP VLAN ID", default=2)
 
     # STP
-    stp_root_option: str = Field(alias="stpRootOption", description="STP root option", default="mst")
-    stp_vlan_range: str = Field(alias="stpVlanRange", description="STP VLAN range", default="")
-    mst_instance_range: str = Field(alias="mstInstanceRange", description="MST instance range", default="0-3,5,7-9")
+    stp_root_option: StpRootOptionEnum = Field(alias="stpRootOption", description="STP root option", default=StpRootOptionEnum.UNMANAGED)
+    stp_vlan_range: str = Field(alias="stpVlanRange", description="STP VLAN range", default="1-3967")
+    mst_instance_range: str = Field(alias="mstInstanceRange", description="MST instance range", default="0")
     stp_bridge_priority: int = Field(alias="stpBridgePriority", description="STP bridge priority", default=0)
 
     # MPLS Handoff
@@ -1097,7 +1104,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     anycast_border_gateway_advertise_physical_ip: bool = Field(
         alias="anycastBorderGatewayAdvertisePhysicalIp", description="Anycast border gateway advertise physical IP", default=False
     )
-    greenfield_debug_flag: str = Field(alias="greenfieldDebugFlag", description="Greenfield debug flag", default="enable")
+    greenfield_debug_flag: GreenfieldDebugFlagEnum = Field(alias="greenfieldDebugFlag", description="Greenfield debug flag", default=GreenfieldDebugFlagEnum.DISABLE)
     interface_statistics_load_interval: int = Field(
         alias="interfaceStatisticsLoadInterval", description="Interface statistics load interval", default=10
     )
@@ -1116,7 +1123,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="strictConfigComplianceMode", description="Enable strict config compliance mode", default=False
     )
     advanced_ssh_option: bool = Field(alias="advancedSshOption", description="Enable advanced SSH option", default=False)
-    copp_policy: str = Field(alias="coppPolicy", description="CoPP policy", default="dense")
+    copp_policy: CoppPolicyEnum = Field(alias="coppPolicy", description="CoPP policy", default=CoppPolicyEnum.STRICT)
     power_redundancy_mode: str = Field(alias="powerRedundancyMode", description="Power redundancy mode", default="redundant")
     host_interface_admin_state: bool = Field(
         alias="hostInterfaceAdminState", description="Host interface admin state", default=True
@@ -1131,6 +1138,26 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     allow_smart_switch_onboarding: bool = Field(
         alias="allowSmartSwitchOnboarding", description="Allow smart switch onboarding", default=False
+    )
+
+    # Hypershield / Connectivity
+    connectivity_domain_name: Optional[str] = Field(
+        alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None
+    )
+    hypershield_connectivity_proxy_server: Optional[str] = Field(
+        alias="hypershieldConnectivityProxyServer",
+        description="IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication",
+        default=None
+    )
+    hypershield_connectivity_proxy_server_port: Optional[int] = Field(
+        alias="hypershieldConnectivityProxyServerPort",
+        description="Proxy port number for communication with Hypershield",
+        default=None
+    )
+    hypershield_connectivity_source_intf: Optional[str] = Field(
+        alias="hypershieldConnectivitySourceIntf",
+        description="Loopback interface on smart switch for communication with Hypershield",
+        default=None
     )
 
     @field_validator("bgp_asn")

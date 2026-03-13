@@ -16,7 +16,7 @@ common_fabric_config:
   telemetry_collection: false
   management:
     type: vxlanIbgp
-    bgp_asn: "65001"
+    bgp_asn: "65001.55"
     site_id: "65001"
     target_subnet_mask: 30
     anycast_gateway_mac: "2020.0000.00aa"

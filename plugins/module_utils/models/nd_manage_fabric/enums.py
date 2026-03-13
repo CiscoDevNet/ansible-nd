@@ -114,3 +114,90 @@ class LinkStateRoutingProtocolEnum(str, Enum):
 
     OSPF = "ospf"
     ISIS = "isis"
+
+
+class CoppPolicyEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for CoPP policy options.
+    """
+
+    DENSE = "dense"
+    LENIENT = "lenient"
+    MODERATE = "moderate"
+    STRICT = "strict"
+    MANUAL = "manual"
+
+
+class FabricInterfaceTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for fabric interface types.
+    """
+
+    P2P = "p2p"
+    UNNUMBERED = "unNumbered"
+
+
+class GreenfieldDebugFlagEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for greenfield debug flag.
+    """
+
+    ENABLE = "enable"
+    DISABLE = "disable"
+
+
+class IsisLevelEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for IS-IS levels.
+    """
+
+    LEVEL_1 = "level-1"
+    LEVEL_2 = "level-2"
+
+
+class SecurityGroupStatusEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for security group status.
+    """
+
+    ENABLED = "enabled"
+    ENABLED_STRICT = "enabledStrict"
+    ENABLED_LOOSE = "enabledLoose"
+    ENABLE_PENDING = "enablePending"
+    ENABLE_PENDING_STRICT = "enablePendingStrict"
+    ENABLE_PENDING_LOOSE = "enablePendingLoose"
+    DISABLE_PENDING = "disablePending"
+    DISABLED = "disabled"
+
+
+class StpRootOptionEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for STP root options.
+    """
+
+    RPVST_PLUS = "rpvst+"
+    MST = "mst"
+    UNMANAGED = "unmanaged"
+
+
+class VpcPeerKeepAliveOptionEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for vPC peer keep-alive options.
+    """
+
+    LOOPBACK = "loopback"
+    MANAGEMENT = "management"
