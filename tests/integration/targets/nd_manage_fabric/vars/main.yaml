@@ -1,0 +1,81 @@
+---
+
+test_fabric_merged: "test_fabric_merged"
+test_fabric_replaced: "test_fabric_replaced"
+test_fabric_deleted: "test_fabric_deleted"
+
+# Common fabric configuration for all tests
+common_fabric_config:
+  category: fabric
+  location:
+    latitude: 37.7749
+    longitude: -122.4194
+  license_tier: premier
+  alert_suspend: disabled
+  security_domain: all
+  telemetry_collection: false
+  management:
+    type: vxlanIbgp
+    bgp_asn: "65001"
+    site_id: "65001"
+    target_subnet_mask: 30
+    anycast_gateway_mac: "2020.0000.00aa"
+    performance_monitoring: false
+    replication_mode: multicast
+    multicast_group_subnet: "239.1.1.0/25"
+    auto_generate_multicast_group_address: false
+    underlay_multicast_group_address_limit: 128
+    tenant_routed_multicast: false
+    rendezvous_point_count: 2
+    rendezvous_point_loopback_id: 254
+    vpc_peer_link_vlan: "3600"
+    vpc_peer_link_enable_native_vlan: false
+    vpc_peer_keep_alive_option: loopback
+    vpc_auto_recovery_timer: 360
+    vpc_delay_restore_timer: 150
+    vpc_peer_link_port_channel_id: "500"
+    advertise_physical_ip: false
+    vpc_domain_id_range: "1-1000"
+    bgp_loopback_id: 0
+    nve_loopback_id: 1
+    vrf_template: Default_VRF_Universal
+    network_template: Default_Network_Universal
+    vrf_extension_template: Default_VRF_Extension_Universal
+    network_extension_template: Default_Network_Extension_Universal
+    l3_vni_no_vlan_default_option: false
+    fabric_mtu: 9216
+    l2_host_interface_mtu: 9216
+    tenant_dhcp: true
+    nxapi: true
+    nxapi_https_port: 443
+    nxapi_http: false
+    nxapi_http_port: 80
+    snmp_trap: true
+    anycast_border_gateway_advertise_physical_ip: false
+    greenfield_debug_flag: enable
+    tcam_allocation: true
+    real_time_interface_statistics_collection: false
+    interface_statistics_load_interval: 10
+    bgp_loopback_ip_range: "10.2.0.0/22"
+    nve_loopback_ip_range: "10.3.0.0/22"
+    anycast_rendezvous_point_ip_range: "10.254.254.0/24"
+    intra_fabric_subnet_range: "10.4.0.0/16"
+    l2_vni_range: "30000-49000"
+    l3_vni_range: "50000-59000"
+    network_vlan_range: "2300-2999"
+    vrf_vlan_range: "2000-2299"
+    sub_interface_dot1q_range: "2-511"
+    vrf_lite_auto_config: manual
+    vrf_lite_subnet_range: "10.33.0.0/16"
+    vrf_lite_subnet_target_mask: 30
+    auto_unique_vrf_lite_ip_prefix: false
+    per_vrf_loopback_auto_provision: true
+    per_vrf_loopback_ip_range: "10.5.0.0/22"
+    banner: ""
+    day0_bootstrap: false
+    local_dhcp_server: false
+    dhcp_protocol_version: dhcpv4
+    dhcp_start_address: ""
+    dhcp_end_address: ""
+    management_gateway: ""
+    management_ipv4_prefix: 24

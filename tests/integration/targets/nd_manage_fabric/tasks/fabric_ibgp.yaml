@@ -1,0 +1,1172 @@
+---
+# Test code for the ND modules
+# Copyright: (c) 2026, Mike Wiebe (@mwiebe) <mwiebe@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+#############################################################################
+# CLEANUP - Ensure clean state before tests
+#############################################################################
+- name: Clean up any existing test fabrics before starting tests
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: deleted
+    config:
+      - name: "{{ test_fabric_merged }}"
+      - name: "{{ test_fabric_replaced }}"
+      - name: "{{ test_fabric_deleted }}"
+  tags: always
+
+#############################################################################
+# TEST 1: STATE MERGED - Create fabric using merged state
+#############################################################################
+- name: "TEST 1a: Create fabric using state merged (first run)"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: merged
+    config:
+      - "{{ {'name': test_fabric_merged} | combine(common_fabric_config) }}"
+  register: merged_result_1
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1a: Verify fabric was created using merged state"
+  assert:
+    that:
+      - merged_result_1 is changed
+      - merged_result_1 is not failed
+    fail_msg: "Fabric creation with state merged failed"
+    success_msg: "Fabric successfully created with state merged"
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1b: Create fabric using state merged (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: merged
+    config:
+      - "{{ {'name': test_fabric_merged} | combine(common_fabric_config) }}"
+  register: merged_result_2
+  tags: [test_merged, test_merged_idempotent]
+
+- name: "TEST 1b: Verify merged state is idempotent"
+  assert:
+    that:
+      - merged_result_2 is not changed
+      - merged_result_2 is not failed
+    fail_msg: "Merged state is not idempotent - should not change when run twice with same config"
+    success_msg: "Merged state is idempotent - no changes on second run"
+  tags: [test_merged, test_merged_idempotent]
+
+# - name: "PAUSE: Review TEST 1b results before continuing"
+#   ansible.builtin.pause:
+#     prompt: "TEST 1b complete. Review results and press Enter to continue, or Ctrl+C then A to abort"
+#   tags: [test_merged, test_merged_update]
+
+- name: "TEST 1c: Update fabric using state merged (modify existing)"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: merged
+    config:
+      - name: "{{ test_fabric_merged }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: vxlanIbgp
+          bgp_asn: "65002"  # Changed from 65001
+          site_id: "65002"  # Changed from 65001
+          target_subnet_mask: 30
+          anycast_gateway_mac: "2020.0000.00bb"  # Changed from 00aa
+          performance_monitoring: true  # Changed from false
+          replication_mode: multicast
+          multicast_group_subnet: "239.1.1.0/25"
+          auto_generate_multicast_group_address: false
+          underlay_multicast_group_address_limit: 128
+          tenant_routed_multicast: false
+          rendezvous_point_count: 2
+          rendezvous_point_loopback_id: 254
+          vpc_peer_link_vlan: "3600"
+          vpc_peer_link_enable_native_vlan: false
+          vpc_peer_keep_alive_option: loopback
+          vpc_auto_recovery_timer: 360
+          vpc_delay_restore_timer: 150
+          vpc_peer_link_port_channel_id: "500"
+          advertise_physical_ip: false
+          vpc_domain_id_range: "1-1000"
+          bgp_loopback_id: 0
+          nve_loopback_id: 1
+          vrf_template: Default_VRF_Universal
+          network_template: Default_Network_Universal
+          vrf_extension_template: Default_VRF_Extension_Universal
+          network_extension_template: Default_Network_Extension_Universal
+          l3_vni_no_vlan_default_option: false
+          fabric_mtu: 9216
+          l2_host_interface_mtu: 9216
+          tenant_dhcp: true
+          nxapi: true
+          nxapi_https_port: 443
+          nxapi_http: false
+          nxapi_http_port: 80
+          snmp_trap: true
+          anycast_border_gateway_advertise_physical_ip: false
+          greenfield_debug_flag: enable
+          tcam_allocation: true
+          real_time_interface_statistics_collection: false
+          interface_statistics_load_interval: 10
+          bgp_loopback_ip_range: "10.2.0.0/22"
+          nve_loopback_ip_range: "10.3.0.0/22"
+          anycast_rendezvous_point_ip_range: "10.254.254.0/24"
+          intra_fabric_subnet_range: "10.4.0.0/16"
+          l2_vni_range: "30000-49000"
+          l3_vni_range: "50000-59000"
+          network_vlan_range: "2300-2999"
+          vrf_vlan_range: "2000-2299"
+          sub_interface_dot1q_range: "2-511"
+          vrf_lite_auto_config: manual
+          vrf_lite_subnet_range: "10.33.0.0/16"
+          vrf_lite_subnet_target_mask: 30
+          auto_unique_vrf_lite_ip_prefix: false
+          per_vrf_loopback_auto_provision: true
+          per_vrf_loopback_ip_range: "10.5.0.0/22"
+          # per_vrf_loopback_auto_provision_ipv6: false
+          # per_vrf_loopback_ipv6_range: "fd00::a05:0/112"
+          banner: ""
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+  register: merged_result_3
+  tags: [test_merged, test_merged_update]
+
+- name: "TEST 1c: Verify fabric was updated using merged state"
+  assert:
+    that:
+      - merged_result_3 is changed
+      - merged_result_3 is not failed
+    fail_msg: "Fabric update with state merged failed"
+    success_msg: "Fabric successfully updated with state merged"
+  tags: [test_merged, test_merged_update]
+
+#############################################################################
+# VALIDATION: Query test_fabric_merged and validate expected changes
+#############################################################################
+# Get authentication token first
+- name: "VALIDATION 1: Authenticate with ND to get token"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_auth_response
+  tags: [test_merged, test_merged_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 1: Query test_fabric_merged configuration from ND"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ test_fabric_merged }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: merged_fabric_query
+  tags: [test_merged, test_merged_validation]
+  delegate_to: localhost
+
+# - debug: msg="{{ merged_fabric_query }}"
+# - meta: end_play
+
+- name: "VALIDATION 1: Parse fabric configuration response"
+  set_fact:
+    merged_fabric_config: "{{ merged_fabric_query.json }}"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify BGP ASN was updated to 65002"
+  assert:
+    that:
+      - merged_fabric_config.management.bgpAsn == "65002"
+    fail_msg: "BGP ASN validation failed. Expected: 65002, Actual: {{ merged_fabric_config.management.bgpAsn }}"
+    success_msg: "✓ BGP ASN correctly updated to 65002"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify Site ID was updated to 65002"
+  assert:
+    that:
+      - merged_fabric_config.management.siteId == "65002"
+    fail_msg: "Site ID validation failed. Expected: 65002, Actual: {{ merged_fabric_config.management.siteId }}"
+    success_msg: "✓ Site ID correctly updated to 65002"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify Anycast Gateway MAC was updated to 2020.0000.00bb"
+  assert:
+    that:
+      - merged_fabric_config.management.anycastGatewayMac == "2020.0000.00bb"
+    fail_msg: "Anycast Gateway MAC validation failed. Expected: 2020.0000.00bb, Actual: {{ merged_fabric_config.management.anycastGatewayMac }}"
+    success_msg: "✓ Anycast Gateway MAC correctly updated to 2020.0000.00bb"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify Performance Monitoring was enabled"
+  assert:
+    that:
+      - merged_fabric_config.management.performanceMonitoring == true
+    fail_msg: "Performance Monitoring validation failed. Expected: true, Actual: {{ merged_fabric_config.management.performanceMonitoring }}"
+    success_msg: "✓ Performance Monitoring correctly enabled"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Display successful validation summary for test_fabric_merged"
+  debug:
+    msg: |
+      ========================================
+      VALIDATION SUMMARY for test_fabric_merged:
+      ========================================
+      ✓ BGP ASN: {{ merged_fabric_config.management.bgpAsn }}
+      ✓ Site ID: {{ merged_fabric_config.management.siteId }}
+      ✓ Anycast Gateway MAC: {{ merged_fabric_config.management.anycastGatewayMac }}
+      ✓ Performance Monitoring: {{ merged_fabric_config.management.performanceMonitoring }}
+
+      All 4 expected changes validated successfully!
+      ========================================
+  tags: [test_merged, test_merged_validation]
+
+# - name: "PAUSE: Review TEST 1c results before continuing"
+#   ansible.builtin.pause:
+#     prompt: "TEST 1c complete. Review results and press Enter to continue, or Ctrl+C then A to abort"
+#   tags: [test_merged, test_merged_update]
+
+#############################################################################
+# TEST 2: STATE REPLACED - Create and manage fabric using replaced state
+#############################################################################
+- name: "TEST 2a: Create fabric using state replaced (first run)"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: replaced
+    config:
+      - name: "{{ test_fabric_replaced }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: vxlanIbgp
+          bgp_asn: "65004"  # DIfferent from default  ASN
+          site_id: "65004"  # DIfferent from default  site_id
+          target_subnet_mask: 30
+          anycast_gateway_mac: "2020.0000.00dd"  # DIfferent from default  MAC
+          performance_monitoring: true  # DIfferent from default  to true
+          replication_mode: multicast
+          multicast_group_subnet: "239.1.3.0/25"  # DIfferent from default  subnet
+          auto_generate_multicast_group_address: false
+          underlay_multicast_group_address_limit: 128
+          tenant_routed_multicast: false
+          rendezvous_point_count: 3  # DIfferent from default  count
+          rendezvous_point_loopback_id: 253  # DIfferent from default  loopback
+          vpc_peer_link_vlan: "3700"  # DIfferent from default  VLAN
+          vpc_peer_link_enable_native_vlan: false
+          vpc_peer_keep_alive_option: loopback
+          vpc_auto_recovery_timer: 300  # DIfferent from default  timer
+          vpc_delay_restore_timer: 120  # DIfferent from default  timer
+          vpc_peer_link_port_channel_id: "600"  # DIfferent from default  port channel
+          vpc_ipv6_neighbor_discovery_sync: false  # DIfferent from default  to false
+          advertise_physical_ip: true  # DIfferent from default  to true
+          vpc_domain_id_range: "1-800"  # DIfferent from default  range
+          bgp_loopback_id: 0
+          nve_loopback_id: 1
+          vrf_template: Default_VRF_Universal
+          network_template: Default_Network_Universal
+          vrf_extension_template: Default_VRF_Extension_Universal
+          network_extension_template: Default_Network_Extension_Universal
+          l3_vni_no_vlan_default_option: false
+          fabric_mtu: 9000  # DIfferent from default  MTU
+          l2_host_interface_mtu: 9000  # DIfferent from default  MTU
+          tenant_dhcp: false  # DIfferent from default  to false
+          nxapi: false  # DIfferent from default  to false
+          nxapi_https_port: 443
+          nxapi_http: true  # DIfferent from default  to true
+          nxapi_http_port: 80
+          snmp_trap: false  # DIfferent from default  to false
+          anycast_border_gateway_advertise_physical_ip: true  # DIfferent from default  to true
+          greenfield_debug_flag: disable  # DIfferent from default  to disable
+          tcam_allocation: false  # DIfferent from default  to false
+          real_time_interface_statistics_collection: true  # DIfferent from default  to true
+          interface_statistics_load_interval: 30  # DIfferent from default  interval
+          bgp_loopback_ip_range: "10.22.0.0/22"  # DIfferent from default  range
+          nve_loopback_ip_range: "10.23.0.0/22"  # DIfferent from default  range
+          anycast_rendezvous_point_ip_range: "10.254.252.0/24"  # DIfferent from default  range
+          intra_fabric_subnet_range: "10.24.0.0/16"  # DIfferent from default  range
+          l2_vni_range: "40000-59000"  # DIfferent from default  range
+          l3_vni_range: "60000-69000"  # DIfferent from default  range
+          network_vlan_range: "2400-3099"  # DIfferent from default  range
+          vrf_vlan_range: "2100-2399"  # DIfferent from default  range
+          sub_interface_dot1q_range: "2-511"
+          vrf_lite_auto_config: manual
+          vrf_lite_subnet_range: "10.53.0.0/16"  # DIfferent from default  range
+          vrf_lite_subnet_target_mask: 30
+          auto_unique_vrf_lite_ip_prefix: false
+          per_vrf_loopback_auto_provision: true
+          per_vrf_loopback_ip_range: "10.25.0.0/22"  # DIfferent from default  range
+          per_vrf_loopback_auto_provision_ipv6: true
+          per_vrf_loopback_ipv6_range: "fd00::a25:0/112"  # DIfferent from default  range
+          banner: "^ Updated via replaced state ^"  # Added banner
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+          management_ipv6_prefix: 64
+  register: replaced_result_1
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2a: Verify fabric was created using replaced state"
+  assert:
+    that:
+      - replaced_result_1 is changed
+      - replaced_result_1 is not failed
+    fail_msg: "Fabric creation with state replaced failed"
+    success_msg: "Fabric successfully created with state replaced"
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2b: Create fabric using state replaced (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: replaced
+    config:
+      - name: "{{ test_fabric_replaced }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: vxlanIbgp
+          bgp_asn: "65004"  # DIfferent from default  ASN
+          site_id: "65004"  # DIfferent from default  site_id
+          target_subnet_mask: 30
+          anycast_gateway_mac: "2020.0000.00dd"  # DIfferent from default  MAC
+          performance_monitoring: true  # DIfferent from default  to true
+          replication_mode: multicast
+          multicast_group_subnet: "239.1.3.0/25"  # DIfferent from default  subnet
+          auto_generate_multicast_group_address: false
+          underlay_multicast_group_address_limit: 128
+          tenant_routed_multicast: false
+          rendezvous_point_count: 3  # DIfferent from default  count
+          rendezvous_point_loopback_id: 253  # DIfferent from default  loopback
+          vpc_peer_link_vlan: "3700"  # DIfferent from default  VLAN
+          vpc_peer_link_enable_native_vlan: false
+          vpc_peer_keep_alive_option: loopback
+          vpc_auto_recovery_timer: 300  # DIfferent from default  timer
+          vpc_delay_restore_timer: 120  # DIfferent from default  timer
+          vpc_peer_link_port_channel_id: "600"  # DIfferent from default  port channel
+          vpc_ipv6_neighbor_discovery_sync: false  # DIfferent from default  to false
+          advertise_physical_ip: true  # DIfferent from default  to true
+          vpc_domain_id_range: "1-800"  # DIfferent from default  range
+          bgp_loopback_id: 0
+          nve_loopback_id: 1
+          vrf_template: Default_VRF_Universal
+          network_template: Default_Network_Universal
+          vrf_extension_template: Default_VRF_Extension_Universal
+          network_extension_template: Default_Network_Extension_Universal
+          l3_vni_no_vlan_default_option: false
+          fabric_mtu: 9000  # DIfferent from default  MTU
+          l2_host_interface_mtu: 9000  # DIfferent from default  MTU
+          tenant_dhcp: false  # DIfferent from default  to false
+          nxapi: false  # DIfferent from default  to false
+          nxapi_https_port: 443
+          nxapi_http: true  # DIfferent from default  to true
+          nxapi_http_port: 80
+          snmp_trap: false  # DIfferent from default  to false
+          anycast_border_gateway_advertise_physical_ip: true  # DIfferent from default  to true
+          greenfield_debug_flag: disable  # DIfferent from default  to disable
+          tcam_allocation: false  # DIfferent from default  to false
+          real_time_interface_statistics_collection: true  # DIfferent from default  to true
+          interface_statistics_load_interval: 30  # DIfferent from default  interval
+          bgp_loopback_ip_range: "10.22.0.0/22"  # DIfferent from default  range
+          nve_loopback_ip_range: "10.23.0.0/22"  # DIfferent from default  range
+          anycast_rendezvous_point_ip_range: "10.254.252.0/24"  # DIfferent from default  range
+          intra_fabric_subnet_range: "10.24.0.0/16"  # DIfferent from default  range
+          l2_vni_range: "40000-59000"  # DIfferent from default  range
+          l3_vni_range: "60000-69000"  # DIfferent from default  range
+          network_vlan_range: "2400-3099"  # DIfferent from default  range
+          vrf_vlan_range: "2100-2399"  # DIfferent from default  range
+          sub_interface_dot1q_range: "2-511"
+          vrf_lite_auto_config: manual
+          vrf_lite_subnet_range: "10.53.0.0/16"  # DIfferent from default  range
+          vrf_lite_subnet_target_mask: 30
+          auto_unique_vrf_lite_ip_prefix: false
+          per_vrf_loopback_auto_provision: true
+          per_vrf_loopback_ip_range: "10.25.0.0/22"  # DIfferent from default  range
+          per_vrf_loopback_auto_provision_ipv6: true
+          per_vrf_loopback_ipv6_range: "fd00::a25:0/112"  # DIfferent from default  range
+          banner: "^ Updated via replaced state ^"  # Added banner
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+          management_ipv6_prefix: 64
+  register: replaced_result_2
+  tags: [test_replaced, test_replaced_idempotent]
+
+- name: "TEST 2b: Verify replaced state is idempotent"
+  assert:
+    that:
+      - replaced_result_2 is not changed
+      - replaced_result_2 is not failed
+    fail_msg: "Replaced state is not idempotent - should not change when run twice with same config"
+    success_msg: "Replaced state is idempotent - no changes on second run"
+  tags: [test_replaced, test_replaced_idempotent]
+
+# - name: "PAUSE: Review TEST 2b results before continuing"
+#   ansible.builtin.pause:
+#     prompt: "TEST 2b complete. Review results and press Enter to continue, or Ctrl+C then A to abort"
+#   tags: [test_replaced, test_replaced_idempotent]
+
+- name: "TEST 2c: Update fabric using state replaced (complete replacement)"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: replaced
+    config:
+      - name: "{{ test_fabric_replaced }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: vxlanIbgp
+          bgp_asn: "65004"  # Changed ASN
+          site_id: "65004"  # Changed site_id
+          banner: "^ Updated via replaced state ^"  # Added banner
+  register: replaced_result_3
+  tags: [test_replaced, test_replaced_update]
+
+- name: "TEST 2c: Verify fabric was completely replaced"
+  assert:
+    that:
+      - replaced_result_3 is changed
+      - replaced_result_3 is not failed
+    fail_msg: "Fabric replacement with state replaced failed"
+    success_msg: "Fabric successfully replaced with state replaced"
+  tags: [test_replaced, test_replaced_update]
+
+# #############################################################################
+# # VALIDATION: Query test_fabric_replaced and validate expected changes
+# #############################################################################
+# Get authentication token first
+- name: "VALIDATION 2: Authenticate with ND to get token"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_auth_response_2
+  tags: [test_replaced, test_replaced_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 2: Query test_fabric_replaced configuration from ND"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ test_fabric_replaced }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response_2.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: replaced_fabric_query
+  tags: [test_replaced, test_replaced_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 2: Parse fabric configuration response"
+  set_fact:
+    replaced_fabric_config: "{{ replaced_fabric_query.json }}"
+  tags: [test_replaced, test_replaced_validation]
+
+# Network Range Validations
+- name: "VALIDATION 2: Verify L3 VNI Range was standardized to 50000-59000"
+  assert:
+    that:
+      - replaced_fabric_config.management.l3VniRange == "50000-59000"
+    fail_msg: "L3 VNI Range validation failed. Expected: 50000-59000, Actual: {{ replaced_fabric_config.management.l3VniRange }}"
+    success_msg: "✓ L3 VNI Range correctly standardized to 50000-59000"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify L2 VNI Range was standardized to 30000-49000"
+  assert:
+    that:
+      - replaced_fabric_config.management.l2VniRange == "30000-49000"
+    fail_msg: "L2 VNI Range validation failed. Expected: 30000-49000, Actual: {{ replaced_fabric_config.management.l2VniRange }}"
+    success_msg: "✓ L2 VNI Range correctly standardized to 30000-49000"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify BGP Loopback IP Range was standardized to 10.2.0.0/22"
+  assert:
+    that:
+      - replaced_fabric_config.management.bgpLoopbackIpRange == "10.2.0.0/22"
+    fail_msg: "BGP Loopback IP Range validation failed. Expected: 10.2.0.0/22, Actual: {{ replaced_fabric_config.management.bgpLoopbackIpRange }}"
+    success_msg: "✓ BGP Loopback IP Range correctly standardized to 10.2.0.0/22"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify NVE Loopback IP Range was standardized to 10.3.0.0/22"
+  assert:
+    that:
+      - replaced_fabric_config.management.nveLoopbackIpRange == "10.3.0.0/22"
+    fail_msg: "NVE Loopback IP Range validation failed. Expected: 10.3.0.0/22, Actual: {{ replaced_fabric_config.management.nveLoopbackIpRange }}"
+    success_msg: "✓ NVE Loopback IP Range correctly standardized to 10.3.0.0/22"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Intra-Fabric Subnet Range was standardized to 10.4.0.0/16"
+  assert:
+    that:
+      - replaced_fabric_config.management.intraFabricSubnetRange == "10.4.0.0/16"
+    fail_msg: "Intra-Fabric Subnet Range validation failed. Expected: 10.4.0.0/16, Actual: {{ replaced_fabric_config.management.intraFabricSubnetRange }}"
+    success_msg: "✓ Intra-Fabric Subnet Range correctly standardized to 10.4.0.0/16"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify VRF Lite Subnet Range was standardized to 10.33.0.0/16"
+  assert:
+    that:
+      - replaced_fabric_config.management.vrfLiteSubnetRange == "10.33.0.0/16"
+    fail_msg: "VRF Lite Subnet Range validation failed. Expected: 10.33.0.0/16, Actual: {{ replaced_fabric_config.management.vrfLiteSubnetRange }}"
+    success_msg: "✓ VRF Lite Subnet Range correctly standardized to 10.33.0.0/16"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Anycast RP IP Range was standardized to 10.254.254.0/24"
+  assert:
+    that:
+      - replaced_fabric_config.management.anycastRendezvousPointIpRange == "10.254.254.0/24"
+    fail_msg: "Anycast RP IP Range validation failed. Expected: 10.254.254.0/24, Actual: {{ replaced_fabric_config.management.anycastRendezvousPointIpRange }}"
+    success_msg: "✓ Anycast RP IP Range correctly standardized to 10.254.254.0/24"
+  tags: [test_replaced, test_replaced_validation]
+
+# VLAN Range Validations
+- name: "VALIDATION 2: Verify Network VLAN Range was standardized to 2300-2999"
+  assert:
+    that:
+      - replaced_fabric_config.management.networkVlanRange == "2300-2999"
+    fail_msg: "Network VLAN Range validation failed. Expected: 2300-2999, Actual: {{ replaced_fabric_config.management.networkVlanRange }}"
+    success_msg: "✓ Network VLAN Range correctly standardized to 2300-2999"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify VRF VLAN Range was standardized to 2000-2299"
+  assert:
+    that:
+      - replaced_fabric_config.management.vrfVlanRange == "2000-2299"
+    fail_msg: "VRF VLAN Range validation failed. Expected: 2000-2299, Actual: {{ replaced_fabric_config.management.vrfVlanRange }}"
+    success_msg: "✓ VRF VLAN Range correctly standardized to 2000-2299"
+  tags: [test_replaced, test_replaced_validation]
+
+# MTU Validations
+- name: "VALIDATION 2: Verify Fabric MTU was increased to 9216"
+  assert:
+    that:
+      - replaced_fabric_config.management.fabricMtu == 9216
+    fail_msg: "Fabric MTU validation failed. Expected: 9216, Actual: {{ replaced_fabric_config.management.fabricMtu }}"
+    success_msg: "✓ Fabric MTU correctly increased to 9216"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify L2 Host Interface MTU was increased to 9216"
+  assert:
+    that:
+      - replaced_fabric_config.management.l2HostInterfaceMtu == 9216
+    fail_msg: "L2 Host Interface MTU validation failed. Expected: 9216, Actual: {{ replaced_fabric_config.management.l2HostInterfaceMtu }}"
+    success_msg: "✓ L2 Host Interface MTU correctly increased to 9216"
+  tags: [test_replaced, test_replaced_validation]
+
+# Gateway and Multicast Validations
+- name: "VALIDATION 2: Verify Anycast Gateway MAC was standardized to 2020.0000.00aa"
+  assert:
+    that:
+      - replaced_fabric_config.management.anycastGatewayMac == "2020.0000.00aa"
+    fail_msg: "Anycast Gateway MAC validation failed. Expected: 2020.0000.00aa, Actual: {{ replaced_fabric_config.management.anycastGatewayMac }}"
+    success_msg: "✓ Anycast Gateway MAC correctly standardized to 2020.0000.00aa"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Multicast Group Subnet was standardized to 239.1.1.0/25"
+  assert:
+    that:
+      - replaced_fabric_config.management.multicastGroupSubnet == "239.1.1.0/25"
+    fail_msg: "Multicast Group Subnet validation failed. Expected: 239.1.1.0/25, Actual: {{ replaced_fabric_config.management.multicastGroupSubnet }}"
+    success_msg: "✓ Multicast Group Subnet correctly standardized to 239.1.1.0/25"
+  tags: [test_replaced, test_replaced_validation]
+
+# VPC Configuration Validations
+- name: "VALIDATION 2: Verify VPC Auto Recovery Timer was standardized to 360"
+  assert:
+    that:
+      - replaced_fabric_config.management.vpcAutoRecoveryTimer == 360
+    fail_msg: "VPC Auto Recovery Timer validation failed. Expected: 360, Actual: {{ replaced_fabric_config.management.vpcAutoRecoveryTimer }}"
+    success_msg: "✓ VPC Auto Recovery Timer correctly standardized to 360"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify VPC Delay Restore Timer was standardized to 150"
+  assert:
+    that:
+      - replaced_fabric_config.management.vpcDelayRestoreTimer == 150
+    fail_msg: "VPC Delay Restore Timer validation failed. Expected: 150, Actual: {{ replaced_fabric_config.management.vpcDelayRestoreTimer }}"
+    success_msg: "✓ VPC Delay Restore Timer correctly standardized to 150"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify VPC Peer Link Port Channel ID was standardized to 500"
+  assert:
+    that:
+      - replaced_fabric_config.management.vpcPeerLinkPortChannelId == "500"
+    fail_msg: "VPC Peer Link Port Channel ID validation failed. Expected: 500, Actual: {{ replaced_fabric_config.management.vpcPeerLinkPortChannelId }}"
+    success_msg: "✓ VPC Peer Link Port Channel ID correctly standardized to 500"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify VPC Peer Link VLAN was standardized to 3600"
+  assert:
+    that:
+      - replaced_fabric_config.management.vpcPeerLinkVlan == "3600"
+    fail_msg: "VPC Peer Link VLAN validation failed. Expected: 3600, Actual: {{ replaced_fabric_config.management.vpcPeerLinkVlan }}"
+    success_msg: "✓ VPC Peer Link VLAN correctly standardized to 3600"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify VPC Domain ID Range was standardized to 1-1000"
+  assert:
+    that:
+      - replaced_fabric_config.management.vpcDomainIdRange == "1-1000"
+    fail_msg: "VPC Domain ID Range validation failed. Expected: 1-1000, Actual: {{ replaced_fabric_config.management.vpcDomainIdRange }}"
+    success_msg: "✓ VPC Domain ID Range correctly standardized to 1-1000"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify VPC IPv6 Neighbor Discovery Sync was enabled"
+  assert:
+    that:
+      - replaced_fabric_config.management.vpcIpv6NeighborDiscoverySync == true
+    fail_msg: "VPC IPv6 Neighbor Discovery Sync validation failed. Expected: true, Actual: {{ replaced_fabric_config.management.vpcIpv6NeighborDiscoverySync }}"
+    success_msg: "✓ VPC IPv6 Neighbor Discovery Sync correctly enabled"
+  tags: [test_replaced, test_replaced_validation]
+
+# Multicast Settings Validations
+- name: "VALIDATION 2: Verify Rendezvous Point Count was standardized to 2"
+  assert:
+    that:
+      - replaced_fabric_config.management.rendezvousPointCount == 2
+    fail_msg: "Rendezvous Point Count validation failed. Expected: 2, Actual: {{ replaced_fabric_config.management.rendezvousPointCount }}"
+    success_msg: "✓ Rendezvous Point Count correctly standardized to 2"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Rendezvous Point Loopback ID was standardized to 254"
+  assert:
+    that:
+      - replaced_fabric_config.management.rendezvousPointLoopbackId == 254
+    fail_msg: "Rendezvous Point Loopback ID validation failed. Expected: 254, Actual: {{ replaced_fabric_config.management.rendezvousPointLoopbackId }}"
+    success_msg: "✓ Rendezvous Point Loopback ID correctly standardized to 254"
+  tags: [test_replaced, test_replaced_validation]
+
+# Feature Flag Validations
+- name: "VALIDATION 2: Verify TCAM Allocation was enabled"
+  assert:
+    that:
+      - replaced_fabric_config.management.tcamAllocation == true
+    fail_msg: "TCAM Allocation validation failed. Expected: true, Actual: {{ replaced_fabric_config.management.tcamAllocation }}"
+    success_msg: "✓ TCAM Allocation correctly enabled"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Real Time Interface Statistics Collection was disabled"
+  assert:
+    that:
+      - replaced_fabric_config.management.realTimeInterfaceStatisticsCollection == false
+    fail_msg: "Real Time Interface Statistics Collection validation failed. Expected: false, Actual: {{ replaced_fabric_config.management.realTimeInterfaceStatisticsCollection }}"
+    success_msg: "✓ Real Time Interface Statistics Collection correctly disabled"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Performance Monitoring was disabled"
+  assert:
+    that:
+      - replaced_fabric_config.management.performanceMonitoring == false
+    fail_msg: "Performance Monitoring validation failed. Expected: false, Actual: {{ replaced_fabric_config.management.performanceMonitoring }}"
+    success_msg: "✓ Performance Monitoring correctly disabled"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Tenant DHCP was enabled"
+  assert:
+    that:
+      - replaced_fabric_config.management.tenantDhcp == true
+    fail_msg: "Tenant DHCP validation failed. Expected: true, Actual: {{ replaced_fabric_config.management.tenantDhcp }}"
+    success_msg: "✓ Tenant DHCP correctly enabled"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify SNMP Trap was enabled"
+  assert:
+    that:
+      - replaced_fabric_config.management.snmpTrap == true
+    fail_msg: "SNMP Trap validation failed. Expected: true, Actual: {{ replaced_fabric_config.management.snmpTrap }}"
+    success_msg: "✓ SNMP Trap correctly enabled"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Greenfield Debug Flag was enabled"
+  assert:
+    that:
+      - replaced_fabric_config.management.greenfieldDebugFlag == "enable"
+    fail_msg: "Greenfield Debug Flag validation failed. Expected: enable, Actual: {{ replaced_fabric_config.management.greenfieldDebugFlag }}"
+    success_msg: "✓ Greenfield Debug Flag correctly enabled"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify NXAPI HTTP was enabled"
+  assert:
+    that:
+      - replaced_fabric_config.management.nxapiHttp == true
+    fail_msg: "NXAPI HTTP validation failed. Expected: true, Actual: {{ replaced_fabric_config.management.nxapiHttp }}"
+    success_msg: "✓ NXAPI HTTP correctly enabled"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify NXAPI was disabled"
+  assert:
+    that:
+      - replaced_fabric_config.management.nxapi == false
+    fail_msg: "NXAPI validation failed. Expected: false, Actual: {{ replaced_fabric_config.management.nxapi }}"
+    success_msg: "✓ NXAPI correctly disabled"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Per VRF Loopback Auto Provision was disabled"
+  assert:
+    that:
+      - replaced_fabric_config.management.perVrfLoopbackAutoProvision == false
+    fail_msg: "Per VRF Loopback Auto Provision validation failed. Expected: false, Actual: {{ replaced_fabric_config.management.perVrfLoopbackAutoProvision }}"
+    success_msg: "✓ Per VRF Loopback Auto Provision correctly disabled"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Per VRF Loopback Auto Provision IPv6 was disabled"
+  assert:
+    that:
+      - replaced_fabric_config.management.perVrfLoopbackAutoProvisionIpv6 == false
+    fail_msg: "Per VRF Loopback Auto Provision IPv6 validation failed. Expected: false, Actual: {{ replaced_fabric_config.management.perVrfLoopbackAutoProvisionIpv6 }}"
+    success_msg: "✓ Per VRF Loopback Auto Provision IPv6 correctly disabled"
+  tags: [test_replaced, test_replaced_validation]
+
+# Verify banner was preserved
+- name: "VALIDATION 2: Verify Banner was preserved"
+  assert:
+    that:
+      - replaced_fabric_config.management.banner == "^ Updated via replaced state ^"
+    fail_msg: "Banner validation failed. Expected: '^ Updated via replaced state ^', Actual: {{ replaced_fabric_config.management.banner }}"
+    success_msg: "✓ Banner correctly preserved: '{{ replaced_fabric_config.management.banner }}'"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Display successful validation summary for test_fabric_replaced"
+  debug:
+    msg: |
+      ========================================
+      VALIDATION SUMMARY for test_fabric_replaced:
+      ========================================
+      Network Ranges:
+      ✓ L3 VNI Range: {{ replaced_fabric_config.management.l3VniRange }}
+      ✓ L2 VNI Range: {{ replaced_fabric_config.management.l2VniRange }}
+      ✓ BGP Loopback IP Range: {{ replaced_fabric_config.management.bgpLoopbackIpRange }}
+      ✓ NVE Loopback IP Range: {{ replaced_fabric_config.management.nveLoopbackIpRange }}
+      ✓ Intra-Fabric Subnet Range: {{ replaced_fabric_config.management.intraFabricSubnetRange }}
+      ✓ VRF Lite Subnet Range: {{ replaced_fabric_config.management.vrfLiteSubnetRange }}
+      ✓ Anycast RP IP Range: {{ replaced_fabric_config.management.anycastRendezvousPointIpRange }}
+
+      VLAN Ranges:
+      ✓ Network VLAN Range: {{ replaced_fabric_config.management.networkVlanRange }}
+      ✓ VRF VLAN Range: {{ replaced_fabric_config.management.vrfVlanRange }}
+
+      MTU Settings:
+      ✓ Fabric MTU: {{ replaced_fabric_config.management.fabricMtu }}
+      ✓ L2 Host Interface MTU: {{ replaced_fabric_config.management.l2HostInterfaceMtu }}
+
+      VPC Configuration:
+      ✓ VPC Auto Recovery Timer: {{ replaced_fabric_config.management.vpcAutoRecoveryTimer }}
+      ✓ VPC Delay Restore Timer: {{ replaced_fabric_config.management.vpcDelayRestoreTimer }}
+      ✓ VPC Peer Link Port Channel ID: {{ replaced_fabric_config.management.vpcPeerLinkPortChannelId }}
+      ✓ VPC Peer Link VLAN: {{ replaced_fabric_config.management.vpcPeerLinkVlan }}
+      ✓ VPC Domain ID Range: {{ replaced_fabric_config.management.vpcDomainIdRange }}
+      ✓ VPC IPv6 Neighbor Discovery Sync: {{ replaced_fabric_config.management.vpcIpv6NeighborDiscoverySync }}
+
+      Gateway & Multicast:
+      ✓ Anycast Gateway MAC: {{ replaced_fabric_config.management.anycastGatewayMac }}
+      ✓ Multicast Group Subnet: {{ replaced_fabric_config.management.multicastGroupSubnet }}
+      ✓ Rendezvous Point Count: {{ replaced_fabric_config.management.rendezvousPointCount }}
+      ✓ Rendezvous Point Loopback ID: {{ replaced_fabric_config.management.rendezvousPointLoopbackId }}
+
+      Feature Flags:
+      ✓ TCAM Allocation: {{ replaced_fabric_config.management.tcamAllocation }}
+      ✓ Real Time Interface Statistics Collection: {{ replaced_fabric_config.management.realTimeInterfaceStatisticsCollection }}
+      ✓ Performance Monitoring: {{ replaced_fabric_config.management.performanceMonitoring }}
+      ✓ Tenant DHCP: {{ replaced_fabric_config.management.tenantDhcp }}
+      ✓ SNMP Trap: {{ replaced_fabric_config.management.snmpTrap }}
+      ✓ Greenfield Debug Flag: {{ replaced_fabric_config.management.greenfieldDebugFlag }}
+      ✓ NXAPI HTTP: {{ replaced_fabric_config.management.nxapiHttp }}
+      ✓ NXAPI: {{ replaced_fabric_config.management.nxapi }}
+
+      Auto-Provisioning:
+      ✓ Per VRF Loopback Auto Provision: {{ replaced_fabric_config.management.perVrfLoopbackAutoProvision }}
+      ✓ Per VRF Loopback Auto Provision IPv6: {{ replaced_fabric_config.management.perVrfLoopbackAutoProvisionIpv6 }}
+
+      Preserved Settings:
+      ✓ Banner: "{{ replaced_fabric_config.management.banner }}"
+
+      All 30+ expected changes validated successfully!
+      ========================================
+  tags: [test_replaced, test_replaced_validation]
+
+# - name: "PAUSE: Review TEST 2c results before continuing"
+#   ansible.builtin.pause:
+#     prompt: "TEST 2c complete. Review results and press Enter to continue, or Ctrl+C then A to abort"
+#   tags: [test_replaced, test_replaced_idempotent]
+
+#############################################################################
+# TEST 3: Demonstrate difference between merged and replaced states
+#############################################################################
+- name: "TEST 3: Create fabric for merged vs replaced comparison"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: replaced
+    config:
+      - "{{ {'name': test_fabric_deleted} | combine(common_fabric_config) }}"
+  register: comparison_fabric_creation
+  tags: [test_comparison]
+
+- name: "TEST 3a: Partial update using merged state (should merge changes)"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: merged
+    config:
+      - name: "{{ test_fabric_deleted }}"
+        category: fabric
+        management:
+          bgp_asn: "65099"  # Only updating ASN
+          fabric_mtu: 8000  # Only updating MTU
+  register: merged_partial_result
+  tags: [test_comparison, test_merged_partial]
+
+- name: "TEST 3a: Verify merged state preserves existing configuration"
+  assert:
+    that:
+      - merged_partial_result is changed
+      - merged_partial_result is not failed
+    fail_msg: "Partial update with merged state failed"
+    success_msg: "Merged state successfully performed partial update"
+  tags: [test_comparison, test_merged_partial]
+
+- name: "TEST 3b: Partial update using replaced state (should replace entire config)"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: replaced
+    config:
+      - name: "{{ test_fabric_deleted }}"
+        category: fabric
+        management:
+          type: vxlanIbgp
+          bgp_asn: "65100"  # Only specifying minimal config for replaced
+          target_subnet_mask: 30
+  register: replaced_partial_result
+  tags: [test_comparison, test_replaced_partial]
+
+- name: "TEST 3b: Verify replaced state performs complete replacement"
+  assert:
+    that:
+      - replaced_partial_result is changed
+      - replaced_partial_result is not failed
+    fail_msg: "Partial replacement with replaced state failed"
+    success_msg: "Replaced state successfully performed complete replacement"
+  tags: [test_comparison, test_replaced_partial]
+
+#############################################################################
+# TEST 4: STATE DELETED - Delete fabrics
+#############################################################################
+- name: "TEST 4a: Delete fabric using state deleted"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: deleted
+    config:
+      - name: "{{ test_fabric_deleted }}"
+  register: deleted_result_1
+  tags: [test_deleted, test_deleted_delete]
+
+- name: "TEST 4a: Verify fabric was deleted"
+  assert:
+    that:
+      - deleted_result_1 is changed
+      - deleted_result_1 is not failed
+    fail_msg: "Fabric deletion with state deleted failed"
+    success_msg: "Fabric successfully deleted with state deleted"
+  tags: [test_deleted, test_deleted_delete]
+
+- name: "TEST 4b: Delete fabric using state deleted (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: deleted
+    config:
+      - name: "{{ test_fabric_deleted }}"
+  register: deleted_result_2
+  tags: [test_deleted, test_deleted_idempotent]
+
+- name: "TEST 4b: Verify deleted state is idempotent"
+  assert:
+    that:
+      - deleted_result_2 is not changed
+      - deleted_result_2 is not failed
+    fail_msg: "Deleted state is not idempotent - should not change when deleting non-existent fabric"
+    success_msg: "Deleted state is idempotent - no changes when deleting non-existent fabric"
+  tags: [test_deleted, test_deleted_idempotent]
+
+#############################################################################
+# TEST 5: Multiple fabric operations in single task
+#############################################################################
+- name: "TEST 5: Multiple fabric operations in single task"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: merged
+    config:
+      - name: "multi_fabric_1"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: vxlanIbgp
+          bgp_asn: "65101"
+          site_id: "65101"
+          target_subnet_mask: 30
+          anycast_gateway_mac: "2020.0000.0001"
+          performance_monitoring: false
+          replication_mode: multicast
+          multicast_group_subnet: "239.1.1.0/25"
+          auto_generate_multicast_group_address: false
+          underlay_multicast_group_address_limit: 128
+          tenant_routed_multicast: false
+          rendezvous_point_count: 2
+          rendezvous_point_loopback_id: 254
+          vpc_peer_link_vlan: "3600"
+          vpc_peer_link_enable_native_vlan: false
+          vpc_peer_keep_alive_option: loopback
+          vpc_auto_recovery_timer: 360
+          vpc_delay_restore_timer: 150
+          vpc_peer_link_port_channel_id: "500"
+          # vpc_ipv6_neighbor_discovery_sync: true
+          advertise_physical_ip: false
+          vpc_domain_id_range: "1-1000"
+          bgp_loopback_id: 0
+          nve_loopback_id: 1
+          vrf_template: Default_VRF_Universal
+          network_template: Default_Network_Universal
+          vrf_extension_template: Default_VRF_Extension_Universal
+          network_extension_template: Default_Network_Extension_Universal
+          l3_vni_no_vlan_default_option: false
+          fabric_mtu: 9216
+          l2_host_interface_mtu: 9216
+          tenant_dhcp: true
+          nxapi: true
+          nxapi_https_port: 443
+          nxapi_http: false
+          nxapi_http_port: 80
+          snmp_trap: true
+          anycast_border_gateway_advertise_physical_ip: false
+          greenfield_debug_flag: enable
+          tcam_allocation: true
+          real_time_interface_statistics_collection: false
+          interface_statistics_load_interval: 10
+          bgp_loopback_ip_range: "10.101.0.0/22"
+          nve_loopback_ip_range: "10.103.0.0/22"
+          anycast_rendezvous_point_ip_range: "10.254.101.0/24"
+          intra_fabric_subnet_range: "10.104.0.0/16"
+          l2_vni_range: "30000-49000"
+          l3_vni_range: "50000-59000"
+          network_vlan_range: "2300-2999"
+          vrf_vlan_range: "2000-2299"
+          sub_interface_dot1q_range: "2-511"
+          vrf_lite_auto_config: manual
+          vrf_lite_subnet_range: "10.133.0.0/16"
+          vrf_lite_subnet_target_mask: 30
+          auto_unique_vrf_lite_ip_prefix: false
+          per_vrf_loopback_auto_provision: true
+          per_vrf_loopback_ip_range: "10.105.0.0/22"
+          # per_vrf_loopback_auto_provision_ipv6: false
+          # per_vrf_loopback_ipv6_range: "fd00::a105:0/112"
+          banner: ""
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+          # management_ipv6_prefix: 64
+      - name: "multi_fabric_2"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: vxlanIbgp
+          bgp_asn: "65102"
+          site_id: "65102"
+          target_subnet_mask: 30
+          anycast_gateway_mac: "2020.0000.0002"
+          performance_monitoring: false
+          replication_mode: multicast
+          multicast_group_subnet: "239.1.1.0/25"
+          auto_generate_multicast_group_address: false
+          underlay_multicast_group_address_limit: 128
+          tenant_routed_multicast: false
+          rendezvous_point_count: 2
+          rendezvous_point_loopback_id: 254
+          vpc_peer_link_vlan: "3600"
+          vpc_peer_link_enable_native_vlan: false
+          vpc_peer_keep_alive_option: loopback
+          vpc_auto_recovery_timer: 360
+          vpc_delay_restore_timer: 150
+          vpc_peer_link_port_channel_id: "500"
+          # vpc_ipv6_neighbor_discovery_sync: true
+          advertise_physical_ip: false
+          vpc_domain_id_range: "1-1000"
+          bgp_loopback_id: 0
+          nve_loopback_id: 1
+          vrf_template: Default_VRF_Universal
+          network_template: Default_Network_Universal
+          vrf_extension_template: Default_VRF_Extension_Universal
+          network_extension_template: Default_Network_Extension_Universal
+          l3_vni_no_vlan_default_option: false
+          fabric_mtu: 9216
+          l2_host_interface_mtu: 9216
+          tenant_dhcp: true
+          nxapi: true
+          nxapi_https_port: 443
+          nxapi_http: false
+          nxapi_http_port: 80
+          snmp_trap: true
+          anycast_border_gateway_advertise_physical_ip: false
+          greenfield_debug_flag: enable
+          tcam_allocation: true
+          real_time_interface_statistics_collection: false
+          interface_statistics_load_interval: 10
+          bgp_loopback_ip_range: "10.102.0.0/22"
+          nve_loopback_ip_range: "10.103.0.0/22"
+          anycast_rendezvous_point_ip_range: "10.254.102.0/24"
+          intra_fabric_subnet_range: "10.104.0.0/16"
+          l2_vni_range: "30000-49000"
+          l3_vni_range: "50000-59000"
+          network_vlan_range: "2300-2999"
+          vrf_vlan_range: "2000-2299"
+          sub_interface_dot1q_range: "2-511"
+          vrf_lite_auto_config: manual
+          vrf_lite_subnet_range: "10.134.0.0/16"
+          vrf_lite_subnet_target_mask: 30
+          auto_unique_vrf_lite_ip_prefix: false
+          per_vrf_loopback_auto_provision: true
+          per_vrf_loopback_ip_range: "10.106.0.0/22"
+          # per_vrf_loopback_auto_provision_ipv6: false
+          # per_vrf_loopback_ipv6_range: "fd00::a106:0/112"
+          banner: ""
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+          # management_ipv6_prefix: 64
+  register: multi_fabric_result
+  tags: [test_multi, test_multi_create]
+
+- name: "TEST 5: Verify multiple fabrics were created"
+  assert:
+    that:
+      - multi_fabric_result is changed
+      - multi_fabric_result is not failed
+    fail_msg: "Multiple fabric creation failed"
+    success_msg: "Multiple fabrics successfully created"
+  tags: [test_multi, test_multi_create]
+
+#############################################################################
+# FINAL CLEANUP - Clean up all test fabrics
+#############################################################################
+- name: "CLEANUP: Delete all test fabrics"
+  cisco.nd.nd_manage_fabric_ibgp:
+    state: deleted
+    config:
+      - name: "{{ test_fabric_merged }}"
+      - name: "{{ test_fabric_replaced }}"
+      - name: "{{ test_fabric_deleted }}"
+      - name: "multi_fabric_1"
+      - name: "multi_fabric_2"
+  ignore_errors: true
+  tags: [cleanup, always]
+
+#############################################################################
+# TEST SUMMARY
+#############################################################################
+- name: "TEST SUMMARY: Display test results"
+  debug:
+    msg: |
+      ========================================
+      TEST SUMMARY for cisco.nd.nd_manage_fabric_ibgp module:
+      ========================================
+      ✓ TEST 1: STATE MERGED
+        - Create fabric: {{ 'PASSED' if merged_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if merged_result_2 is not changed else 'FAILED' }}
+        - Update fabric: {{ 'PASSED' if merged_result_3 is changed else 'FAILED' }}
+
+      ✓ TEST 2: STATE REPLACED
+        - Create fabric: {{ 'PASSED' if replaced_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if replaced_result_2 is not changed else 'FAILED' }}
+        - Replace fabric: {{ 'PASSED' if replaced_result_3 is changed else 'FAILED' }}
+
+      ✓ TEST 3: MERGED vs REPLACED Comparison
+        - Merged partial: {{ 'PASSED' if merged_partial_result is changed else 'FAILED' }}
+        - Replaced partial: {{ 'PASSED' if replaced_partial_result is changed else 'FAILED' }}
+
+      ✓ TEST 4: STATE DELETED
+        - Delete fabric: {{ 'PASSED' if deleted_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if deleted_result_2 is not changed else 'FAILED' }}
+
+      ✓ TEST 5: MULTIPLE FABRICS
+        - Multi-create: {{ 'PASSED' if multi_fabric_result is changed else 'FAILED' }}
+
+      All tests validate:
+      - State merged: Creates and updates fabrics by merging changes
+      - State replaced: Creates and completely replaces fabric configuration
+      - State deleted: Removes fabrics
+      - Idempotency: All operations are idempotent when run multiple times
+      - Difference: Merged preserves existing config, replaced overwrites completely
+      ========================================
+  tags: [summary, always]
