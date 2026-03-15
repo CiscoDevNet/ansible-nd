@@ -10,15 +10,13 @@ v1.5.0
 Release Summary
 ---------------
 
-Release v1.5.0 of the ``ansible-nd`` collection on 2026-03-12.
+Release v1.5.0 of the ``ansible-nd`` collection on 2026-03-15.
 This changelog describes all changes made to the modules and plugins included in this collection since v1.4.0.
 
 Minor Changes
 -------------
 
-- Add backup_type and remote_location options to nd_backup and introduce state=download for downloading an existing backup.
-- Add ignore_persistent_ips, restore_type, and remote_location options to nd_backup_restore.
-- Add suppress_previous option to nd_rest to skip fetching previous state.
+- Added ND 4.1 version support to the nd_backup and nd_backup_restore module
 
 v1.4.0
 ======
