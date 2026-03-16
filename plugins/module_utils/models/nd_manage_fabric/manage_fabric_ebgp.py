@@ -799,6 +799,15 @@ class FabricEbgpModel(NDBaseModel):
 
         return self
 
+    def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
+        """Export for diff comparison, excluding fields that ND overrides for eBGP fabrics."""
+        d = super().to_diff_dict(**kwargs)
+        # ND always returns nxapiHttp=True for eBGP fabrics regardless of the configured value,
+        # so exclude it from diff comparison to prevent a persistent false-positive diff.
+        if "management" in d:
+            d["management"].pop("nxapiHttp", None)
+        return d
+
     @classmethod
     def get_argument_spec(cls) -> Dict:
         return dict(

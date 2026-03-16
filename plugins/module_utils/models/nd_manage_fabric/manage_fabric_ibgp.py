@@ -1169,7 +1169,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         return value.lower()
 
 
-class FabricModel(NDBaseModel):
+class FabricIbgpModel(NDBaseModel):
     """
     # Summary
 

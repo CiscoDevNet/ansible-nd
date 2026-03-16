@@ -1,3 +1,6 @@
 ---
 - name: Run nd_manage_fabric iBGP tests
   ansible.builtin.include_tasks: fabric_ibgp.yaml
+
+- name: Run nd_manage_fabric eBGP tests
+  ansible.builtin.include_tasks: fabric_ebgp.yaml

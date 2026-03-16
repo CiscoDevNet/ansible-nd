@@ -13,18 +13,18 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 
 DOCUMENTATION = r"""
 ---
-module: nd_manage_fabric_ibgp
+module: nd_manage_fabric_ebgp
 version_added: "1.4.0"
-short_description: Manage iBGP VXLAN fabrics on Cisco Nexus Dashboard
+short_description: Manage eBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
-- Manage iBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
-- It supports creating, updating, replacing, and deleting iBGP VXLAN fabrics.
+- Manage eBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
+- It supports creating, updating, replacing, and deleting eBGP VXLAN fabrics.
 author:
 - Mike Wiebe (@mwiebe)
 options:
   config:
     description:
-    - The list of iBGP VXLAN fabrics to configure.
+    - The list of eBGP VXLAN fabrics to configure.
     type: list
     elements: dict
     suboptions:
@@ -99,31 +99,105 @@ options:
         default: all
       management:
         description:
-        - The iBGP VXLAN management configuration for the fabric.
+        - The eBGP VXLAN management configuration for the fabric.
         type: dict
         suboptions:
           type:
             description:
-            - The fabric management type. Must be C(vxlanIbgp) for iBGP VXLAN fabrics.
+            - The fabric management type. Must be C(vxlanEbgp) for eBGP VXLAN fabrics.
             type: str
-            default: vxlanIbgp
-            choices: [ vxlanIbgp ]
+            default: vxlanEbgp
+            choices: [ vxlanEbgp ]
           bgp_asn:
             description:
             - The BGP Autonomous System Number for the fabric.
-            - Must be a numeric value between 1 and 4294967295.
+            - Must be a numeric value between 1 and 4294967295, or dotted notation (1-65535.0-65535).
+            - Optional when O(config.management.bgp_asn_auto_allocation) is C(true).
             type: str
-            required: true
+          bgp_asn_auto_allocation:
+            description:
+            - Enable automatic BGP ASN allocation from the O(config.management.bgp_asn_range) pool.
+            type: bool
+            default: true
+          bgp_asn_range:
+            description:
+            - The BGP ASN range to use for automatic ASN allocation (e.g. C(65000-65535)).
+            - Required when O(config.management.bgp_asn_auto_allocation) is C(true).
+            type: str
+          bgp_as_mode:
+            description:
+            - The BGP AS mode for the fabric.
+            - C(multiAS) assigns a unique AS number to each leaf tier.
+            - C(sameTierAS) assigns the same AS number within a tier.
+            type: str
+            default: multiAS
+            choices: [ multiAS, sameTierAS ]
+          bgp_allow_as_in_num:
+            description:
+            - The number of times BGP allows an AS-path containing the local AS number.
+            type: int
+            default: 1
+          bgp_max_path:
+            description:
+            - The maximum number of BGP equal-cost paths.
+            type: int
+            default: 4
+          bgp_underlay_failure_protect:
+            description:
+            - Enable BGP underlay failure protection.
+            type: bool
+            default: false
+          auto_configure_ebgp_evpn_peering:
+            description:
+            - Automatically configure eBGP EVPN peering between spine and leaf switches.
+            type: bool
+            default: true
+          allow_leaf_same_as:
+            description:
+            - Allow leaf switches to share the same BGP AS number.
+            type: bool
+            default: false
+          assign_ipv4_to_loopback0:
+            description:
+            - Assign an IPv4 address to the loopback0 interface.
+            type: bool
+            default: true
+          evpn:
+            description:
+            - Enable the EVPN control plane.
+            type: bool
+            default: true
+          route_map_tag:
+            description:
+            - The route map tag used for redistribution.
+            type: int
+            default: 12345
+          disable_route_map_tag:
+            description:
+            - Disable route map tag usage.
+            type: bool
+            default: false
+          leaf_bgp_as:
+            description:
+            - The BGP AS number for leaf switches (used with C(sameTierAS) mode).
+            type: str
+          border_bgp_as:
+            description:
+            - The BGP AS number for border switches.
+            type: str
+          super_spine_bgp_as:
+            description:
+            - The BGP AS number for super-spine switches.
+            type: str
           site_id:
             description:
             - The site identifier for the fabric.
-            - Must be a numeric value between 1 and 65535.
             - Defaults to the value of O(config.management.bgp_asn) if not provided.
             type: str
             default: ""
           target_subnet_mask:
             description:
-            - The target subnet mask for intra-fabric links.
+            - The target subnet mask for intra-fabric links (24-31).
             type: int
             default: 30
           anycast_gateway_mac:
@@ -157,6 +231,17 @@ options:
             - Enable tenant routed multicast.
             type: bool
             default: false
+          tenant_routed_multicast_ipv6:
+            description:
+            - Enable tenant routed multicast for IPv6.
+            type: bool
+            default: false
+          first_hop_redundancy_protocol:
+            description:
+            - The first-hop redundancy protocol for tenant networks.
+            type: str
+            default: hsrp
+            choices: [ hsrp, vrrp ]
           rendezvous_point_count:
             description:
             - The number of rendezvous points (1-4).
@@ -173,22 +258,6 @@ options:
             type: str
             default: cli
             choices: [ cli, config-profile ]
-          link_state_routing_protocol:
-            description:
-            - The underlay link-state routing protocol.
-            type: str
-            default: ospf
-            choices: [ ospf, isis ]
-          ospf_area_id:
-            description:
-            - The OSPF area ID.
-            type: str
-            default: "0.0.0.0"
-          fabric_interface_type:
-            description:
-            - The fabric interface type.
-            type: str
-            default: p2p
           bgp_loopback_id:
             description:
             - The BGP loopback interface ID (0-1023).
@@ -199,36 +268,46 @@ options:
             - The NVE loopback interface ID (0-1023).
             type: int
             default: 1
-          route_reflector_count:
+          anycast_loopback_id:
             description:
-            - The number of BGP route reflectors (1-4).
+            - The anycast loopback interface ID.
             type: int
-            default: 2
+            default: 10
           bgp_loopback_ip_range:
             description:
             - The BGP loopback IP address pool.
             type: str
             default: "10.2.0.0/22"
+          bgp_loopback_ipv6_range:
+            description:
+            - The BGP loopback IPv6 address pool.
+            type: str
+            default: "fd00::a02:0/119"
           nve_loopback_ip_range:
             description:
             - The NVE loopback IP address pool.
             type: str
             default: "10.3.0.0/22"
+          nve_loopback_ipv6_range:
+            description:
+            - The NVE loopback IPv6 address pool.
+            type: str
+            default: "fd00::a03:0/118"
           anycast_rendezvous_point_ip_range:
             description:
             - The anycast rendezvous point IP address pool.
             type: str
             default: "10.254.254.0/24"
+          ipv6_anycast_rendezvous_point_ip_range:
+            description:
+            - The IPv6 anycast rendezvous point IP address pool.
+            type: str
+            default: "fd00::254:254:0/118"
           intra_fabric_subnet_range:
             description:
             - The intra-fabric subnet IP address pool.
             type: str
             default: "10.4.0.0/16"
-          router_id_range:
-            description:
-            - The router ID IP address pool.
-            type: str
-            default: "10.2.0.0/23"
           l2_vni_range:
             description:
             - The Layer 2 VNI range.
@@ -254,11 +333,6 @@ options:
             - The sub-interface 802.1q range.
             type: str
             default: "2-511"
-          service_network_vlan_range:
-            description:
-            - The service network VLAN range.
-            type: str
-            default: "3000-3199"
           l3_vni_no_vlan_default_option:
             description:
             - Enable L3 VNI no-VLAN default option.
@@ -274,6 +348,16 @@ options:
             - The L2 host interface MTU size (1500-9216).
             type: int
             default: 9216
+          underlay_ipv6:
+            description:
+            - Enable IPv6 underlay.
+            type: bool
+            default: false
+          static_underlay_ip_allocation:
+            description:
+            - Disable dynamic underlay IP address allocation.
+            type: bool
+            default: false
           vpc_domain_id_range:
             description:
             - The vPC domain ID range.
@@ -293,7 +377,8 @@ options:
             description:
             - The vPC peer keep-alive option.
             type: str
-            default: loopback
+            default: management
+            choices: [ loopback, management ]
           vpc_auto_recovery_timer:
             description:
             - The vPC auto recovery timer in seconds (240-3600).
@@ -349,6 +434,26 @@ options:
             - Enable peer switch.
             type: bool
             default: false
+          per_vrf_loopback_auto_provision:
+            description:
+            - Enable per-VRF loopback auto-provisioning.
+            type: bool
+            default: false
+          per_vrf_loopback_ip_range:
+            description:
+            - The per-VRF loopback IP address pool.
+            type: str
+            default: "10.5.0.0/22"
+          per_vrf_loopback_auto_provision_ipv6:
+            description:
+            - Enable per-VRF loopback auto-provisioning for IPv6.
+            type: bool
+            default: false
+          per_vrf_loopback_ipv6_range:
+            description:
+            - The per-VRF loopback IPv6 address pool.
+            type: str
+            default: "fd00::a05:0/112"
           vrf_template:
             description:
             - The VRF template name.
@@ -423,7 +528,8 @@ options:
             description:
             - The greenfield debug flag.
             type: str
-            default: enable
+            default: disable
+            choices: [ enable, disable ]
           nxapi:
             description:
             - Enable NX-API (HTTPS).
@@ -438,7 +544,7 @@ options:
             description:
             - Enable NX-API HTTP.
             type: bool
-            default: true
+            default: false
           nxapi_http_port:
             description:
             - The NX-API HTTP port (1-65535).
@@ -469,21 +575,6 @@ options:
             - Enable BFD for iBGP sessions.
             type: bool
             default: false
-          bfd_ospf:
-            description:
-            - Enable BFD for OSPF.
-            type: bool
-            default: false
-          bfd_isis:
-            description:
-            - Enable BFD for IS-IS.
-            type: bool
-            default: false
-          bfd_pim:
-            description:
-            - Enable BFD for PIM.
-            type: bool
-            default: false
           bfd_authentication:
             description:
             - Enable BFD authentication.
@@ -499,21 +590,6 @@ options:
             - The BFD authentication key.
             type: str
             default: ""
-          ospf_authentication:
-            description:
-            - Enable OSPF authentication.
-            type: bool
-            default: false
-          ospf_authentication_key_id:
-            description:
-            - The OSPF authentication key ID.
-            type: int
-            default: 127
-          ospf_authentication_key:
-            description:
-            - The OSPF authentication key.
-            type: str
-            default: ""
           pim_hello_authentication:
             description:
             - Enable PIM hello authentication.
@@ -524,51 +600,6 @@ options:
             - The PIM hello authentication key.
             type: str
             default: ""
-          isis_level:
-            description:
-            - The IS-IS level.
-            type: str
-            default: level-2
-          isis_area_number:
-            description:
-            - The IS-IS area number.
-            type: str
-            default: "0001"
-          isis_point_to_point:
-            description:
-            - Enable IS-IS point-to-point.
-            type: bool
-            default: true
-          isis_authentication:
-            description:
-            - Enable IS-IS authentication.
-            type: bool
-            default: false
-          isis_authentication_keychain_name:
-            description:
-            - The IS-IS authentication keychain name.
-            type: str
-            default: ""
-          isis_authentication_keychain_key_id:
-            description:
-            - The IS-IS authentication keychain key ID.
-            type: int
-            default: 127
-          isis_authentication_key:
-            description:
-            - The IS-IS authentication key.
-            type: str
-            default: ""
-          isis_overload:
-            description:
-            - Enable IS-IS overload bit.
-            type: bool
-            default: true
-          isis_overload_elapse_time:
-            description:
-            - The IS-IS overload elapse time in seconds.
-            type: int
-            default: 60
           macsec:
             description:
             - Enable MACsec on intra-fabric links.
@@ -601,39 +632,9 @@ options:
             default: AES_128_CMAC
           macsec_report_timer:
             description:
-            - The MACsec report timer.
+            - The MACsec report timer in minutes.
             type: int
             default: 5
-          vrf_lite_macsec:
-            description:
-            - Enable MACsec on VRF lite links.
-            type: bool
-            default: false
-          quantum_key_distribution:
-            description:
-            - Enable quantum key distribution.
-            type: bool
-            default: false
-          quantum_key_distribution_profile_name:
-            description:
-            - The quantum key distribution profile name.
-            type: str
-            default: ""
-          key_management_entity_server_ip:
-            description:
-            - The key management entity server IP address.
-            type: str
-            default: ""
-          key_management_entity_server_port:
-            description:
-            - The key management entity server port.
-            type: int
-            default: 0
-          trustpoint_label:
-            description:
-            - The trustpoint label.
-            type: str
-            default: ""
           vrf_lite_auto_config:
             description:
             - The VRF lite auto-configuration mode.
@@ -649,156 +650,11 @@ options:
             - The VRF lite subnet target mask.
             type: int
             default: 30
-          vrf_lite_ipv6_subnet_range:
-            description:
-            - The VRF lite IPv6 subnet range.
-            type: str
-            default: "fd00::a33:0/112"
-          vrf_lite_ipv6_subnet_target_mask:
-            description:
-            - The VRF lite IPv6 subnet target mask (112-128).
-            type: int
-            default: 126
           auto_unique_vrf_lite_ip_prefix:
             description:
             - Enable auto unique VRF lite IP prefix.
             type: bool
             default: false
-          auto_symmetric_vrf_lite:
-            description:
-            - Enable auto symmetric VRF lite.
-            type: bool
-            default: false
-          auto_vrf_lite_default_vrf:
-            description:
-            - Enable auto VRF lite for the default VRF.
-            type: bool
-            default: false
-          auto_symmetric_default_vrf:
-            description:
-            - Enable auto symmetric default VRF.
-            type: bool
-            default: false
-          per_vrf_loopback_auto_provision:
-            description:
-            - Enable per-VRF loopback auto-provisioning.
-            type: bool
-            default: false
-          per_vrf_loopback_ip_range:
-            description:
-            - The per-VRF loopback IP address pool.
-            type: str
-            default: "10.5.0.0/22"
-          per_vrf_loopback_auto_provision_ipv6:
-            description:
-            - Enable per-VRF loopback auto-provisioning for IPv6.
-            type: bool
-            default: false
-          per_vrf_loopback_ipv6_range:
-            description:
-            - The per-VRF loopback IPv6 address pool.
-            type: str
-            default: "fd00::a05:0/112"
-          underlay_ipv6:
-            description:
-            - Enable IPv6 underlay.
-            type: bool
-            default: false
-          ipv6_multicast_group_subnet:
-            description:
-            - The IPv6 multicast group subnet.
-            type: str
-            default: "ff1e::/121"
-          tenant_routed_multicast_ipv6:
-            description:
-            - Enable tenant routed multicast for IPv6.
-            type: bool
-            default: false
-          ipv6_link_local:
-            description:
-            - Enable IPv6 link-local addressing.
-            type: bool
-            default: true
-          ipv6_subnet_target_mask:
-            description:
-            - The IPv6 subnet target mask.
-            type: int
-            default: 126
-          ipv6_subnet_range:
-            description:
-            - The IPv6 subnet range.
-            type: str
-            default: "fd00::a04:0/112"
-          bgp_loopback_ipv6_range:
-            description:
-            - The BGP loopback IPv6 address pool.
-            type: str
-            default: "fd00::a02:0/119"
-          nve_loopback_ipv6_range:
-            description:
-            - The NVE loopback IPv6 address pool.
-            type: str
-            default: "fd00::a03:0/118"
-          ipv6_anycast_rendezvous_point_ip_range:
-            description:
-            - The IPv6 anycast rendezvous point IP address pool.
-            type: str
-            default: "fd00::254:254:0/118"
-          auto_bgp_neighbor_description:
-            description:
-            - Enable automatic BGP neighbor description.
-            type: bool
-            default: true
-          ibgp_peer_template:
-            description:
-            - The iBGP peer template name.
-            type: str
-            default: ""
-          leaf_ibgp_peer_template:
-            description:
-            - The leaf iBGP peer template name.
-            type: str
-            default: ""
-          link_state_routing_tag:
-            description:
-            - The link state routing tag.
-            type: str
-            default: UNDERLAY
-          static_underlay_ip_allocation:
-            description:
-            - Enable static underlay IP allocation.
-            type: bool
-            default: false
-          security_group_tag:
-            description:
-            - Enable Security Group Tag (SGT) support.
-            type: bool
-            default: false
-          security_group_tag_prefix:
-            description:
-            - The SGT prefix.
-            type: str
-            default: SG_
-          security_group_tag_mac_segmentation:
-            description:
-            - Enable SGT MAC segmentation.
-            type: bool
-            default: false
-          security_group_tag_id_range:
-            description:
-            - The SGT ID range.
-            type: str
-            default: "10000-14000"
-          security_group_tag_preprovision:
-            description:
-            - Enable SGT pre-provisioning.
-            type: bool
-            default: false
-          security_group_status:
-            description:
-            - The security group status.
-            type: str
-            default: enabled
           default_queuing_policy:
             description:
             - Enable default queuing policy.
@@ -839,61 +695,11 @@ options:
             - The PTP domain ID.
             type: int
             default: 0
-          stp_root_option:
-            description:
-            - The STP root option.
-            type: str
-            default: mst
-          stp_vlan_range:
-            description:
-            - The STP VLAN range.
-            type: str
-            default: ""
-          mst_instance_range:
-            description:
-            - The MST instance range.
-            type: str
-            default: "0-3,5,7-9"
-          stp_bridge_priority:
-            description:
-            - The STP bridge priority.
-            type: int
-            default: 0
-          mpls_handoff:
-            description:
-            - Enable MPLS handoff.
-            type: bool
-            default: false
-          mpls_loopback_identifier:
-            description:
-            - The MPLS loopback identifier.
-            type: int
-            default: 101
-          mpls_loopback_ip_range:
-            description:
-            - The MPLS loopback IP address pool.
-            type: str
-            default: "10.101.0.0/25"
           private_vlan:
             description:
             - Enable private VLAN support.
             type: bool
             default: false
-          ip_service_level_agreement_id_range:
-            description:
-            - The IP SLA ID range.
-            type: str
-            default: "10000-19999"
-          object_tracking_number_range:
-            description:
-            - The object tracking number range.
-            type: str
-            default: "100-299"
-          route_map_sequence_number_range:
-            description:
-            - The route map sequence number range.
-            type: str
-            default: "1-65534"
           day0_bootstrap:
             description:
             - Enable day-0 bootstrap (POAP).
@@ -938,12 +744,10 @@ options:
             description:
             - Enable real-time backup.
             type: bool
-            default: false
           scheduled_backup:
             description:
             - Enable scheduled backup.
             type: bool
-            default: false
           scheduled_backup_time:
             description:
             - The scheduled backup time.
@@ -968,37 +772,17 @@ options:
             description:
             - The CoPP policy.
             type: str
-            default: dense
+            default: strict
           power_redundancy_mode:
             description:
             - The power redundancy mode.
             type: str
             default: redundant
-          host_interface_admin_state:
-            description:
-            - Enable host interface admin state.
-            type: bool
-            default: true
           heartbeat_interval:
             description:
             - The heartbeat interval.
             type: int
             default: 190
-          policy_based_routing:
-            description:
-            - Enable policy-based routing.
-            type: bool
-            default: false
-          brownfield_network_name_format:
-            description:
-            - The brownfield network name format.
-            type: str
-            default: "Auto_Net_VNI$$VNI$$_VLAN$$VLAN_ID$$"
-          brownfield_skip_overlay_network_attachments:
-            description:
-            - Skip brownfield overlay network attachments.
-            type: bool
-            default: false
           allow_smart_switch_onboarding:
             description:
             - Allow smart switch onboarding.
@@ -1082,18 +866,20 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
-- Only iBGP VXLAN fabric type (C(vxlanIbgp)) is supported by this module.
+- Only eBGP VXLAN fabric type (C(vxlanEbgp)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
-- The O(config.management.bgp_asn) field is required when creating a fabric.
+- The O(config.management.bgp_asn) field is optional when O(config.management.bgp_asn_auto_allocation) is C(true).
+- The O(config.management.bgp_asn) field is required when O(config.management.bgp_asn_auto_allocation) is C(false).
 - O(config.management.site_id) defaults to the value of O(config.management.bgp_asn) if not provided.
+- The default O(config.management.vpc_peer_keep_alive_option) for eBGP fabrics is C(management), unlike iBGP fabrics.
 """
 
 EXAMPLES = r"""
-- name: Create an iBGP VXLAN fabric using state merged
-  cisco.nd.nd_manage_fabric_ibgp:
+- name: Create an eBGP VXLAN fabric using state merged (with auto ASN allocation)
+  cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - name: my_fabric
+      - name: my_ebgp_fabric
         category: fabric
         location:
           latitude: 37.7749
@@ -1103,9 +889,10 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
-          bgp_asn: "65001"
-          site_id: "65001"
+          type: vxlanEbgp
+          bgp_asn_auto_allocation: true
+          bgp_asn_range: "65000-65535"
+          bgp_as_mode: multiAS
           target_subnet_mask: 30
           anycast_gateway_mac: "2020.0000.00aa"
           performance_monitoring: false
@@ -1118,7 +905,7 @@ EXAMPLES = r"""
           rendezvous_point_loopback_id: 254
           vpc_peer_link_vlan: "3600"
           vpc_peer_link_enable_native_vlan: false
-          vpc_peer_keep_alive_option: loopback
+          vpc_peer_keep_alive_option: management
           vpc_auto_recovery_timer: 360
           vpc_delay_restore_timer: 150
           vpc_peer_link_port_channel_id: "500"
@@ -1134,13 +921,13 @@ EXAMPLES = r"""
           fabric_mtu: 9216
           l2_host_interface_mtu: 9216
           tenant_dhcp: true
-          nxapi: true
+          nxapi: false
           nxapi_https_port: 443
           nxapi_http: false
           nxapi_http_port: 80
           snmp_trap: true
           anycast_border_gateway_advertise_physical_ip: false
-          greenfield_debug_flag: enable
+          greenfield_debug_flag: disable
           tcam_allocation: true
           real_time_interface_statistics_collection: false
           interface_statistics_load_interval: 10
@@ -1169,24 +956,49 @@ EXAMPLES = r"""
           management_ipv4_prefix: 24
   register: result
 
-- name: Update specific fields on an existing fabric using state merged (partial update)
-  cisco.nd.nd_manage_fabric_ibgp:
+- name: Create an eBGP VXLAN fabric with a static BGP ASN
+  cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - name: my_fabric
+      - name: my_ebgp_fabric_static
         category: fabric
         management:
-          bgp_asn: "65002"
-          site_id: "65002"
+          type: vxlanEbgp
+          bgp_asn: "65001"
+          bgp_asn_auto_allocation: false
+          site_id: "65001"
+          bgp_as_mode: multiAS
+          target_subnet_mask: 30
+          anycast_gateway_mac: "2020.0000.00aa"
+          replication_mode: multicast
+          multicast_group_subnet: "239.1.1.0/25"
+          bgp_loopback_ip_range: "10.2.0.0/22"
+          nve_loopback_ip_range: "10.3.0.0/22"
+          anycast_rendezvous_point_ip_range: "10.254.254.0/24"
+          intra_fabric_subnet_range: "10.4.0.0/16"
+          l2_vni_range: "30000-49000"
+          l3_vni_range: "50000-59000"
+          network_vlan_range: "2300-2999"
+          vrf_vlan_range: "2000-2299"
+  register: result
+
+- name: Update specific fields on an existing eBGP fabric using state merged (partial update)
+  cisco.nd.nd_manage_fabric_ebgp:
+    state: merged
+    config:
+      - name: my_ebgp_fabric
+        category: fabric
+        management:
+          bgp_asn_range: "65100-65199"
           anycast_gateway_mac: "2020.0000.00bb"
           performance_monitoring: true
   register: result
 
-- name: Create or fully replace an iBGP VXLAN fabric using state replaced
-  cisco.nd.nd_manage_fabric_ibgp:
+- name: Create or fully replace an eBGP VXLAN fabric using state replaced
+  cisco.nd.nd_manage_fabric_ebgp:
     state: replaced
     config:
-      - name: my_fabric
+      - name: my_ebgp_fabric
         category: fabric
         location:
           latitude: 37.7749
@@ -1196,42 +1008,28 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
+          type: vxlanEbgp
           bgp_asn: "65004"
+          bgp_asn_auto_allocation: false
           site_id: "65004"
+          bgp_as_mode: multiAS
           target_subnet_mask: 30
           anycast_gateway_mac: "2020.0000.00dd"
           performance_monitoring: true
           replication_mode: multicast
           multicast_group_subnet: "239.1.3.0/25"
-          auto_generate_multicast_group_address: false
-          underlay_multicast_group_address_limit: 128
-          tenant_routed_multicast: false
           rendezvous_point_count: 3
           rendezvous_point_loopback_id: 253
           vpc_peer_link_vlan: "3700"
-          vpc_peer_link_enable_native_vlan: false
-          vpc_peer_keep_alive_option: loopback
+          vpc_peer_keep_alive_option: management
           vpc_auto_recovery_timer: 300
           vpc_delay_restore_timer: 120
           vpc_peer_link_port_channel_id: "600"
-          vpc_ipv6_neighbor_discovery_sync: false
           advertise_physical_ip: true
           vpc_domain_id_range: "1-800"
-          bgp_loopback_id: 0
-          nve_loopback_id: 1
-          vrf_template: Default_VRF_Universal
-          network_template: Default_Network_Universal
-          vrf_extension_template: Default_VRF_Extension_Universal
-          network_extension_template: Default_Network_Extension_Universal
-          l3_vni_no_vlan_default_option: false
           fabric_mtu: 9000
           l2_host_interface_mtu: 9000
           tenant_dhcp: false
-          nxapi: false
-          nxapi_https_port: 443
-          nxapi_http: true
-          nxapi_http_port: 80
           snmp_trap: false
           anycast_border_gateway_advertise_physical_ip: true
           greenfield_debug_flag: disable
@@ -1246,41 +1044,25 @@ EXAMPLES = r"""
           l3_vni_range: "60000-69000"
           network_vlan_range: "2400-3099"
           vrf_vlan_range: "2100-2399"
-          sub_interface_dot1q_range: "2-511"
-          vrf_lite_auto_config: manual
-          vrf_lite_subnet_range: "10.53.0.0/16"
-          vrf_lite_subnet_target_mask: 30
-          auto_unique_vrf_lite_ip_prefix: false
-          per_vrf_loopback_auto_provision: true
-          per_vrf_loopback_ip_range: "10.25.0.0/22"
-          per_vrf_loopback_auto_provision_ipv6: true
-          per_vrf_loopback_ipv6_range: "fd00::a25:0/112"
           banner: "^ Managed by Ansible ^"
-          day0_bootstrap: false
-          local_dhcp_server: false
-          dhcp_protocol_version: dhcpv4
-          dhcp_start_address: ""
-          dhcp_end_address: ""
-          management_gateway: ""
-          management_ipv4_prefix: 24
-          management_ipv6_prefix: 64
   register: result
 
 - name: Replace fabric with only required fields (all optional settings revert to defaults)
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ebgp:
     state: replaced
     config:
-      - name: my_fabric
+      - name: my_ebgp_fabric
         category: fabric
         management:
-          type: vxlanIbgp
+          type: vxlanEbgp
           bgp_asn: "65004"
+          bgp_asn_auto_allocation: false
           site_id: "65004"
           banner: "^ Managed by Ansible ^"
   register: result
 
 - name: Enforce exact fabric inventory using state overridden (deletes unlisted fabrics)
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ebgp:
     state: overridden
     config:
       - name: fabric_east
@@ -1293,9 +1075,11 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
+          type: vxlanEbgp
           bgp_asn: "65010"
+          bgp_asn_auto_allocation: false
           site_id: "65010"
+          bgp_as_mode: multiAS
           target_subnet_mask: 30
           anycast_gateway_mac: "2020.0000.0010"
           replication_mode: multicast
@@ -1318,9 +1102,11 @@ EXAMPLES = r"""
         security_domain: all
         telemetry_collection: false
         management:
-          type: vxlanIbgp
+          type: vxlanEbgp
           bgp_asn: "65020"
+          bgp_asn_auto_allocation: false
           site_id: "65020"
+          bgp_as_mode: multiAS
           target_subnet_mask: 30
           anycast_gateway_mac: "2020.0000.0020"
           replication_mode: multicast
@@ -1335,15 +1121,15 @@ EXAMPLES = r"""
           vrf_vlan_range: "2000-2299"
   register: result
 
-- name: Delete a specific fabric using state deleted
-  cisco.nd.nd_manage_fabric_ibgp:
+- name: Delete a specific eBGP fabric using state deleted
+  cisco.nd.nd_manage_fabric_ebgp:
     state: deleted
     config:
-      - name: my_fabric
+      - name: my_ebgp_fabric
   register: result
 
-- name: Delete multiple fabrics in a single task
-  cisco.nd.nd_manage_fabric_ibgp:
+- name: Delete multiple eBGP fabrics in a single task
+  cisco.nd.nd_manage_fabric_ebgp:
     state: deleted
     config:
       - name: fabric_east
@@ -1358,13 +1144,13 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.manage_fabric_ibgp import FabricIbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric import ManageIbgpFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.manage_fabric_ebgp import FabricEbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric import ManageEbgpFabricOrchestrator
 
 
 def main():
     argument_spec = nd_argument_spec()
-    argument_spec.update(FabricIbgpModel.get_argument_spec())
+    argument_spec.update(FabricEbgpModel.get_argument_spec())
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -1375,7 +1161,7 @@ def main():
         # Initialize StateMachine
         nd_state_machine = NDStateMachine(
             module=module,
-            model_orchestrator=ManageIbgpFabricOrchestrator,
+            model_orchestrator=ManageEbgpFabricOrchestrator,
         )
 
         # Manage state
