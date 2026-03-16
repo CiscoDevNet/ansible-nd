@@ -1,0 +1,582 @@
+# Test code for the ND modules
+# Copyright: (c) 2025, Sabari Jaganathan (@sajagana) <sajagana@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# CLEAN TEST ENVIRONMENT
+- name: Delete all backup schedules with empty overridden config
+  cisco.nd.nd_backup_schedule:
+    output_level: debug
+    state: overridden
+    config: []
+  register: delete_all_1
+
+# CREATE
+- name: Create backup schedules with state merged (check_mode)
+  cisco.nd.nd_backup_schedule: &cm_add_with_merged
+    output_level: debug
+    state: merged
+    config:
+      - name: daily
+        encryption_key: testtest1
+        frequency: 1
+        scheduler_date: "2025-01-02"
+        scheduler_time: "11:04:05"
+        remote_location: test
+        backup_type: config_only
+      - name: weekly
+        encryption_key: testtest1
+        frequency: 7
+        scheduler_date: "2025-01-02"
+        scheduler_time: "12:04:05"
+        remote_location: test
+        backup_type: config_only
+  check_mode: true
+  register: cm_add_with_merged
+
+- name: Create backup schedules with state merged
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_add_with_merged
+  register: add_with_merged
+
+- name: Create backup schedules with state merged again
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_add_with_merged
+  register: add_with_merged_again
+
+- name: Create monthly backup schedule with state merged - expected to fail
+  cisco.nd.nd_backup_schedule:
+    output_level: debug
+    state: merged
+    config:
+      - name: monthly
+        encryption_key: testtest1
+        frequency: 30
+        scheduler_date: "2025-01-02"
+        scheduler_time: "13:04:05"
+        remote_location: test
+        backup_type: config_only
+  ignore_errors: true
+  register: nt_add_with_merged
+
+- name: Assertion check for create backup schedules with state merged
+  ansible.builtin.assert:
+    that:
+      - cm_add_with_merged is changed
+      - cm_add_with_merged.after.0.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_add_with_merged.after.0.frequency == 1
+      - cm_add_with_merged.after.0.name == "daily"
+      - cm_add_with_merged.after.0.remoteLocation == "test"
+      - cm_add_with_merged.after.0.startTime == "2025-01-02T11:04:05Z"
+      - cm_add_with_merged.after.0.type == "configOnly"
+      - cm_add_with_merged.after.1.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_add_with_merged.after.1.frequency == 7
+      - cm_add_with_merged.after.1.name == "weekly"
+      - cm_add_with_merged.after.1.remoteLocation == "test"
+      - cm_add_with_merged.after.1.startTime == "2025-01-02T12:04:05Z"
+      - cm_add_with_merged.after.1.type == "configOnly"
+      - cm_add_with_merged.before == []
+      - cm_add_with_merged.commands.0.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_add_with_merged.commands.0.frequency == 1
+      - cm_add_with_merged.commands.0.name == "daily"
+      - cm_add_with_merged.commands.0.remoteLocation == "test"
+      - cm_add_with_merged.commands.0.startTime == "2025-01-02T11:04:05Z"
+      - cm_add_with_merged.commands.0.type == "configOnly"
+      - cm_add_with_merged.commands.1.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_add_with_merged.commands.1.frequency == 7
+      - cm_add_with_merged.commands.1.name == "weekly"
+      - cm_add_with_merged.commands.1.remoteLocation == "test"
+      - cm_add_with_merged.commands.1.startTime == "2025-01-02T12:04:05Z"
+      - cm_add_with_merged.commands.1.type == "configOnly"
+      - add_with_merged is changed
+      - add_with_merged.after.0.frequency == 1
+      - add_with_merged.after.0.name == "daily"
+      - add_with_merged.after.0.remoteLocation == "test"
+      - add_with_merged.after.0.startTime == "2025-01-02T11:04:05Z"
+      - add_with_merged.after.0.type == "configOnly"
+      - add_with_merged.after.1.frequency == 7
+      - add_with_merged.after.1.name == "weekly"
+      - add_with_merged.after.1.remoteLocation == "test"
+      - add_with_merged.after.1.startTime == "2025-01-02T12:04:05Z"
+      - add_with_merged.after.1.type == "configOnly"
+      - add_with_merged.before == []
+      - add_with_merged.commands.0.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - add_with_merged.commands.0.frequency == 1
+      - add_with_merged.commands.0.name == "daily"
+      - add_with_merged.commands.0.remoteLocation == "test"
+      - add_with_merged.commands.0.startTime == "2025-01-02T11:04:05Z"
+      - add_with_merged.commands.0.type == "configOnly"
+      - add_with_merged.commands.1.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - add_with_merged.commands.1.frequency == 7
+      - add_with_merged.commands.1.name == "weekly"
+      - add_with_merged.commands.1.remoteLocation == "test"
+      - add_with_merged.commands.1.startTime == "2025-01-02T12:04:05Z"
+      - add_with_merged.commands.1.type == "configOnly"
+      - add_with_merged_again is not changed
+      - add_with_merged_again.after.0.name == add_with_merged_again.before.0.name == "daily"
+      - add_with_merged_again.after.1.name == add_with_merged_again.before.1.name == "weekly"
+      - add_with_merged_again.after.0 == add_with_merged_again.before.0
+      - add_with_merged_again.after.1 == add_with_merged_again.before.1
+      - nt_add_with_merged is failed
+      - nt_add_with_merged.after.0.name == "daily"
+      - nt_add_with_merged.after.1.name == "weekly"
+      - nt_add_with_merged.before.0.name == "daily"
+      - nt_add_with_merged.before.1.name == "weekly"
+      - nt_add_with_merged.commands.0.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - nt_add_with_merged.commands.0.frequency == 30
+      - nt_add_with_merged.commands.0.name == "monthly"
+      - nt_add_with_merged.commands.0.remoteLocation == "test"
+      - nt_add_with_merged.commands.0.startTime == "2025-01-02T13:04:05Z"
+      - nt_add_with_merged.commands.0.type == "configOnly"
+      - nt_add_with_merged.msg == "ND Error 400{{':'}} The maximum number of backup schedules is 2"
+
+# UPDATE
+- name: Update the daily backup schedule with state merged (check_mode)
+  cisco.nd.nd_backup_schedule: &cm_update_with_merged
+    output_level: debug
+    state: merged
+    config:
+      - name: daily
+        encryption_key: testtest1
+        scheduler_date: "2025-01-02"
+        scheduler_time: "11:10:05"
+        remote_location: test
+        backup_type: full
+  check_mode: true
+  register: cm_update_with_merged
+
+- name: Update the daily backup schedule with state merged
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_update_with_merged
+  register: update_with_merged
+
+- name: Update the daily backup schedule with state merged again
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_update_with_merged
+  register: update_with_merged_again
+
+- name: Assertion check for update the daily backup schedule
+  ansible.builtin.assert:
+    that:
+      - cm_update_with_merged is changed
+      - cm_update_with_merged.after.0.frequency == 7
+      - cm_update_with_merged.after.0.name == "weekly"
+      - cm_update_with_merged.after.0.remoteLocation == "test"
+      - cm_update_with_merged.after.0.startTime == "2025-01-02T12:04:05Z"
+      - cm_update_with_merged.after.0.type == "configOnly"
+      - cm_update_with_merged.before.1.frequency == 7
+      - cm_update_with_merged.before.1.name == "weekly"
+      - cm_update_with_merged.before.1.remoteLocation == "test"
+      - cm_update_with_merged.before.1.startTime == "2025-01-02T12:04:05Z"
+      - cm_update_with_merged.before.1.type == "configOnly"
+      - cm_update_with_merged.after.1.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_with_merged.after.1.frequency == 1
+      - cm_update_with_merged.after.1.name == "daily"
+      - cm_update_with_merged.after.1.remoteLocation == "test"
+      - cm_update_with_merged.after.1.startTime == "2025-01-02T11:10:05Z"
+      - cm_update_with_merged.after.1.type == "full"
+      - cm_update_with_merged.before.0.frequency == 1
+      - cm_update_with_merged.before.0.name == "daily"
+      - cm_update_with_merged.before.0.remoteLocation == "test"
+      - cm_update_with_merged.before.0.startTime == "2025-01-02T11:04:05Z"
+      - cm_update_with_merged.before.0.type == "configOnly"
+      - cm_update_with_merged.commands.0.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_with_merged.commands.0.frequency == 1
+      - cm_update_with_merged.commands.0.name == "daily"
+      - cm_update_with_merged.commands.0.remoteLocation == "test"
+      - cm_update_with_merged.commands.0.startTime == "2025-01-02T11:10:05Z"
+      - cm_update_with_merged.commands.0.type == "full"
+      - update_with_merged is changed
+      - update_with_merged.after.0.frequency == 7
+      - update_with_merged.after.0.name == "weekly"
+      - update_with_merged.after.0.remoteLocation == "test"
+      - update_with_merged.after.0.startTime == "2025-01-02T12:04:05Z"
+      - update_with_merged.after.0.type == "configOnly"
+      - update_with_merged.before.1.frequency == 7
+      - update_with_merged.before.1.name == "weekly"
+      - update_with_merged.before.1.remoteLocation == "test"
+      - update_with_merged.before.1.startTime == "2025-01-02T12:04:05Z"
+      - update_with_merged.before.1.type == "configOnly"
+      - update_with_merged.after.1.frequency == 1
+      - update_with_merged.after.1.name == "daily"
+      - update_with_merged.after.1.remoteLocation == "test"
+      - update_with_merged.after.1.startTime == "2025-01-02T11:10:05Z"
+      - update_with_merged.after.1.type == "full"
+      - update_with_merged.before.0.frequency == 1
+      - update_with_merged.before.0.name == "daily"
+      - update_with_merged.before.0.remoteLocation == "test"
+      - update_with_merged.before.0.startTime == "2025-01-02T11:04:05Z"
+      - update_with_merged.before.0.type == "configOnly"
+      - update_with_merged.commands.0.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - update_with_merged.commands.0.frequency == 1
+      - update_with_merged.commands.0.name == "daily"
+      - update_with_merged.commands.0.remoteLocation == "test"
+      - update_with_merged.commands.0.startTime == "2025-01-02T11:10:05Z"
+      - update_with_merged.commands.0.type == "full"
+      - update_with_merged_again is not changed
+      - update_with_merged_again.after.0.frequency == 7
+      - update_with_merged_again.after.0.name == "weekly"
+      - update_with_merged_again.after.0.remoteLocation == "test"
+      - update_with_merged_again.after.0.startTime == "2025-01-02T12:04:05Z"
+      - update_with_merged_again.after.0.type == "configOnly"
+      - update_with_merged_again.after.1.frequency == 1
+      - update_with_merged_again.after.1.name == "daily"
+      - update_with_merged_again.after.1.remoteLocation == "test"
+      - update_with_merged_again.after.1.startTime == "2025-01-02T11:10:05Z"
+      - update_with_merged_again.after.1.type == "full"
+      - update_with_merged_again.before.0.frequency == 1
+      - update_with_merged_again.before.0.name == "daily"
+      - update_with_merged_again.before.0.remoteLocation == "test"
+      - update_with_merged_again.before.0.startTime == "2025-01-02T11:10:05Z"
+      - update_with_merged_again.before.0.type == "full"
+      - update_with_merged_again.before.1.frequency == 7
+      - update_with_merged_again.before.1.name == "weekly"
+      - update_with_merged_again.before.1.remoteLocation == "test"
+      - update_with_merged_again.before.1.startTime == "2025-01-02T12:04:05Z"
+      - update_with_merged_again.before.1.type == "configOnly"
+
+- name: Update the backup schedules with state overridden to delete unspecified backup schedules from the remote (check_mode)
+  cisco.nd.nd_backup_schedule: &cm_update_with_overridden
+    output_level: debug
+    state: overridden
+    config:
+      - name: daily
+        encryption_key: testtest1
+        frequency: 2
+        scheduler_date: "2025-01-02"
+        scheduler_time: "11:15:05"
+        remote_location: test
+        backup_type: config_only
+      - name: quarterly
+        encryption_key: testtest1
+        frequency: 90
+        scheduler_date: "2025-01-02"
+        scheduler_time: "23:50:05"
+        remote_location: test
+        backup_type: config_only
+  check_mode: true
+  register: cm_update_with_overridden
+
+- name: Update the backup schedules with state overridden to delete unspecified backup schedules from the remote
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_update_with_overridden
+  register: update_with_overridden
+
+- name: Update the backup schedules with state overridden to delete unspecified backup schedules from the remote again
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_update_with_overridden
+  register: update_with_overridden_again
+
+- name: Assertion check for update the backup schedules with state overridden to delete unspecified backup schedules from the remote
+  ansible.builtin.assert:
+    that:
+      - cm_update_with_overridden is changed
+      - cm_update_with_overridden.after.0.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_with_overridden.after.0.frequency == 90
+      - cm_update_with_overridden.after.0.name == "quarterly"
+      - cm_update_with_overridden.after.0.remoteLocation == "test"
+      - cm_update_with_overridden.after.0.startTime == "2025-01-02T23:50:05Z"
+      - cm_update_with_overridden.after.0.type == "configOnly"
+      - cm_update_with_overridden.after.1.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_with_overridden.after.1.frequency == 2
+      - cm_update_with_overridden.after.1.name == "daily"
+      - cm_update_with_overridden.after.1.remoteLocation == "test"
+      - cm_update_with_overridden.after.1.startTime == "2025-01-02T11:15:05Z"
+      - cm_update_with_overridden.after.1.type == "configOnly"
+      - cm_update_with_overridden.before.0.frequency == 1
+      - cm_update_with_overridden.before.0.name == "daily"
+      - cm_update_with_overridden.before.0.remoteLocation == "test"
+      - cm_update_with_overridden.before.0.startTime == "2025-01-02T11:10:05Z"
+      - cm_update_with_overridden.before.0.type == "full"
+      - cm_update_with_overridden.before.1.frequency == 7
+      - cm_update_with_overridden.before.1.name == "weekly"
+      - cm_update_with_overridden.before.1.remoteLocation == "test"
+      - cm_update_with_overridden.before.1.startTime == "2025-01-02T12:04:05Z"
+      - cm_update_with_overridden.before.1.type == "configOnly"
+      - cm_update_with_overridden.commands.0.method == "DELETE"
+      - cm_update_with_overridden.commands.0.path == "/api/v1/infra/backups/schedules/weekly"
+      - cm_update_with_overridden.commands.1.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_with_overridden.commands.1.frequency == 90
+      - cm_update_with_overridden.commands.1.name == "quarterly"
+      - cm_update_with_overridden.commands.1.remoteLocation == "test"
+      - cm_update_with_overridden.commands.1.startTime == "2025-01-02T23:50:05Z"
+      - cm_update_with_overridden.commands.1.type == "configOnly"
+      - cm_update_with_overridden.commands.2.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_with_overridden.commands.2.frequency == 2
+      - cm_update_with_overridden.commands.2.name == "daily"
+      - cm_update_with_overridden.commands.2.remoteLocation == "test"
+      - cm_update_with_overridden.commands.2.startTime == "2025-01-02T11:15:05Z"
+      - cm_update_with_overridden.commands.2.type == "configOnly"
+      - update_with_overridden is changed
+      - update_with_overridden.after.0.frequency == 90
+      - update_with_overridden.after.0.name == "quarterly"
+      - update_with_overridden.after.0.remoteLocation == "test"
+      - update_with_overridden.after.0.startTime == "2025-01-02T23:50:05Z"
+      - update_with_overridden.after.0.type == "configOnly"
+      - update_with_overridden.after.1.frequency == 2
+      - update_with_overridden.after.1.name == "daily"
+      - update_with_overridden.after.1.remoteLocation == "test"
+      - update_with_overridden.after.1.startTime == "2025-01-02T11:15:05Z"
+      - update_with_overridden.after.1.type == "configOnly"
+      - update_with_overridden.before.0.frequency == 1
+      - update_with_overridden.before.0.name == "daily"
+      - update_with_overridden.before.0.remoteLocation == "test"
+      - update_with_overridden.before.0.startTime == "2025-01-02T11:10:05Z"
+      - update_with_overridden.before.0.type == "full"
+      - update_with_overridden.before.1.frequency == 7
+      - update_with_overridden.before.1.name == "weekly"
+      - update_with_overridden.before.1.remoteLocation == "test"
+      - update_with_overridden.before.1.startTime == "2025-01-02T12:04:05Z"
+      - update_with_overridden.before.1.type == "configOnly"
+      - update_with_overridden.commands.0.method == "DELETE"
+      - update_with_overridden.commands.0.path == "/api/v1/infra/backups/schedules/weekly"
+      - update_with_overridden.commands.1.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - update_with_overridden.commands.1.frequency == 90
+      - update_with_overridden.commands.1.name == "quarterly"
+      - update_with_overridden.commands.1.remoteLocation == "test"
+      - update_with_overridden.commands.1.startTime == "2025-01-02T23:50:05Z"
+      - update_with_overridden.commands.1.type == "configOnly"
+      - update_with_overridden.commands.2.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - update_with_overridden.commands.2.frequency == 2
+      - update_with_overridden.commands.2.name == "daily"
+      - update_with_overridden.commands.2.remoteLocation == "test"
+      - update_with_overridden.commands.2.startTime == "2025-01-02T11:15:05Z"
+      - update_with_overridden.commands.2.type == "configOnly"
+      - update_with_overridden_again is not changed
+      - update_with_overridden_again.after.0.name == update_with_overridden_again.before.0.name == "daily"
+      - update_with_overridden_again.after.1.name == update_with_overridden_again.before.1.name == "quarterly"
+      - update_with_overridden_again.after.0 == update_with_overridden_again.before.0
+      - update_with_overridden_again.after.1 == update_with_overridden_again.before.1
+
+- name: Delete the quarterly backup schedule with state deleted (check_mode)
+  cisco.nd.nd_backup_schedule: &cm_rm_with_deleted
+    output_level: debug
+    state: deleted
+    config:
+      - name: quarterly
+        encryption_key: testtest1
+        frequency: 90
+        scheduler_date: "2025-01-02"
+        scheduler_time: "23:50:05"
+        remote_location: test
+        backup_type: config_only
+  check_mode: true
+  register: cm_rm_with_deleted
+
+- name: Delete the quarterly backup schedule with state deleted
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_rm_with_deleted
+  register: rm_with_deleted
+
+- name: Delete the quarterly backup schedule with state deleted again
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_rm_with_deleted
+  register: rm_with_deleted_again
+
+- name: Update the backup schedules with state replaced (check_mode)
+  cisco.nd.nd_backup_schedule: &cm_update_with_replaced
+    output_level: debug
+    state: replaced
+    config:
+      - name: daily
+        encryption_key: testtest1
+        frequency: 1
+        scheduler_date: "2025-01-02"
+        scheduler_time: "11:15:05"
+        remote_location: test
+        backup_type: config_only
+      - name: monthly
+        encryption_key: testtest1
+        frequency: 30
+        scheduler_date: "2025-01-02"
+        scheduler_time: "13:04:05"
+        remote_location: test
+        backup_type: config_only
+  check_mode: true
+  register: cm_update_with_replaced
+
+- name: Update the backup schedules with state replaced
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_update_with_replaced
+  register: update_with_replaced
+
+- name: Update the backup schedules with state replaced again
+  cisco.nd.nd_backup_schedule:
+    <<: *cm_update_with_replaced
+  register: update_with_replaced_again
+
+- name: Update one backup schedules with state replaced
+  cisco.nd.nd_backup_schedule:
+    output_level: debug
+    state: replaced
+    config:
+      - name: monthly
+        encryption_key: testtest1
+        frequency: 28
+        scheduler_date: "2025-01-02"
+        scheduler_time: "13:04:05"
+        remote_location: test
+        backup_type: config_only
+  register: update_with_replaced_1
+
+- name: Assertion check for update the backup schedules with state replaced
+  ansible.builtin.assert:
+    that:
+      - cm_update_with_replaced is changed
+      - cm_update_with_replaced.after.0.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_with_replaced.after.0.frequency == 30
+      - cm_update_with_replaced.after.0.name == "monthly"
+      - cm_update_with_replaced.after.0.remoteLocation == "test"
+      - cm_update_with_replaced.after.0.startTime == "2025-01-02T13:04:05Z"
+      - cm_update_with_replaced.after.0.type == "configOnly"
+      - cm_update_with_replaced.after.1.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_with_replaced.after.1.frequency == 1
+      - cm_update_with_replaced.after.1.name == "daily"
+      - cm_update_with_replaced.after.1.remoteLocation == "test"
+      - cm_update_with_replaced.after.1.startTime == "2025-01-02T11:15:05Z"
+      - cm_update_with_replaced.after.1.type == "configOnly"
+      - cm_update_with_replaced.before.0.frequency == 2
+      - cm_update_with_replaced.before.0.name == "daily"
+      - cm_update_with_replaced.before.0.remoteLocation == "test"
+      - cm_update_with_replaced.before.0.startTime == "2025-01-02T11:15:05Z"
+      - cm_update_with_replaced.before.0.type == "configOnly"
+      - cm_update_with_replaced.commands.0.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_with_replaced.commands.0.frequency == 30
+      - cm_update_with_replaced.commands.0.name == "monthly"
+      - cm_update_with_replaced.commands.0.remoteLocation == "test"
+      - cm_update_with_replaced.commands.0.startTime == "2025-01-02T13:04:05Z"
+      - cm_update_with_replaced.commands.0.type == "configOnly"
+      - cm_update_with_replaced.commands.1.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - cm_update_with_replaced.commands.1.frequency == 1
+      - cm_update_with_replaced.commands.1.name == "daily"
+      - cm_update_with_replaced.commands.1.remoteLocation == "test"
+      - cm_update_with_replaced.commands.1.startTime == "2025-01-02T11:15:05Z"
+      - cm_update_with_replaced.commands.1.type == "configOnly"
+      - update_with_replaced is changed
+      - update_with_replaced.after.0.name == "monthly"
+      - update_with_replaced.after.0.frequency == 30
+      - update_with_replaced.after.0.remoteLocation == "test"
+      - update_with_replaced.after.0.startTime == "2025-01-02T13:04:05Z"
+      - update_with_replaced.after.0.type == "configOnly"
+      - update_with_replaced.after.1.frequency == 1
+      - update_with_replaced.after.1.name == "daily"
+      - update_with_replaced.after.1.remoteLocation == "test"
+      - update_with_replaced.after.1.startTime == "2025-01-02T11:15:05Z"
+      - update_with_replaced.after.1.type == "configOnly"
+      - update_with_replaced.before.0.frequency == 2
+      - update_with_replaced.before.0.name == "daily"
+      - update_with_replaced.before.0.remoteLocation == "test"
+      - update_with_replaced.before.0.startTime == "2025-01-02T11:15:05Z"
+      - update_with_replaced.before.0.type == "configOnly"
+      - update_with_replaced.commands.0.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - update_with_replaced.commands.0.frequency == 30
+      - update_with_replaced.commands.0.name == "monthly"
+      - update_with_replaced.commands.0.remoteLocation == "test"
+      - update_with_replaced.commands.0.startTime == "2025-01-02T13:04:05Z"
+      - update_with_replaced.commands.0.type == "configOnly"
+      - update_with_replaced.commands.1.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - update_with_replaced.commands.1.frequency == 1
+      - update_with_replaced.commands.1.name == "daily"
+      - update_with_replaced.commands.1.remoteLocation == "test"
+      - update_with_replaced.commands.1.startTime == "2025-01-02T11:15:05Z"
+      - update_with_replaced.commands.1.type == "configOnly"
+      - update_with_replaced_again is not changed
+      - update_with_replaced_again.after.0.name == update_with_replaced_again.before.0.name == "daily"
+      - update_with_replaced_again.after.0 == update_with_replaced_again.before.0
+      - update_with_replaced_again.after.1.name == update_with_replaced_again.before.1.name == "monthly"
+      - update_with_replaced_again.after.1 == update_with_replaced_again.before.1
+      - update_with_replaced_1 is changed
+      - update_with_replaced_1.after.0.name == update_with_replaced_1.before.0.name == "daily"
+      - update_with_replaced_1.after.0 == update_with_replaced_1.before.0
+      - update_with_replaced_1.after.1.frequency == 28
+      - update_with_replaced_1.after.1.name == update_with_replaced_1.before.1.name == "monthly"
+      - update_with_replaced_1.after.1.remoteLocation == update_with_replaced_1.before.1.remoteLocation == "test"
+      - update_with_replaced_1.after.1.startTime == update_with_replaced_1.before.1.startTime == "2025-01-02T13:04:05Z"
+      - update_with_replaced_1.after.1.type == update_with_replaced_1.before.1.type == "configOnly"
+      - update_with_replaced_1.commands.0.encryptionKey == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
+      - update_with_replaced_1.commands.0.frequency == 28
+      - update_with_replaced_1.commands.0.name == "monthly"
+      - update_with_replaced_1.commands.0.remoteLocation == "test"
+      - update_with_replaced_1.commands.0.startTime == "2025-01-02T13:04:05Z"
+      - update_with_replaced_1.commands.0.type == "configOnly"
+
+# QUERY
+- name: Query one backup schedule
+  cisco.nd.nd_backup_schedule:
+    output_level: debug
+    state: query
+    config:
+      - name: monthly
+  register: query_one
+
+- name: Query all backup schedules
+  cisco.nd.nd_backup_schedule:
+    output_level: debug
+    state: query
+  register: query_all
+
+- name: Assertion check for query backup schedules
+  ansible.builtin.assert:
+    that:
+      - query_one is not changed
+      - query_one.after.0.frequency == 28
+      - query_one.after.0.name == "monthly"
+      - query_one.after.0.remoteLocation == "test"
+      - query_one.after.0.startTime == "2025-01-02T13:04:05Z"
+      - query_one.after.0.type == "configOnly"
+      - query_all is not changed
+      - query_all.after.0.frequency == 1
+      - query_all.after.0.name == "daily"
+      - query_all.after.0.remoteLocation == "test"
+      - query_all.after.0.startTime == "2025-01-02T11:15:05Z"
+      - query_all.after.0.type == "configOnly"
+      - query_all.after.1.frequency == 28
+      - query_all.after.1.name == "monthly"
+      - query_all.after.1.remoteLocation == "test"
+      - query_all.after.1.startTime == "2025-01-02T13:04:05Z"
+      - query_all.after.1.type == "configOnly"
+
+# DELETE
+- name: Delete all backup schedules with empty overridden config
+  cisco.nd.nd_backup_schedule:
+    output_level: debug
+    state: overridden
+    config: []
+  register: delete_all_2
+
+- name: Assertion check for delete backup schedules
+  ansible.builtin.assert:
+    that:
+      - cm_rm_with_deleted is changed
+      - cm_rm_with_deleted.after.0.name == cm_rm_with_deleted.before.0.name == "daily"
+      - cm_rm_with_deleted.after.0 == cm_rm_with_deleted.before.0
+      - cm_rm_with_deleted.before.1.frequency == 90
+      - cm_rm_with_deleted.before.1.name == "quarterly"
+      - cm_rm_with_deleted.before.1.remoteLocation == "test"
+      - cm_rm_with_deleted.before.1.startTime == "2025-01-02T23:50:05Z"
+      - cm_rm_with_deleted.before.1.type == "configOnly"
+      - cm_rm_with_deleted.commands.0.method == "DELETE"
+      - cm_rm_with_deleted.commands.0.path == "/api/v1/infra/backups/schedules/quarterly"
+      - rm_with_deleted is changed
+      - rm_with_deleted.after.0.name == rm_with_deleted.before.0.name == "daily"
+      - rm_with_deleted.after.0 == rm_with_deleted.before.0
+      - rm_with_deleted.before.1.frequency == 90
+      - rm_with_deleted.before.1.name == "quarterly"
+      - rm_with_deleted.before.1.remoteLocation == "test"
+      - rm_with_deleted.before.1.startTime == "2025-01-02T23:50:05Z"
+      - rm_with_deleted.before.1.type == "configOnly"
+      - rm_with_deleted.commands.0.method == "DELETE"
+      - rm_with_deleted.commands.0.path == "/api/v1/infra/backups/schedules/quarterly"
+      - rm_with_deleted_again is not changed
+      - rm_with_deleted_again.after.0.name == rm_with_deleted_again.before.0.name == "daily"
+      - rm_with_deleted_again.after.0 == rm_with_deleted_again.before.0
+      - rm_with_deleted_again.commands.0.method == "DELETE"
+      - rm_with_deleted_again.commands.0.path == "/api/v1/infra/backups/schedules/quarterly"
+      - delete_all_2 is changed
+      - delete_all_2.after == []
+      - delete_all_2.before.0.name == "daily"
+      - delete_all_2.before.1.name == "monthly"
+      - delete_all_2.commands.0.method == "DELETE"
+      - delete_all_2.commands.0.path == "/api/v1/infra/backups/schedules/daily"
+      - delete_all_2.commands.1.method == "DELETE"
+      - delete_all_2.commands.1.path == "/api/v1/infra/backups/schedules/monthly"
