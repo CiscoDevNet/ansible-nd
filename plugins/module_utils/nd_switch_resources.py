@@ -221,6 +221,24 @@ class SwitchDiffEngine:
             else:
                 raise
 
+        # Duplicate seed_ip check
+        seen_ips: set = set()
+        duplicate_ips: set = set()
+        for cfg in validated_configs:
+            if cfg.seed_ip in seen_ips:
+                duplicate_ips.add(cfg.seed_ip)
+            seen_ips.add(cfg.seed_ip)
+        if duplicate_ips:
+            error_msg = (
+                f"Duplicate seed_ip entries found in config: "
+                f"{sorted(duplicate_ips)}. Each switch must appear only once."
+            )
+            log.error(error_msg)
+            if hasattr(nd, 'module'):
+                nd.module.fail_json(msg=error_msg)
+            else:
+                raise ValueError(error_msg)
+
         operation_type = validated_configs[0].operation_type
         log.info(
             f"Successfully validated {len(validated_configs)} "
@@ -320,10 +338,10 @@ class SwitchDiffEngine:
                 continue
 
             prop_dict = prop_sw.model_dump(
-                by_alias=True, exclude_none=True, include=compare_fields
+                by_alias=False, exclude_none=True, include=compare_fields
             )
             existing_dict = existing_sw.model_dump(
-                by_alias=True, exclude_none=True, include=compare_fields
+                by_alias=False, exclude_none=True, include=compare_fields
             )
 
             if prop_dict == existing_dict:

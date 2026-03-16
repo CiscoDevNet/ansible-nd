@@ -582,7 +582,7 @@ def main():
             }
         
         results.diff_current = {}
-        results.register_task_result()
+        results.register_api_call()
         results.build_final_result()
         
         # Add error details if debug output is requested
@@ -608,7 +608,7 @@ def main():
             "found": False,
         }
         results.diff_current = {}
-        results.register_task_result()
+        results.register_api_call()
         results.build_final_result()
         
         if output_level == "debug":
