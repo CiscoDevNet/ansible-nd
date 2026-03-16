@@ -448,6 +448,20 @@ class SwitchConfigModel(NDBaseModel):
         description="Software version from inventory API"
     )
 
+    def to_config_dict(self) -> Dict[str, Any]:
+        """Return the playbook config as a dict with all credentials stripped.
+
+        Returns:
+            Dict of config fields with ``user_name``, ``password``,
+            ``discovery_username``, and ``discovery_password`` excluded.
+        """
+        return self.to_config(exclude={
+            "user_name": True,
+            "password": True,
+            "poap": {"__all__": {"discovery_username": True, "discovery_password": True}},
+            "rma": {"__all__": {"discovery_username": True, "discovery_password": True}},
+        })
+
     @model_validator(mode='before')
     @classmethod
     def reject_auth_proto_for_poap_rma(cls, data: Any) -> Any:

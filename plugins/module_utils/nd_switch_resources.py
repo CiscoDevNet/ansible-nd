@@ -23,6 +23,8 @@ from pydantic import ValidationError
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches import (
     SwitchRole,
@@ -83,6 +85,43 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_ma
 
 # Max hops is not supported by the module.
 _DISCOVERY_MAX_HOPS: int = 0
+
+
+# =========================================================================
+# Output Collections
+# =========================================================================
+
+class SwitchOutputCollection(NDConfigCollection):
+    """Output collection for all output keys (previous, current, proposed, diff).
+
+    Accepts ``SwitchDataModel``, ``SwitchConfigModel``, or ``_DiffRecord`` items
+    and serializes them via ``to_config_dict()``.
+    """
+
+    def __init__(self, model_class=None, items: Optional[List] = None):
+        # Store directly — skip add() type guard to support mixed-type diffs.
+        self._model_class = model_class
+        self._items: List = list(items) if items else []
+        self._index: Dict = {}
+
+    def to_ansible_config(self, **kwargs) -> List[Dict]:
+        return [item.to_config_dict() for item in self._items]
+
+    def copy(self) -> "SwitchOutputCollection":
+        return SwitchOutputCollection(
+            model_class=self._model_class,
+            items=deepcopy(list(self._items)),
+        )
+
+
+@dataclass
+class _DiffRecord:
+    """Wraps a plain dict as a diff entry, exposing ``to_config_dict()``."""
+
+    data: Dict[str, Any]
+
+    def to_config_dict(self) -> Dict[str, Any]:
+        return self.data
 
 
 @dataclass
@@ -2177,12 +2216,12 @@ class NDSwitchResourceModule():
 
         # Switch collections
         try:
-            self.proposed: List[SwitchDataModel] = []
-            self.existing: List[SwitchDataModel] = [
-                SwitchDataModel.model_validate(sw)
-                for sw in self._query_all_switches()
-            ]
-            self.previous: List[SwitchDataModel] = deepcopy(self.existing)
+            self.proposed: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
+            self.existing: SwitchOutputCollection = SwitchOutputCollection.from_api_response(
+                response_data=self._query_all_switches(),
+                model_class=SwitchDataModel,
+            )
+            self.previous: SwitchOutputCollection = self.existing.copy()
         except Exception as e:
             msg = (
                 f"Failed to query fabric '{self.fabric}' inventory "
@@ -2193,6 +2232,11 @@ class NDSwitchResourceModule():
 
         # Operation tracking
         self.nd_logs: List[Dict[str, Any]] = []
+
+        # Output tracking — NDOutput serializes all collections via their
+        # overridden to_ansible_config() methods.
+        self.output = NDOutput(output_level=self.module.params.get("output_level", "normal"))
+        self.output.assign(before=self.previous, after=self.existing)
 
         # Utility instances (SwitchWaitUtils / FabricUtils depend on self)
         self.fabric_utils = FabricUtils(self.nd, self.fabric, log)
@@ -2220,17 +2264,26 @@ class NDSwitchResourceModule():
         self.results.build_final_result()
         final = self.results.final_result
 
-        final["logs"] = self.nd_logs
-        final["previous"] = (
-            [sw.model_dump(by_alias=True) for sw in self.previous]
-            if self.previous
-            else []
-        )
-        final["current"] = (
-            [sw.model_dump(by_alias=True) for sw in self.existing]
-            if self.existing
-            else []
-        )
+        # NDOutput owns serialization of before/after/proposed via their
+        # overridden to_ansible_config() methods. We only set _changed
+        # manually because self.existing is not re-queried after mutations
+        # so the auto-diff in NDOutput.format() would see no change.
+        self.output._changed = bool(final.get("changed", False))
+        formatted = self.output.format()
+
+        output_level = formatted["output_level"]
+
+        # Rename before/after to previous/current for backward compatibility.
+        final["previous"] = formatted.pop("before", [])
+        final["current"] = formatted.pop("after", [])
+        final["output_level"] = output_level
+        final["diff"] = formatted.get("diff", [])
+
+        if output_level in ("info", "debug"):
+            final["proposed"] = formatted.get("proposed", [])
+            if output_level == "debug":
+                # Override NDOutput's placeholder with real operation logs.
+                final["logs"] = self.nd_logs
 
         if True in self.results.failed:
             self.nd.module.fail_json(**final)
@@ -2259,6 +2312,12 @@ class NDSwitchResourceModule():
                 if self.config
                 else None
             )
+            if proposed_config:
+                self.output.assign(
+                    proposed=SwitchOutputCollection(
+                        model_class=SwitchConfigModel, items=proposed_config
+                    )
+                )
             if self.state == "deleted":
                 return self._handle_deleted_state(proposed_config)
             return self._handle_query_state(proposed_config)
@@ -2272,21 +2331,28 @@ class NDSwitchResourceModule():
         proposed_config = SwitchDiffEngine.validate_configs(
             self.config, self.state, self.nd, self.log
         )
+        # Register proposed config (credentials excluded via SwitchOutputCollection)
+        self.output.assign(
+            proposed=SwitchOutputCollection(
+                model_class=SwitchConfigModel, items=proposed_config
+            )
+        )
         self.operation_type = proposed_config[0].operation_type
 
         # POAP and RMA bypass normal discovery — delegate to handlers
         if self.operation_type == "poap":
-            return self.poap_handler.handle(proposed_config, self.existing)
+            return self.poap_handler.handle(proposed_config, list(self.existing))
         if self.operation_type == "rma":
-            return self.rma_handler.handle(proposed_config, self.existing)
+            return self.rma_handler.handle(proposed_config, list(self.existing))
 
         # Normal: discover → build proposed models → compute diff → delegate
         discovered_data = self.discovery.discover(proposed_config)
-        self.proposed = self.discovery.build_proposed(
-            proposed_config, discovered_data, self.existing
+        built = self.discovery.build_proposed(
+            proposed_config, discovered_data, list(self.existing)
         )
+        self.proposed = NDConfigCollection(model_class=SwitchDataModel, items=built)
         diff = SwitchDiffEngine.compute_changes(
-            self.proposed, self.existing, self.log
+            list(self.proposed), list(self.existing), self.log
         )
 
         state_handlers = {
@@ -2436,6 +2502,7 @@ class NDSwitchResourceModule():
 
         # Collect (serial_number, SwitchConfigModel) pairs for post-processing
         switch_actions: List[Tuple[str, SwitchConfigModel]] = []
+        diff_items: List = []
 
         # Phase 4: Bulk add new switches to fabric
         if switches_to_add and discovered_data:
@@ -2479,6 +2546,17 @@ class NDSwitchResourceModule():
                         sn = disc.get("serialNumber")
                         if sn:
                             switch_actions.append((sn, cfg))
+                            # Discovery response has softwareVersion, hostname,
+                            # model — richer than SwitchConfigModel fields.
+                            diff_items.append(_DiffRecord({
+                                "seed_ip": cfg.seed_ip,
+                                "serial_number": sn,
+                                "hostname": disc.get("hostname"),
+                                "model": disc.get("model"),
+                                "role": cfg.role,
+                                "software_version": disc.get("softwareVersion"),
+                                "mode": None,
+                            }))
                             self._log_operation("add", cfg.seed_ip)
 
         # Phase 5: Collect migration switches for post-processing
@@ -2487,6 +2565,9 @@ class NDSwitchResourceModule():
             cfg = config_by_ip.get(mig_sw.fabric_management_ip)
             if cfg and mig_sw.switch_id:
                 switch_actions.append((mig_sw.switch_id, cfg))
+                # mig_sw is a SwitchDataModel — has all 7 fields including
+                # software_version and mode from the inventory API.
+                diff_items.append(mig_sw)
                 self._log_operation("migrate", mig_sw.fabric_management_ip)
 
         if not switch_actions:
@@ -2514,6 +2595,7 @@ class NDSwitchResourceModule():
             all_preserve_config=all_preserve_config,
             update_roles=True,
         )
+        self.output.assign(diff=SwitchOutputCollection(items=diff_items))
 
         self.log.debug("EXIT: _handle_merged_state() - completed")
 
@@ -2565,10 +2647,17 @@ class NDSwitchResourceModule():
 
         # Build (switch_id, SwitchConfigModel) pairs and apply role change
         role_actions: List[Tuple[str, SwitchConfigModel]] = []
+        role_diff_items: List = []
         for sw in role_change_switches:
             cfg = config_by_ip.get(sw.fabric_management_ip)
             if cfg and sw.switch_id:
                 role_actions.append((sw.switch_id, cfg))
+                # Use existing SwitchDataModel for software_version + mode;
+                # override role with the desired value from the playbook.
+                record = sw.to_config_dict()
+                if cfg.role is not None:
+                    record["role"] = cfg.role
+                role_diff_items.append(_DiffRecord(record))
 
         if role_actions:
             self.log.info(
@@ -2576,6 +2665,7 @@ class NDSwitchResourceModule():
             )
             self.fabric_ops.bulk_update_roles(role_actions)
             self.fabric_ops.finalize()
+            self.output.assign(diff=SwitchOutputCollection(items=role_diff_items))
 
     def _merged_handle_idempotent(
         self,
@@ -2812,6 +2902,7 @@ class NDSwitchResourceModule():
             f"Proceeding to delete {len(switches_to_delete)} switch(es) from fabric"
         )
         self.fabric_ops.bulk_delete(switches_to_delete)
+        self.output.assign(diff=SwitchOutputCollection(items=switches_to_delete))
         self.log.debug("EXIT: _handle_deleted_state()")
 
     # =====================================================================

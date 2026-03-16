@@ -472,6 +472,28 @@ class SwitchDataModel(NDBaseModel):
 
         return cls.model_validate(transformed)
 
+    def to_config_dict(self) -> Dict[str, Any]:
+        """Return this inventory record using the 7 standard user-facing fields.
+
+        Produces a consistent dict for previous/current output keys. All 7
+        fields are always present (None when not available). Credential fields
+        are never included.
+
+        Returns:
+            Dict with keys: seed_ip, serial_number, hostname, model,
+            role, software_version, mode.
+        """
+        ad = self.additional_data
+        return {
+            "seed_ip": self.fabric_management_ip or self.switch_id or "",
+            "serial_number": self.serial_number,
+            "hostname": self.hostname,
+            "model": self.model,
+            "role": self.switch_role,
+            "software_version": self.software_version,
+            "mode": (ad.system_mode if ad and hasattr(ad, "system_mode") else None),
+        }
+
 
 __all__ = [
     "TelemetryIpCollection",
