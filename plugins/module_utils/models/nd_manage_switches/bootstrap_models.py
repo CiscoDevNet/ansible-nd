@@ -272,6 +272,16 @@ class BootstrapImportSwitchModel(NDBaseModel):
         default=None,
         alias="discoveryPassword"
     )
+    remote_credential_store: RemoteCredentialStore = Field(
+        default=RemoteCredentialStore.LOCAL,
+        alias="remoteCredentialStore",
+        description="Type of credential store for discovery credentials"
+    )
+    remote_credential_store_key: Optional[str] = Field(
+        default=None,
+        alias="remoteCredentialStoreKey",
+        description="Remote credential store key for discovery credentials"
+    )
     data: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Bootstrap configuration data block (gatewayIpMask, models)"

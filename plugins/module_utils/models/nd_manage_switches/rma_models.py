@@ -26,71 +26,6 @@ from .enums import (
 )
 from .validators import SwitchValidators
 
-
-class RMASpecificModel(NDBaseModel):
-    """
-    Replacement-switch-specific fields used in an RMA bootstrap operation.
-    """
-    identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
-    hostname: str = Field(
-        ...,
-        description="Hostname of the switch"
-    )
-    ip: str = Field(
-        ...,
-        description="IP address of the switch"
-    )
-    new_switch_id: str = Field(
-        ...,
-        alias="newSwitchId",
-        description="SwitchId (serial number) of the switch"
-    )
-    public_key: str = Field(
-        ...,
-        alias="publicKey",
-        description="Public Key"
-    )
-    finger_print: str = Field(
-        ...,
-        alias="fingerPrint",
-        description="Fingerprint"
-    )
-    dhcp_bootstrap_ip: Optional[str] = Field(
-        default=None,
-        alias="dhcpBootstrapIp",
-        description="This is used for device day-0 bring-up when using inband reachability"
-    )
-    seed_switch: bool = Field(
-        default=False,
-        alias="seedSwitch",
-        description="Use as seed switch"
-    )
-
-    @field_validator('hostname', mode='before')
-    @classmethod
-    def validate_host(cls, v: str) -> str:
-        result = SwitchValidators.validate_hostname(v)
-        if result is None:
-            raise ValueError("hostname cannot be empty")
-        return result
-
-    @field_validator('ip', 'dhcp_bootstrap_ip', mode='before')
-    @classmethod
-    def validate_ip(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        return SwitchValidators.validate_ip_address(v)
-
-    @field_validator('new_switch_id', mode='before')
-    @classmethod
-    def validate_serial(cls, v: str) -> str:
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError("new_switch_id cannot be empty")
-        return result
-
-
 class RMASwitchModel(NDBaseModel):
     """
     Request payload for provisioning a replacement (RMA) switch via bootstrap.
@@ -183,6 +118,10 @@ class RMASwitchModel(NDBaseModel):
         default=False,
         alias="seedSwitch"
     )
+    data: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Bootstrap configuration data block (gatewayIpMask, models)"
+    )
 
     @field_validator('gateway_ip_mask', mode='before')
     @classmethod
@@ -253,6 +192,5 @@ class RMASwitchModel(NDBaseModel):
 
 
 __all__ = [
-    "RMASpecificModel",
     "RMASwitchModel",
 ]

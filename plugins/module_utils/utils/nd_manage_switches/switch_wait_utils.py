@@ -36,7 +36,7 @@ class SwitchWaitUtils:
 
     # Default wait parameters
     DEFAULT_MAX_ATTEMPTS: int = 300
-    DEFAULT_WAIT_INTERVAL: int = 5  # seconds
+    DEFAULT_WAIT_INTERVAL: int = 10  # seconds
 
     # Status values indicating the switch is ready
     MANAGEABLE_STATUSES = frozenset({"ok", "manageable"})
@@ -177,6 +177,39 @@ class SwitchWaitUtils:
         return self._wait_for_discovery_state(
             serial_numbers, "ok"
         )
+
+    def wait_for_rma_switch_ready(
+        self,
+        serial_numbers: List[str],
+    ) -> bool:
+        """Wait for RMA replacement switches to become manageable.
+
+        RMA replacement switches come up via POAP bootstrap and never enter
+        migration mode.  Three phases are run in order:
+
+        1. Wait for each new serial to appear in the fabric inventory.
+           The controller registers the switch after ``provisionRMA``
+           completes, but it may take a few polling cycles.
+        2. Wait for discovery status ``ok``.
+
+        Args:
+            serial_numbers: New (replacement) switch serial numbers to monitor.
+
+        Returns:
+            ``True`` if all switches reach ``ok`` status, ``False`` on timeout.
+        """
+        self.log.info(
+            f"Waiting for RMA replacement switch(es) to become ready "
+            f"(skipping migration-mode phase): {serial_numbers}"
+        )
+
+        # Phase 1: wait until all new serials appear in the fabric inventory.
+        # Rediscovery triggers will 400 until the switch is registered.
+        if not self._wait_for_switches_in_fabric(serial_numbers):
+            return False
+
+        # Phase 2: wait for ok discovery status.
+        return self._wait_for_discovery_state(serial_numbers, "ok")
 
     def wait_for_discovery(
         self,
@@ -471,6 +504,64 @@ class SwitchWaitUtils:
     # =====================================================================
     # API Helpers
     # =====================================================================
+
+    def _wait_for_switches_in_fabric(
+        self,
+        serial_numbers: List[str],
+    ) -> bool:
+        """Poll until all serial numbers appear in the fabric inventory.
+
+        After ``provisionRMA`` the controller registers the new switch
+        asynchronously.  Rediscovery requests will fail with 400
+        "Switch not found" until the switch is registered, so we must
+        wait for it to appear before triggering any rediscovery.
+
+        Args:
+            serial_numbers: Switch serial numbers to wait for.
+
+        Returns:
+            ``True`` when all serials are present, ``False`` on timeout.
+        """
+        pending = list(serial_numbers)
+        self.log.info(
+            f"Waiting for {len(pending)} switch(es) to appear in "
+            f"fabric inventory: {pending}"
+        )
+
+        for attempt in range(1, self.max_attempts + 1):
+            if not pending:
+                return True
+
+            switch_data = self._fetch_switch_data()
+            if switch_data is None:
+                # API error — keep waiting
+                time.sleep(self.wait_interval)
+                continue
+
+            known_serials = {
+                sw.get("serialNumber") for sw in switch_data
+            }
+            pending = [
+                sn for sn in pending if sn not in known_serials
+            ]
+
+            if not pending:
+                self.log.info(
+                    f"All RMA switch(es) now visible in fabric inventory "
+                    f"(attempt {attempt})"
+                )
+                return True
+
+            self.log.debug(
+                f"Attempt {attempt}/{self.max_attempts}: "
+                f"{len(pending)} switch(es) not yet in fabric: {pending}"
+            )
+            time.sleep(self.wait_interval)
+
+        self.log.warning(
+            f"Timeout waiting for switches to appear in fabric: {pending}"
+        )
+        return False
 
     def _fetch_switch_data(
         self,

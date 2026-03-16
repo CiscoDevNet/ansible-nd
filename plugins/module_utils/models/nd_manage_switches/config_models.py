@@ -268,15 +268,15 @@ class RMAConfigModel(NDNestedModel):
         min_length=1,
         description="Serial number of switch to be replaced by RMA"
     )
-    model: str = Field(
-        ...,
+    model: Optional[str] = Field(
+        default=None,
         min_length=1,
-        description="Model of switch to Bootstrap for RMA"
+        description="Model of switch to Bootstrap for RMA. If omitted, sourced from bootstrap API."
     )
-    version: str = Field(
-        ...,
+    version: Optional[str] = Field(
+        default=None,
         min_length=1,
-        description="Software version of switch to Bootstrap for RMA"
+        description="Software version of switch to Bootstrap for RMA. If omitted, sourced from bootstrap API."
     )
 
     # Optional fields
@@ -286,13 +286,14 @@ class RMAConfigModel(NDNestedModel):
         description="Name of the image policy to be applied on switch during Bootstrap for RMA"
     )
 
-    # Required config data for RMA (models list + gateway)
-    config_data: ConfigDataModel = Field(
-        ...,
+    # Optional config data for RMA (models list + gateway); sourced from bootstrap API if omitted
+    config_data: Optional[ConfigDataModel] = Field(
+        default=None,
         alias="configData",
         description=(
             "Basic config data of switch to Bootstrap for RMA. "
-            "'models' (list of module models) and 'gateway' (IP with mask) are mandatory."
+            "'models' (list of module models) and 'gateway' (IP with mask) are mandatory "
+            "when provided. If omitted, sourced from bootstrap API."
         ),
     )
 

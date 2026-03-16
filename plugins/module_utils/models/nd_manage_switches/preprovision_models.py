@@ -14,7 +14,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from ipaddress import ip_network
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, computed_field, field_validator
 from typing import Any, Dict, List, Optional, ClassVar, Literal
 from typing_extensions import Self
 
@@ -110,14 +110,6 @@ class PreProvisionSwitchModel(NDBaseModel):
     )
 
     # --- bootstrapCredential fields (optional) ---
-    use_new_credentials: bool = Field(
-        default=False,
-        alias="useNewCredentials",
-        description=(
-            "If True, use discoveryUsername and discoveryPassword for local "
-            "remoteCredentialStore or use remoteCredentialStoreKey for CyberArk"
-        ),
-    )
     discovery_username: Optional[str] = Field(
         default=None,
         alias="discoveryUsername",
@@ -128,10 +120,15 @@ class PreProvisionSwitchModel(NDBaseModel):
         alias="discoveryPassword",
         description="Password for switch discovery post pre-provision",
     )
-    remote_credential_store: Optional[RemoteCredentialStore] = Field(
-        default=None,
+    remote_credential_store: RemoteCredentialStore = Field(
+        default=RemoteCredentialStore.LOCAL,
         alias="remoteCredentialStore",
         description="Type of credential store for discovery credentials",
+    )
+    remote_credential_store_key: Optional[str] = Field(
+        default=None,
+        alias="remoteCredentialStoreKey",
+        description="Remote credential store key for discovery credentials",
     )
 
     # --- Validators ---
@@ -175,11 +172,11 @@ class PreProvisionSwitchModel(NDBaseModel):
             raise ValueError(f"Invalid gatewayIpMask: {v}") from exc
         return v
 
-    @model_validator(mode='after')
-    def derive_use_new_credentials(self) -> Self:
-        """Auto-set useNewCredentials when both discoveryUsername and discoveryPassword are provided."""
-        self.use_new_credentials = bool(self.discovery_username and self.discovery_password)
-        return self
+    @computed_field(alias="useNewCredentials")
+    @property
+    def use_new_credentials(self) -> bool:
+        """Derive useNewCredentials from discoveryUsername and discoveryPassword."""
+        return bool(self.discovery_username and self.discovery_password)
 
     def to_payload(self) -> Dict[str, Any]:
         """Convert to API payload format matching preProvision spec."""

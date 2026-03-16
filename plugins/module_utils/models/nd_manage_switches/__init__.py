@@ -73,7 +73,6 @@ from .preprovision_models import (  # noqa: F401
 
 # --- RMA models ---
 from .rma_models import (  # noqa: F401
-    RMASpecificModel,
     RMASwitchModel,
 )
 
@@ -130,7 +129,6 @@ __all__ = [
     "PreProvisionSwitchesRequestModel",
     "PreProvisionSwitchModel",
     # RMA models
-    "RMASpecificModel",
     "RMASwitchModel",
     # Switch actions models
     "ChangeSwitchSerialNumberRequestModel",

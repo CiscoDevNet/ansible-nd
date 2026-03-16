@@ -142,6 +142,7 @@ class SwitchServiceContext:
     log: logging.Logger
     save_config: bool = True
     deploy_config: bool = True
+    output: Optional[NDOutput] = None
 
 
 # =========================================================================
@@ -298,7 +299,6 @@ class SwitchDiffEngine:
         changes: Dict[str, list] = {
             "to_add": [],
             "to_update": [],
-            "role_change": [],
             "to_delete": [],
             "migration_mode": [],
             "idempotent": [],
@@ -348,28 +348,16 @@ class SwitchDiffEngine:
                 log.debug(f"Switch {ip} is idempotent — no changes needed")
                 changes["idempotent"].append(prop_sw)
             else:
-                diff_keys = {
-                    k for k in set(prop_dict) | set(existing_dict)
-                    if prop_dict.get(k) != existing_dict.get(k)
-                }
-                if diff_keys == {"switch_role"}:
-                    log.info(
-                        f"Switch {ip} has role-only difference — marking role_change. "
-                        f"proposed: {prop_dict.get('switch_role')}, "
-                        f"existing: {existing_dict.get('switch_role')}"
-                    )
-                    changes["role_change"].append(prop_sw)
-                else:
-                    log.info(
-                        f"Switch {ip} has differences — marking to_update. "
-                        f"Changed fields: {diff_keys}"
-                    )
-                    log.debug(
-                        f"Switch {ip} diff detail — "
-                        f"proposed: { {k: prop_dict.get(k) for k in diff_keys} }, "
-                        f"existing: { {k: existing_dict.get(k) for k in diff_keys} }"
-                    )
-                    changes["to_update"].append(prop_sw)
+                log.info(
+                    f"Switch {ip} has differences — marking to_update. "
+                    f"Changed fields: {diff_keys}"
+                )
+                log.debug(
+                    f"Switch {ip} diff detail — "
+                    f"proposed: { {k: prop_dict.get(k) for k in diff_keys} }, "
+                    f"existing: { {k: existing_dict.get(k) for k in diff_keys} }"
+                )
+                changes["to_update"].append(prop_sw)
 
         # Switches in existing but not in proposed (for overridden state)
         proposed_ids = {sw.switch_id for sw in proposed}
@@ -385,13 +373,112 @@ class SwitchDiffEngine:
             f"Compute changes summary: "
             f"to_add={len(changes['to_add'])}, "
             f"to_update={len(changes['to_update'])}, "
-            f"role_change={len(changes['role_change'])}, "
             f"to_delete={len(changes['to_delete'])}, "
             f"migration_mode={len(changes['migration_mode'])}, "
             f"idempotent={len(changes['idempotent'])}"
         )
         log.debug("EXIT: compute_changes()")
         return changes
+
+    @staticmethod
+    def validate_switch_api_fields(
+        nd: NDModule,
+        serial: str,
+        model: Optional[str],
+        version: Optional[str],
+        config_data,
+        bootstrap_data: Dict[str, Any],
+        log: logging.Logger,
+        context: str,
+        hostname: Optional[str] = None,
+    ) -> None:
+        """Validate user-supplied switch fields against the bootstrap API response.
+
+        Only fields that are provided (non-None) are validated against the API.
+        Fields that are omitted are silently filled in from the API at build
+        time — no error is raised for those. Any omitted fields are logged at
+        INFO level so the operator can see what was sourced from the API.
+
+        Args:
+            nd: ND module wrapper used for failure handling.
+            serial: Serial number of the switch being processed.
+            model: User-provided switch model, or None if omitted.
+            version: User-provided software version, or None if omitted.
+            config_data: User-provided ``ConfigDataModel``, or None if omitted.
+            bootstrap_data: Matching entry from the bootstrap GET API.
+            log: Logger instance.
+            context: Label used in error messages (e.g. ``"Bootstrap"`` or ``"RMA"``).
+            hostname: User-provided hostname, or None if omitted (bootstrap only).
+
+        Returns:
+            None.
+        """
+        bs_data = bootstrap_data.get("data") or {}
+        mismatches: List[str] = []
+
+        if model is not None and model != bootstrap_data.get("model"):
+            mismatches.append(
+                f"model: provided '{model}', "
+                f"bootstrap reports '{bootstrap_data.get('model')}'"
+            )
+
+        if version is not None and version != bootstrap_data.get("softwareVersion"):
+            mismatches.append(
+                f"version: provided '{version}', "
+                f"bootstrap reports '{bootstrap_data.get('softwareVersion')}'"
+            )
+
+        if config_data is not None:
+            bs_gateway = (
+                bootstrap_data.get("gatewayIpMask")
+                or bs_data.get("gatewayIpMask")
+            )
+            if config_data.gateway is not None and config_data.gateway != bs_gateway:
+                mismatches.append(
+                    f"config_data.gateway: provided '{config_data.gateway}', "
+                    f"bootstrap reports '{bs_gateway}'"
+                )
+
+            bs_models = bs_data.get("models", [])
+            if (
+                config_data.models
+                and sorted(config_data.models) != sorted(bs_models)
+            ):
+                mismatches.append(
+                    f"config_data.models: provided {config_data.models}, "
+                    f"bootstrap reports {bs_models}"
+                )
+
+        if mismatches:
+            nd.module.fail_json(
+                msg=(
+                    f"{context} field mismatch for serial '{serial}'. "
+                    f"The following provided values do not match the "
+                    f"bootstrap API data:\n"
+                    + "\n".join(f"  - {m}" for m in mismatches)
+                )
+            )
+
+        # Log any fields that were omitted and will be sourced from the API
+        pulled: List[str] = []
+        if model is None:
+            pulled.append("model")
+        if version is None:
+            pulled.append("version")
+        if hostname is None:
+            pulled.append("hostname")
+        if config_data is None:
+            pulled.append("config_data (gateway + models)")
+        if pulled:
+            log.info(
+                f"{context} serial '{serial}': the following fields were not "
+                f"provided and will be sourced from the bootstrap API: "
+                f"{', '.join(pulled)}"
+            )
+        else:
+            log.debug(
+                f"{context} field validation passed for serial '{serial}'"
+            )
 
 
 # =========================================================================
@@ -1196,6 +1283,20 @@ class POAPHandler:
             if preprov_models:
                 self._preprovision_switches(preprov_models)
 
+                if self.ctx.output:
+                    diff_items = [
+                        _DiffRecord({
+                            "serial_number": m.serial_number,
+                            "hostname": m.hostname,
+                            "ip": m.ip,
+                            "model": m.model,
+                            "software_version": m.software_version,
+                            "role": m.switch_role,
+                        })
+                        for m in preprov_models
+                    ]
+                    self.ctx.output.assign(diff=SwitchOutputCollection(items=diff_items))
+
         # Edge case: nothing actionable
         if not bootstrap_entries and not preprov_entries and not swap_entries:
             log.warning("No POAP switch models built — nothing to process")
@@ -1251,7 +1352,17 @@ class POAPHandler:
 
             # Validate user-supplied fields against bootstrap data (if provided)
             # and warn about any fields that will be pulled from the API.
-            self._validate_bootstrap_fields(poap_cfg, bootstrap_data, log)
+            SwitchDiffEngine.validate_switch_api_fields(
+                    nd=nd,
+                    serial=poap_cfg.serial_number,
+                    model=poap_cfg.model,
+                    version=poap_cfg.version,
+                    config_data=poap_cfg.config_data,
+                    bootstrap_data=bootstrap_data,
+                    log=log,
+                    context="Bootstrap",
+                    hostname=poap_cfg.hostname,
+                )
 
             model = self._build_bootstrap_import_model(
                 switch_cfg, poap_cfg, bootstrap_data
@@ -1281,91 +1392,22 @@ class POAPHandler:
             skip_greenfield_check=True,
         )
 
+        if self.ctx.output:
+            import_by_serial = {m.serial_number: m for m in import_models}
+            diff_items = [
+                _DiffRecord({
+                    "seed_ip": switch_cfg.seed_ip,
+                    "serial_number": serial,
+                    "hostname": import_by_serial[serial].hostname if serial in import_by_serial else None,
+                    "model": import_by_serial[serial].model if serial in import_by_serial else None,
+                    "software_version": import_by_serial[serial].version if serial in import_by_serial else None,
+                    "role": switch_cfg.role,
+                })
+                for serial, switch_cfg in switch_actions
+            ]
+            self.ctx.output.assign(diff=SwitchOutputCollection(items=diff_items))
+
         log.debug("EXIT: _handle_poap_bootstrap()")
-
-    def _validate_bootstrap_fields(
-        self,
-        poap_cfg: POAPConfigModel,
-        bootstrap_data: Dict[str, Any],
-        log: logging.Logger,
-    ) -> None:
-        """Validate user-supplied bootstrap fields against the bootstrap API response.
-
-        If a field is provided in the playbook config, it must match what the
-        bootstrap API reports.  Fields that are omitted are silently filled in
-        from the API at import time — no error is raised for those.
-
-        Args:
-            poap_cfg: POAP config entry from the playbook.
-            bootstrap_data: Matching entry from the bootstrap GET API.
-            log: Logger instance.
-
-        Returns:
-            None.
-        """
-        serial = poap_cfg.serial_number
-        bs_data = bootstrap_data.get("data") or {}
-        mismatches: List[str] = []
-
-        if poap_cfg.model and poap_cfg.model != bootstrap_data.get("model"):
-            mismatches.append(
-                f"model: provided '{poap_cfg.model}', "
-                f"bootstrap reports '{bootstrap_data.get('model')}'"
-            )
-
-        if poap_cfg.version and poap_cfg.version != bootstrap_data.get("softwareVersion"):
-            mismatches.append(
-                f"version: provided '{poap_cfg.version}', "
-                f"bootstrap reports '{bootstrap_data.get('softwareVersion')}'"
-            )
-
-        if poap_cfg.config_data:
-            bs_gateway = (
-                bootstrap_data.get("gatewayIpMask")
-                or bs_data.get("gatewayIpMask")
-            )
-            if poap_cfg.config_data.gateway and poap_cfg.config_data.gateway != bs_gateway:
-                mismatches.append(
-                    f"config_data.gateway: provided '{poap_cfg.config_data.gateway}', "
-                    f"bootstrap reports '{bs_gateway}'"
-                )
-
-            bs_models = bs_data.get("models", [])
-            if (
-                poap_cfg.config_data.models
-                and sorted(poap_cfg.config_data.models) != sorted(bs_models)
-            ):
-                mismatches.append(
-                    f"config_data.models: provided {poap_cfg.config_data.models}, "
-                    f"bootstrap reports {bs_models}"
-                )
-
-        if mismatches:
-            self.ctx.nd.module.fail_json(
-                msg=(
-                    f"Bootstrap field mismatch for serial '{serial}'. "
-                    f"The following provided values do not match the "
-                    f"bootstrap API data:\n"
-                    + "\n".join(f"  - {m}" for m in mismatches)
-                )
-            )
-
-        # Log which fields will be sourced from the bootstrap API
-        pulled: List[str] = []
-        if not poap_cfg.model:
-            pulled.append("model")
-        if not poap_cfg.version:
-            pulled.append("version")
-        if not poap_cfg.hostname:
-            pulled.append("hostname")
-        if not poap_cfg.config_data:
-            pulled.append("config_data (gateway + models)")
-        if pulled:
-            log.info(
-                f"Bootstrap serial '{serial}': the following fields were not "
-                f"provided and will be sourced from the bootstrap API: "
-                f"{', '.join(pulled)}"
-            )
 
     def _build_bootstrap_import_model(
         self,
@@ -1948,6 +1990,7 @@ class RMAHandler:
 
         # Build and submit each RMA request
         switch_actions: List[Tuple[str, SwitchConfigModel]] = []
+        rma_diff_data: List[Tuple[str, str, SwitchConfigModel]] = []  # (new_serial, old_serial, switch_cfg)
         for switch_cfg, rma_cfg in rma_entries:
             new_serial = rma_cfg.serial_number
             bootstrap_data = bootstrap_idx.get(new_serial)
@@ -1962,6 +2005,17 @@ class RMAHandler:
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
 
+            SwitchDiffEngine.validate_switch_api_fields(
+                    nd=nd,
+                    serial=rma_cfg.serial_number,
+                    model=rma_cfg.model,
+                    version=rma_cfg.version,
+                    config_data=rma_cfg.config_data,
+                    bootstrap_data=bootstrap_data,
+                    log=log,
+                    context="RMA",
+                )
+
             rma_model = self._build_rma_model(
                 switch_cfg, rma_cfg, bootstrap_data,
                 old_switch_info[rma_cfg.old_serial],
@@ -1973,14 +2027,53 @@ class RMAHandler:
 
             self._provision_rma_switch(rma_cfg.old_serial, rma_model)
             switch_actions.append((rma_model.new_switch_id, switch_cfg))
+            rma_diff_data.append((rma_model.new_switch_id, rma_cfg.old_serial, switch_cfg))
 
-        # Post-processing: wait, save credentials, finalize
-        self.fabric_ops.post_add_processing(
-            switch_actions,
-            wait_utils=self.wait_utils,
-            context="RMA",
-            skip_greenfield_check=True,
+        # Post-processing: wait for RMA switches to become ready, then
+        # save credentials and finalize.  RMA switches come up via POAP
+        # bootstrap and never enter migration mode, so we use the
+        # RMA-specific wait (unreachable → ok) instead of the generic
+        # wait_for_switch_manageable which would time out on the
+        # migration-mode phase.
+        all_new_serials = [sn for sn, _ in switch_actions]
+        log.info(
+            f"Waiting for {len(all_new_serials)} RMA replacement "
+            f"switch(es) to become ready: {all_new_serials}"
         )
+        success = self.wait_utils.wait_for_rma_switch_ready(all_new_serials)
+        if not success:
+            msg = (
+                f"One or more RMA replacement switches failed to become "
+                f"discoverable in fabric '{self.ctx.fabric}'. "
+                f"Switches: {all_new_serials}"
+            )
+            log.error(msg)
+            nd.module.fail_json(msg=msg)
+
+        if self.ctx.output:
+            diff_items = [
+                _DiffRecord({
+                    "seed_ip": switch_cfg.seed_ip,
+                    "old_serial_number": old_serial,
+                    "new_serial_number": new_serial,
+                    "hostname": old_switch_info[old_serial]["hostname"],
+                    "role": switch_cfg.role,
+                })
+                for new_serial, old_serial, switch_cfg in rma_diff_data
+            ]
+            self.ctx.output.assign(diff=SwitchOutputCollection(items=diff_items))
+
+        self.fabric_ops.bulk_save_credentials(switch_actions)
+
+        try:
+            self.fabric_ops.finalize()
+        except Exception as e:
+            msg = (
+                f"Failed to finalize (config-save/deploy) for RMA "
+                f"switches {all_new_serials}: {e}"
+            )
+            log.error(msg)
+            nd.module.fail_json(msg=msg)
 
         log.debug("EXIT: RMAHandler.handle()")
 
@@ -2022,6 +2115,20 @@ class RMAHandler:
                     )
                 )
 
+            # Verify the seed_ip in config matches the IP of the switch
+            # identified by old_serial in the fabric inventory.
+            seed_ip = switch_cfg.seed_ip
+            inventory_ip = old_switch.fabric_management_ip
+            if seed_ip != inventory_ip:
+                nd.module.fail_json(
+                    msg=(
+                        f"RMA: seed_ip '{seed_ip}' does not match the "
+                        f"fabric management IP '{inventory_ip}' of switch "
+                        f"with serial '{old_serial}'. Verify that seed_ip "
+                        f"and old_serial refer to the same switch."
+                    )
+                )
+
             ad = old_switch.additional_data
             if ad is None:
                 nd.module.fail_json(
@@ -2036,7 +2143,7 @@ class RMAHandler:
                 nd.module.fail_json(
                     msg=(
                         f"RMA: Switch '{old_serial}' has discovery status "
-                        f"'{ad.discovery_status.value if ad.discovery_status else 'unknown'}', "
+                        f"'{getattr(ad.discovery_status, 'value', ad.discovery_status) if ad.discovery_status else 'unknown'}', "
                         f"expected 'unreachable'. The old switch must be "
                         f"unreachable before RMA can proceed."
                     )
@@ -2046,7 +2153,7 @@ class RMAHandler:
                 nd.module.fail_json(
                     msg=(
                         f"RMA: Switch '{old_serial}' is in "
-                        f"'{ad.system_mode.value if ad.system_mode else 'unknown'}' "
+                        f"'{getattr(ad.system_mode, 'value', ad.system_mode) if ad.system_mode else 'unknown'}' "
                         f"mode, expected 'maintenance'. Put the switch in "
                         f"maintenance mode before initiating RMA."
                     )
@@ -2093,10 +2200,7 @@ class RMAHandler:
         new_switch_id = rma_cfg.serial_number
         hostname = old_switch_info.get("hostname", "")
         ip = switch_cfg.seed_ip
-        model_name = rma_cfg.model
-        version = rma_cfg.version
         image_policy = rma_cfg.image_policy
-        gateway_ip_mask = rma_cfg.config_data.gateway
         switch_role = switch_cfg.role
         password = switch_cfg.password
         auth_proto = SnmpV3AuthProtocol.MD5  # RMA always uses MD5
@@ -2108,6 +2212,20 @@ class RMAHandler:
         public_key = bootstrap_data.get("publicKey", "")
         finger_print = bootstrap_data.get(
             "fingerPrint", bootstrap_data.get("fingerprint", "")
+        )
+        bs_data = bootstrap_data.get("data") or {}
+
+        # Use user-provided values when available; fall back to bootstrap API data.
+        model_name = rma_cfg.model or bootstrap_data.get("model", "")
+        version = rma_cfg.version or bootstrap_data.get("softwareVersion", "")
+        gateway_ip_mask = (
+            (rma_cfg.config_data.gateway if rma_cfg.config_data else None)
+            or bootstrap_data.get("gatewayIpMask")
+            or bs_data.get("gatewayIpMask")
+        )
+        data_models = (
+            (rma_cfg.config_data.models if rma_cfg.config_data else None)
+            or bs_data.get("models", [])
         )
 
         rma_model = RMASwitchModel(
@@ -2125,6 +2243,7 @@ class RMAHandler:
             newSwitchId=new_switch_id,
             publicKey=public_key,
             fingerPrint=finger_print,
+            data={"gatewayIpMask": gateway_ip_mask, "models": data_models} if (gateway_ip_mask or data_models) else None,
         )
 
         log.debug(
@@ -2154,7 +2273,7 @@ class RMAHandler:
 
         endpoint = EpManageFabricSwitchProvisionRMAPost()
         endpoint.fabric_name = self.ctx.fabric
-        endpoint.switch_id = old_switch_id
+        endpoint.switch_sn = old_switch_id
 
         payload = rma_model.to_payload()
 
@@ -2241,8 +2360,8 @@ class NDSwitchResourceModule():
             results=results,
             fabric=self.fabric,
             log=log,
-            save_config=self.module.params.get("save", True),
-            deploy_config=self.module.params.get("deploy", True),
+            save_config=self.module.params.get("save"),
+            deploy_config=self.module.params.get("deploy"),
         )
 
         # Switch collections
@@ -2268,6 +2387,7 @@ class NDSwitchResourceModule():
         # overridden to_ansible_config() methods.
         self.output = NDOutput(output_level=self.module.params.get("output_level", "normal"))
         self.output.assign(before=self.previous, after=self.existing)
+        self.ctx.output = self.output
 
         # Utility instances (SwitchWaitUtils / FabricUtils depend on self)
         self.fabric_utils = FabricUtils(self.nd, self.fabric, log)
@@ -2340,8 +2460,8 @@ class NDSwitchResourceModule():
         """
         self.log.info(f"Managing state: {self.state}")
 
-        # query / deleted — config is optional
-        if self.state in ("query", "deleted"):
+        # deleted — config is optional
+        if self.state == "deleted":
             proposed_config = (
                 SwitchDiffEngine.validate_configs(self.config, self.state, self.nd, self.log)
                 if self.config
@@ -2353,9 +2473,7 @@ class NDSwitchResourceModule():
                         model_class=SwitchConfigModel, items=proposed_config
                     )
                 )
-            if self.state == "deleted":
-                return self._handle_deleted_state(proposed_config)
-            return self._handle_query_state(proposed_config)
+            return self._handle_deleted_state(proposed_config)
 
         # merged / overridden — config is required
         if not self.config:
@@ -2403,75 +2521,6 @@ class NDSwitchResourceModule():
     # State Handlers (orchestration only — delegate to services)
     # =====================================================================
 
-    def _handle_query_state(
-        self,
-        proposed_config: Optional[List[SwitchConfigModel]] = None,
-    ) -> None:
-        """Return inventory switches matching the optional proposed config.
-
-        Args:
-            proposed_config: Optional filter config list for matching switches.
-
-        Returns:
-            None.
-        """
-        self.log.debug("ENTER: _handle_query_state()")
-        self.log.info("Handling query state")
-        self.log.debug(f"Found {len(self.existing)} existing switches")
-
-        if proposed_config is None:
-            matched_switches = list(self.existing)
-            self.log.info("No proposed config — returning all existing switches")
-        else:
-            matched_switches: List[SwitchDataModel] = []
-            for cfg in proposed_config:
-                match = next(
-                    (
-                        sw for sw in self.existing
-                        if sw.fabric_management_ip == cfg.seed_ip
-                    ),
-                    None,
-                )
-                if match is None:
-                    self.log.info(f"Switch {cfg.seed_ip} not found in fabric")
-                    continue
-
-                if cfg.role is not None and match.switch_role != cfg.role:
-                    self.log.info(
-                        f"Switch {cfg.seed_ip} found but role mismatch: "
-                        f"expected {cfg.role.value}, got "
-                        f"{match.switch_role.value if match.switch_role else 'None'}"
-                    )
-                    continue
-
-                matched_switches.append(match)
-
-            self.log.info(
-                f"Matched {len(matched_switches)}/{len(proposed_config)} "
-                f"switch(es) from proposed config"
-            )
-
-        switch_data = [sw.model_dump(by_alias=True) for sw in matched_switches]
-
-        self.results.action = "query"
-        self.results.state = self.state
-        self.results.check_mode = self.nd.module.check_mode
-        self.results.operation_type = OperationType.QUERY
-        self.results.response_current = {
-            "RETURN_CODE": 200,
-            "MESSAGE": "OK",
-            "DATA": switch_data,
-        }
-        self.results.result_current = {
-            "found": len(matched_switches) > 0,
-            "success": True,
-        }
-        self.results.diff_current = {}
-        self.results.register_api_call()
-
-        self.log.debug(f"Returning {len(switch_data)} switches in results")
-        self.log.debug("EXIT: _handle_query_state()")
-
     def _handle_merged_state(
         self,
         diff: Dict[str, List[SwitchDataModel]],
@@ -2501,19 +2550,16 @@ class NDSwitchResourceModule():
         config_by_ip = {sw.seed_ip: sw for sw in proposed_config}
         existing_by_ip = {sw.fabric_management_ip: sw for sw in self.existing}
 
-        # Phase 1: Handle role-change switches
-        self._merged_handle_role_changes(diff, config_by_ip, existing_by_ip)
+        # Phase 1: Handle idempotent switches that may need config sync
+        idempotent_save_req = self._merged_handle_idempotent(diff, existing_by_ip)
 
-        # Phase 2: Handle idempotent switches that may need config sync
-        self._merged_handle_idempotent(diff, existing_by_ip)
-
-        # Phase 3: Fail on to_update (merged state doesn't support updates)
+        # Phase 2: Fail on to_update (merged state doesn't support updates)
         self._merged_handle_to_update(diff)
 
         switches_to_add = diff.get("to_add", [])
         migration_switches = diff.get("migration_mode", [])
 
-        if not switches_to_add and not migration_switches:
+        if not switches_to_add and not migration_switches and not idempotent_save_req:
             self.log.info("No switches need adding or migration processing")
             return
 
@@ -2596,6 +2642,11 @@ class NDSwitchResourceModule():
 
         # Phase 5: Collect migration switches for post-processing
         # Migration mode switches get role updates during post-add processing.
+
+        have_migration_switches = False
+        if migration_switches:
+            have_migration_switches = True
+
         for mig_sw in migration_switches:
             cfg = config_by_ip.get(mig_sw.fabric_management_ip)
             if cfg and mig_sw.switch_id:
@@ -2628,7 +2679,7 @@ class NDSwitchResourceModule():
             wait_utils=self.wait_utils,
             context="merged",
             all_preserve_config=all_preserve_config,
-            update_roles=True,
+            update_roles=have_migration_switches,
         )
         self.output.assign(diff=SwitchOutputCollection(items=diff_items))
 
@@ -2638,75 +2689,11 @@ class NDSwitchResourceModule():
     # Merged-state sub-handlers (modular phases)
     # -----------------------------------------------------------------
 
-    def _merged_handle_role_changes(
-        self,
-        diff: Dict[str, List[SwitchDataModel]],
-        config_by_ip: Dict[str, SwitchConfigModel],
-        existing_by_ip: Dict[str, SwitchDataModel],
-    ) -> None:
-        """Handle role-change switches in merged state.
-
-        Role changes are only allowed when configSyncStatus is notApplicable.
-        Any other status fails the module.
-
-        Args:
-            diff: Categorized switch diff output.
-            config_by_ip: Config lookup by seed IP.
-            existing_by_ip: Existing switch lookup by management IP.
-
-        Returns:
-            None.
-        """
-        role_change_switches = diff.get("role_change", [])
-        if not role_change_switches:
-            return
-
-        # Validate configSyncStatus for every role-change switch
-        for sw in role_change_switches:
-            existing_sw = existing_by_ip.get(sw.fabric_management_ip)
-            status = (
-                existing_sw.additional_data.config_sync_status
-                if existing_sw and existing_sw.additional_data
-                else None
-            )
-            if status != ConfigSyncStatus.NOT_APPLICABLE:
-                self.nd.module.fail_json(
-                    msg=(
-                        f"Role change not possible for switch "
-                        f"{sw.fabric_management_ip} ({sw.switch_id}). "
-                        f"configSyncStatus is "
-                        f"'{getattr(status, 'value', status) if status else 'unknown'}', "
-                        f"expected '{ConfigSyncStatus.NOT_APPLICABLE.value}'."
-                    )
-                )
-
-        # Build (switch_id, SwitchConfigModel) pairs and apply role change
-        role_actions: List[Tuple[str, SwitchConfigModel]] = []
-        role_diff_items: List = []
-        for sw in role_change_switches:
-            cfg = config_by_ip.get(sw.fabric_management_ip)
-            if cfg and sw.switch_id:
-                role_actions.append((sw.switch_id, cfg))
-                # Use existing SwitchDataModel for software_version + mode;
-                # override role with the desired value from the playbook.
-                record = sw.to_config_dict()
-                if cfg.role is not None:
-                    record["role"] = cfg.role
-                role_diff_items.append(_DiffRecord(record))
-
-        if role_actions:
-            self.log.info(
-                f"Performing role change for {len(role_actions)} switch(es)"
-            )
-            self.fabric_ops.bulk_update_roles(role_actions)
-            self.fabric_ops.finalize()
-            self.output.assign(diff=SwitchOutputCollection(items=role_diff_items))
-
     def _merged_handle_idempotent(
         self,
         diff: Dict[str, List[SwitchDataModel]],
         existing_by_ip: Dict[str, SwitchDataModel],
-    ) -> None:
+    ) -> bool:
         """Handle idempotent switches that may need config save and deploy.
 
         If configSyncStatus is anything other than inSync, run config save
@@ -2717,13 +2704,12 @@ class NDSwitchResourceModule():
             existing_by_ip: Existing switch lookup by management IP.
 
         Returns:
-            None.
+            bool: True if any idempotent switches require config save and deploy, False otherwise.
         """
         idempotent_switches = diff.get("idempotent", [])
         if not idempotent_switches:
-            return
+            return False
 
-        finalize_needed = False
         for sw in idempotent_switches:
             existing_sw = existing_by_ip.get(sw.fabric_management_ip)
             status = (
@@ -2738,15 +2724,9 @@ class NDSwitchResourceModule():
                     f"'{getattr(status, 'value', status) if status else 'unknown'}' — "
                     f"will run config save and deploy"
                 )
-                finalize_needed = True
-            else:
-                self.log.info(
-                    f"Switch {sw.fabric_management_ip} ({sw.switch_id}) "
-                    f"is idempotent — no changes needed"
-                )
+                return True
 
-        if finalize_needed:
-            self.fabric_ops.finalize()
+        return False
 
     def _merged_handle_to_update(
         self,
@@ -2798,10 +2778,6 @@ class NDSwitchResourceModule():
         if not self.proposed:
             self.log.warning("No configurations provided for overridden state")
             return
-
-        # Merge role_change into to_update — overridden uses delete-and-re-add
-        diff["to_update"].extend(diff.get("role_change", []))
-        diff["role_change"] = []
 
         # Check mode — preview only
         if self.nd.module.check_mode:
