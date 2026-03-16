@@ -2657,7 +2657,7 @@ class NDSwitchResourceModule():
                         f"Role change not possible for switch "
                         f"{sw.fabric_management_ip} ({sw.switch_id}). "
                         f"configSyncStatus is "
-                        f"'{status.value if status else 'unknown'}', "
+                        f"'{getattr(status, 'value', status) if status else 'unknown'}', "
                         f"expected '{ConfigSyncStatus.NOT_APPLICABLE.value}'."
                     )
                 )
@@ -2717,7 +2717,7 @@ class NDSwitchResourceModule():
                 self.log.info(
                     f"Switch {sw.fabric_management_ip} ({sw.switch_id}) is "
                     f"config-idempotent but configSyncStatus is "
-                    f"'{status.value if status else 'unknown'}' — "
+                    f"'{getattr(status, 'value', status) if status else 'unknown'}' — "
                     f"will run config save and deploy"
                 )
                 finalize_needed = True
