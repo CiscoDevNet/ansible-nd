@@ -1360,6 +1360,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spe
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.manage_fabric_ibgp import FabricIbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric import ManageIbgpFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 
 
 def main():
@@ -1383,6 +1384,8 @@ def main():
 
         module.exit_json(**nd_state_machine.output.format())
 
+    except NDStateMachineError as e:
+        module.fail_json(msg=str(e))
     except Exception as e:
         module.fail_json(msg=f"Module execution failed: {str(e)}")
 
