@@ -122,7 +122,7 @@ class SwitchActionsImportEndpointParams(ClusterNameMixin, TicketIdMixin, Endpoin
 # ============================================================================
 
 
-class _V1ManageFabricSwitchActionsBase(FabricNameMixin, NDEndpointBaseModel):
+class _EpManageFabricSwitchActionsBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for Fabric Switch Actions endpoints.
 
@@ -138,7 +138,7 @@ class _V1ManageFabricSwitchActionsBase(FabricNameMixin, NDEndpointBaseModel):
         return BasePath.path("fabrics", self.fabric_name, "switchActions")
 
 
-class V1ManageFabricSwitchActionsRemovePost(_V1ManageFabricSwitchActionsBase):
+class EpManageFabricSwitchActionsRemovePost(_EpManageFabricSwitchActionsBase):
     """
     # Summary
 
@@ -166,13 +166,13 @@ class V1ManageFabricSwitchActionsRemovePost(_V1ManageFabricSwitchActionsBase):
 
     ```python
     # Remove switches
-    request = V1ManageFabricSwitchActionsRemovePost()
+    request = EpManageFabricSwitchActionsRemovePost()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
 
     # Remove switches with force and ticket
-    request = V1ManageFabricSwitchActionsRemovePost()
+    request = EpManageFabricSwitchActionsRemovePost()
     request.fabric_name = "MyFabric"
     request.endpoint_params.force = True
     request.endpoint_params.ticket_id = "CHG12345"
@@ -182,8 +182,8 @@ class V1ManageFabricSwitchActionsRemovePost(_V1ManageFabricSwitchActionsBase):
     ```
     """
 
-    class_name: Literal["V1ManageFabricSwitchActionsRemovePost"] = Field(
-        default="V1ManageFabricSwitchActionsRemovePost", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricSwitchActionsRemovePost"] = Field(
+        default="EpManageFabricSwitchActionsRemovePost", description="Class name for backward compatibility"
     )
     endpoint_params: SwitchActionsRemoveEndpointParams = Field(
         default_factory=SwitchActionsRemoveEndpointParams, description="Endpoint-specific query parameters"
@@ -212,7 +212,7 @@ class V1ManageFabricSwitchActionsRemovePost(_V1ManageFabricSwitchActionsBase):
         return HttpVerbEnum.POST
 
 
-class V1ManageFabricSwitchActionsChangeRolesPost(_V1ManageFabricSwitchActionsBase):
+class EpManageFabricSwitchActionsChangeRolesPost(_EpManageFabricSwitchActionsBase):
     """
     # Summary
 
@@ -239,13 +239,13 @@ class V1ManageFabricSwitchActionsChangeRolesPost(_V1ManageFabricSwitchActionsBas
 
     ```python
     # Change roles
-    request = V1ManageFabricSwitchActionsChangeRolesPost()
+    request = EpManageFabricSwitchActionsChangeRolesPost()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
 
     # Change roles with change control ticket
-    request = V1ManageFabricSwitchActionsChangeRolesPost()
+    request = EpManageFabricSwitchActionsChangeRolesPost()
     request.fabric_name = "MyFabric"
     request.endpoint_params.ticket_id = "CHG12345"
     path = request.path
@@ -254,8 +254,8 @@ class V1ManageFabricSwitchActionsChangeRolesPost(_V1ManageFabricSwitchActionsBas
     ```
     """
 
-    class_name: Literal["V1ManageFabricSwitchActionsChangeRolesPost"] = Field(
-        default="V1ManageFabricSwitchActionsChangeRolesPost",
+    class_name: Literal["EpManageFabricSwitchActionsChangeRolesPost"] = Field(
+        default="EpManageFabricSwitchActionsChangeRolesPost",
         description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsTicketEndpointParams = Field(
@@ -285,7 +285,7 @@ class V1ManageFabricSwitchActionsChangeRolesPost(_V1ManageFabricSwitchActionsBas
         return HttpVerbEnum.POST
 
 
-class V1ManageFabricSwitchActionsImportBootstrapPost(_V1ManageFabricSwitchActionsBase):
+class EpManageFabricSwitchActionsImportBootstrapPost(_EpManageFabricSwitchActionsBase):
     """
     # Summary
 
@@ -313,13 +313,13 @@ class V1ManageFabricSwitchActionsImportBootstrapPost(_V1ManageFabricSwitchAction
 
     ```python
     # Import bootstrap switches
-    request = V1ManageFabricSwitchActionsImportBootstrapPost()
+    request = EpManageFabricSwitchActionsImportBootstrapPost()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
 
     # Import with cluster and ticket
-    request = V1ManageFabricSwitchActionsImportBootstrapPost()
+    request = EpManageFabricSwitchActionsImportBootstrapPost()
     request.fabric_name = "MyFabric"
     request.endpoint_params.cluster_name = "cluster1"
     request.endpoint_params.ticket_id = "CHG12345"
@@ -329,8 +329,8 @@ class V1ManageFabricSwitchActionsImportBootstrapPost(_V1ManageFabricSwitchAction
     ```
     """
 
-    class_name: Literal["V1ManageFabricSwitchActionsImportBootstrapPost"] = Field(
-        default="V1ManageFabricSwitchActionsImportBootstrapPost", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricSwitchActionsImportBootstrapPost"] = Field(
+        default="EpManageFabricSwitchActionsImportBootstrapPost", description="Class name for backward compatibility"
     )
     endpoint_params: SwitchActionsImportEndpointParams = Field(
         default_factory=SwitchActionsImportEndpointParams, description="Endpoint-specific query parameters"
@@ -364,7 +364,7 @@ class V1ManageFabricSwitchActionsImportBootstrapPost(_V1ManageFabricSwitchAction
 # ============================================================================
 
 
-class V1ManageFabricSwitchActionsPreProvisionPost(_V1ManageFabricSwitchActionsBase):
+class EpManageFabricSwitchActionsPreProvisionPost(_EpManageFabricSwitchActionsBase):
     """
     # Summary
 
@@ -395,13 +395,13 @@ class V1ManageFabricSwitchActionsPreProvisionPost(_V1ManageFabricSwitchActionsBa
 
     ```python
     # Pre-provision switches
-    request = V1ManageFabricSwitchActionsPreProvisionPost()
+    request = EpManageFabricSwitchActionsPreProvisionPost()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
 
     # Pre-provision with cluster and ticket
-    request = V1ManageFabricSwitchActionsPreProvisionPost()
+    request = EpManageFabricSwitchActionsPreProvisionPost()
     request.fabric_name = "MyFabric"
     request.endpoint_params.cluster_name = "cluster1"
     request.endpoint_params.ticket_id = "CHG12345"
@@ -411,8 +411,8 @@ class V1ManageFabricSwitchActionsPreProvisionPost(_V1ManageFabricSwitchActionsBa
     ```
     """
 
-    class_name: Literal["V1ManageFabricSwitchActionsPreProvisionPost"] = Field(
-        default="V1ManageFabricSwitchActionsPreProvisionPost",
+    class_name: Literal["EpManageFabricSwitchActionsPreProvisionPost"] = Field(
+        default="EpManageFabricSwitchActionsPreProvisionPost",
         description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsImportEndpointParams = Field(
@@ -447,7 +447,7 @@ class V1ManageFabricSwitchActionsPreProvisionPost(_V1ManageFabricSwitchActionsBa
 # ============================================================================
 
 
-class _V1ManageFabricSwitchActionsPerSwitchBase(FabricNameMixin, SwitchSerialNumberMixin, NDEndpointBaseModel):
+class _EpManageFabricSwitchActionsPerSwitchBase(FabricNameMixin, SwitchSerialNumberMixin, NDEndpointBaseModel):
     """
     Base class for per-switch action endpoints.
 
@@ -465,7 +465,7 @@ class _V1ManageFabricSwitchActionsPerSwitchBase(FabricNameMixin, SwitchSerialNum
         return BasePath.path("fabrics", self.fabric_name, "switches", self.switch_sn, "actions")
 
 
-class V1ManageFabricSwitchProvisionRMAPost(_V1ManageFabricSwitchActionsPerSwitchBase):
+class EpManageFabricSwitchProvisionRMAPost(_EpManageFabricSwitchActionsPerSwitchBase):
     """
     # Summary
 
@@ -492,14 +492,14 @@ class V1ManageFabricSwitchProvisionRMAPost(_V1ManageFabricSwitchActionsPerSwitch
 
     ```python
     # Provision RMA
-    request = V1ManageFabricSwitchProvisionRMAPost()
+    request = EpManageFabricSwitchProvisionRMAPost()
     request.fabric_name = "MyFabric"
     request.switch_sn = "SAL1948TRTT"
     path = request.path
     verb = request.verb
 
     # Provision RMA with change control ticket
-    request = V1ManageFabricSwitchProvisionRMAPost()
+    request = EpManageFabricSwitchProvisionRMAPost()
     request.fabric_name = "MyFabric"
     request.switch_sn = "SAL1948TRTT"
     request.endpoint_params.ticket_id = "CHG12345"
@@ -509,8 +509,8 @@ class V1ManageFabricSwitchProvisionRMAPost(_V1ManageFabricSwitchActionsPerSwitch
     ```
     """
 
-    class_name: Literal["V1ManageFabricSwitchProvisionRMAPost"] = Field(
-        default="V1ManageFabricSwitchProvisionRMAPost", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricSwitchProvisionRMAPost"] = Field(
+        default="EpManageFabricSwitchProvisionRMAPost", description="Class name for backward compatibility"
     )
     endpoint_params: SwitchActionsTicketEndpointParams = Field(
         default_factory=SwitchActionsTicketEndpointParams, description="Endpoint-specific query parameters"
@@ -564,7 +564,7 @@ class SwitchActionsClusterEndpointParams(ClusterNameMixin, EndpointQueryParams):
     """
 
 
-class V1ManageFabricSwitchChangeSerialNumberPost(_V1ManageFabricSwitchActionsPerSwitchBase):
+class EpManageFabricSwitchChangeSerialNumberPost(_EpManageFabricSwitchActionsPerSwitchBase):
     """
     # Summary
 
@@ -591,14 +591,14 @@ class V1ManageFabricSwitchChangeSerialNumberPost(_V1ManageFabricSwitchActionsPer
 
     ```python
     # Change serial number
-    request = V1ManageFabricSwitchChangeSerialNumberPost()
+    request = EpManageFabricSwitchChangeSerialNumberPost()
     request.fabric_name = "MyFabric"
     request.switch_sn = "SAL1948TRTT"
     path = request.path
     verb = request.verb
 
     # Change serial number with cluster name
-    request = V1ManageFabricSwitchChangeSerialNumberPost()
+    request = EpManageFabricSwitchChangeSerialNumberPost()
     request.fabric_name = "MyFabric"
     request.switch_sn = "SAL1948TRTT"
     request.endpoint_params.cluster_name = "cluster1"
@@ -608,8 +608,8 @@ class V1ManageFabricSwitchChangeSerialNumberPost(_V1ManageFabricSwitchActionsPer
     ```
     """
 
-    class_name: Literal["V1ManageFabricSwitchChangeSerialNumberPost"] = Field(
-        default="V1ManageFabricSwitchChangeSerialNumberPost", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricSwitchChangeSerialNumberPost"] = Field(
+        default="EpManageFabricSwitchChangeSerialNumberPost", description="Class name for backward compatibility"
     )
     endpoint_params: SwitchActionsClusterEndpointParams = Field(
         default_factory=SwitchActionsClusterEndpointParams, description="Endpoint-specific query parameters"
@@ -643,7 +643,7 @@ class V1ManageFabricSwitchChangeSerialNumberPost(_V1ManageFabricSwitchActionsPer
 # ============================================================================
 
 
-class V1ManageFabricSwitchActionsRediscoverPost(_V1ManageFabricSwitchActionsBase):
+class EpManageFabricSwitchActionsRediscoverPost(_EpManageFabricSwitchActionsBase):
     """
     # Summary
 
@@ -670,13 +670,13 @@ class V1ManageFabricSwitchActionsRediscoverPost(_V1ManageFabricSwitchActionsBase
 
     ```python
     # Rediscover switches
-    request = V1ManageFabricSwitchActionsRediscoverPost()
+    request = EpManageFabricSwitchActionsRediscoverPost()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
 
     # Rediscover switches with change control ticket
-    request = V1ManageFabricSwitchActionsRediscoverPost()
+    request = EpManageFabricSwitchActionsRediscoverPost()
     request.fabric_name = "MyFabric"
     request.endpoint_params.ticket_id = "CHG12345"
     path = request.path
@@ -685,8 +685,8 @@ class V1ManageFabricSwitchActionsRediscoverPost(_V1ManageFabricSwitchActionsBase
     ```
     """
 
-    class_name: Literal["V1ManageFabricSwitchActionsRediscoverPost"] = Field(
-        default="V1ManageFabricSwitchActionsRediscoverPost",
+    class_name: Literal["EpManageFabricSwitchActionsRediscoverPost"] = Field(
+        default="EpManageFabricSwitchActionsRediscoverPost",
         description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsTicketEndpointParams = Field(

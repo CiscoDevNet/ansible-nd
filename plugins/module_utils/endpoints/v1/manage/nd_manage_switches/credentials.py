@@ -63,7 +63,7 @@ class CredentialsSwitchesEndpointParams(TicketIdMixin, EndpointQueryParams):
     """
 
 
-class _V1ManageCredentialsSwitchesBase(NDEndpointBaseModel):
+class _EpManageCredentialsSwitchesBase(NDEndpointBaseModel):
     """
     Base class for Credentials Switches endpoints.
 
@@ -77,7 +77,7 @@ class _V1ManageCredentialsSwitchesBase(NDEndpointBaseModel):
         return BasePath.path("credentials", "switches")
 
 
-class V1ManageCredentialsSwitchesPost(_V1ManageCredentialsSwitchesBase):
+class EpManageCredentialsSwitchesPost(_EpManageCredentialsSwitchesBase):
     """
     # Summary
 
@@ -104,12 +104,12 @@ class V1ManageCredentialsSwitchesPost(_V1ManageCredentialsSwitchesBase):
 
     ```python
     # Create credentials without ticket
-    request = V1ManageCredentialsSwitchesPost()
+    request = EpManageCredentialsSwitchesPost()
     path = request.path
     verb = request.verb
 
     # Create credentials with change control ticket
-    request = V1ManageCredentialsSwitchesPost()
+    request = EpManageCredentialsSwitchesPost()
     request.endpoint_params.ticket_id = "CHG12345"
     path = request.path
     verb = request.verb
@@ -117,8 +117,8 @@ class V1ManageCredentialsSwitchesPost(_V1ManageCredentialsSwitchesBase):
     ```
     """
 
-    class_name: Literal["V1ManageCredentialsSwitchesPost"] = Field(
-        default="V1ManageCredentialsSwitchesPost", description="Class name for backward compatibility"
+    class_name: Literal["EpManageCredentialsSwitchesPost"] = Field(
+        default="EpManageCredentialsSwitchesPost", description="Class name for backward compatibility"
     )
     endpoint_params: CredentialsSwitchesEndpointParams = Field(
         default_factory=CredentialsSwitchesEndpointParams, description="Endpoint-specific query parameters"

@@ -15,13 +15,13 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_config import (
-    V1ManageFabricInventoryDiscoverGet,
+    EpManageFabricInventoryDiscoverGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_switches import (
-    V1ManageFabricSwitchesGet,
+    EpManageFabricSwitchesGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_switch_actions import (
-    V1ManageFabricSwitchActionsRediscoverPost,
+    EpManageFabricSwitchActionsRediscoverPost,
 )
 
 from .fabric_utils import FabricUtils
@@ -94,13 +94,13 @@ class SwitchWaitUtils:
         )
 
         # Pre-configure endpoints
-        self.ep_switches_get = V1ManageFabricSwitchesGet()
+        self.ep_switches_get = EpManageFabricSwitchesGet()
         self.ep_switches_get.fabric_name = fabric
 
-        self.ep_inventory_discover = V1ManageFabricInventoryDiscoverGet()
+        self.ep_inventory_discover = EpManageFabricInventoryDiscoverGet()
         self.ep_inventory_discover.fabric_name = fabric
 
-        self.ep_rediscover = V1ManageFabricSwitchActionsRediscoverPost()
+        self.ep_rediscover = EpManageFabricSwitchActionsRediscoverPost()
         self.ep_rediscover.fabric_name = fabric
 
         # Cached greenfield flag

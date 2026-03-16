@@ -92,7 +92,7 @@ class FabricSwitchesAddEndpointParams(ClusterNameMixin, TicketIdMixin, EndpointQ
     """
 
 
-class _V1ManageFabricSwitchesBase(FabricNameMixin, NDEndpointBaseModel):
+class _EpManageFabricSwitchesBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for Fabric Switches endpoints.
 
@@ -108,7 +108,7 @@ class _V1ManageFabricSwitchesBase(FabricNameMixin, NDEndpointBaseModel):
         return BasePath.path("fabrics", self.fabric_name, "switches")
 
 
-class V1ManageFabricSwitchesGet(_V1ManageFabricSwitchesBase):
+class EpManageFabricSwitchesGet(_EpManageFabricSwitchesBase):
     """
     # Summary
 
@@ -138,13 +138,13 @@ class V1ManageFabricSwitchesGet(_V1ManageFabricSwitchesBase):
 
     ```python
     # List all switches
-    request = V1ManageFabricSwitchesGet()
+    request = EpManageFabricSwitchesGet()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
 
     # List with filtering
-    request = V1ManageFabricSwitchesGet()
+    request = EpManageFabricSwitchesGet()
     request.fabric_name = "MyFabric"
     request.endpoint_params.hostname = "leaf1"
     request.endpoint_params.max = 100
@@ -154,8 +154,8 @@ class V1ManageFabricSwitchesGet(_V1ManageFabricSwitchesBase):
     ```
     """
 
-    class_name: Literal["V1ManageFabricSwitchesGet"] = Field(
-        default="V1ManageFabricSwitchesGet", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricSwitchesGet"] = Field(
+        default="EpManageFabricSwitchesGet", description="Class name for backward compatibility"
     )
     endpoint_params: FabricSwitchesGetEndpointParams = Field(
         default_factory=FabricSwitchesGetEndpointParams, description="Endpoint-specific query parameters"
@@ -183,7 +183,7 @@ class V1ManageFabricSwitchesGet(_V1ManageFabricSwitchesBase):
         return HttpVerbEnum.GET
 
 
-class V1ManageFabricSwitchesPost(_V1ManageFabricSwitchesBase):
+class EpManageFabricSwitchesPost(_EpManageFabricSwitchesBase):
     """
     # Summary
 
@@ -211,13 +211,13 @@ class V1ManageFabricSwitchesPost(_V1ManageFabricSwitchesBase):
 
     ```python
     # Add switches
-    request = V1ManageFabricSwitchesPost()
+    request = EpManageFabricSwitchesPost()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
 
     # Add switches with cluster and ticket
-    request = V1ManageFabricSwitchesPost()
+    request = EpManageFabricSwitchesPost()
     request.fabric_name = "MyFabric"
     request.endpoint_params.cluster_name = "cluster1"
     request.endpoint_params.ticket_id = "CHG12345"
@@ -227,8 +227,8 @@ class V1ManageFabricSwitchesPost(_V1ManageFabricSwitchesBase):
     ```
     """
 
-    class_name: Literal["V1ManageFabricSwitchesPost"] = Field(
-        default="V1ManageFabricSwitchesPost", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricSwitchesPost"] = Field(
+        default="EpManageFabricSwitchesPost", description="Class name for backward compatibility"
     )
     endpoint_params: FabricSwitchesAddEndpointParams = Field(
         default_factory=FabricSwitchesAddEndpointParams, description="Endpoint-specific query parameters"

@@ -15,7 +15,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_bootstrap import (
-    V1ManageFabricBootstrapGet,
+    EpManageFabricBootstrapGet,
 )
 
 
@@ -36,7 +36,7 @@ def query_bootstrap_switches(
     """
     log.debug("ENTER: query_bootstrap_switches()")
 
-    endpoint = V1ManageFabricBootstrapGet()
+    endpoint = EpManageFabricBootstrapGet()
     endpoint.fabric_name = fabric
     log.debug(f"Bootstrap endpoint: {endpoint.path}")
 

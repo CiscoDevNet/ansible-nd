@@ -67,7 +67,7 @@ class FabricConfigDeployEndpointParams(EndpointQueryParams):
     incl_all_msd_switches: Optional[bool] = Field(default=None, description="Include all MSD fabric switches")
 
 
-class _V1ManageFabricConfigBase(FabricNameMixin, NDEndpointBaseModel):
+class _EpManageFabricConfigBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for Fabric Config endpoints.
 
@@ -83,7 +83,7 @@ class _V1ManageFabricConfigBase(FabricNameMixin, NDEndpointBaseModel):
         return BasePath.path("fabrics", self.fabric_name)
 
 
-class V1ManageFabricConfigSavePost(_V1ManageFabricConfigBase):
+class EpManageFabricConfigSavePost(_EpManageFabricConfigBase):
     """
     # Summary
 
@@ -104,15 +104,15 @@ class V1ManageFabricConfigSavePost(_V1ManageFabricConfigBase):
     ## Usage
 
     ```python
-    request = V1ManageFabricConfigSavePost()
+    request = EpManageFabricConfigSavePost()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
     ```
     """
 
-    class_name: Literal["V1ManageFabricConfigSavePost"] = Field(
-        default="V1ManageFabricConfigSavePost", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricConfigSavePost"] = Field(
+        default="EpManageFabricConfigSavePost", description="Class name for backward compatibility"
     )
 
     @property
@@ -126,7 +126,7 @@ class V1ManageFabricConfigSavePost(_V1ManageFabricConfigBase):
         return HttpVerbEnum.POST
 
 
-class V1ManageFabricConfigDeployPost(_V1ManageFabricConfigBase):
+class EpManageFabricConfigDeployPost(_EpManageFabricConfigBase):
     """
     # Summary
 
@@ -154,13 +154,13 @@ class V1ManageFabricConfigDeployPost(_V1ManageFabricConfigBase):
 
     ```python
     # Deploy with defaults
-    request = V1ManageFabricConfigDeployPost()
+    request = EpManageFabricConfigDeployPost()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
 
     # Deploy forcing show run
-    request = V1ManageFabricConfigDeployPost()
+    request = EpManageFabricConfigDeployPost()
     request.fabric_name = "MyFabric"
     request.endpoint_params.force_show_run = True
     path = request.path
@@ -169,8 +169,8 @@ class V1ManageFabricConfigDeployPost(_V1ManageFabricConfigBase):
     ```
     """
 
-    class_name: Literal["V1ManageFabricConfigDeployPost"] = Field(
-        default="V1ManageFabricConfigDeployPost", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricConfigDeployPost"] = Field(
+        default="EpManageFabricConfigDeployPost", description="Class name for backward compatibility"
     )
     endpoint_params: FabricConfigDeployEndpointParams = Field(
         default_factory=FabricConfigDeployEndpointParams, description="Endpoint-specific query parameters"
@@ -199,7 +199,7 @@ class V1ManageFabricConfigDeployPost(_V1ManageFabricConfigBase):
         return HttpVerbEnum.POST
 
 
-class V1ManageFabricGet(_V1ManageFabricConfigBase):
+class EpManageFabricGet(_EpManageFabricConfigBase):
     """
     # Summary
 
@@ -220,15 +220,15 @@ class V1ManageFabricGet(_V1ManageFabricConfigBase):
     ## Usage
 
     ```python
-    request = V1ManageFabricGet()
+    request = EpManageFabricGet()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
     ```
     """
 
-    class_name: Literal["V1ManageFabricGet"] = Field(
-        default="V1ManageFabricGet", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricGet"] = Field(
+        default="EpManageFabricGet", description="Class name for backward compatibility"
     )
 
     @property
@@ -242,7 +242,7 @@ class V1ManageFabricGet(_V1ManageFabricConfigBase):
         return HttpVerbEnum.GET
 
 
-class V1ManageFabricInventoryDiscoverGet(_V1ManageFabricConfigBase):
+class EpManageFabricInventoryDiscoverGet(_EpManageFabricConfigBase):
     """
     # Summary
 
@@ -263,15 +263,15 @@ class V1ManageFabricInventoryDiscoverGet(_V1ManageFabricConfigBase):
     ## Usage
 
     ```python
-    request = V1ManageFabricInventoryDiscoverGet()
+    request = EpManageFabricInventoryDiscoverGet()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
     ```
     """
 
-    class_name: Literal["V1ManageFabricInventoryDiscoverGet"] = Field(
-        default="V1ManageFabricInventoryDiscoverGet", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricInventoryDiscoverGet"] = Field(
+        default="EpManageFabricInventoryDiscoverGet", description="Class name for backward compatibility"
     )
 
     @property

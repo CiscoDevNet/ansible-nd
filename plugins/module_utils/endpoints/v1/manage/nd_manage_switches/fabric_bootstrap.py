@@ -65,7 +65,7 @@ class FabricBootstrapEndpointParams(FilterMixin, MaxMixin, OffsetMixin, Endpoint
     """
 
 
-class _V1ManageFabricBootstrapBase(FabricNameMixin, NDEndpointBaseModel):
+class _EpManageFabricBootstrapBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for Fabric Bootstrap endpoints.
 
@@ -81,7 +81,7 @@ class _V1ManageFabricBootstrapBase(FabricNameMixin, NDEndpointBaseModel):
         return BasePath.path("fabrics", self.fabric_name, "bootstrap")
 
 
-class V1ManageFabricBootstrapGet(_V1ManageFabricBootstrapBase):
+class EpManageFabricBootstrapGet(_EpManageFabricBootstrapBase):
     """
     # Summary
 
@@ -110,13 +110,13 @@ class V1ManageFabricBootstrapGet(_V1ManageFabricBootstrapBase):
 
     ```python
     # List all bootstrap switches
-    request = V1ManageFabricBootstrapGet()
+    request = EpManageFabricBootstrapGet()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
 
     # List with pagination
-    request = V1ManageFabricBootstrapGet()
+    request = EpManageFabricBootstrapGet()
     request.fabric_name = "MyFabric"
     request.endpoint_params.max = 50
     request.endpoint_params.offset = 0
@@ -126,8 +126,8 @@ class V1ManageFabricBootstrapGet(_V1ManageFabricBootstrapBase):
     ```
     """
 
-    class_name: Literal["V1ManageFabricBootstrapGet"] = Field(
-        default="V1ManageFabricBootstrapGet", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricBootstrapGet"] = Field(
+        default="EpManageFabricBootstrapGet", description="Class name for backward compatibility"
     )
     endpoint_params: FabricBootstrapEndpointParams = Field(
         default_factory=FabricBootstrapEndpointParams, description="Endpoint-specific query parameters"

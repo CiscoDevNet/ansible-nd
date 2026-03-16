@@ -37,7 +37,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
 )
 
 
-class _V1ManageFabricDiscoveryBase(FabricNameMixin, NDEndpointBaseModel):
+class _EpManageFabricDiscoveryBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for Fabric Discovery endpoints.
 
@@ -53,7 +53,7 @@ class _V1ManageFabricDiscoveryBase(FabricNameMixin, NDEndpointBaseModel):
         return BasePath.path("fabrics", self.fabric_name, "actions", "shallowDiscovery")
 
 
-class V1ManageFabricShallowDiscoveryPost(_V1ManageFabricDiscoveryBase):
+class EpManageFabricShallowDiscoveryPost(_EpManageFabricDiscoveryBase):
     """
     # Summary
 
@@ -74,15 +74,15 @@ class V1ManageFabricShallowDiscoveryPost(_V1ManageFabricDiscoveryBase):
     ## Usage
 
     ```python
-    request = V1ManageFabricShallowDiscoveryPost()
+    request = EpManageFabricShallowDiscoveryPost()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
     ```
     """
 
-    class_name: Literal["V1ManageFabricShallowDiscoveryPost"] = Field(
-        default="V1ManageFabricShallowDiscoveryPost", description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricShallowDiscoveryPost"] = Field(
+        default="EpManageFabricShallowDiscoveryPost", description="Class name for backward compatibility"
     )
 
     @property

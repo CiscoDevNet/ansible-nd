@@ -58,22 +58,22 @@ from ansible_collections.cisco.nd.plugins.module_utils.utils.nd_manage_switches 
     build_poap_data_block,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_switches import (
-    V1ManageFabricSwitchesGet,
-    V1ManageFabricSwitchesPost,
+    EpManageFabricSwitchesGet,
+    EpManageFabricSwitchesPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_discovery import ( 
-    V1ManageFabricShallowDiscoveryPost,
+    EpManageFabricShallowDiscoveryPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_switch_actions import (
-    V1ManageFabricSwitchProvisionRMAPost,
-    V1ManageFabricSwitchActionsImportBootstrapPost,
-    V1ManageFabricSwitchActionsPreProvisionPost,
-    V1ManageFabricSwitchActionsRemovePost,
-    V1ManageFabricSwitchActionsChangeRolesPost,
-    V1ManageFabricSwitchChangeSerialNumberPost,
+    EpManageFabricSwitchProvisionRMAPost,
+    EpManageFabricSwitchActionsImportBootstrapPost,
+    EpManageFabricSwitchActionsPreProvisionPost,
+    EpManageFabricSwitchActionsRemovePost,
+    EpManageFabricSwitchActionsChangeRolesPost,
+    EpManageFabricSwitchChangeSerialNumberPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.credentials import ( 
-    V1ManageCredentialsSwitchesPost,
+    EpManageCredentialsSwitchesPost,
 )
 
 
@@ -429,7 +429,7 @@ class SwitchDiscoveryService:
         log.debug("ENTER: bulk_discover()")
         log.debug(f"Discovering {len(switches)} switches in bulk")
 
-        endpoint = V1ManageFabricShallowDiscoveryPost()
+        endpoint = EpManageFabricShallowDiscoveryPost()
         endpoint.fabric_name = self.ctx.fabric
 
         seed_ips = [switch.seed_ip for switch in switches]
@@ -641,7 +641,7 @@ class SwitchFabricOps:
         log.debug("ENTER: bulk_add()")
         log.debug(f"Adding {len(switches)} switches to fabric")
 
-        endpoint = V1ManageFabricSwitchesPost()
+        endpoint = EpManageFabricSwitchesPost()
         endpoint.fabric_name = self.ctx.fabric
 
         switch_discoveries = []
@@ -768,7 +768,7 @@ class SwitchFabricOps:
             log.debug("EXIT: bulk_delete() - nothing to delete")
             return []
 
-        endpoint = V1ManageFabricSwitchActionsRemovePost()
+        endpoint = EpManageFabricSwitchActionsRemovePost()
         endpoint.fabric_name = self.ctx.fabric
         payload = {"switchIds": serial_numbers}
 
@@ -831,7 +831,7 @@ class SwitchFabricOps:
             log.debug("EXIT: bulk_save_credentials() - no credentials to save")
             return
 
-        endpoint = V1ManageCredentialsSwitchesPost()
+        endpoint = EpManageCredentialsSwitchesPost()
 
         for (username, password), serial_numbers in cred_groups.items():
             creds_request = SwitchCredentialsRequestModel(
@@ -904,7 +904,7 @@ class SwitchFabricOps:
             log.debug("EXIT: bulk_update_roles() - no roles to update")
             return
 
-        endpoint = V1ManageFabricSwitchActionsChangeRolesPost()
+        endpoint = EpManageFabricSwitchActionsChangeRolesPost()
         endpoint.fabric_name = self.ctx.fabric
         payload = {"switchRoles": switch_roles}
 
@@ -1412,7 +1412,7 @@ class POAPHandler:
 
         log.debug("ENTER: _import_bootstrap_switches()")
 
-        endpoint = V1ManageFabricSwitchActionsImportBootstrapPost()
+        endpoint = EpManageFabricSwitchActionsImportBootstrapPost()
         endpoint.fabric_name = self.ctx.fabric
 
         request_model = ImportBootstrapSwitchesRequestModel(switches=models)
@@ -1532,7 +1532,7 @@ class POAPHandler:
 
         log.debug("ENTER: _preprovision_switches()")
 
-        endpoint = V1ManageFabricSwitchActionsPreProvisionPost()
+        endpoint = EpManageFabricSwitchActionsPreProvisionPost()
         endpoint.fabric_name = self.ctx.fabric
 
         request_model = PreProvisionSwitchesRequestModel(switches=models)
@@ -1665,7 +1665,7 @@ class POAPHandler:
                 f"{old_serial} → {new_serial}"
             )
 
-            endpoint = V1ManageFabricSwitchChangeSerialNumberPost()
+            endpoint = EpManageFabricSwitchChangeSerialNumberPost()
             endpoint.fabric_name = fabric
             endpoint.switch_sn = old_serial
 
@@ -2083,7 +2083,7 @@ class RMAHandler:
 
         log.debug("ENTER: _provision_rma_switch()")
 
-        endpoint = V1ManageFabricSwitchProvisionRMAPost()
+        endpoint = EpManageFabricSwitchProvisionRMAPost()
         endpoint.fabric_name = self.ctx.fabric
         endpoint.switch_id = old_switch_id
 
@@ -2824,7 +2824,7 @@ class NDSwitchResourceModule():
         Returns:
             List of raw switch dictionaries returned by the controller.
         """
-        endpoint = V1ManageFabricSwitchesGet()
+        endpoint = EpManageFabricSwitchesGet()
         endpoint.fabric_name = self.fabric
         self.log.debug(f"Querying all switches with endpoint: {endpoint.path}")
         self.log.debug(f"Query verb: {endpoint.verb}")

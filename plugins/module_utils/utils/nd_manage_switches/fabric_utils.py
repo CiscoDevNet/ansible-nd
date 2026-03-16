@@ -15,9 +15,9 @@ import time
 from typing import Any, Dict, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_config import (
-    V1ManageFabricConfigDeployPost,
-    V1ManageFabricConfigSavePost,
-    V1ManageFabricGet,
+    EpManageFabricConfigDeployPost,
+    EpManageFabricConfigSavePost,
+    EpManageFabricGet,
 )
 
 from .exceptions import SwitchOperationError
@@ -44,13 +44,13 @@ class FabricUtils:
         self.log = logger or logging.getLogger("nd.FabricUtils")
 
         # Pre-configure endpoints
-        self.ep_config_save = V1ManageFabricConfigSavePost()
+        self.ep_config_save = EpManageFabricConfigSavePost()
         self.ep_config_save.fabric_name = fabric
 
-        self.ep_config_deploy = V1ManageFabricConfigDeployPost()
+        self.ep_config_deploy = EpManageFabricConfigDeployPost()
         self.ep_config_deploy.fabric_name = fabric
 
-        self.ep_fabric_get = V1ManageFabricGet()
+        self.ep_fabric_get = EpManageFabricGet()
         self.ep_fabric_get.fabric_name = fabric
 
     # -----------------------------------------------------------------
