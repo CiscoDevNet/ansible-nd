@@ -497,10 +497,11 @@ class SwitchDiscoveryService:
             result = nd.rest_send.result_current
 
             results.action = "discover"
+            results.operation_type = OperationType.QUERY
             results.response_current = response
             results.result_current = result
             results.diff_current = payload
-            results.register_task_result()
+            results.register_api_call()
 
             # Extract discovered switches from response
             switches_data = []
@@ -748,10 +749,11 @@ class SwitchFabricOps:
         result = nd.rest_send.result_current
 
         results.action = "create"
+        results.operation_type = OperationType.CREATE
         results.response_current = response
         results.result_current = result
         results.diff_current = payload
-        results.register_task_result()
+        results.register_api_call()
 
         if not result.get("success"):
             msg = (
@@ -825,10 +827,11 @@ class SwitchFabricOps:
             result = nd.rest_send.result_current
 
             results.action = "delete"
+            results.operation_type = OperationType.DELETE
             results.response_current = response
             results.result_current = result
             results.diff_current = {"deleted": serial_numbers}
-            results.register_task_result()
+            results.register_api_call()
 
             log.info(f"Bulk delete submitted for {len(serial_numbers)} switch(es)")
             log.debug("EXIT: bulk_delete()")
@@ -895,13 +898,14 @@ class SwitchFabricOps:
                 result = nd.rest_send.result_current
 
                 results.action = "save_credentials"
+                results.operation_type = OperationType.UPDATE
                 results.response_current = response
                 results.result_current = result
                 results.diff_current = {
                     "switchIds": serial_numbers,
                     "username": username,
                 }
-                results.register_task_result()
+                results.register_api_call()
                 log.info(f"Credentials saved for {len(serial_numbers)} switch(es)")
             except Exception as e:
                 msg = (
@@ -958,10 +962,11 @@ class SwitchFabricOps:
             result = nd.rest_send.result_current
 
             results.action = "update_role"
+            results.operation_type = OperationType.UPDATE
             results.response_current = response
             results.result_current = result
             results.diff_current = payload
-            results.register_task_result()
+            results.register_api_call()
             log.info(f"Roles updated for {len(switch_roles)} switch(es)")
         except Exception as e:
             msg = (
@@ -1110,12 +1115,13 @@ class POAPHandler:
         if nd.module.check_mode:
             log.info("Check mode: would run POAP bootstrap / pre-provision")
             results.action = "poap"
+            results.operation_type = OperationType.CREATE
             results.response_current = {"MESSAGE": "check mode — skipped"}
             results.result_current = {"success": True, "changed": True}
             results.diff_current = {
                 "poap_switches": [pc.seed_ip for pc in proposed_config]
             }
-            results.register_task_result()
+            results.register_api_call()
             return
 
         # Classify entries
@@ -1176,10 +1182,11 @@ class POAPHandler:
         if not bootstrap_entries and not preprov_entries and not swap_entries:
             log.warning("No POAP switch models built — nothing to process")
             results.action = "poap"
+            results.operation_type = OperationType.QUERY
             results.response_current = {"MESSAGE": "no switches to process"}
             results.result_current = {"success": True, "changed": False}
             results.diff_current = {}
-            results.register_task_result()
+            results.register_api_call()
 
         log.debug("EXIT: POAPHandler.handle()")
 
@@ -1480,10 +1487,11 @@ class POAPHandler:
         result = nd.rest_send.result_current
 
         results.action = "bootstrap"
+        results.operation_type = OperationType.CREATE
         results.response_current = response
         results.result_current = result
         results.diff_current = payload
-        results.register_task_result()
+        results.register_api_call()
 
         if not result.get("success"):
             msg = (
@@ -1600,10 +1608,11 @@ class POAPHandler:
         result = nd.rest_send.result_current
 
         results.action = "preprovision"
+        results.operation_type = OperationType.CREATE
         results.response_current = response
         results.result_current = result
         results.diff_current = payload
-        results.register_task_result()
+        results.register_api_call()
 
         if not result.get("success"):
             msg = (
@@ -1732,13 +1741,14 @@ class POAPHandler:
             result = nd.rest_send.result_current
 
             results.action = "swap_serial"
+            results.operation_type = OperationType.UPDATE
             results.response_current = response
             results.result_current = result
             results.diff_current = {
                 "old_serial": old_serial,
                 "new_serial": new_serial,
             }
-            results.register_task_result()
+            results.register_api_call()
 
             if not result.get("success"):
                 msg = (
@@ -1875,12 +1885,13 @@ class RMAHandler:
         if nd.module.check_mode:
             log.info("Check mode: would run RMA provision")
             results.action = "rma"
+            results.operation_type = OperationType.CREATE
             results.response_current = {"MESSAGE": "check mode — skipped"}
             results.result_current = {"success": True, "changed": True}
             results.diff_current = {
                 "rma_switches": [pc.seed_ip for pc in proposed_config]
             }
-            results.register_task_result()
+            results.register_api_call()
             return
 
         # Collect (SwitchConfigModel, RMAConfigModel) pairs
@@ -1897,10 +1908,11 @@ class RMAHandler:
         if not rma_entries:
             log.warning("No RMA entries found — nothing to process")
             results.action = "rma"
+            results.operation_type = OperationType.QUERY
             results.response_current = {"MESSAGE": "no switches to process"}
             results.result_current = {"success": True, "changed": False}
             results.diff_current = {}
-            results.register_task_result()
+            results.register_api_call()
             return
 
         log.info(f"Found {len(rma_entries)} RMA entry/entries to process")
@@ -2146,13 +2158,14 @@ class RMAHandler:
         result = nd.rest_send.result_current
 
         results.action = "rma"
+        results.operation_type = OperationType.CREATE
         results.response_current = response
         results.result_current = result
         results.diff_current = {
             "old_switch_id": old_switch_id,
             "new_switch_id": rma_model.new_switch_id,
         }
-        results.register_task_result()
+        results.register_api_call()
 
         if not result.get("success"):
             msg = (
@@ -2264,10 +2277,14 @@ class NDSwitchResourceModule():
         self.results.build_final_result()
         final = self.results.final_result
 
-        # NDOutput owns serialization of before/after/proposed via their
-        # overridden to_ansible_config() methods. We only set _changed
-        # manually because self.existing is not re-queried after mutations
-        # so the auto-diff in NDOutput.format() would see no change.
+        # Re-query the fabric to get the actual post-operation inventory so
+        # that "current" reflects real state rather than the pre-op snapshot.
+        if True not in self.results.failed and not self.nd.module.check_mode:
+            self.existing = SwitchOutputCollection.from_api_response(
+                response_data=self._query_all_switches(), model_class=SwitchDataModel
+            )
+            self.output.assign(after=self.existing)
+
         self.output._changed = bool(final.get("changed", False))
         formatted = self.output.format()
 
@@ -2432,7 +2449,7 @@ class NDSwitchResourceModule():
             "success": True,
         }
         self.results.diff_current = {}
-        self.results.register_task_result()
+        self.results.register_api_call()
 
         self.log.debug(f"Returning {len(switch_data)} switches in results")
         self.log.debug("EXIT: _handle_query_state()")
@@ -2497,7 +2514,7 @@ class NDSwitchResourceModule():
                 "to_add": [sw.fabric_management_ip for sw in switches_to_add],
                 "migration_mode": [sw.fabric_management_ip for sw in migration_switches],
             }
-            self.results.register_task_result()
+            self.results.register_api_call()
             return
 
         # Collect (serial_number, SwitchConfigModel) pairs for post-processing
@@ -2791,7 +2808,7 @@ class NDSwitchResourceModule():
                 "to_add": n_add,
                 "migration_mode": n_migrate,
             }
-            self.results.register_task_result()
+            self.results.register_api_call()
             return
 
         switches_to_delete: List[SwitchDataModel] = []
@@ -2895,7 +2912,7 @@ class NDSwitchResourceModule():
             self.results.diff_current = {
                 "to_delete": [sw.fabric_management_ip for sw in switches_to_delete],
             }
-            self.results.register_task_result()
+            self.results.register_api_call()
             return
 
         self.log.info(
