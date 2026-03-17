@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # pylint: disable=missing-module-docstring
 # pylint: disable=unnecessary-ellipsis
 # pylint: disable=wrong-import-position
@@ -13,7 +12,7 @@ from __future__ import annotations
 # isort: on
 
 # pylint: disable=invalid-name
-__metaclass__ = type
+
 # pylint: enable=invalid-name
 
 """

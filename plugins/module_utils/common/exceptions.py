@@ -15,10 +15,6 @@ from __future__ import annotations
 # fmt: on
 # isort: on
 
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
-
 from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
