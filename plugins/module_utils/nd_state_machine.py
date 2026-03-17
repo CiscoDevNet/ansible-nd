@@ -16,12 +16,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 
 class NDStateMachine:
     """
-    Generic Network Resource Module for Nexus Dashboard.
+    Generic State Machine for Nexus Dashboard.
     """
 
     def __init__(self, module: AnsibleModule, model_orchestrator: Type[NDBaseOrchestrator]):
         """
-        Initialize the Network Resource Module.
+        Initialize the ND State Machine.
         """
         self.module = module
         self.nd_module = NDModule(self.module)

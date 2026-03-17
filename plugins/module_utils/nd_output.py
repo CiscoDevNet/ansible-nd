@@ -34,7 +34,7 @@ class NDOutput:
         if self._output_level in ("debug", "info"):
             output["proposed"] = self._proposed.to_ansible_config() if isinstance(self._proposed, NDConfigCollection) else self._proposed
             if self._output_level == "debug":
-                output["logs"] = "Not yet implemented"
+                output["logs"] = self._logs
 
         if self._extra:
             output.update(self._extra)

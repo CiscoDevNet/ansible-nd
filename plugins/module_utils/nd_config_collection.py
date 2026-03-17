@@ -119,7 +119,6 @@ class NDConfigCollection:
 
     # Diff Operations
 
-    # NOTE: Maybe add a similar one in the NDBaseModel (-> but is it necessary?)
     def get_diff_config(self, new_item: NDBaseModel) -> Literal["new", "no_diff", "changed"]:
         """
         Compare single item against collection.
@@ -198,18 +197,18 @@ class NDConfigCollection:
         """
         return [item.to_payload(**kwargs) for item in self._items]
 
-    @classmethod
-    def from_ansible_config(cls, data: List[Dict], model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
+    @staticmethod
+    def from_ansible_config(data: List[Dict], model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
         """
         Create collection from Ansible config.
         """
         items = [model_class.from_config(item_data, **kwargs) for item_data in data]
-        return cls(model_class=model_class, items=items)
+        return NDConfigCollection(model_class=model_class, items=items)
 
-    @classmethod
-    def from_api_response(cls, response_data: List[Dict[str, Any]], model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
+    @staticmethod
+    def from_api_response(response_data: List[Dict[str, Any]], model_class: type[NDBaseModel], **kwargs) -> "NDConfigCollection":
         """
         Create collection from API response.
         """
         items = [model_class.from_response(item_data, **kwargs) for item_data in response_data]
-        return cls(model_class=model_class, items=items)
+        return NDConfigCollection(model_class=model_class, items=items)
