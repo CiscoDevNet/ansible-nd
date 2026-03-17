@@ -536,7 +536,7 @@
 
 
 # DELETE
-- name: Delete local user by name (check mode)
+- name: Delete local user (check mode)
   cisco.nd.nd_local_user: &delete_local_user
     <<: *nd_info
     config:
@@ -545,7 +545,7 @@
   check_mode: true
   register: cm_delete_local_user
 
-- name: Delete local user by name (normal mode)
+- name: Delete local user (normal mode)
   cisco.nd.nd_local_user:
     <<: *delete_local_user
   register: nm_delete_local_user
