@@ -158,7 +158,6 @@ jobs:
 
   units:
     name: Units in ubuntu-latest
-    if: false # No unit tests yet
     needs:
       - importer
     runs-on: ubuntu-latest
@@ -202,7 +201,7 @@ jobs:
   integration:
     name: Integration in ubuntu-latest
     needs:
-      # - units
+      - units
       - sanity
     runs-on: ubuntu-latest
     strategy:
