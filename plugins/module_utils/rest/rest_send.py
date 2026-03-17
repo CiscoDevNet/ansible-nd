@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # pylint: disable=wrong-import-position
 # pylint: disable=missing-module-docstring
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>

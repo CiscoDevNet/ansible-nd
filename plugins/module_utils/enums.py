@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # pylint: disable=wrong-import-position
 # pylint: disable=missing-module-docstring
 # Copyright: (c) 2026, Allen Robel (@allenrobel) <arobel@cisco.com>
@@ -20,10 +19,6 @@ from __future__ import (absolute_import, division, print_function)
 from __future__ import annotations
 # fmt: on
 # isort: on
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
 
 from enum import Enum
 

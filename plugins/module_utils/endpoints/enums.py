@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Allen Robel (@allenrobel) <arobel@cisco.com>
 # Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
@@ -9,8 +7,6 @@ Enums used in endpoints.
 """
 
 from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
 
 from enum import Enum
 

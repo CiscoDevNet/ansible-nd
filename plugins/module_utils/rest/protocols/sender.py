@@ -1,7 +1,7 @@
 # pylint: disable=wrong-import-position
 # pylint: disable=missing-module-docstring
 # pylint: disable=unnecessary-ellipsis
-# -*- coding: utf-8 -*-
+
 
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 # isort: on
 
 # pylint: disable=invalid-name
-__metaclass__ = type
+
 # pylint: enable=invalid-name
 
 try:
