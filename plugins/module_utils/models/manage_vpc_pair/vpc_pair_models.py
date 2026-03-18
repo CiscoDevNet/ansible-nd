@@ -38,7 +38,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.ne
 )
 
 # Import enums from centralized location
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage_vpc_pair.enums import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.vpc_pair_enums import (
     VpcActionEnum,
     VpcPairTypeEnum,
     KeepAliveVrfEnum,

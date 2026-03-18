@@ -41,12 +41,6 @@ options:
         - Saves fabric configuration and triggers deployment.
         type: bool
         default: false
-    dry_run:
-        description:
-        - Show what changes would be made without executing them.
-        - Maps to Ansible check_mode internally.
-        type: bool
-        default: false
     force:
         description:
         - Force deletion without pre-deletion validation checks.
@@ -142,15 +136,15 @@ EXAMPLES = """
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
 
-# Dry run to see what would change
-- name: Dry run vPC pair creation
+# Native Ansible check mode (dry-run behavior)
+- name: Check mode vPC pair creation
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: myFabric
     state: merged
-    dry_run: true
     config:
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
+  check_mode: true
 """
 
 RETURN = """
@@ -292,8 +286,6 @@ pending_delete_pairs_not_in_delete:
     sample: []
 """
 
-import sys
-
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 
@@ -350,7 +342,6 @@ def main():
         ),
         fabric_name=dict(type="str", required=True),
         deploy=dict(type="bool", default=False),
-        dry_run=dict(type="bool", default=False),
         force=dict(
             type="bool",
             default=False,
@@ -391,10 +382,6 @@ def main():
     module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
     setup_logging(module)
 
-    # Module-level validations
-    if sys.version_info < (3, 9):
-        module.fail_json(msg="Python version 3.9 or higher is required for this module.")
-
     if not HAS_DEEPDIFF:
         module.fail_json(
             msg=missing_required_lib("deepdiff"),
@@ -402,19 +389,11 @@ def main():
         )
 
     # State-specific parameter validations
-    state = module.params.get("state", "merged")
+    state = module.params["state"]
     deploy = module.params.get("deploy")
-    dry_run = module.params.get("dry_run")
 
     if state == "gathered" and deploy:
         module.fail_json(msg="Deploy parameter cannot be used with 'gathered' state")
-
-    if state == "gathered" and dry_run:
-        module.fail_json(msg="Dry_run parameter cannot be used with 'gathered' state")
-
-    # Map dry_run to check_mode
-    if dry_run:
-        module.check_mode = True
 
     # Validate force parameter usage:
     # - state=deleted
