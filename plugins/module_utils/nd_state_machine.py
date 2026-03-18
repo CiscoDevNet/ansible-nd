@@ -45,16 +45,18 @@ class NDStateMachine:
             self.sent = NDConfigCollection(model_class=self.model_class)
             # Collection of configuration objects given by user
             self.proposed = NDConfigCollection(model_class=self.model_class)
+
             for config in self.module.params.get("config", []):
-                try:
-                    # Parse config into model
-                    item = self.model_class.from_config(config)
-                    self.proposed.add(item)
-                except ValidationError as e:
-                    raise NDStateMachineError(f"Invalid configuration. for config {config}: {str(e)}")
+                # Parse config into model
+                item = self.model_class.from_config(config)
+                self.proposed.add(item)
+
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
+
+        except ValidationError as e:
+            raise NDStateMachineError(f"Invalid configuration. for config {config}: {str(e)}") from e
         except Exception as e:
-            raise NDStateMachineError(f"Initialization failed: {str(e)}")
+            raise NDStateMachineError(f"Initialization failed: {str(e)}") from e
 
     # State Management (core function)
     def manage_state(self) -> None:
@@ -105,11 +107,10 @@ class NDStateMachine:
                 if diff_status == "changed":
                     if not self.module.check_mode:
                         self.model_orchestrator.update(final_item)
-                        self.sent.add(final_item)
                 elif diff_status == "new":
                     if not self.module.check_mode:
                         self.model_orchestrator.create(final_item)
-                        self.sent.add(final_item)
+                self.sent.add(final_item)
 
                 # Log operation
                 self.output.assign(after=self.existing)
@@ -117,7 +118,7 @@ class NDStateMachine:
             except Exception as e:
                 error_msg = f"Failed to process {identifier}: {e}"
                 if not self.module.params.get("ignore_errors", False):
-                    raise NDStateMachineError(error_msg)
+                    raise NDStateMachineError(error_msg) from e
 
     def _manage_override_deletions(self) -> None:
         """
@@ -144,7 +145,7 @@ class NDStateMachine:
             except Exception as e:
                 error_msg = f"Failed to delete {identifier}: {e}"
                 if not self.module.params.get("ignore_errors", False):
-                    raise NDStateMachineError(error_msg)
+                    raise NDStateMachineError(error_msg) from e
 
     def _manage_delete_state(self) -> None:
         """Handle deleted state."""
@@ -169,4 +170,4 @@ class NDStateMachine:
             except Exception as e:
                 error_msg = f"Failed to delete {identifier}: {e}"
                 if not self.module.params.get("ignore_errors", False):
-                    raise NDStateMachineError(error_msg)
+                    raise NDStateMachineError(error_msg) from e
