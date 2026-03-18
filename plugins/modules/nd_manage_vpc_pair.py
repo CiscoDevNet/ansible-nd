@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Sivakami S <sivakasi@cisco.com>
+# Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-
 from __future__ import absolute_import, division, print_function
 
 __copyright__ = "Copyright (c) 2026 Cisco and/or its affiliates."
@@ -68,6 +67,17 @@ options:
         - Lower timeout for non-critical queries to avoid port exhaustion.
         type: int
         default: 10
+    refresh_after_apply:
+        description:
+        - Query controller again after write operations to populate final C(after) state.
+        - Disable for faster execution when eventual consistency is acceptable.
+        type: bool
+        default: true
+    refresh_after_timeout:
+        description:
+        - Optional timeout in seconds for the post-apply refresh query.
+        - When omitted, C(query_timeout) is used.
+        type: int
     config:
         description:
         - List of vPC pair configuration dictionaries.
@@ -205,6 +215,21 @@ diff:
             description: Request payload sent to API
             type: dict
     sample: [{"operation": "PUT", "vpc_pair_key": "FDO123-FDO456", "path": "/api/v1/...", "payload": {}}]
+created:
+    description: List of created object identifiers
+    type: list
+    returned: always
+    sample: [["FDO123", "FDO456"]]
+deleted:
+    description: List of deleted object identifiers
+    type: list
+    returned: always
+    sample: [["FDO123", "FDO456"]]
+updated:
+    description: List of updated object identifiers and changed properties
+    type: list
+    returned: always
+    sample: [{"identifier": ["FDO123", "FDO456"], "changed_properties": ["useVirtualPeerLink"]}]
 metadata:
     description: Operation metadata with sequence and identifiers
     type: dict
@@ -273,8 +298,10 @@ from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 
 # Service layer imports
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage_vpc_pair.vpc_pair_resources import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.vpc_pair_resources import (
     VpcPairResourceService,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_exceptions import (
     VpcPairResourceError,
 )
 
@@ -287,7 +314,7 @@ except Exception:  # pragma: no cover - compatibility for stripped framework tre
     _nd_config_collection = None  # noqa: F841
     _nd_utils = None  # noqa: F841
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage_vpc_pair.enums import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.vpc_pair_enums import (
     VpcFieldNames,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_common import (
@@ -338,6 +365,16 @@ def main():
             type="int",
             default=10,
             description="API request timeout in seconds for query/recommendation operations"
+        ),
+        refresh_after_apply=dict(
+            type="bool",
+            default=True,
+            description="Refresh final after-state by querying controller after write operations",
+        ),
+        refresh_after_timeout=dict(
+            type="int",
+            required=False,
+            description="Optional timeout in seconds for post-apply after-state refresh query",
         ),
         config=dict(
             type="list",
