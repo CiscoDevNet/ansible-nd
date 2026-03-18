@@ -19,11 +19,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     FromClusterMixin,
     SwitchIdMixin,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
-    BasePath,
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.vpc_pair_base_paths import (
+    VpcPairBasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
+# API path covered by this file:
+# /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPairOverview
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
 
@@ -34,6 +36,10 @@ class EpVpcPairOverviewGet(
     ComponentTypeMixin,
     NDEndpointBaseModel,
 ):
+    """
+    GET /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPairOverview
+    """
+
     model_config = COMMON_CONFIG
     api_version: Literal["v1"] = Field(default="v1")
     min_controller_version: str = Field(default="3.0.0")
@@ -43,9 +49,7 @@ class EpVpcPairOverviewGet(
     def path(self) -> str:
         if self.fabric_name is None or self.switch_id is None:
             raise ValueError("fabric_name and switch_id are required")
-        return BasePath.path(
-            "fabrics", self.fabric_name, "switches", self.switch_id, "vpcPairOverview"
-        )
+        return VpcPairBasePath.vpc_pair_overview(self.fabric_name, self.switch_id)
 
     @property
     def verb(self) -> HttpVerbEnum:

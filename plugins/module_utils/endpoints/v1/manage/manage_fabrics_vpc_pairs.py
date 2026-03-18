@@ -21,11 +21,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     SortMixin,
     ViewMixin,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
-    BasePath,
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.vpc_pair_base_paths import (
+    VpcPairBasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
+# API path covered by this file:
+# /api/v1/manage/fabrics/{fabricName}/vpcPairs
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
 
@@ -38,6 +40,10 @@ class EpVpcPairsListGet(
     ViewMixin,
     NDEndpointBaseModel,
 ):
+    """
+    GET /api/v1/manage/fabrics/{fabricName}/vpcPairs
+    """
+
     model_config = COMMON_CONFIG
     api_version: Literal["v1"] = Field(default="v1")
     min_controller_version: str = Field(default="3.0.0")
@@ -47,7 +53,7 @@ class EpVpcPairsListGet(
     def path(self) -> str:
         if self.fabric_name is None:
             raise ValueError("fabric_name is required")
-        return BasePath.path("fabrics", self.fabric_name, "vpcPairs")
+        return VpcPairBasePath.vpc_pairs_list(self.fabric_name)
 
     @property
     def verb(self) -> HttpVerbEnum:
