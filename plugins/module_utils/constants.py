@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
 # Copyright: (c) 2024, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
@@ -7,7 +5,25 @@
 
 from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type
+from typing import Dict
+from types import MappingProxyType
+from copy import deepcopy
+
+
+class NDConstantMapping(Dict):
+    def __init__(self, data: Dict):
+        self.data = data
+        self.new_dict = deepcopy(data)
+        for k, v in data.items():
+            self.new_dict[v] = k
+        self.new_dict = MappingProxyType(self.new_dict)
+
+    def get_dict(self):
+        return self.new_dict
+
+    def get_original_data(self):
+        return list(self.data.keys())
+
 
 from typing import Dict
 from types import MappingProxyType

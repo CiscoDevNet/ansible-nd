@@ -1,12 +1,8 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
 
 from typing import Dict, Any, Optional, List, Union
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
@@ -38,7 +34,7 @@ class NDOutput:
         if self._output_level in ("debug", "info"):
             output["proposed"] = self._proposed.to_ansible_config() if isinstance(self._proposed, NDConfigCollection) else self._proposed
             if self._output_level == "debug":
-                output["logs"] = "Not yet implemented"
+                output["logs"] = self._logs
 
         if self._extra:
             output.update(self._extra)

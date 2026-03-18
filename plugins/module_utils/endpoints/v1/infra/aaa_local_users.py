@@ -32,7 +32,7 @@ class _EpInfraAaaLocalUsersBase(LoginIdMixin, NDEndpointBaseModel):
         """
         # Summary
 
-        Build the endpoint path.
+        Build the /api/v1/infra/aaa/localUsers endpoint path.
 
         ## Returns
 
@@ -70,12 +70,12 @@ class EpInfraAaaLocalUsersGet(_EpInfraAaaLocalUsersBase):
 
     ```python
     # Get all local users
-    request = EpApiV1InfraAaaLocalUsersGet()
+    request = EpInfraAaaLocalUsersGet()
     path = request.path
     verb = request.verb
 
     # Get specific local user
-    request = EpApiV1InfraAaaLocalUsersGet()
+    request = EpInfraAaaLocalUsersGet()
     request.login_id = "admin"
     path = request.path
     verb = request.verb
@@ -111,7 +111,7 @@ class EpInfraAaaLocalUsersPost(_EpInfraAaaLocalUsersBase):
     ## Usage
 
     ```python
-    request = EpApiV1InfraAaaLocalUsersPost()
+    request = EpInfraAaaLocalUsersPost()
     path = request.path
     verb = request.verb
     ```
@@ -148,7 +148,7 @@ class EpInfraAaaLocalUsersPut(_EpInfraAaaLocalUsersBase):
     ## Usage
 
     ```python
-    request = EpApiV1InfraAaaLocalUsersPut()
+    request = EpInfraAaaLocalUsersPut()
     request.login_id = "admin"
     path = request.path
     verb = request.verb
@@ -184,7 +184,7 @@ class EpInfraAaaLocalUsersDelete(_EpInfraAaaLocalUsersBase):
     ## Usage
 
     ```python
-    request = EpApiV1InfraAaaLocalUsersDelete()
+    request = EpInfraAaaLocalUsersDelete()
     request.login_id = "admin"
     path = request.path
     verb = request.verb

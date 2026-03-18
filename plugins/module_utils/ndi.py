@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2021, Lionel Hercot (@lhercot) <lhercot@cisco.com>
 # Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
 # Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
@@ -16,7 +14,6 @@ try:
     HAS_JSONPATH_NG_PARSE = True
 except ImportError:
     HAS_JSONPATH_NG_PARSE = False
-__metaclass__ = type
 
 from ansible_collections.cisco.nd.plugins.module_utils.constants import OBJECT_TYPES, MATCH_TYPES
 

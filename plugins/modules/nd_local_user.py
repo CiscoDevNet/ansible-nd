@@ -1,20 +1,15 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type
-
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
 DOCUMENTATION = r"""
 ---
 module: nd_local_user
-version_added: "1.4.0"
+version_added: "1.6.0"
 short_description: Manage local users on Cisco Nexus Dashboard
 description:
 - Manage local users on Cisco Nexus Dashboard (ND).
@@ -112,7 +107,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.1 or higher.
 - This module is not idempotent when creating or updating a local user object when O(config.user_password) is used.
 """
 
@@ -199,6 +194,9 @@ def main():
         )
 
         # Manage state
+        # TODO: return module output class object:
+        # output = nd_state_machine.manage_state()
+        # module.exit_json(**output)
         nd_state_machine.manage_state()
 
         module.exit_json(**nd_state_machine.output.format())

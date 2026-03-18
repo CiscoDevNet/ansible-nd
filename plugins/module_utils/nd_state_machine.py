@@ -1,12 +1,8 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
 
 from typing import Type
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
@@ -20,12 +16,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 
 class NDStateMachine:
     """
-    Generic Network Resource Module for Nexus Dashboard.
+    Generic State Machine for Nexus Dashboard.
     """
 
     def __init__(self, module: AnsibleModule, model_orchestrator: Type[NDBaseOrchestrator]):
         """
-        Initialize the Network Resource Module.
+        Initialize the ND State Machine.
         """
         self.module = module
         self.nd_module = NDModule(self.module)

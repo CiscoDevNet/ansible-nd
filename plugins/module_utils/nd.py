@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2021, Lionel Hercot (@lhercot) <lhercot@cisco.com>
 # Copyright: (c) 2022, Cindy Zhao (@cizhao) <cizhao@cisco.com>
 # Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
@@ -8,8 +6,6 @@
 
 from __future__ import absolute_import, division, print_function
 from functools import reduce
-
-__metaclass__ = type
 
 from copy import deepcopy
 import os

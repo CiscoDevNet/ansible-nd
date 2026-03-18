@@ -22,12 +22,9 @@ __metaclass__ = type
 # pylint: disable=too-few-public-methods
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import Literal
 
 import pytest
-
-if TYPE_CHECKING:
-    from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
