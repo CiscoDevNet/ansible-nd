@@ -13,7 +13,7 @@ version_added: "1.6.0"
 short_description: Manage local users on Cisco Nexus Dashboard
 description:
 - Manage local users on Cisco Nexus Dashboard (ND).
-- It supports creating, updating, querying, and deleting local users.
+- It supports creating, updating, and deleting local users.
 author:
 - Gaspard Micol (@gmicol)
 options:
