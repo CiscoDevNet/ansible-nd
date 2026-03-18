@@ -82,7 +82,7 @@ class EpManageFabricShallowDiscoveryPost(_EpManageFabricDiscoveryBase):
     """
 
     class_name: Literal["EpManageFabricShallowDiscoveryPost"] = Field(
-        default="EpManageFabricShallowDiscoveryPost", description="Class name for backward compatibility"
+        default="EpManageFabricShallowDiscoveryPost", frozen=True, description="Class name for backward compatibility"
     )
 
     @property

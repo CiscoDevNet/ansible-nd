@@ -196,12 +196,10 @@ options:
                         description:
                         - Model of switch to Bootstrap for RMA.
                         type: str
-                        required: true
                     version:
                         description:
                         - Software version of switch to Bootstrap for RMA.
                         type: str
-                        required: true
                     image_policy:
                         description:
                         - Name of the image policy to be applied on switch during Bootstrap for RMA.
@@ -213,7 +211,6 @@ options:
                         - C(models) is list of model of modules in switch to Bootstrap for RMA.
                         - C(gateway) is the gateway IP with mask for the switch to Bootstrap for RMA.
                         type: dict
-                        required: true
                         suboptions:
                             models:
                                 description:
@@ -229,48 +226,27 @@ options:
                         - Serial number of new replacement switch.
                         type: str
                         required: true
-                    model:
-                        description:
-                        - Model of new switch.
-                        type: str
-                        required: true
-                    version:
-                        description:
-                        - Software version of new switch.
-                        type: str
-                        required: true
-                    hostname:
-                        description:
-                        - Hostname for the replacement switch.
-                        type: str
-                        required: true
-                    image_policy:
-                        description:
-                        - Image policy to apply.
-                        type: str
-                        required: true
-                    ip:
-                        description:
-                        - IP address of the replacement switch.
-                        type: str
-                        required: true
-                    gateway_ip:
-                        description:
-                        - Gateway IP with subnet mask.
-                        type: str
-                        required: true
-                    discovery_password:
-                        description:
-                        - Password for device discovery during RMA.
-                        type: str
-                        required: true
+
 extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module requires NDFC 12.x or higher.
+- This module requires ND 12.x or higher.
 - POAP operations require POAP and DHCP to be enabled in fabric settings.
 - RMA operations require the old switch to be in a replaceable state.
+- Idempotence for B(Bootstrap) - A bootstrap entry is considered idempotent when
+  the C(seed_ip) already exists in the fabric inventory B(and) the C(serial_number)
+  in the POAP config matches the serial number recorded for that IP in inventory.
+  Both conditions must be true; a matching IP with a different serial is not
+  treated as idempotent and will attempt the bootstrap again.
+- Idempotence for B(Pre-provision) - A pre-provision entry is considered idempotent
+  when the C(seed_ip) already exists in the fabric inventory, regardless of the
+  C(preprovision_serial) value. Because the pre-provision serial is a placeholder
+  that may differ from the real hardware serial, only the IP address is used as
+  the stable identity for idempotency checks.
+- Idempotence for B(normal discovery) - A switch is considered idempotent when
+  its C(seed_ip) already exists in the fabric inventory with no configuration
+  drift (same role).
 """
 
 EXAMPLES = """

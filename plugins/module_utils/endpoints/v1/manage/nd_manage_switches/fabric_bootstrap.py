@@ -127,7 +127,7 @@ class EpManageFabricBootstrapGet(_EpManageFabricBootstrapBase):
     """
 
     class_name: Literal["EpManageFabricBootstrapGet"] = Field(
-        default="EpManageFabricBootstrapGet", description="Class name for backward compatibility"
+        default="EpManageFabricBootstrapGet", frozen=True, description="Class name for backward compatibility"
     )
     endpoint_params: FabricBootstrapEndpointParams = Field(
         default_factory=FabricBootstrapEndpointParams, description="Endpoint-specific query parameters"

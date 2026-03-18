@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
+# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """Switch discovery models for shallow discovery and fabric add operations.
 
-Based on OpenAPI schema (manage.json) for Nexus Dashboard Manage APIs v1.1.332.
+Based on OpenAPI schema for Nexus Dashboard Manage APIs v1.1.332.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -19,13 +19,14 @@ from typing_extensions import Self
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
-from .enums import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches.enums import (
     PlatformType,
     RemoteCredentialStore,
+    ShallowDiscoveryPlatformType,
     SnmpV3AuthProtocol,
     SwitchRole,
 )
-from .validators import SwitchValidators
+from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches.validators import SwitchValidators
 
 
 class ShallowDiscoveryRequestModel(NDBaseModel):
@@ -50,10 +51,10 @@ class ShallowDiscoveryRequestModel(NDBaseModel):
         le=7,
         description="Max hop"
     )
-    platform_type: PlatformType = Field(
-        default=PlatformType.NX_OS,
+    platform_type: ShallowDiscoveryPlatformType = Field(
+        default=ShallowDiscoveryPlatformType.NX_OS,
         alias="platformType",
-        description="Switch platform type"
+        description="Switch platform type (apic is not supported for shallow discovery)"
     )
     snmp_v3_auth_protocol: SnmpV3AuthProtocol = Field(
         default=SnmpV3AuthProtocol.MD5,
@@ -102,9 +103,9 @@ class ShallowDiscoveryRequestModel(NDBaseModel):
 
     @field_validator('platform_type', mode='before')
     @classmethod
-    def normalize_platform(cls, v: Union[str, PlatformType, None]) -> PlatformType:
+    def normalize_platform(cls, v: Union[str, ShallowDiscoveryPlatformType, None]) -> ShallowDiscoveryPlatformType:
         """Normalize platform type (case-insensitive)."""
-        return PlatformType.normalize(v)
+        return ShallowDiscoveryPlatformType.normalize(v)
 
 
 class SwitchDiscoveryModel(NDBaseModel):

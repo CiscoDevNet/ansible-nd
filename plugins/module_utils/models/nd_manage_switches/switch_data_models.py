@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
+# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """Switch inventory data models (API response representations).
 
-Based on OpenAPI schema (manage.json) for Nexus Dashboard Manage APIs v1.1.332.
+Based on OpenAPI schema for Nexus Dashboard Manage APIs v1.1.332.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -20,7 +20,7 @@ from typing_extensions import Self
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
-from .enums import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches.enums import (
     AdvisoryLevel,
     AnomalyLevel,
     ConfigSyncStatus,

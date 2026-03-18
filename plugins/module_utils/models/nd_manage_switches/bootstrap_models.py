@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
+# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """Bootstrap (POAP) switch models for import operations.
 
-Based on OpenAPI schema (manage.json) for Nexus Dashboard Manage APIs v1.1.332.
+Based on OpenAPI schema for Nexus Dashboard Manage APIs v1.1.332.
 """
 
 from __future__ import absolute_import, division, print_function
@@ -20,12 +20,12 @@ from typing_extensions import Self
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
-from .enums import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches.enums import (
     RemoteCredentialStore,
     SnmpV3AuthProtocol,
     SwitchRole,
 )
-from .validators import SwitchValidators
+from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches.validators import SwitchValidators
 
 
 class BootstrapBaseData(NDNestedModel):
@@ -243,17 +243,17 @@ class BootstrapImportSwitchModel(NDBaseModel):
         ...,
         description="Model of the bootstrap switch"
     )
-    version: str = Field(
+    software_version: str = Field(
         ...,
+        alias="softwareVersion",
         description="Software version of the bootstrap switch"
     )
     hostname: str = Field(
         ...,
         description="Hostname of the bootstrap switch"
     )
-    ip_address: str = Field(
+    ip: str = Field(
         ...,
-        alias="ipAddress",
         description="IP address of the bootstrap switch"
     )
     password: str = Field(
@@ -288,6 +288,7 @@ class BootstrapImportSwitchModel(NDBaseModel):
     )
     fingerprint: str = Field(
         default="",
+        alias="fingerPrint",
         description="SSH fingerprint from bootstrap GET API"
     )
     public_key: str = Field(
@@ -298,7 +299,7 @@ class BootstrapImportSwitchModel(NDBaseModel):
     re_add: bool = Field(
         default=False,
         alias="reAdd",
-        description="Re-add flag from bootstrap GET API"
+        description="Whether to re-add an already-seen switch"
     )
     in_inventory: bool = Field(
         default=False,
@@ -313,24 +314,15 @@ class BootstrapImportSwitchModel(NDBaseModel):
         default=None,
         alias="switchRole"
     )
-    ip: Optional[str] = Field(
-        default=None,
-        description="IP address (duplicate of ipAddress for API compatibility)"
-    )
-    software_version: Optional[str] = Field(
-        default=None,
-        alias="softwareVersion",
-        description="Software version (duplicate of version for API compatibility)"
-    )
-    gateway_ip_mask: Optional[str] = Field(
-        default=None,
+    gateway_ip_mask: str = Field(
+        ...,
         alias="gatewayIpMask",
         description="Gateway IP address with mask"
     )
 
-    @field_validator('ip_address', mode='before')
+    @field_validator('ip', mode='before')
     @classmethod
-    def validate_ip_address(cls, v: str) -> str:
+    def validate_ip_field(cls, v: str) -> str:
         result = SwitchValidators.validate_ip_address(v)
         if result is None:
             raise ValueError(f"Invalid IP address: {v}")

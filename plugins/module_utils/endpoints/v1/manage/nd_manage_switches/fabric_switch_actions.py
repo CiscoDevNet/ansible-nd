@@ -183,7 +183,7 @@ class EpManageFabricSwitchActionsRemovePost(_EpManageFabricSwitchActionsBase):
     """
 
     class_name: Literal["EpManageFabricSwitchActionsRemovePost"] = Field(
-        default="EpManageFabricSwitchActionsRemovePost", description="Class name for backward compatibility"
+        default="EpManageFabricSwitchActionsRemovePost", frozen=True, description="Class name for backward compatibility"
     )
     endpoint_params: SwitchActionsRemoveEndpointParams = Field(
         default_factory=SwitchActionsRemoveEndpointParams, description="Endpoint-specific query parameters"
@@ -255,7 +255,7 @@ class EpManageFabricSwitchActionsChangeRolesPost(_EpManageFabricSwitchActionsBas
     """
 
     class_name: Literal["EpManageFabricSwitchActionsChangeRolesPost"] = Field(
-        default="EpManageFabricSwitchActionsChangeRolesPost",
+        default="EpManageFabricSwitchActionsChangeRolesPost", frozen=True,
         description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsTicketEndpointParams = Field(
@@ -330,7 +330,7 @@ class EpManageFabricSwitchActionsImportBootstrapPost(_EpManageFabricSwitchAction
     """
 
     class_name: Literal["EpManageFabricSwitchActionsImportBootstrapPost"] = Field(
-        default="EpManageFabricSwitchActionsImportBootstrapPost", description="Class name for backward compatibility"
+        default="EpManageFabricSwitchActionsImportBootstrapPost", frozen=True, description="Class name for backward compatibility"
     )
     endpoint_params: SwitchActionsImportEndpointParams = Field(
         default_factory=SwitchActionsImportEndpointParams, description="Endpoint-specific query parameters"
@@ -412,7 +412,7 @@ class EpManageFabricSwitchActionsPreProvisionPost(_EpManageFabricSwitchActionsBa
     """
 
     class_name: Literal["EpManageFabricSwitchActionsPreProvisionPost"] = Field(
-        default="EpManageFabricSwitchActionsPreProvisionPost",
+        default="EpManageFabricSwitchActionsPreProvisionPost", frozen=True,
         description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsImportEndpointParams = Field(
@@ -510,7 +510,7 @@ class EpManageFabricSwitchProvisionRMAPost(_EpManageFabricSwitchActionsPerSwitch
     """
 
     class_name: Literal["EpManageFabricSwitchProvisionRMAPost"] = Field(
-        default="EpManageFabricSwitchProvisionRMAPost", description="Class name for backward compatibility"
+        default="EpManageFabricSwitchProvisionRMAPost", frozen=True, description="Class name for backward compatibility"
     )
     endpoint_params: SwitchActionsTicketEndpointParams = Field(
         default_factory=SwitchActionsTicketEndpointParams, description="Endpoint-specific query parameters"
@@ -609,7 +609,7 @@ class EpManageFabricSwitchChangeSerialNumberPost(_EpManageFabricSwitchActionsPer
     """
 
     class_name: Literal["EpManageFabricSwitchChangeSerialNumberPost"] = Field(
-        default="EpManageFabricSwitchChangeSerialNumberPost", description="Class name for backward compatibility"
+        default="EpManageFabricSwitchChangeSerialNumberPost", frozen=True, description="Class name for backward compatibility"
     )
     endpoint_params: SwitchActionsClusterEndpointParams = Field(
         default_factory=SwitchActionsClusterEndpointParams, description="Endpoint-specific query parameters"
@@ -686,7 +686,7 @@ class EpManageFabricSwitchActionsRediscoverPost(_EpManageFabricSwitchActionsBase
     """
 
     class_name: Literal["EpManageFabricSwitchActionsRediscoverPost"] = Field(
-        default="EpManageFabricSwitchActionsRediscoverPost",
+        default="EpManageFabricSwitchActionsRediscoverPost", frozen=True,
         description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsTicketEndpointParams = Field(

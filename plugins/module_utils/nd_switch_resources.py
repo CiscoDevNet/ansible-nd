@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
+# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -721,9 +721,9 @@ class SwitchDiscoveryService:
             )
             if existing_match:
                 proposed.append(existing_match)
-                log.warning(
-                    f"Switch {seed_ip} not discovered but found in existing "
-                    f"inventory — using existing record for comparison"
+                log.debug(
+                    f"Switch {seed_ip} already in fabric inventory — "
+                    f"using existing record (discovery skipped)"
                 )
                 continue
 
@@ -1260,6 +1260,43 @@ class POAPHandler:
             f"{len(swap_entries)} swap"
         )
 
+        # Idempotency: skip entries whose target serial is already in the fabric.
+        # Build lookup structures for idempotency checks.
+        # Bootstrap: idempotent when both IP address AND serial number match.
+        # PreProvision: idempotent when IP address alone matches.
+        existing_by_ip = {
+            sw.fabric_management_ip: sw
+            for sw in existing
+            if sw.fabric_management_ip
+        }
+
+        active_bootstrap = []
+        for switch_cfg, poap_cfg in bootstrap_entries:
+            existing_sw = existing_by_ip.get(switch_cfg.seed_ip)
+            if existing_sw and poap_cfg.serial_number in (
+                existing_sw.serial_number,
+                existing_sw.switch_id,
+            ):
+                log.info(
+                    f"Bootstrap: IP '{switch_cfg.seed_ip}' with serial "
+                    f"'{poap_cfg.serial_number}' already in fabric "
+                    f"— idempotent, skipping"
+                )
+            else:
+                active_bootstrap.append((switch_cfg, poap_cfg))
+        bootstrap_entries = active_bootstrap
+
+        active_preprov = []
+        for switch_cfg, poap_cfg in preprov_entries:
+            if switch_cfg.seed_ip in existing_by_ip:
+                log.info(
+                    f"PreProvision: IP '{switch_cfg.seed_ip}' already in fabric "
+                    f"— idempotent, skipping"
+                )
+            else:
+                active_preprov.append((switch_cfg, poap_cfg))
+        preprov_entries = active_preprov
+
         # Handle swap entries (change serial number on pre-provisioned switches)
         if swap_entries:
             self._handle_poap_swap(swap_entries, existing or [])
@@ -1476,9 +1513,8 @@ class POAPHandler:
         bootstrap_model = BootstrapImportSwitchModel(
             serialNumber=serial_number,
             model=model,
-            version=version,
             hostname=hostname,
-            ipAddress=ip,
+            ip=ip,
             password=password,
             discoveryAuthProtocol=auth_proto,
             discoveryUsername=discovery_username,
@@ -1490,7 +1526,6 @@ class POAPHandler:
             inInventory=in_inventory,
             imagePolicy=image_policy or "",
             switchRole=switch_role,
-            ip=ip,
             softwareVersion=version,
             gatewayIpMask=gateway_ip_mask,
         )
@@ -2499,7 +2534,18 @@ class NDSwitchResourceModule():
             return self.rma_handler.handle(proposed_config, list(self.existing))
 
         # Normal: discover → build proposed models → compute diff → delegate
-        discovered_data = self.discovery.discover(proposed_config)
+        # Skip discovery for switches already in the fabric.
+        existing_ips = {sw.fabric_management_ip for sw in self.existing}
+        configs_to_discover = [cfg for cfg in proposed_config if cfg.seed_ip not in existing_ips]
+        if configs_to_discover:
+            self.log.info(
+                f"Discovery needed for {len(configs_to_discover)}/{len(proposed_config)} "
+                f"switch(es) — {len(proposed_config) - len(configs_to_discover)} already in fabric"
+            )
+            discovered_data = self.discovery.discover(configs_to_discover)
+        else:
+            self.log.info("All proposed switches already in fabric — skipping discovery")
+            discovered_data = {}
         built = self.discovery.build_proposed(
             proposed_config, discovered_data, list(self.existing)
         )

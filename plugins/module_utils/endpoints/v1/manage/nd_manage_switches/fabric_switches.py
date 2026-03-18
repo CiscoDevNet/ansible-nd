@@ -155,7 +155,7 @@ class EpManageFabricSwitchesGet(_EpManageFabricSwitchesBase):
     """
 
     class_name: Literal["EpManageFabricSwitchesGet"] = Field(
-        default="EpManageFabricSwitchesGet", description="Class name for backward compatibility"
+        default="EpManageFabricSwitchesGet", frozen=True, description="Class name for backward compatibility"
     )
     endpoint_params: FabricSwitchesGetEndpointParams = Field(
         default_factory=FabricSwitchesGetEndpointParams, description="Endpoint-specific query parameters"
@@ -228,7 +228,7 @@ class EpManageFabricSwitchesPost(_EpManageFabricSwitchesBase):
     """
 
     class_name: Literal["EpManageFabricSwitchesPost"] = Field(
-        default="EpManageFabricSwitchesPost", description="Class name for backward compatibility"
+        default="EpManageFabricSwitchesPost", frozen=True, description="Class name for backward compatibility"
     )
     endpoint_params: FabricSwitchesAddEndpointParams = Field(
         default_factory=FabricSwitchesAddEndpointParams, description="Endpoint-specific query parameters"

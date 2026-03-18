@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
+# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -9,7 +9,6 @@
 These models represent the user-facing configuration schema used in Ansible
 playbooks for normal switch addition, POAP, and RMA operations.
 
-Based on: dcnm_inventory.py config suboptions
 """
 
 from __future__ import absolute_import, division, print_function
@@ -25,12 +24,12 @@ from typing_extensions import Self
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
-from .enums import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches.enums import (
     PlatformType,
     SnmpV3AuthProtocol,
     SwitchRole,
 )
-from .validators import SwitchValidators
+from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches.validators import SwitchValidators
 
 
 class ConfigDataModel(NDNestedModel):

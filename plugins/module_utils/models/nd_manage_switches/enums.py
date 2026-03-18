@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
+# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -120,7 +120,9 @@ class PlatformType(str, Enum):
     """
     Switch platform type enumeration.
 
-    Based on: components/schemas (multiple references)
+    Used for POST /fabrics/{fabricName}/switches (AddSwitches).
+    Includes all platform types supported by the add-switches endpoint.
+    Based on: components/schemas
     """
     NX_OS = "nx-os"
     OTHER = "other"
@@ -149,6 +151,41 @@ class PlatformType(str, Enum):
                 if pt.value == v_normalized:
                     return pt
         raise ValueError(f"Invalid PlatformType: {value}. Valid: {cls.choices()}")
+
+class ShallowDiscoveryPlatformType(str, Enum):
+    """
+    Platform type for shallow discovery.
+
+    Used for POST /fabrics/{fabricName}/actions/shallowDiscovery only.
+    Excludes 'apic' which is not supported by the shallowDiscovery endpoint.
+    Based on: components/schemas/shallowDiscoveryRequest.platformType
+    """
+    NX_OS = "nx-os"
+    OTHER = "other"
+    IOS_XE = "ios-xe"
+    IOS_XR = "ios-xr"
+    SONIC = "sonic"
+
+    @classmethod
+    def choices(cls) -> List[str]:
+        return [e.value for e in cls]
+
+    @classmethod
+    def normalize(cls, value: Union[str, "ShallowDiscoveryPlatformType", None]) -> "ShallowDiscoveryPlatformType":
+        """
+        Normalize input to enum value (case-insensitive).
+        Accepts: NX_OS, nx-os, NX-OS, ios_xe, ios-xe, etc.
+        """
+        if value is None:
+            return cls.NX_OS
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            v_normalized = value.lower().replace('_', '-')
+            for pt in cls:
+                if pt.value == v_normalized:
+                    return pt
+        raise ValueError(f"Invalid ShallowDiscoveryPlatformType: {value}. Valid: {cls.choices()}")
 
 
 class SnmpV3AuthProtocol(str, Enum):
@@ -310,6 +347,7 @@ __all__ = [
     "SwitchRole",
     "SystemMode",
     "PlatformType",
+    "ShallowDiscoveryPlatformType",
     "SnmpV3AuthProtocol",
     "DiscoveryStatus",
     "ConfigSyncStatus",

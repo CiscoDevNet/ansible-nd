@@ -112,7 +112,7 @@ class EpManageFabricConfigSavePost(_EpManageFabricConfigBase):
     """
 
     class_name: Literal["EpManageFabricConfigSavePost"] = Field(
-        default="EpManageFabricConfigSavePost", description="Class name for backward compatibility"
+        default="EpManageFabricConfigSavePost", frozen=True, description="Class name for backward compatibility"
     )
 
     @property
@@ -170,7 +170,7 @@ class EpManageFabricConfigDeployPost(_EpManageFabricConfigBase):
     """
 
     class_name: Literal["EpManageFabricConfigDeployPost"] = Field(
-        default="EpManageFabricConfigDeployPost", description="Class name for backward compatibility"
+        default="EpManageFabricConfigDeployPost", frozen=True, description="Class name for backward compatibility"
     )
     endpoint_params: FabricConfigDeployEndpointParams = Field(
         default_factory=FabricConfigDeployEndpointParams, description="Endpoint-specific query parameters"
@@ -228,7 +228,7 @@ class EpManageFabricGet(_EpManageFabricConfigBase):
     """
 
     class_name: Literal["EpManageFabricGet"] = Field(
-        default="EpManageFabricGet", description="Class name for backward compatibility"
+        default="EpManageFabricGet", frozen=True, description="Class name for backward compatibility"
     )
 
     @property
@@ -271,7 +271,7 @@ class EpManageFabricInventoryDiscoverGet(_EpManageFabricConfigBase):
     """
 
     class_name: Literal["EpManageFabricInventoryDiscoverGet"] = Field(
-        default="EpManageFabricInventoryDiscoverGet", description="Class name for backward compatibility"
+        default="EpManageFabricInventoryDiscoverGet", frozen=True, description="Class name for backward compatibility"
     )
 
     @property

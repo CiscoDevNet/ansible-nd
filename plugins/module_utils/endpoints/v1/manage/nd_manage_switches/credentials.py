@@ -118,7 +118,7 @@ class EpManageCredentialsSwitchesPost(_EpManageCredentialsSwitchesBase):
     """
 
     class_name: Literal["EpManageCredentialsSwitchesPost"] = Field(
-        default="EpManageCredentialsSwitchesPost", description="Class name for backward compatibility"
+        default="EpManageCredentialsSwitchesPost", frozen=True, description="Class name for backward compatibility"
     )
     endpoint_params: CredentialsSwitchesEndpointParams = Field(
         default_factory=CredentialsSwitchesEndpointParams, description="Endpoint-specific query parameters"
