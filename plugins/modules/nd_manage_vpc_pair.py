@@ -290,11 +290,6 @@ except Exception:  # pragma: no cover - compatibility for stripped framework tre
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage_vpc_pair.enums import (
     VpcFieldNames,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_actions import (
-    custom_vpc_create,
-    custom_vpc_delete,
-    custom_vpc_update,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_common import (
     DEEPDIFF_IMPORT_ERROR,
     HAS_DEEPDIFF,
@@ -303,14 +298,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_deploy
     _needs_deployment,
     custom_vpc_deploy,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_query import (
-    custom_vpc_query_all,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_runner import (
     run_vpc_module,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage_vpc_pair.vpc_pair_module_model import (
-    VpcPairModel,
 )
 
 
@@ -440,18 +429,9 @@ def main():
 
     # VpcPairResourceService bridges NDStateMachine lifecycle hooks to RestSend actions.
     fabric_name = module.params.get("fabric_name")
-    actions = {
-        "query_all": custom_vpc_query_all,
-        "create": custom_vpc_create,
-        "update": custom_vpc_update,
-        "delete": custom_vpc_delete,
-    }
-
     try:
         service = VpcPairResourceService(
             module=module,
-            model_class=VpcPairModel,
-            actions=actions,
             run_state_handler=run_vpc_module,
             deploy_handler=custom_vpc_deploy,
             needs_deployment_handler=_needs_deployment,
