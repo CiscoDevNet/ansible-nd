@@ -23,7 +23,6 @@ from pydantic import ValidationError
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches import (
@@ -87,42 +86,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 _DISCOVERY_MAX_HOPS: int = 0
 
 
-# =========================================================================
-# Output Collections
-# =========================================================================
-
-class SwitchOutputCollection(NDConfigCollection):
-    """Output collection for all output keys (previous, current, proposed, diff).
-
-    Accepts ``SwitchDataModel``, ``SwitchConfigModel``, or ``_DiffRecord`` items
-    and serializes them via ``to_config_dict()``.
-    """
-
-    def __init__(self, model_class=None, items: Optional[List] = None):
-        # Store directly — skip add() type guard to support mixed-type diffs.
-        self._model_class = model_class
-        self._items: List = list(items) if items else []
-        self._index: Dict = {}
-
-    def to_ansible_config(self, **kwargs) -> List[Dict]:
-        return [item.to_config_dict() for item in self._items]
-
-    def copy(self) -> "SwitchOutputCollection":
-        return SwitchOutputCollection(
-            model_class=self._model_class,
-            items=deepcopy(list(self._items)),
-        )
-
-
-@dataclass
-class _DiffRecord:
-    """Wraps a plain dict as a diff entry, exposing ``to_config_dict()``."""
-
-    data: Dict[str, Any]
-
-    def to_config_dict(self) -> Dict[str, Any]:
-        return self.data
-
 
 @dataclass
 class SwitchServiceContext:
@@ -142,7 +105,6 @@ class SwitchServiceContext:
     log: logging.Logger
     save_config: bool = True
     deploy_config: bool = True
-    output: Optional[NDOutput] = None
 
 
 # =========================================================================
@@ -1309,20 +1271,6 @@ class POAPHandler:
             if preprov_models:
                 self._preprovision_switches(preprov_models)
 
-                if self.ctx.output:
-                    diff_items = [
-                        _DiffRecord({
-                            "serial_number": m.serial_number,
-                            "hostname": m.hostname,
-                            "ip": m.ip,
-                            "model": m.model,
-                            "software_version": m.software_version,
-                            "role": m.switch_role,
-                        })
-                        for m in preprov_models
-                    ]
-                    self.ctx.output.assign(diff=SwitchOutputCollection(items=diff_items))
-
         # Edge case: nothing actionable
         if not bootstrap_entries and not preprov_entries and not swap_entries:
             log.warning("No POAP switch models built — nothing to process")
@@ -1417,21 +1365,6 @@ class POAPHandler:
             context="bootstrap",
             skip_greenfield_check=True,
         )
-
-        if self.ctx.output:
-            import_by_serial = {m.serial_number: m for m in import_models}
-            diff_items = [
-                _DiffRecord({
-                    "seed_ip": switch_cfg.seed_ip,
-                    "serial_number": serial,
-                    "hostname": import_by_serial[serial].hostname if serial in import_by_serial else None,
-                    "model": import_by_serial[serial].model if serial in import_by_serial else None,
-                    "software_version": import_by_serial[serial].version if serial in import_by_serial else None,
-                    "role": switch_cfg.role,
-                })
-                for serial, switch_cfg in switch_actions
-            ]
-            self.ctx.output.assign(diff=SwitchOutputCollection(items=diff_items))
 
         log.debug("EXIT: _handle_poap_bootstrap()")
 
@@ -2074,19 +2007,6 @@ class RMAHandler:
             log.error(msg)
             nd.module.fail_json(msg=msg)
 
-        if self.ctx.output:
-            diff_items = [
-                _DiffRecord({
-                    "seed_ip": switch_cfg.seed_ip,
-                    "old_serial_number": old_serial,
-                    "new_serial_number": new_serial,
-                    "hostname": old_switch_info[old_serial]["hostname"],
-                    "role": switch_cfg.role,
-                })
-                for new_serial, old_serial, switch_cfg in rma_diff_data
-            ]
-            self.ctx.output.assign(diff=SwitchOutputCollection(items=diff_items))
-
         self.fabric_ops.bulk_save_credentials(switch_actions)
 
         try:
@@ -2391,11 +2311,11 @@ class NDSwitchResourceModule():
         # Switch collections
         try:
             self.proposed: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
-            self.existing: SwitchOutputCollection = SwitchOutputCollection.from_api_response(
+            self.existing: NDConfigCollection = NDConfigCollection.from_api_response(
                 response_data=self._query_all_switches(),
                 model_class=SwitchDataModel,
             )
-            self.previous: SwitchOutputCollection = self.existing.copy()
+            self.previous: NDConfigCollection = self.existing.copy()
         except Exception as e:
             msg = (
                 f"Failed to query fabric '{self.fabric}' inventory "
@@ -2406,12 +2326,6 @@ class NDSwitchResourceModule():
 
         # Operation tracking
         self.nd_logs: List[Dict[str, Any]] = []
-
-        # Output tracking — NDOutput serializes all collections via their
-        # overridden to_ansible_config() methods.
-        self.output = NDOutput(output_level=self.module.params.get("output_level", "normal"))
-        self.output.assign(before=self.previous, after=self.existing)
-        self.ctx.output = self.output
 
         # Utility instances (SwitchWaitUtils / FabricUtils depend on self)
         self.fabric_utils = FabricUtils(self.nd, self.fabric, log)
@@ -2442,27 +2356,12 @@ class NDSwitchResourceModule():
         # Re-query the fabric to get the actual post-operation inventory so
         # that "current" reflects real state rather than the pre-op snapshot.
         if True not in self.results.failed and not self.nd.module.check_mode:
-            self.existing = SwitchOutputCollection.from_api_response(
+            self.existing = NDConfigCollection.from_api_response(
                 response_data=self._query_all_switches(), model_class=SwitchDataModel
             )
-            self.output.assign(after=self.existing)
 
-        self.output._changed = bool(final.get("changed", False))
-        formatted = self.output.format()
-
-        output_level = formatted["output_level"]
-
-        # Rename before/after to previous/current for backward compatibility.
-        final["previous"] = formatted.pop("before", [])
-        final["current"] = formatted.pop("after", [])
-        final["output_level"] = output_level
-        final["diff"] = formatted.get("diff", [])
-
-        if output_level in ("info", "debug"):
-            final["proposed"] = formatted.get("proposed", [])
-            if output_level == "debug":
-                # Override NDOutput's placeholder with real operation logs.
-                final["logs"] = self.nd_logs
+        final["previous"] = self.previous.to_ansible_config()
+        final["current"] = self.existing.to_ansible_config()
 
         if True in self.results.failed:
             self.nd.module.fail_json(**final)
@@ -2491,12 +2390,6 @@ class NDSwitchResourceModule():
                 if self.config
                 else None
             )
-            if proposed_config:
-                self.output.assign(
-                    proposed=SwitchOutputCollection(
-                        model_class=SwitchConfigModel, items=proposed_config
-                    )
-                )
             return self._handle_deleted_state(proposed_config)
 
         # merged / overridden — config is required
@@ -2507,12 +2400,6 @@ class NDSwitchResourceModule():
 
         proposed_config = SwitchDiffEngine.validate_configs(
             self.config, self.state, self.nd, self.log
-        )
-        # Register proposed config (credentials excluded via SwitchOutputCollection)
-        self.output.assign(
-            proposed=SwitchOutputCollection(
-                model_class=SwitchConfigModel, items=proposed_config
-            )
         )
         # Partition configs by operation type
         poap_configs = [c for c in proposed_config if c.operation_type == "poap"]
@@ -2633,7 +2520,6 @@ class NDSwitchResourceModule():
 
         # Collect (serial_number, SwitchConfigModel) pairs for post-processing
         switch_actions: List[Tuple[str, SwitchConfigModel]] = []
-        diff_items: List = []
 
         # Phase 4: Bulk add new switches to fabric
         if switches_to_add and discovered_data:
@@ -2677,17 +2563,6 @@ class NDSwitchResourceModule():
                         sn = disc.get("serialNumber")
                         if sn:
                             switch_actions.append((sn, cfg))
-                            # Discovery response has softwareVersion, hostname,
-                            # model — richer than SwitchConfigModel fields.
-                            diff_items.append(_DiffRecord({
-                                "seed_ip": cfg.seed_ip,
-                                "serial_number": sn,
-                                "hostname": disc.get("hostname"),
-                                "model": disc.get("model"),
-                                "role": cfg.role,
-                                "software_version": disc.get("softwareVersion"),
-                                "mode": None,
-                            }))
                             self._log_operation("add", cfg.seed_ip)
 
         # Phase 5: Collect migration switches for post-processing
@@ -2701,9 +2576,6 @@ class NDSwitchResourceModule():
             cfg = config_by_ip.get(mig_sw.fabric_management_ip)
             if cfg and mig_sw.switch_id:
                 switch_actions.append((mig_sw.switch_id, cfg))
-                # mig_sw is a SwitchDataModel — has all 7 fields including
-                # software_version and mode from the inventory API.
-                diff_items.append(mig_sw)
                 self._log_operation("migrate", mig_sw.fabric_management_ip)
 
         if not switch_actions:
@@ -2731,8 +2603,6 @@ class NDSwitchResourceModule():
             all_preserve_config=all_preserve_config,
             update_roles=have_migration_switches,
         )
-        self.output.assign(diff=SwitchOutputCollection(items=diff_items))
-
         self.log.debug("EXIT: _handle_merged_state() - completed")
 
     # -----------------------------------------------------------------
@@ -2963,7 +2833,6 @@ class NDSwitchResourceModule():
             f"Proceeding to delete {len(switches_to_delete)} switch(es) from fabric"
         )
         self.fabric_ops.bulk_delete(switches_to_delete)
-        self.output.assign(diff=SwitchOutputCollection(items=switches_to_delete))
         self.log.debug("EXIT: _handle_deleted_state()")
 
     # =====================================================================
