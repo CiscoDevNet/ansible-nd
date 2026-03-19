@@ -24,7 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
     model_validator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.enums import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     FabricTypeEnum,
     AlertSuspendEnum,
     LicenseTierEnum,

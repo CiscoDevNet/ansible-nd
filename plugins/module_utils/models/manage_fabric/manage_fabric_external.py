@@ -22,7 +22,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
     model_validator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.enums import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     FabricTypeEnum,
     AlertSuspendEnum,
     LicenseTierEnum,
@@ -31,7 +31,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.e
     PowerRedundancyModeEnum,
 )
 # Re-use shared nested models from the iBGP module
-from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.manage_fabric_ibgp import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp import (
     LocationModel,
     NetflowSettingsModel,
     BootstrapSubnetModel,

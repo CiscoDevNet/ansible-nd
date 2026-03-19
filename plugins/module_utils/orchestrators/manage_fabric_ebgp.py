@@ -11,8 +11,8 @@ __metaclass__ = type
 from typing import Type
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.manage_fabric_ibgp import FabricIbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_fabric.manage_fabric_ebgp import FabricEbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp import FabricIbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp import FabricEbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
@@ -22,29 +22,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsPut,
     EpManageFabricsDelete,
 )
-
-
-class ManageIbgpFabricOrchestrator(NDBaseOrchestrator):
-    model_class: Type[NDBaseModel] = FabricIbgpModel
-
-    create_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsPut
-    delete_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsDelete
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsListGet
-
-    def query_all(self) -> ResponseType:
-        """
-        Custom query_all action to extract 'fabrics' from response,
-        filtered to only vxlanIbgp fabric types.
-        """
-        try:
-            api_endpoint = self.query_all_endpoint()
-            result = self.sender.query_obj(api_endpoint.path)
-            fabrics = result.get("fabrics", []) or []
-            return [f for f in fabrics if f.get("management", {}).get("type") == "vxlanIbgp"]
-        except Exception as e:
-            raise Exception(f"Query all failed: {e}") from e
 
 class ManageEbgpFabricOrchestrator(NDBaseOrchestrator):
     model_class: Type[NDBaseModel] = FabricEbgpModel
