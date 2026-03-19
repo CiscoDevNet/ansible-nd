@@ -44,17 +44,10 @@ class NDStateMachine:
             # Ongoing collection of configuration objects that were changed
             self.sent = NDConfigCollection(model_class=self.model_class)
             # Collection of configuration objects given by user
-            self.proposed = NDConfigCollection(model_class=self.model_class)
-
-            for config in self.module.params.get("config", []):
-                # Parse config into model
-                item = self.model_class.from_config(config)
-                self.proposed.add(item)
+            self.proposed = NDConfigCollection.from_ansible_config(data=self.module.params.get("config", []), model_class=self.model_class)
 
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
 
-        except ValidationError as e:
-            raise NDStateMachineError(f"Invalid configuration. for config {config}: {str(e)}") from e
         except Exception as e:
             raise NDStateMachineError(f"Initialization failed: {str(e)}") from e
 
