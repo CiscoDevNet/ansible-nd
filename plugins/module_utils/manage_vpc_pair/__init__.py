@@ -9,17 +9,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
     VpcActionEnum,
     VpcFieldNames,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.resources import (
-    VpcPairResourceService,
-    VpcPairStateMachine,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runtime_endpoints import (
-    VpcPairEndpoints,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runtime_payloads import (
-    _build_vpc_pair_payload,
-    _get_api_field_value,
-)
 
 __all__ = [
     "ComponentTypeSupportEnum",
@@ -31,3 +20,39 @@ __all__ = [
     "_build_vpc_pair_payload",
     "_get_api_field_value",
 ]
+
+
+def __getattr__(name):
+    """
+    Lazy-load heavy symbols to avoid import-time cycles.
+    """
+    if name in ("VpcPairResourceService", "VpcPairStateMachine"):
+        from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.resources import (
+            VpcPairResourceService,
+            VpcPairStateMachine,
+        )
+
+        return {
+            "VpcPairResourceService": VpcPairResourceService,
+            "VpcPairStateMachine": VpcPairStateMachine,
+        }[name]
+
+    if name == "VpcPairEndpoints":
+        from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runtime_endpoints import (
+            VpcPairEndpoints,
+        )
+
+        return VpcPairEndpoints
+
+    if name in ("_build_vpc_pair_payload", "_get_api_field_value"):
+        from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runtime_payloads import (
+            _build_vpc_pair_payload,
+            _get_api_field_value,
+        )
+
+        return {
+            "_build_vpc_pair_payload": _build_vpc_pair_payload,
+            "_get_api_field_value": _get_api_field_value,
+        }[name]
+
+    raise AttributeError("module '{}' has no attribute '{}'".format(__name__, name))

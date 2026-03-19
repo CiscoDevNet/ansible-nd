@@ -329,6 +329,9 @@ pending_delete_pairs_not_in_delete:
 
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ValidationError,
+)
 
 # Service layer imports
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.resources import (
@@ -347,8 +350,8 @@ except Exception:  # pragma: no cover - compatibility for stripped framework tre
     _nd_config_collection = None  # noqa: F841
     _nd_utils = None  # noqa: F841
 
-from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
-    VpcFieldNames,
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.model import (
+    VpcPairPlaybookConfigModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_common import (
     DEEPDIFF_IMPORT_ERROR,
@@ -375,66 +378,7 @@ def main():
     - VpcPairResourceService handles NDStateMachine orchestration
     - Custom actions use RestSend (NDModuleV2) for HTTP with retry logic
     """
-    argument_spec = dict(
-        state=dict(
-            type="str",
-            default="merged",
-            choices=["merged", "replaced", "deleted", "overridden", "gathered"],
-        ),
-        fabric_name=dict(type="str", required=True),
-        deploy=dict(type="bool", default=False),
-        force=dict(
-            type="bool",
-            default=False,
-            description="Force deletion without pre-deletion validation (bypasses safety checks)"
-        ),
-        api_timeout=dict(
-            type="int",
-            default=30,
-            description="API request timeout in seconds for primary operations"
-        ),
-        query_timeout=dict(
-            type="int",
-            default=10,
-            description="API request timeout in seconds for query/recommendation operations"
-        ),
-        refresh_after_apply=dict(
-            type="bool",
-            default=True,
-            description="Refresh final after-state by querying controller after write operations",
-        ),
-        refresh_after_timeout=dict(
-            type="int",
-            required=False,
-            description="Optional timeout in seconds for post-apply after-state refresh query",
-        ),
-        suppress_previous=dict(
-            type="bool",
-            default=False,
-            description=(
-                "Skip initial controller query for before/diff baseline. "
-                "Supported only with state=merged."
-            ),
-        ),
-        suppress_verification=dict(
-            type="bool",
-            default=False,
-            description=(
-                "Skip post-apply controller query for after-state verification "
-                "(alias for refresh_after_apply=false)."
-            ),
-        ),
-        config=dict(
-            type="list",
-            elements="dict",
-            options=dict(
-                peer1_switch_id=dict(type="str", required=True, aliases=["switch_id"]),
-                peer2_switch_id=dict(type="str", required=True, aliases=["peer_switch_id"]),
-                use_virtual_peer_link=dict(type="bool", default=True),
-                vpc_pair_details=dict(type="dict"),
-            ),
-        ),
-    )
+    argument_spec = VpcPairPlaybookConfigModel.get_argument_spec()
 
     module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
     setup_logging(module)
@@ -445,11 +389,21 @@ def main():
             exception=DEEPDIFF_IMPORT_ERROR
         )
 
+    try:
+        module_config = VpcPairPlaybookConfigModel.model_validate(
+            module.params, by_alias=True, by_name=True
+        )
+    except ValidationError as e:
+        module.fail_json(
+            msg="Invalid nd_manage_vpc_pair playbook configuration",
+            validation_errors=e.errors(),
+        )
+
     # State-specific parameter validations
-    state = module.params["state"]
-    deploy = module.params.get("deploy")
-    suppress_previous = module.params.get("suppress_previous", False)
-    suppress_verification = module.params.get("suppress_verification", False)
+    state = module_config.state
+    deploy = module_config.deploy
+    suppress_previous = module_config.suppress_previous
+    suppress_verification = module_config.suppress_verification
 
     if state == "gathered" and deploy:
         module.fail_json(msg="Deploy parameter cannot be used with 'gathered' state")
@@ -483,8 +437,8 @@ def main():
     # Validate force parameter usage:
     # - state=deleted
     # - state=overridden with empty config (interpreted as delete-all)
-    force = module.params.get("force", False)
-    user_config = module.params.get("config") or []
+    force = module_config.force
+    user_config = module_config.config or []
     force_applicable = state == "deleted" or (
         state == "overridden" and len(user_config) == 0
     )
@@ -495,27 +449,8 @@ def main():
             f"Ignoring force for state '{state}'."
         )
 
-    # Normalize config keys for model
-    config = module.params.get("config") or []
-    normalized_config = []
-
-    for item in config:
-        switch_id = item.get("peer1_switch_id") or item.get("switch_id")
-        peer_switch_id = item.get("peer2_switch_id") or item.get("peer_switch_id")
-        use_virtual_peer_link = item.get("use_virtual_peer_link", True)
-        vpc_pair_details = item.get("vpc_pair_details")
-        normalized = {
-            "switch_id": switch_id,
-            "peer_switch_id": peer_switch_id,
-            "use_virtual_peer_link": use_virtual_peer_link,
-            "vpc_pair_details": vpc_pair_details,
-            # Defensive dual-shape normalization for state-machine/model variants.
-            VpcFieldNames.SWITCH_ID: switch_id,
-            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
-            VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_virtual_peer_link,
-            VpcFieldNames.VPC_PAIR_DETAILS: vpc_pair_details,
-        }
-        normalized_config.append(normalized)
+    # Normalize config keys for runtime/state-machine model handling.
+    normalized_config = [item.to_runtime_config() for item in module_config.config]
 
     module.params["config"] = normalized_config
 
