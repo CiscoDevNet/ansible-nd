@@ -72,6 +72,21 @@ options:
         - Optional timeout in seconds for the post-apply refresh query.
         - When omitted, C(query_timeout) is used.
         type: int
+    suppress_previous:
+        description:
+        - Skip initial controller query for C(before) state and diff baseline.
+        - Performance optimization for trusted upsert workflows.
+        - May reduce idempotency and diff accuracy because existing controller state is not pre-fetched.
+        - Supported only with C(state=merged).
+        type: bool
+        default: false
+    suppress_verification:
+        description:
+        - Skip post-apply controller query for final C(after) state verification.
+        - Equivalent to setting C(refresh_after_apply=false).
+        - Improves performance by avoiding end-of-task query.
+        type: bool
+        default: false
     config:
         description:
         - List of vPC pair configuration dictionaries.
@@ -145,6 +160,26 @@ EXAMPLES = """
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
   check_mode: true
+
+# Performance mode: skip final after-state verification query
+- name: Create vPC pair without post-apply verification query
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: myFabric
+    state: merged
+    suppress_verification: true
+    config:
+      - peer1_switch_id: "FDO23040Q85"
+        peer2_switch_id: "FDO23040Q86"
+
+# Advanced performance mode: skip initial before-state query (merged only)
+- name: Create/update vPC pair without initial before query
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: myFabric
+    state: merged
+    suppress_previous: true
+    config:
+      - peer1_switch_id: "FDO23040Q85"
+        peer2_switch_id: "FDO23040Q86"
 """
 
 RETURN = """
@@ -154,12 +189,18 @@ changed:
     returned: always
     sample: true
 before:
-    description: vPC pair state before changes
+    description:
+    - vPC pair state before changes.
+    - May contain controller read-only properties because it is queried from controller state.
+    - Empty when C(suppress_previous=true).
     type: list
     returned: always
     sample: [{"switchId": "FDO123", "peerSwitchId": "FDO456", "useVirtualPeerLink": false}]
 after:
-    description: vPC pair state after changes
+    description:
+    - vPC pair state after changes.
+    - By default this is refreshed from controller after write operations and may include read-only properties.
+    - Refresh can be skipped with C(refresh_after_apply=false) or C(suppress_verification=true).
     type: list
     returned: always
     sample: [{"switchId": "FDO123", "peerSwitchId": "FDO456", "useVirtualPeerLink": true}]
@@ -290,7 +331,7 @@ from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 
 # Service layer imports
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.vpc_pair_resources import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.resources import (
     VpcPairResourceService,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_exceptions import (
@@ -306,7 +347,7 @@ except Exception:  # pragma: no cover - compatibility for stripped framework tre
     _nd_config_collection = None  # noqa: F841
     _nd_utils = None  # noqa: F841
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.vpc_pair_enums import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
     VpcFieldNames,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_common import (
@@ -367,6 +408,22 @@ def main():
             required=False,
             description="Optional timeout in seconds for post-apply after-state refresh query",
         ),
+        suppress_previous=dict(
+            type="bool",
+            default=False,
+            description=(
+                "Skip initial controller query for before/diff baseline. "
+                "Supported only with state=merged."
+            ),
+        ),
+        suppress_verification=dict(
+            type="bool",
+            default=False,
+            description=(
+                "Skip post-apply controller query for after-state verification "
+                "(alias for refresh_after_apply=false)."
+            ),
+        ),
         config=dict(
             type="list",
             elements="dict",
@@ -391,9 +448,37 @@ def main():
     # State-specific parameter validations
     state = module.params["state"]
     deploy = module.params.get("deploy")
+    suppress_previous = module.params.get("suppress_previous", False)
+    suppress_verification = module.params.get("suppress_verification", False)
 
     if state == "gathered" and deploy:
         module.fail_json(msg="Deploy parameter cannot be used with 'gathered' state")
+
+    if suppress_previous and state != "merged":
+        module.fail_json(
+            msg=(
+                "Parameter 'suppress_previous' is supported only with state 'merged' "
+                "for nd_manage_vpc_pair."
+            )
+        )
+
+    if suppress_previous:
+        module.warn(
+            "suppress_previous=true skips initial controller query. "
+            "before/diff accuracy and idempotency checks may be reduced."
+        )
+
+    if suppress_verification:
+        if module.params.get("refresh_after_apply", True):
+            module.warn(
+                "suppress_verification=true overrides refresh_after_apply=true. "
+                "Final after-state refresh query will be skipped."
+            )
+        if module.params.get("refresh_after_timeout") is not None:
+            module.warn(
+                "refresh_after_timeout is ignored when suppress_verification=true."
+            )
+        module.params["refresh_after_apply"] = False
 
     # Validate force parameter usage:
     # - state=deleted

@@ -21,8 +21,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     SortMixin,
     ViewMixin,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.vpc_pair_base_paths import (
-    VpcPairBasePath,
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
+    BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
@@ -53,7 +53,7 @@ class EpVpcPairsListGet(
     def path(self) -> str:
         if self.fabric_name is None:
             raise ValueError("fabric_name is required")
-        return VpcPairBasePath.vpc_pairs_list(self.fabric_name)
+        return BasePath.path("fabrics", self.fabric_name, "vpcPairs")
 
     @property
     def verb(self) -> HttpVerbEnum:
