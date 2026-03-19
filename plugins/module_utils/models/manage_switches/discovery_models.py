@@ -19,14 +19,14 @@ from typing_extensions import Self
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches.enums import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import (
     PlatformType,
     RemoteCredentialStore,
     ShallowDiscoveryPlatformType,
     SnmpV3AuthProtocol,
     SwitchRole,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches.validators import SwitchValidators
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import SwitchValidators
 
 
 class ShallowDiscoveryRequestModel(NDBaseModel):

@@ -26,7 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationTyp
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
-from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches import (
     SwitchRole,
     SnmpV3AuthProtocol,
     PlatformType,
@@ -211,17 +211,6 @@ class SwitchDiffEngine:
             log.warning("No valid configurations found in input")
             return validated_configs
 
-        # Cross-config check — model can't do this per-instance
-        try:
-            SwitchConfigModel.validate_no_mixed_operations(validated_configs)
-        except ValueError as e:
-            error_msg = str(e)
-            log.error(error_msg)
-            if hasattr(nd, 'module'):
-                nd.module.fail_json(msg=error_msg)
-            else:
-                raise
-
         # Duplicate seed_ip check
         seen_ips: set = set()
         duplicate_ips: set = set()
@@ -240,14 +229,14 @@ class SwitchDiffEngine:
             else:
                 raise ValueError(error_msg)
 
-        operation_type = validated_configs[0].operation_type
+        operation_types = {c.operation_type for c in validated_configs}
         log.info(
             f"Successfully validated {len(validated_configs)} "
-            f"configuration(s) with operation type: {operation_type}"
+            f"configuration(s) with operation type(s): {operation_types}"
         )
         log.debug(
             f"EXIT: validate_configs() -> "
-            f"{len(validated_configs)} configs, operation_type={operation_type}"
+            f"{len(validated_configs)} configs, operation_types={operation_types}"
         )
         return validated_configs
 
@@ -2487,7 +2476,7 @@ class NDSwitchResourceModule():
         """Dispatch the requested module state to the appropriate workflow.
 
         This method validates input, routes POAP and RMA operations to dedicated
-        handlers, and executes state-specific orchestration for query, merged,
+        handlers, and executes state-specific orchestration for merged,
         overridden, and deleted operations.
 
         Returns:
@@ -2525,43 +2514,58 @@ class NDSwitchResourceModule():
                 model_class=SwitchConfigModel, items=proposed_config
             )
         )
-        self.operation_type = proposed_config[0].operation_type
+        # Partition configs by operation type
+        poap_configs = [c for c in proposed_config if c.operation_type == "poap"]
+        rma_configs = [c for c in proposed_config if c.operation_type == "rma"]
+        normal_configs = [c for c in proposed_config if c.operation_type not in ("poap", "rma")]
 
-        # POAP and RMA bypass normal discovery — delegate to handlers
-        if self.operation_type == "poap":
-            return self.poap_handler.handle(proposed_config, list(self.existing))
-        if self.operation_type == "rma":
-            return self.rma_handler.handle(proposed_config, list(self.existing))
+        self.log.info(
+            f"Config partition: {len(normal_configs)} normal, "
+            f"{len(poap_configs)} poap, {len(rma_configs)} rma"
+        )
 
-        # Normal: discover → build proposed models → compute diff → delegate
-        # Skip discovery for switches already in the fabric.
-        existing_ips = {sw.fabric_management_ip for sw in self.existing}
-        configs_to_discover = [cfg for cfg in proposed_config if cfg.seed_ip not in existing_ips]
-        if configs_to_discover:
-            self.log.info(
-                f"Discovery needed for {len(configs_to_discover)}/{len(proposed_config)} "
-                f"switch(es) — {len(proposed_config) - len(configs_to_discover)} already in fabric"
+        # POAP and RMA are only valid with state=merged
+        if (poap_configs or rma_configs) and self.state != "merged":
+            self.nd.module.fail_json(
+                msg="POAP and RMA configs are only supported with state=merged"
             )
-            discovered_data = self.discovery.discover(configs_to_discover)
-        else:
-            self.log.info("All proposed switches already in fabric — skipping discovery")
-            discovered_data = {}
-        built = self.discovery.build_proposed(
-            proposed_config, discovered_data, list(self.existing)
-        )
-        self.proposed = NDConfigCollection(model_class=SwitchDataModel, items=built)
-        diff = SwitchDiffEngine.compute_changes(
-            list(self.proposed), list(self.existing), self.log
-        )
 
-        state_handlers = {
-            "merged": self._handle_merged_state,
-            "overridden": self._handle_overridden_state,
-        }
-        handler = state_handlers.get(self.state)
-        if handler is None:
-            self.nd.module.fail_json(msg=f"Unsupported state: {self.state}")
-        return handler(diff, proposed_config, discovered_data)
+        # Normal discovery runs first so the fabric inventory is up to date
+        # before POAP/RMA handlers execute.
+        if normal_configs:
+            existing_ips = {sw.fabric_management_ip for sw in self.existing}
+            configs_to_discover = [cfg for cfg in normal_configs if cfg.seed_ip not in existing_ips]
+            if configs_to_discover:
+                self.log.info(
+                    f"Discovery needed for {len(configs_to_discover)}/{len(normal_configs)} "
+                    f"switch(es) — {len(normal_configs) - len(configs_to_discover)} already in fabric"
+                )
+                discovered_data = self.discovery.discover(configs_to_discover)
+            else:
+                self.log.info("All proposed switches already in fabric — skipping discovery")
+                discovered_data = {}
+            built = self.discovery.build_proposed(
+                normal_configs, discovered_data, list(self.existing)
+            )
+            self.proposed = NDConfigCollection(model_class=SwitchDataModel, items=built)
+            diff = SwitchDiffEngine.compute_changes(
+                list(self.proposed), list(self.existing), self.log
+            )
+
+            state_handlers = {
+                "merged": self._handle_merged_state,
+                "overridden": self._handle_overridden_state,
+            }
+            handler = state_handlers.get(self.state)
+            if handler is None:
+                self.nd.module.fail_json(msg=f"Unsupported state: {self.state}")
+            handler(diff, normal_configs, discovered_data)
+
+        # POAP and RMA run after normal discovery
+        if poap_configs:
+            self.poap_handler.handle(poap_configs, list(self.existing))
+        if rma_configs:
+            self.rma_handler.handle(rma_configs, list(self.existing))
 
     # =====================================================================
     # State Handlers (orchestration only — delegate to services)

@@ -17,7 +17,7 @@ short_description: Manage switches in Cisco Nexus Dashboard (ND).
 version_added: "1.0.0"
 author: Akshayanat Chengam Saravanan (@achengam)
 description:
-- Add, delete, override, and query switches in Cisco Nexus Dashboard.
+- Add, delete, and override switches in Cisco Nexus Dashboard.
 - Supports normal discovery, POAP (bootstrap/preprovision), and RMA operations.
 - Uses Pydantic model validation for switch configurations.
 - Provides state-based operations with intelligent diff calculation.
@@ -30,7 +30,7 @@ options:
     state:
         description:
         - The state of ND and switch(es) after module completion.
-        - C(merged) and C(query) are the only states supported for POAP.
+        - C(merged) is the only state supported for POAP.
         - C(merged) is the only state supported for RMA.
         type: str
         default: merged
@@ -38,7 +38,6 @@ options:
         - merged
         - overridden
         - deleted
-        - query
     save:
         description:
         - Save/Recalculate the configuration of the fabric after inventory is updated.
@@ -344,11 +343,6 @@ EXAMPLES = """
       - seed_ip: 192.168.10.202
     state: deleted
 
-- name: Query all switches in fabric
-  cisco.nd.nd_manage_switches:
-    fabric: my-fabric
-    state: query
-  register: switches_result
 """
 
 RETURN = """
@@ -364,7 +358,7 @@ proposed:
   elements: dict
 sent:
   description: The configuration sent to the API.
-  returned: when state is not query
+  returned: always
   type: list
   elements: dict
 current:
@@ -479,7 +473,7 @@ def main():
         state=dict(
             type="str",
             default="merged",
-            choices=["merged", "overridden", "deleted", "query"]
+            choices=["merged", "overridden", "deleted"]
         ),
     )
 
@@ -529,7 +523,7 @@ def main():
         )
         log.info(f"NDSwitchResourceModule initialized for fabric: {fabric}")
         
-        # Manage state for merged, overridden, deleted, query
+        # Manage state for merged, overridden, deleted
         log.info(f"Managing state: {state}")
         sw_module.manage_state()
         

@@ -24,12 +24,12 @@ from typing_extensions import Self
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches.enums import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import (
     PlatformType,
     SnmpV3AuthProtocol,
     SwitchRole,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.nd_manage_switches.validators import SwitchValidators
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import SwitchValidators
 
 
 class ConfigDataModel(NDNestedModel):
@@ -337,11 +337,9 @@ class SwitchConfigModel(NDBaseModel):
 
     # Fields excluded from diff — only seed_ip + role are compared
     exclude_from_diff: ClassVar[List[str]] = [
-        "user_name", "password", "auth_proto", "max_hops",
+        "user_name", "password", "auth_proto",
         "preserve_config", "platform_type", "poap", "rma",
         "operation_type",
-        "switch_id", "serial_number", "mode", "hostname",
-        "model", "software_version",
     ]
 
     # Required fields
@@ -362,19 +360,11 @@ class SwitchConfigModel(NDBaseModel):
         default=None,
         description="Login password to the switch (required for merged/overridden states)"
     )
-
     # Optional fields with defaults
     auth_proto: SnmpV3AuthProtocol = Field(
         default=SnmpV3AuthProtocol.MD5,
         alias="authProto",
         description="Authentication protocol to use"
-    )
-    max_hops: int = Field(
-        default=0,
-        alias="maxHops",
-        ge=0,
-        le=7,
-        description="Maximum hops to reach the switch (deprecated, defaults to 0)"
     )
     role: Optional[SwitchRole] = Field(
         default=None,
@@ -418,35 +408,6 @@ class SwitchConfigModel(NDBaseModel):
         if self.rma:
             return "rma"
         return "normal"
-
-    # API-derived fields (populated by from_response, never set by users)
-    switch_id: Optional[str] = Field(
-        default=None,
-        alias="switchId",
-        description="Serial number / switch ID from inventory API"
-    )
-    serial_number: Optional[str] = Field(
-        default=None,
-        alias="serialNumber",
-        description="Serial number from inventory API"
-    )
-    mode: Optional[str] = Field(
-        default=None,
-        description="Switch mode from inventory API (Normal, Migration, etc.)"
-    )
-    hostname: Optional[str] = Field(
-        default=None,
-        description="Switch hostname from inventory API"
-    )
-    model: Optional[str] = Field(
-        default=None,
-        description="Switch model from inventory API"
-    )
-    software_version: Optional[str] = Field(
-        default=None,
-        alias="softwareVersion",
-        description="Software version from inventory API"
-    )
 
     def to_config_dict(self) -> Dict[str, Any]:
         """Return the playbook config as a dict with all credentials stripped.
@@ -534,10 +495,10 @@ class SwitchConfigModel(NDBaseModel):
         """
         state = (info.context or {}).get("state") if info else None
 
-        # POAP only allowed with merged or query
-        if self.poap and state not in (None, "merged", "query"):
+        # POAP only allowed with merged
+        if self.poap and state not in (None, "merged"):
             raise ValueError(
-                f"POAP operations require 'merged' or 'query' state, "
+                f"POAP operations require 'merged' state, "
                 f"got '{state}' (switch: {self.seed_ip})"
             )
 
@@ -623,76 +584,12 @@ class SwitchConfigModel(NDBaseModel):
         """Normalize platform_type for case-insensitive matching (NX_OS, nx-os, etc.)."""
         return PlatformType.normalize(v)
 
-    @classmethod
-    def validate_no_mixed_operations(
-        cls, configs: List["SwitchConfigModel"]
-    ) -> None:
-        """Validate that a list of configs does not mix operation types.
-
-        POAP, RMA, and normal switch operations cannot be combined
-        in the same Ansible task.  Call this after validating all
-        individual configs.
-
-        Args:
-            configs: List of validated SwitchConfigModel instances.
-
-        Raises:
-            ValueError: If more than one operation type is present.
-        """
-        op_types = {cfg.operation_type for cfg in configs}
-        if len(op_types) > 1:
-            raise ValueError(
-                "Mixed operation types detected: "
-                f"{', '.join(sorted(op_types))}. "
-                "POAP, RMA, and normal switch operations "
-                "cannot be mixed in the same task. "
-                "Please separate them into different tasks."
-            )
-
     def to_payload(self) -> Dict[str, Any]:
-        """Convert to API payload format.
-
-        Excludes API-derived fields that are not part of the user config.
-        """
+        """Convert to API payload format."""
         return self.model_dump(
             by_alias=True,
             exclude_none=True,
-            exclude={
-                "switch_id", "serial_number", "mode",
-                "hostname", "model", "software_version",
-            },
         )
-
-    @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> Self:
-        """Create model instance from inventory or discovery API response.
-
-        Handles two formats:
-        1. Inventory API: {switchId, fabricManagementIp, switchRole, ...}
-        2. Discovery API: {serialNumber, ip, hostname, ...}
-        """
-        mapped: Dict[str, Any] = {}
-
-        # seed_ip from fabricManagementIp (inventory) or ip (discovery)
-        ip = response.get("fabricManagementIp") or response.get("ip")
-        if ip:
-            mapped["seedIp"] = ip
-
-        # role from switchRole
-        role = response.get("switchRole")
-        if role:
-            mapped["role"] = role
-
-        # Direct API fields
-        direct_fields = (
-            "switchId", "serialNumber", "softwareVersion",
-            "mode", "hostname", "model",
-        )
-        for key in direct_fields:
-            if key in response and response[key] is not None:
-                mapped[key] = response[key]
-
-        return cls.model_validate(mapped)
 
 
 __all__ = [
