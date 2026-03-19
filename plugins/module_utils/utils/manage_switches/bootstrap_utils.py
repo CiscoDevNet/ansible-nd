@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
+# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or
 # https://www.gnu.org/licenses/gpl-3.0.txt)
@@ -14,8 +14,8 @@ __metaclass__ = type
 import logging
 from typing import Any, Dict, List, Optional
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_bootstrap import (
-    EpManageFabricBootstrapGet,
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_bootstrap import (
+    EpManageFabricsBootstrapGet,
 )
 
 
@@ -36,7 +36,7 @@ def query_bootstrap_switches(
     """
     log.debug("ENTER: query_bootstrap_switches()")
 
-    endpoint = EpManageFabricBootstrapGet()
+    endpoint = EpManageFabricsBootstrapGet()
     endpoint.fabric_name = fabric
     log.debug(f"Bootstrap endpoint: {endpoint.path}")
 

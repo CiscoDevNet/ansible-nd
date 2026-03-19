@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
+# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -14,10 +14,12 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.nd_manage_switches.fabric_config import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
     EpManageFabricConfigDeployPost,
-    EpManageFabricConfigSavePost,
     EpManageFabricGet,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions import (
+    EpManageFabricsActionsConfigSavePost,
 )
 
 from .exceptions import SwitchOperationError
@@ -44,7 +46,7 @@ class FabricUtils:
         self.log = logger or logging.getLogger("nd.FabricUtils")
 
         # Pre-configure endpoints
-        self.ep_config_save = EpManageFabricConfigSavePost()
+        self.ep_config_save = EpManageFabricsActionsConfigSavePost()
         self.ep_config_save.fabric_name = fabric
 
         self.ep_config_deploy = EpManageFabricConfigDeployPost()

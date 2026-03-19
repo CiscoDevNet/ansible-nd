@@ -1,21 +1,21 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
+# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 __copyright__ = "Copyright (c) 2026 Cisco and/or its affiliates."
-__author__ = "Akshayanat Chengam Saravanan"
+__author__ = "Akshayanat C S"
 
 DOCUMENTATION = """
 ---
 module: nd_manage_switches
 short_description: Manage switches in Cisco Nexus Dashboard (ND).
 version_added: "1.0.0"
-author: Akshayanat Chengam Saravanan (@achengam)
+author: Akshayanat C S (@achengam)
 description:
 - Add, delete, and override switches in Cisco Nexus Dashboard.
 - Supports normal discovery, POAP (bootstrap/preprovision), and RMA operations.

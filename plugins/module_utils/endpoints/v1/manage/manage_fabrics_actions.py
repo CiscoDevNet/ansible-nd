@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
+# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """
@@ -17,7 +17,7 @@ from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
-__author__ = "Akshayanat Chengam Saravanan"
+__author__ = "Akshayanat C S"
 # pylint: enable=invalid-name
 
 from typing import Literal
@@ -37,12 +37,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
 )
 
 
-class _EpManageFabricDiscoveryBase(FabricNameMixin, NDEndpointBaseModel):
+class _EpManageFabricsActionsBase(FabricNameMixin, NDEndpointBaseModel):
     """
-    Base class for Fabric Discovery endpoints.
+    Base class for Fabric Actions endpoints.
 
     Provides common functionality for all HTTP methods on the
-    /api/v1/manage/fabrics/{fabricName}/actions/shallowDiscovery endpoint.
+    /api/v1/manage/fabrics/{fabricName}/actions endpoint.
     """
 
     @property
@@ -50,10 +50,10 @@ class _EpManageFabricDiscoveryBase(FabricNameMixin, NDEndpointBaseModel):
         """Build the base endpoint path."""
         if self.fabric_name is None:
             raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.path("fabrics", self.fabric_name, "actions", "shallowDiscovery")
+        return BasePath.path("fabrics", self.fabric_name, "actions")
 
 
-class EpManageFabricShallowDiscoveryPost(_EpManageFabricDiscoveryBase):
+class EpManageFabricsActionsShallowDiscoveryPost(_EpManageFabricsActionsBase):
     """
     # Summary
 
@@ -74,21 +74,64 @@ class EpManageFabricShallowDiscoveryPost(_EpManageFabricDiscoveryBase):
     ## Usage
 
     ```python
-    request = EpManageFabricShallowDiscoveryPost()
+    request = EpManageFabricsActionsShallowDiscoveryPost()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
     ```
     """
 
-    class_name: Literal["EpManageFabricShallowDiscoveryPost"] = Field(
-        default="EpManageFabricShallowDiscoveryPost", frozen=True, description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricsActionsShallowDiscoveryPost"] = Field(
+        default="EpManageFabricsActionsShallowDiscoveryPost", frozen=True, description="Class name for backward compatibility"
     )
 
     @property
     def path(self) -> str:
         """Build the endpoint path."""
-        return self._base_path
+        return f"{self._base_path}/shallowDiscovery"
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.POST
+
+
+class EpManageFabricsActionsConfigSavePost(_EpManageFabricsActionsBase):
+    """
+    # Summary
+
+    Fabric Config Save Endpoint
+
+    ## Description
+
+    Endpoint to save (recalculate) fabric configuration.
+
+    ## Path
+
+    - /api/v1/manage/fabrics/{fabricName}/actions/configSave
+
+    ## Verb
+
+    - POST
+
+    ## Usage
+
+    ```python
+    request = EpManageFabricsActionsConfigSavePost()
+    request.fabric_name = "MyFabric"
+    path = request.path
+    verb = request.verb
+    ```
+    """
+
+    class_name: Literal["EpManageFabricsActionsConfigSavePost"] = Field(
+        default="EpManageFabricsActionsConfigSavePost", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def path(self) -> str:
+        """Build the endpoint path."""
+        return f"{self._base_path}/configSave"
 
     @property
     def verb(self) -> HttpVerbEnum:

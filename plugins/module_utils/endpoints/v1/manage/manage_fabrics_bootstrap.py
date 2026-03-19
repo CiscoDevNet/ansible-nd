@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Akshayanat Chengam Saravanan (@achengam) <achengam@cisco.com>
+# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """
@@ -17,7 +17,7 @@ from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
-__author__ = "Akshayanat Chengam Saravanan"
+__author__ = "Akshayanat C S"
 # pylint: enable=invalid-name
 
 from typing import Literal, Optional
@@ -43,7 +43,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
 )
 
 
-class FabricBootstrapEndpointParams(FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
+class FabricsBootstrapEndpointParams(FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -58,14 +58,14 @@ class FabricBootstrapEndpointParams(FilterMixin, MaxMixin, OffsetMixin, Endpoint
     ## Usage
 
     ```python
-    params = FabricBootstrapEndpointParams(max=50, offset=0)
+    params = FabricsBootstrapEndpointParams(max=50, offset=0)
     query_string = params.to_query_string()
     # Returns: "max=50&offset=0"
     ```
     """
 
 
-class _EpManageFabricBootstrapBase(FabricNameMixin, NDEndpointBaseModel):
+class _EpManageFabricsBootstrapBase(FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for Fabric Bootstrap endpoints.
 
@@ -81,7 +81,7 @@ class _EpManageFabricBootstrapBase(FabricNameMixin, NDEndpointBaseModel):
         return BasePath.path("fabrics", self.fabric_name, "bootstrap")
 
 
-class EpManageFabricBootstrapGet(_EpManageFabricBootstrapBase):
+class EpManageFabricsBootstrapGet(_EpManageFabricsBootstrapBase):
     """
     # Summary
 
@@ -110,13 +110,13 @@ class EpManageFabricBootstrapGet(_EpManageFabricBootstrapBase):
 
     ```python
     # List all bootstrap switches
-    request = EpManageFabricBootstrapGet()
+    request = EpManageFabricsBootstrapGet()
     request.fabric_name = "MyFabric"
     path = request.path
     verb = request.verb
 
     # List with pagination
-    request = EpManageFabricBootstrapGet()
+    request = EpManageFabricsBootstrapGet()
     request.fabric_name = "MyFabric"
     request.endpoint_params.max = 50
     request.endpoint_params.offset = 0
@@ -126,11 +126,11 @@ class EpManageFabricBootstrapGet(_EpManageFabricBootstrapBase):
     ```
     """
 
-    class_name: Literal["EpManageFabricBootstrapGet"] = Field(
-        default="EpManageFabricBootstrapGet", frozen=True, description="Class name for backward compatibility"
+    class_name: Literal["EpManageFabricsBootstrapGet"] = Field(
+        default="EpManageFabricsBootstrapGet", frozen=True, description="Class name for backward compatibility"
     )
-    endpoint_params: FabricBootstrapEndpointParams = Field(
-        default_factory=FabricBootstrapEndpointParams, description="Endpoint-specific query parameters"
+    endpoint_params: FabricsBootstrapEndpointParams = Field(
+        default_factory=FabricsBootstrapEndpointParams, description="Endpoint-specific query parameters"
     )
 
     @property
