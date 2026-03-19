@@ -10,7 +10,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import LocalUserModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.infra_aaa_local_users import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.aaa_local_users import (
     EpInfraAaaLocalUsersPost,
     EpInfraAaaLocalUsersPut,
     EpInfraAaaLocalUsersDelete,
