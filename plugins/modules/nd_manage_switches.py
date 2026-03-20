@@ -32,12 +32,15 @@ options:
         - The state of ND and switch(es) after module completion.
         - C(merged) is the only state supported for POAP.
         - C(merged) is the only state supported for RMA.
+        - C(gathered) reads the current fabric inventory and returns it in the
+          C(gathered) key in config format. No changes are made.
         type: str
         default: merged
         choices:
         - merged
         - overridden
         - deleted
+        - gathered
     save:
         description:
         - Save/Recalculate the configuration of the fabric after inventory is updated.
@@ -343,27 +346,41 @@ EXAMPLES = """
       - seed_ip: 192.168.10.202
     state: deleted
 
+- name: Gather all switches from fabric
+  cisco.nd.nd_manage_switches:
+    fabric: my-fabric
+    state: gathered
+  register: result
+
 """
 
 RETURN = """
 previous:
   description: The configuration prior to the module execution.
-  returned: always
+  returned: when state is not gathered
   type: list
   elements: dict
 proposed:
   description: The proposed configuration sent to the API.
-  returned: always
+  returned: when state is not gathered
   type: list
   elements: dict
 sent:
   description: The configuration sent to the API.
-  returned: always
+  returned: when state is not gathered
   type: list
   elements: dict
 current:
   description: The current configuration after module execution.
-  returned: always
+  returned: when state is not gathered
+  type: list
+  elements: dict
+gathered:
+  description:
+  - The current fabric switch inventory returned in config format.
+  - Each entry mirrors the C(config) input schema (seed_ip, role,
+    auth_proto, preserve_config). Credentials are replaced with placeholders.
+  returned: when state is gathered
   type: list
   elements: dict
 """

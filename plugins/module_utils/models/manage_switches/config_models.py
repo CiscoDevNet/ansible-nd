@@ -592,6 +592,66 @@ class SwitchConfigModel(NDBaseModel):
         )
 
     @classmethod
+    def from_switch_data(cls, sw: Any) -> "SwitchConfigModel":
+        """Build a config-shaped entry from a live inventory record.
+
+        Only the fields recoverable from the ND inventory API are populated.
+        Credentials (user_name, password) are intentionally omitted.
+
+        Args:
+            sw: A SwitchDataModel instance from the fabric inventory.
+
+        Returns:
+            SwitchConfigModel instance with seed_ip, role, and platform_type
+            populated from live data.
+
+        Raises:
+            ValueError: If the inventory record is missing a management IP,
+                making it impossible to construct a valid config entry.
+        """
+        if not sw.fabric_management_ip:
+            raise ValueError(
+                f"Switch {sw.switch_id!r} has no fabric_management_ip — "
+                "cannot build a gathered config entry without a seed IP."
+            )
+
+        platform_type = (
+            sw.additional_data.platform_type
+            if sw.additional_data and hasattr(sw.additional_data, "platform_type")
+            else None
+        )
+
+        data: Dict[str, Any] = {"seed_ip": sw.fabric_management_ip}
+        if sw.switch_role is not None:
+            data["role"] = sw.switch_role
+        if platform_type is not None:
+            data["platform_type"] = platform_type
+
+        return cls.model_validate(data)
+
+    def to_gathered_dict(self) -> Dict[str, Any]:
+        """Return a config dict suitable for gathered output.
+
+        platform_type is excluded (internal detail not needed by the user).
+        user_name and password are replaced with placeholders so the returned
+        data is immediately usable as ``config:`` input after substituting
+        real credentials.
+
+        Returns:
+            Dict with seed_ip, role, auth_proto, preserve_config,
+            user_name set to ``"<username>"``, password set to ``"<password>"``.
+        """
+        result = self.to_config(exclude={
+                    "platform_type": True,
+                    "poap": True,
+                    "rma": True,
+                    "operation_type": True,
+                })
+        result["user_name"] = "<username>"
+        result["password"] = "<password>"
+        return result
+
+    @classmethod
     def get_argument_spec(cls) -> Dict[str, Any]:
         """Return the Ansible argument spec for nd_manage_switches."""
         return dict(
@@ -599,7 +659,7 @@ class SwitchConfigModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "overridden", "deleted"],
+                choices=["merged", "overridden", "deleted", "gathered"],
             ),
             save=dict(type="bool", default=True),
             deploy=dict(type="bool", default=True),

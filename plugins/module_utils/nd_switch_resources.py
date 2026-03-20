@@ -2358,15 +2358,29 @@ class NDSwitchResourceModule():
         self.results.build_final_result()
         final = self.results.final_result
 
-        # Re-query the fabric to get the actual post-operation inventory so
-        # that "current" reflects real state rather than the pre-op snapshot.
-        if True not in self.results.failed and not self.nd.module.check_mode:
-            self.existing = NDConfigCollection.from_api_response(
-                response_data=self._query_all_switches(), model_class=SwitchDataModel
-            )
-
-        final["previous"] = self.previous.to_ansible_config()
-        final["current"] = self.existing.to_ansible_config()
+        if self.state == "gathered":
+            # gathered: expose the already-queried inventory in config shape.
+            # No re-query needed — nothing was changed.
+            gathered = []
+            for sw in self.existing:
+                try:
+                    gathered.append(SwitchConfigModel.from_switch_data(sw).to_gathered_dict())
+                except (ValueError, Exception) as exc:
+                    msg = (
+                        f"Failed to convert switch {sw.switch_id!r} to gathered format: {exc}"
+                    )
+                    self.log.error(msg)
+                    self.nd.module.fail_json(msg=msg)
+            final["gathered"] = gathered
+        else:
+            # Re-query the fabric to get the actual post-operation inventory so
+            # that "current" reflects real state rather than the pre-op snapshot.
+            if True not in self.results.failed and not self.nd.module.check_mode:
+                self.existing = NDConfigCollection.from_api_response(
+                    response_data=self._query_all_switches(), model_class=SwitchDataModel
+                )
+            final["previous"] = self.previous.to_ansible_config()
+            final["current"] = self.existing.to_ansible_config()
 
         if True in self.results.failed:
             self.nd.module.fail_json(**final)
@@ -2387,6 +2401,14 @@ class NDSwitchResourceModule():
             None.
         """
         self.log.info(f"Managing state: {self.state}")
+
+        # gathered — read-only, no config accepted
+        if self.state == "gathered":
+            if self.config:
+                self.nd.module.fail_json(
+                    msg="'config' must not be provided for 'gathered' state."
+                )
+            return self._handle_gathered_state()
 
         # deleted — config is optional
         if self.state == "deleted":
@@ -2775,6 +2797,35 @@ class NDSwitchResourceModule():
         # Phase 3: Delegate add + migration to merged state
         self._handle_merged_state(diff, proposed_config, discovered_data)
         self.log.debug("EXIT: _handle_overridden_state()")
+
+    def _handle_gathered_state(self) -> None:
+        """Handle gathered-state read of the fabric inventory.
+
+        No API writes are performed. The existing inventory is serialised into
+        SwitchConfigModel shape by exit_json(). This method only records the
+        result metadata so that Results aggregation works correctly.
+
+        Returns:
+            None.
+        """
+        self.log.debug("ENTER: _handle_gathered_state()")
+        self.log.info(f"Gathering inventory for fabric '{self.fabric}'")
+
+        if not self.existing:
+            self.log.info(f"Fabric '{self.fabric}' has no switches in inventory")
+
+        self.results.action = "gathered"
+        self.results.state = self.state
+        self.results.operation_type = OperationType.QUERY
+        self.results.response_current = {"MESSAGE": "gathered", "RETURN_CODE": 200}
+        self.results.result_current = {"success": True, "changed": False}
+        self.results.diff_current = {}
+        self.results.register_api_call()
+
+        self.log.info(
+            f"Gathered {len(list(self.existing))} switch(es) from fabric '{self.fabric}'"
+        )
+        self.log.debug("EXIT: _handle_gathered_state()")
 
     def _handle_deleted_state(
         self,
