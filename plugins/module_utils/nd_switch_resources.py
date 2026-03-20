@@ -1167,20 +1167,7 @@ class POAPHandler:
         log.debug("ENTER: POAPHandler.handle()")
         log.info(f"Processing POAP for {len(proposed_config)} switch config(s)")
 
-        # Check mode — preview only
-        if nd.module.check_mode:
-            log.info("Check mode: would run POAP bootstrap / pre-provision")
-            results.action = "poap"
-            results.operation_type = OperationType.CREATE
-            results.response_current = {"MESSAGE": "check mode — skipped"}
-            results.result_current = {"success": True, "changed": True}
-            results.diff_current = {
-                "poap_switches": [pc.seed_ip for pc in proposed_config]
-            }
-            results.register_api_call()
-            return
-
-        # Classify entries
+        # Classify entries first so check mode can report per-operation counts
         bootstrap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel]] = []
         preprov_entries: List[Tuple[SwitchConfigModel, POAPConfigModel]] = []
         swap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel]] = []
@@ -1210,6 +1197,24 @@ class POAPHandler:
             f"{len(preprov_entries)} pre-provision, "
             f"{len(swap_entries)} swap"
         )
+
+        # Check mode — preview only
+        if nd.module.check_mode:
+            log.info(
+                f"Check mode: would bootstrap {len(bootstrap_entries)}, "
+                f"pre-provision {len(preprov_entries)}, swap {len(swap_entries)}"
+            )
+            results.action = "poap"
+            results.operation_type = OperationType.CREATE
+            results.response_current = {"MESSAGE": "check mode — skipped"}
+            results.result_current = {"success": True, "changed": False}
+            results.diff_current = {
+                "bootstrap": [cfg.seed_ip for cfg, _ in bootstrap_entries],
+                "preprovision": [cfg.seed_ip for cfg, _ in preprov_entries],
+                "swap": [cfg.seed_ip for cfg, _ in swap_entries],
+            }
+            results.register_api_call()
+            return
 
         # Idempotency: skip entries whose target serial is already in the fabric.
         # Build lookup structures for idempotency checks.
@@ -1904,7 +1909,7 @@ class RMAHandler:
             results.action = "rma"
             results.operation_type = OperationType.CREATE
             results.response_current = {"MESSAGE": "check mode — skipped"}
-            results.result_current = {"success": True, "changed": True}
+            results.result_current = {"success": True, "changed": False}
             results.diff_current = {
                 "rma_switches": [pc.seed_ip for pc in proposed_config]
             }
@@ -2503,17 +2508,19 @@ class NDSwitchResourceModule():
         # Check mode — preview only
         if self.nd.module.check_mode:
             self.log.info(
-                f"Check mode: would add {len(switches_to_add)} and "
-                f"process {len(migration_switches)} migration switches"
+                f"Check mode: would add {len(switches_to_add)}, "
+                f"process {len(migration_switches)} migration switch(es), "
+                f"save_deploy_required={idempotent_save_req}"
             )
             self.results.action = "merge"
             self.results.state = self.state
             self.results.operation_type = OperationType.CREATE
             self.results.response_current = {"MESSAGE": "check mode — skipped", "RETURN_CODE": 200}
-            self.results.result_current = {"success": True, "changed": True}
+            self.results.result_current = {"success": True, "changed": False}
             self.results.diff_current = {
                 "to_add": [sw.fabric_management_ip for sw in switches_to_add],
                 "migration_mode": [sw.fabric_management_ip for sw in migration_switches],
+                "save_deploy_required": idempotent_save_req,
             }
             self.results.register_api_call()
             return
@@ -2710,12 +2717,11 @@ class NDSwitchResourceModule():
                 f"delete-and-re-add {n_update}, "
                 f"add {n_add}, migrate {n_migrate}"
             )
-            would_change = (n_delete + n_update + n_add + n_migrate) > 0
             self.results.action = "override"
             self.results.state = self.state
             self.results.operation_type = OperationType.CREATE
             self.results.response_current = {"MESSAGE": "check mode — skipped", "RETURN_CODE": 200}
-            self.results.result_current = {"success": True, "changed": would_change}
+            self.results.result_current = {"success": True, "changed": False}
             self.results.diff_current = {
                 "to_delete": n_delete,
                 "to_update": n_update,
@@ -2822,7 +2828,7 @@ class NDSwitchResourceModule():
             self.results.state = self.state
             self.results.operation_type = OperationType.DELETE
             self.results.response_current = {"MESSAGE": "check mode — skipped", "RETURN_CODE": 200}
-            self.results.result_current = {"success": True, "changed": True}
+            self.results.result_current = {"success": True, "changed": False}
             self.results.diff_current = {
                 "to_delete": [sw.fabric_management_ip for sw in switches_to_delete],
             }

@@ -591,6 +591,21 @@ class SwitchConfigModel(NDBaseModel):
             exclude_none=True,
         )
 
+    @classmethod
+    def get_argument_spec(cls) -> Dict[str, Any]:
+        """Return the Ansible argument spec for nd_manage_switches."""
+        return dict(
+            fabric=dict(type="str", required=True),
+            state=dict(
+                type="str",
+                default="merged",
+                choices=["merged", "overridden", "deleted"],
+            ),
+            save=dict(type="bool", default=True),
+            deploy=dict(type="bool", default=True),
+            config=dict(type="list", elements="dict"),
+        )
+
 
 __all__ = [
     "ConfigDataModel",

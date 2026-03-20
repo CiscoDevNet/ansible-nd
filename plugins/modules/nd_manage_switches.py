@@ -372,6 +372,7 @@ import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.config_models import SwitchConfigModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_switch_resources import NDSwitchResourceModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule,
@@ -383,99 +384,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Resul
 
 def main():
     """Main entry point for the nd_manage_switches module."""
-    
+
     # Build argument spec
     argument_spec = nd_argument_spec()
-    argument_spec.update(
-        fabric=dict(type="str", required=True),
-        config=dict(
-            type="list",
-            elements="dict",
-            options=dict(
-                seed_ip=dict(type="str", required=True),
-                auth_proto=dict(
-                    type="str",
-                    default="MD5",
-                    choices=["MD5", "SHA", "MD5_DES", "MD5_AES", "SHA_DES", "SHA_AES"]
-                ),
-                user_name=dict(type="str", default="admin"),
-                password=dict(type="str", no_log=True),
-                role=dict(
-                    type="str",
-                    default="leaf",
-                    choices=[
-                        "leaf", "spine", "border", "border_spine",
-                        "border_gateway", "border_gateway_spine",
-                        "super_spine", "border_super_spine",
-                        "border_gateway_super_spine", "access",
-                        "aggregation", "edge_router", "core_router", "tor"
-                    ]
-                ),
-                preserve_config=dict(type="bool", default=False),
-                poap=dict(
-                    type="list",
-                    elements="dict",
-                    options=dict(
-                        discovery_username=dict(type="str"),
-                        discovery_password=dict(type="str", no_log=True),
-                        serial_number=dict(type="str"),
-                        preprovision_serial=dict(type="str"),
-                        model=dict(type="str"),
-                        version=dict(type="str"),
-                        hostname=dict(type="str"),
-                        image_policy=dict(type="str"),
-                        config_data=dict(
-                            type="dict",
-                            options=dict(
-                                models=dict(
-                                    type="list",
-                                    elements="str",
-                                ),
-                                gateway=dict(
-                                    type="str",
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-                rma=dict(
-                    type="list",
-                    elements="dict",
-                    options=dict(
-                        old_serial=dict(type="str", required=True),
-                        serial_number=dict(type="str", required=True),
-                        model=dict(type="str", required=True),
-                        version=dict(type="str", required=True),
-                        image_policy=dict(type="str"),
-                        discovery_username=dict(type="str"),
-                        discovery_password=dict(type="str", no_log=True),
-                        config_data=dict(
-                            type="dict",
-                            required=True,
-                            options=dict(
-                                models=dict(
-                                    type="list",
-                                    elements="str",
-                                    required=True,
-                                ),
-                                gateway=dict(
-                                    type="str",
-                                    required=True,
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        ),
-        save=dict(type="bool", default=True),
-        deploy=dict(type="bool", default=True),
-        state=dict(
-            type="str",
-            default="merged",
-            choices=["merged", "overridden", "deleted"]
-        ),
-    )
+    argument_spec.update(SwitchConfigModel.get_argument_spec())
 
     # Create Ansible module
     module = AnsibleModule(
@@ -490,7 +402,6 @@ def main():
     # Initialize logging
     try:
         log_config = Log()
-        log_config.config = "/Users/achengam/Documents/Ansible_Dev/NDBranch/ansible_collections/cisco/nd/ansible_cisco_log_r.json"
         log_config.commit()
         # Create logger instance for this module
         log = logging.getLogger("nd.nd_manage_switches")
@@ -498,22 +409,16 @@ def main():
         module.fail_json(msg=str(error))
 
     # Get parameters
-    state = module.params.get("state")
-    fabric = module.params.get("fabric")
     output_level = module.params.get("output_level")
 
     # Initialize Results - this collects all operation results
     results = Results()
-    results.state = state
     results.check_mode = module.check_mode
-    results.action = f"manage_switches_{state}"
+    results.action = "manage_switches"
 
     try:
-        log.info(f"Starting nd_manage_switches module: fabric={fabric}, state={state}")
-        
         # Initialize NDModule (uses RestSend infrastructure internally)
         nd = NDModule(module)
-        log.info("NDModule initialized successfully")
 
         # Create NDSwitchResourceModule
         sw_module = NDSwitchResourceModule(
@@ -521,12 +426,10 @@ def main():
             results=results,
             logger=log
         )
-        log.info(f"NDSwitchResourceModule initialized for fabric: {fabric}")
-        
+
         # Manage state for merged, overridden, deleted
-        log.info(f"Managing state: {state}")
         sw_module.manage_state()
-        
+
         # Exit with results
         log.info(f"State management completed successfully. Changed: {results.changed}")
         sw_module.exit_json()
@@ -534,7 +437,7 @@ def main():
     except NDModuleError as error:
         # NDModule-specific errors (API failures, authentication issues, etc.)
         log.error(f"NDModule error: {error.msg}")
-        
+
         # Try to get response from RestSend if available
         try:
             results.response_current = nd.rest_send.response_current
@@ -550,15 +453,15 @@ def main():
                 "success": False,
                 "found": False,
             }
-        
+
         results.diff_current = {}
         results.register_api_call()
         results.build_final_result()
-        
+
         # Add error details if debug output is requested
         if output_level == "debug":
             results.final_result["error_details"] = error.to_dict()
-        
+
         log.error(f"Module failed: {results.final_result}")
         module.fail_json(msg=error.msg, **results.final_result)
 
@@ -566,7 +469,7 @@ def main():
         # Unexpected errors
         log.error(f"Unexpected error during module execution: {str(error)}")
         log.error(f"Error type: {type(error).__name__}")
-        
+
         # Build failed result
         results.response_current = {
             "RETURN_CODE": -1,
@@ -580,11 +483,11 @@ def main():
         results.diff_current = {}
         results.register_api_call()
         results.build_final_result()
-        
+
         if output_level == "debug":
             import traceback
             results.final_result["traceback"] = traceback.format_exc()
-        
+
         module.fail_json(msg=str(error), **results.final_result)
 
 
