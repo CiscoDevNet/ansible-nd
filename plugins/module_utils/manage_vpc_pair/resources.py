@@ -11,11 +11,11 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vpc_pair import (
     VpcPairOrchestrator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    ValidationError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_exceptions import (
     VpcPairResourceError,
@@ -82,6 +82,10 @@ class VpcPairStateMachine(NDStateMachine):
         formatted.setdefault("response", [])
         formatted.setdefault("result", [])
         class_diff = self._build_class_diff()
+        changed_by_class_diff = bool(
+            class_diff["created"] or class_diff["deleted"] or class_diff["updated"]
+        )
+        formatted["changed"] = bool(formatted.get("changed")) or changed_by_class_diff
         formatted["created"] = class_diff["created"]
         formatted["deleted"] = class_diff["deleted"]
         formatted["updated"] = class_diff["updated"]
@@ -115,7 +119,7 @@ class VpcPairStateMachine(NDStateMachine):
             if refresh_timeout is not None:
                 self.module.params["query_timeout"] = refresh_timeout
             response_data = self.model_orchestrator.query_all()
-            self.existing = self.nd_config_collection.from_api_response(
+            self.existing = NDConfigCollection.from_api_response(
                 response_data=response_data,
                 model_class=self.model_class,
             )
@@ -217,23 +221,21 @@ class VpcPairStateMachine(NDStateMachine):
         self.ansible_config = new_configs or []
 
         try:
-            parsed_items = []
-            for config in self.ansible_config:
-                try:
-                    parsed_items.append(self.model_class.from_config(config))
-                except ValidationError as e:
-                    raise VpcPairResourceError(
-                        msg=f"Invalid configuration: {e}",
-                        config=config,
-                        validation_errors=e.errors(),
-                    )
-
-            self.proposed = self.nd_config_collection(model_class=self.model_class, items=parsed_items)
+            self.proposed = NDConfigCollection.from_ansible_config(
+                data=self.ansible_config,
+                model_class=self.model_class,
+            )
             self.previous = self.existing.copy()
         except Exception as e:
             if isinstance(e, VpcPairResourceError):
                 raise
-            raise VpcPairResourceError(msg=f"Failed to prepare configurations: {e}", error=str(e))
+            error_details = {"error": str(e)}
+            if hasattr(e, "errors"):
+                error_details["validation_errors"] = e.errors()
+            raise VpcPairResourceError(
+                msg=f"Failed to prepare configurations: {e}",
+                **error_details,
+            )
 
         if state in ["merged", "replaced", "overridden"]:
             self._manage_create_update_state(state, unwanted_keys)
@@ -290,8 +292,8 @@ class VpcPairStateMachine(NDStateMachine):
                     response = self.model_orchestrator.create(final_item)
                     operation_status = "created"
 
+                self.sent.add(final_item)
                 if not self.module.check_mode:
-                    self.sent.add(final_item)
                     sent_payload = self.proposed_config
                 else:
                     sent_payload = None
@@ -348,9 +350,13 @@ class VpcPairStateMachine(NDStateMachine):
                 self.existing_config = existing_item.model_dump(
                     by_alias=True, exclude_none=True
                 )
-                self.model_orchestrator.delete(existing_item)
+                delete_changed = self.model_orchestrator.delete(existing_item)
                 self.existing.delete(identifier)
-                self.format_log(identifier=identifier, status="deleted", after_data={})
+                self.format_log(
+                    identifier=identifier,
+                    status="deleted" if delete_changed is not False else "no_change",
+                    after_data={},
+                )
             except VpcPairResourceError as e:
                 error_msg = f"Failed to delete {identifier}: {e.msg}"
                 if not self.module.params.get("ignore_errors", False):
@@ -380,9 +386,13 @@ class VpcPairStateMachine(NDStateMachine):
                 self.existing_config = existing_item.model_dump(
                     by_alias=True, exclude_none=True
                 )
-                self.model_orchestrator.delete(existing_item)
+                delete_changed = self.model_orchestrator.delete(existing_item)
                 self.existing.delete(identifier)
-                self.format_log(identifier=identifier, status="deleted", after_data={})
+                self.format_log(
+                    identifier=identifier,
+                    status="deleted" if delete_changed is not False else "no_change",
+                    after_data={},
+                )
             except VpcPairResourceError as e:
                 error_msg = f"Failed to delete {identifier}: {e.msg}"
                 if not self.module.params.get("ignore_errors", False):

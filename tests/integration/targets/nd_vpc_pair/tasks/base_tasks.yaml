@@ -1,0 +1,52 @@
+---
+# Shared base tasks for nd_vpc_pair integration tests.
+# Import this at the top of each test file:
+#   - import_tasks: base_tasks.yaml
+#     tags: <test_tag>
+
+- name: BASE - Test Entry Point - [nd_manage_vpc_pair]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+    nd_vpc_pair Integration Test Base Setup                   +"
+      - "----------------------------------------------------------------"
+
+# --------------------------------
+# Create Dictionary of Test Data
+# --------------------------------
+- name: BASE - Setup Internal TestCase Variables
+  ansible.builtin.set_fact:
+    test_fabric: "{{ fabric_name }}"
+    test_switch1: "{{ switch1_serial }}"
+    test_switch2: "{{ switch2_serial }}"
+    test_fabric_type: "{{ fabric_type | default('LANClassic') }}"
+    deploy_local: true
+  delegate_to: localhost
+
+# ------------------------------------------
+# Query Fabric Existence
+# ------------------------------------------
+- name: BASE - Verify fabric is reachable via API
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}"
+    method: get
+  register: fabric_query
+  ignore_errors: true
+
+- name: BASE - Assert fabric exists
+  ansible.builtin.assert:
+    that:
+      - fabric_query.failed == false
+    fail_msg: "Fabric '{{ test_fabric }}' not found or API unreachable."
+
+# ------------------------------------------
+# Clean up existing vPC pairs
+# ------------------------------------------
+- name: BASE - Clean up existing vPC pairs
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  ignore_errors: true

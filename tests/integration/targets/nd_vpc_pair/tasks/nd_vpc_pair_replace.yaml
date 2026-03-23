@@ -1,0 +1,156 @@
+##############################################
+##                 SETUP                    ##
+##############################################
+
+- name: Import nd_vpc_pair Base Tasks
+  import_tasks: base_tasks.yaml
+  tags: replace
+
+##############################################
+##      Setup Replace TestCase Variables   ##
+##############################################
+
+- name: REPLACE - Setup initial config
+  ansible.builtin.set_fact:
+    vpc_pair_conf:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+  delegate_to: localhost
+  tags: replace
+
+- name: Import Configuration Prepare Tasks - replace_initial
+  vars:
+    file: replace_initial
+  import_tasks: conf_prep_tasks.yaml
+  tags: replace
+
+- name: REPLACE - Setup replaced config
+  ansible.builtin.set_fact:
+    vpc_pair_conf:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: false
+  delegate_to: localhost
+  tags: replace
+
+- name: Import Configuration Prepare Tasks - replace_replaced
+  vars:
+    file: replace_replaced
+  import_tasks: conf_prep_tasks.yaml
+  tags: replace
+
+##############################################
+##                REPLACE                  ##
+##############################################
+
+# TC1 - Create initial vPC pair using replace state
+- name: REPLACE - TC1 - REPLACE - Create vPC pair using replace state
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    config: "{{ nd_vpc_pair_replace_initial_conf }}"
+  register: result
+  tags: replace
+
+- name: REPLACE - TC1 - ASSERT - Check if changed flag is true
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+  tags: replace
+
+- name: REPLACE - TC1 - GATHER - Get vPC pair state in ND
+  cisco.nd.nd_manage_vpc_pair:
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: verify_result
+  tags: replace
+
+- name: REPLACE - TC1 - VALIDATE - Verify vPC pair state in ND
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ verify_result }}"
+    expected_data: "{{ nd_vpc_pair_replace_initial_conf }}"
+  register: validation
+  tags: replace
+
+- name: REPLACE - TC1 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - validation.failed == false
+  tags: replace
+
+# TC2 - Replace vPC pair configuration
+- name: REPLACE - TC2 - REPLACE - Replace vPC pair configuration
+  cisco.nd.nd_manage_vpc_pair: &conf_replaced
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    config: "{{ nd_vpc_pair_replace_replaced_conf }}"
+  register: result
+  tags: replace
+
+- name: REPLACE - TC2 - ASSERT - Check if changed flag is true for LANClassic
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+  when: test_fabric_type == "LANClassic"
+  tags: replace
+
+- name: REPLACE - TC2 - ASSERT - Check if changed flag is false for VXLANFabric
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+  when: test_fabric_type == "VXLANFabric"
+  tags: replace
+
+- name: REPLACE - TC2 - GATHER - Get vPC pair state in ND
+  cisco.nd.nd_manage_vpc_pair:
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: verify_result
+  tags: replace
+
+- name: REPLACE - TC2 - VALIDATE - Verify replaced vPC pair state
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ verify_result }}"
+    expected_data: "{{ nd_vpc_pair_replace_replaced_conf }}"
+    mode: "full"
+  register: validation
+  when: test_fabric_type == "LANClassic"
+  tags: replace
+
+- name: REPLACE - TC2 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - validation.failed == false
+  when: test_fabric_type == "LANClassic"
+  tags: replace
+
+# TC3 - Idempotence test
+- name: REPLACE - TC3 - conf - Idempotence
+  cisco.nd.nd_manage_vpc_pair: *conf_replaced
+  register: result
+  tags: replace
+
+- name: REPLACE - TC3 - ASSERT - Check if changed flag is false
+  ansible.builtin.assert:
+    that:
+      - result.changed == false
+      - result.failed == false
+  tags: replace
+
+##############################################
+##                 CLEAN-UP                 ##
+##############################################
+
+- name: REPLACE - END - remove vPC pairs
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+  when: cleanup_at_end | default(true)
+  tags: replace

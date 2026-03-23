@@ -11,7 +11,6 @@ DOCUMENTATION = """
 ---
 module: nd_manage_vpc_pair
 short_description: Manage vPC pairs in Nexus devices.
-version_added: "1.0.0"
 description:
 - Create, update, delete, override, and gather vPC pairs on Nexus devices.
 - Uses NDStateMachine framework with a vPC orchestrator.
@@ -151,7 +150,7 @@ EXAMPLES = """
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
 
-# Native Ansible check mode (dry-run behavior)
+# Native Ansible check_mode behavior
 - name: Check mode vPC pair creation
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: myFabric
@@ -327,7 +326,7 @@ pending_delete_pairs_not_in_delete:
     sample: []
 """
 
-from ansible.module_utils.basic import AnsibleModule, missing_required_lib
+from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
@@ -352,10 +351,6 @@ except Exception:  # pragma: no cover - compatibility for stripped framework tre
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.model import (
     VpcPairPlaybookConfigModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_common import (
-    DEEPDIFF_IMPORT_ERROR,
-    HAS_DEEPDIFF,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_deploy import (
     _needs_deployment,
@@ -382,12 +377,6 @@ def main():
 
     module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
     setup_logging(module)
-
-    if not HAS_DEEPDIFF:
-        module.fail_json(
-            msg=missing_required_lib("deepdiff"),
-            exception=DEEPDIFF_IMPORT_ERROR
-        )
 
     try:
         module_config = VpcPairPlaybookConfigModel.model_validate(
@@ -450,7 +439,9 @@ def main():
         )
 
     # Normalize config keys for runtime/state-machine model handling.
-    normalized_config = [item.to_runtime_config() for item in module_config.config]
+    normalized_config = [
+        item.to_runtime_config() for item in (module_config.config or [])
+    ]
 
     module.params["config"] = normalized_config
 
