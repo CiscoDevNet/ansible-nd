@@ -1,0 +1,318 @@
+---
+
+- name: Import ND Manage Switches Base Tasks
+  ansible.builtin.import_tasks: ../../tasks/base_tasks.yaml
+  tags: merged
+
+# ----------------------------------------------
+# Run Test Cases
+# ----------------------------------------------
+# TC - 1
+- name: Merged TC1 - Merge a Switch using GreenField Deployment
+  cisco.nd.nd_manage_switches: &conf
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_base_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  register: merged_result
+  tags: merged
+
+- name: Merged TC1 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: deleted
+
+- name: Merged TC1 - Validate ND Data
+  cisco.nd.nd_inventory_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_base_conf }}"
+    changed: "{{ merged_result.changed }}"
+  register: result
+  tags: merged
+
+# TC - 2
+- name: Merged TC2 - Idempotence
+  cisco.nd.nd_manage_switches: *conf
+  register: result
+  tags: merged
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+      # - 'result.response == "The switch provided is already part of the fabric and cannot be created again"'
+  tags: merged
+
+# TC - 3
+- name: Merged TC3 - Clean up Existing Switches
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+  register: delete_result
+  tags: merged
+
+- name: Merged TC3 - Prepare Test Data
+  ansible.builtin.set_fact:
+    nd_switches_delete_conf: []
+  delegate_to: localhost
+  tags: merged
+
+- name: Merged TC3 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: deleted
+
+- name: Merged TC3 - Validate ND Data
+  cisco.nd.nd_inventory_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_delete_conf }}"
+    changed: "{{ delete_result.changed }}"
+  register: result
+  tags: merged
+
+# TC - 4
+- name: Merged TC4 - Prepare Config
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw1 }}"
+        role: leaf
+        auth_proto: MD5
+        preserve_config: true
+  delegate_to: localhost
+  tags: merged
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: merge
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: merged
+
+- name: Merged TC4 - Merge a Switch using BrownField Deployment
+  cisco.nd.nd_manage_switches: &conf_bf
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_merge_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  register: merged_result
+  tags: merged
+
+- name: Merged TC4 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: deleted
+
+- name: Merged TC4 - Validate ND Data
+  cisco.nd.nd_inventory_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_merge_conf }}"
+    changed: "{{ merged_result.changed }}"
+  register: result
+  tags: merged
+
+# TC - 5
+- name: Merged TC5 - Verify Idempotence
+  cisco.nd.nd_manage_switches: *conf_bf
+  register: result
+  tags: merged
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+      # - 'result.response == "The switch provided is already part of the fabric and cannot be created again"'
+  tags: merged
+
+# TC - 6
+- name: Merged TC6 - Clean up Existing Switches
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+  register: deleted_result
+  tags: merged
+
+- name: Merged TC6 - Prepare Config
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw1 }}"
+  delegate_to: localhost
+  tags: merged
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: merge
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: merged
+
+- name: Merged TC6 - Merge a Switch using GreenField Deployment - Using default role/auth_proto
+  cisco.nd.nd_manage_switches: &conf_def
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_merge_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  register: merged_result
+  tags: merged
+
+- name: Merged TC6 - Prepare Config
+  ansible.builtin.set_fact:
+    nd_switches_mergev_conf:
+      - seed_ip: "{{ test_data.sw1 }}"
+        role: leaf # default role in ND
+  delegate_to: localhost
+  tags: merged
+
+- name: Merged TC6 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: deleted
+
+- name: Merged TC6 - Validate ND Data
+  cisco.nd.nd_inventory_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_mergev_conf }}"
+    changed: "{{ merged_result.changed }}"
+  register: result
+  tags: merged
+
+# TC - 7
+- name: Merged TC7 - Verify Idempotence
+  cisco.nd.nd_manage_switches: *conf_def
+  register: result
+  tags: merged
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+      # - 'result.response == "The switch provided is already part of the fabric and cannot be created again"'
+  tags: merged
+
+# TC - 8
+- name: Merged TC8 - Clean up Existing Switches
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+  register: deleted_result
+  tags: merged
+
+# TC - 9
+- name: Merged TC9 - Prepare Config
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip:
+        role: leaf
+        auth_proto: MD5
+  delegate_to: localhost
+  tags: merged
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: merge
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: merged
+
+- name: Merged TC9 - Merge a Switch without seed_ip
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_merge_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  ignore_errors: true
+  register: merged_result
+  tags: merged
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'merged_result.changed == false'
+      - '"seed_ip cannot be empty" in merged_result.msg'
+  tags: merged
+
+# TC - 10
+- name: Merged TC10 - Prepare Config
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw1 }}"
+        auth_proto: MD5
+        role: invalid
+  delegate_to: localhost
+  tags: merged
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: merge
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: merged
+
+- name: Merged TC10 - Merge a Switch with Invalid Role
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_merge_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  register: merged_result
+  ignore_errors: true
+  tags: merged
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'merged_result.changed == false'
+      - '"Invalid SwitchRole: invalid" in merged_result.msg'
+  tags: merged
+
+# TC - 11
+- name: Merged TC11 - Prepare Config
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw1 }}"
+        auth_proto: MD55DM
+        role: leaf
+  delegate_to: localhost
+  tags: merged
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: merge
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: merged
+
+- name: Merged TC11 - Merge a Switch with invalid auth choice
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_merge_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  register: merged_result
+  ignore_errors: true
+  tags: merged
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'merged_result.changed == false'
+      - '"Invalid SnmpV3AuthProtocol: MD55DM" in merged_result.msg'
+  tags: merged
+
+# TC - 12
+- name: Merged TC12 - Merge a Switch without a config
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+  register: merged_result
+  ignore_errors: true
+  tags: merged
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'merged_result.changed == false'
+      - '"state is merged but all of the following are missing: config" in merged_result.msg'
+  tags: merged

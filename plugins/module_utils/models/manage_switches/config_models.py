@@ -423,41 +423,24 @@ class SwitchConfigModel(NDBaseModel):
             "rma": {"__all__": {"discovery_username": True, "discovery_password": True}},
         })
 
-    @model_validator(mode='before')
-    @classmethod
-    def reject_auth_proto_for_poap_rma(cls, data: Any) -> Any:
+    @model_validator(mode='after')
+    def reject_auth_proto_for_poap_rma(self) -> Self:
         """Reject non-MD5 auth_proto when POAP or RMA is configured.
 
         POAP, Pre-provision, and RMA operations always use MD5 internally.
-        If the user explicitly supplies a non-MD5 ``auth_proto`` (or
-        ``authProto``) alongside ``poap`` or ``rma``, raise an error so
-        they know the field is not user-configurable for these operation
-        types.
-
-        Note: Ansible argspec injects the default ``"MD5"`` even when the
-        user omits ``auth_proto``, so we must allow MD5 through.
+        By validating mode='after', all inputs (raw strings, enum instances,
+        or Ansible argspec-injected defaults) have already been coerced by
+        Pydantic into a typed SnmpV3AuthProtocol value, so a direct enum
+        comparison is safe and unambiguous.
         """
-        if not isinstance(data, dict):
-            return data
-
-        has_poap = bool(data.get("poap"))
-        has_rma = bool(data.get("rma"))
-
-        if has_poap or has_rma:
-            # Check both snake_case (Ansible playbook) and camelCase (API) keys
-            auth_val = data.get("auth_proto") or data.get("authProto")
-            if auth_val is not None:
-                # Normalize to lowercase for comparison
-                normalized = str(auth_val).strip().lower()
-                if normalized not in ("md5", ""):
-                    op = "POAP" if has_poap else "RMA"
-                    raise ValueError(
-                        f"'auth_proto' must not be specified for {op} operations. "
-                        f"The authentication protocol is always MD5 and is set "
-                        f"automatically. Received: '{auth_val}'"
-                    )
-
-        return data
+        if (self.poap or self.rma) and self.auth_proto != SnmpV3AuthProtocol.MD5:
+            op = "POAP" if self.poap else "RMA"
+            raise ValueError(
+                f"'auth_proto' must not be specified for {op} operations. "
+                f"The authentication protocol is always MD5 and is set "
+                f"automatically. Received: '{self.auth_proto.value}'"
+            )
+        return self
 
     @model_validator(mode='after')
     def validate_poap_rma_mutual_exclusion(self) -> Self:

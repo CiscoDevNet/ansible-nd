@@ -1,0 +1,64 @@
+---
+- name: Import ND Manage Switches Base Tasks
+  ansible.builtin.import_tasks: ../../tasks/base_tasks.yaml
+  tags: query
+
+# ----------------------------------------------
+# Run Test Cases
+# ----------------------------------------------
+
+# TC - 1
+- name: Query TC1 - Merge a Switch using GreenField Deployment
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_base_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  register: create_result
+  tags: query
+
+- name: Query TC1 - Gather Switch State in Fabric
+  cisco.nd.nd_manage_switches:
+    state: gathered
+    fabric: "{{ test_data.test_fabric }}"
+  register: query_result
+  tags: query
+
+- name: Query TC1 - Build Gathered Lookup
+  ansible.builtin.set_fact:
+    gathered_seeds: "{{ query_result.gathered | map(attribute='seed_ip') | list }}"
+    gathered_role_map: "{{ query_result.gathered | items2dict(key_name='seed_ip', value_name='role') }}"
+  delegate_to: localhost
+  tags: query
+
+- name: Query TC1 - Validate Gathered Count
+  ansible.builtin.assert:
+    that:
+      - query_result.gathered | length == nd_switches_base_conf | length
+    fail_msg: >-
+      Gathered count {{ query_result.gathered | length }} does not match
+      expected {{ nd_switches_base_conf | length }}
+  tags: query
+
+- name: Query TC1 - Validate Each Switch Present and Role Matches
+  ansible.builtin.assert:
+    that:
+      - item.seed_ip in gathered_seeds
+      - "'role' not in item or gathered_role_map[item.seed_ip] == item.role"
+    fail_msg: >-
+      Switch {{ item.seed_ip }} missing from gathered output or role mismatch
+      (expected={{ item.role | default('any') }},
+      got={{ gathered_role_map[item.seed_ip] | default('not found') }})
+  loop: "{{ nd_switches_base_conf }}"
+  tags: query
+
+# ----------------------------------------------
+# Cleanup Fabric Switches
+# ----------------------------------------------
+
+- name: Query - Cleanup Fabric
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+  register: result
+  tags: query

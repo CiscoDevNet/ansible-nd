@@ -1,0 +1,143 @@
+---
+
+- name: Import ND Manage Switches Base Tasks
+  ansible.builtin.import_tasks: ../../tasks/base_tasks.yaml
+  tags: deleted
+
+# ----------------------------------------------
+# Run Test Cases
+# ----------------------------------------------
+# TC - 1
+- name: Deleted TC1 - Prepare Switches in Fabric - GreenField Deployment
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_base_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  register: merged_result
+  tags: deleted
+
+- name: Deleted TC1 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: deleted
+
+- name: Debug - Print Query Result
+  ansible.builtin.debug:
+    var: query_result
+  tags: deleted
+
+- name: Deleted TC1 - Validate ND Data
+  cisco.nd.nd_inventory_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_base_conf }}"
+    changed: "{{merged_result.changed}}"
+  register: result
+  tags: deleted
+
+# TC - 2
+- name: Deleted TC2 - Delete a Switch from the Fabric
+  cisco.nd.nd_manage_switches: &conf_del
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+    config:
+      - seed_ip: "{{ test_data.sw1 }}"
+  register: delete_result
+  tags: deleted
+
+- name: Deleted TC2 - Prepare Test Data
+  ansible.builtin.set_fact:
+    nd_switches_delete_conf: "{{ nd_switches_base_conf | rejectattr('seed_ip', 'equalto', test_data.sw1) | list }}"
+  delegate_to: localhost
+  tags: deleted
+
+- name: Deleted TC2 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: deleted
+
+- name: Debug - Print Query Result
+  ansible.builtin.debug:
+    var: query_result
+  tags: deleted
+
+- name: Deleted TC2 - Validate nd Data
+  cisco.nd.nd_inventory_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_delete_conf }}"
+    changed: "{{ delete_result.changed }}"
+  register: result
+  tags: deleted
+
+# TC - 3
+- name: Deleted TC3 - Removing a previously Deleted Switch - Idempotence
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+    config:
+      - seed_ip: "{{ test_data.sw1 }}"
+  register: delete_result
+  register: result
+  tags: deleted
+
+- name: Debug - Print Query Result
+  ansible.builtin.debug:
+    var: result
+  tags: deleted
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+      # - 'result.response == "The switch provided is not part of the fabric and cannot be deleted"'
+  tags: deleted
+
+# TC - 4
+- name: Deleted TC4 - Delete all Switches from Fabric
+  cisco.nd.nd_manage_switches: &conf_del_all
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+  register: delete_result
+  tags: deleted
+
+- name: Deleted TC4 - Prepare Test Data
+  ansible.builtin.set_fact:
+    nd_switches_delete_conf: []
+  delegate_to: localhost
+  tags: deleted
+
+- name: Deleted TC4 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: deleted
+
+- name: Debug - Print Query Result
+  ansible.builtin.debug:
+    var: query_result
+  tags: deleted
+
+- name: Deleted TC4 - Validate nd Data
+  cisco.nd.nd_inventory_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_delete_conf }}"
+    changed: "{{ delete_result.changed }}"
+  register: result
+  tags: deleted
+
+# TC - 5
+- name: Deleted TC5 - Delete all Switches from Fabric - Idempotence
+  cisco.nd.nd_manage_switches: *conf_del_all
+  register: result
+  tags: deleted
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+  tags: deleted

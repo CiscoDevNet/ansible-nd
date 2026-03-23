@@ -1,0 +1,182 @@
+---
+- name: Test Entry Point - [nd_manage_switches - RMA]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing RMA Tests - [nd_manage_switches]                  +"
+      - "----------------------------------------------------------------"
+  tags: rma
+
+- name: RMA - Setup Internal TestCase Variables
+  ansible.builtin.set_fact:
+    test_data:
+      test_fabric: "{{ ansible_it_fabric }}"
+      sw1: "{{ ansible_switch1 }}"
+      sw1_serial: "1ABC23DEFGH"
+      sw1_rma_serial: "1ABC23DERMA"
+      rma_model: "SW1-K1234v"
+      rma_version: "12.3(4)"
+      rma_hostname: "RMA-SW"
+      rma_configmodel: "['SW1-K1234v']"
+      rma_gateway: "192.168.2.1/24"
+      deploy: "{{ deploy }}"
+      rma_enabled: false
+  delegate_to: localhost
+  tags: rma
+
+# ----------------------------------------------
+# Run Test Cases
+# ----------------------------------------------
+# Base Tests
+- name: Base - Verify fabric is reachable via API
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}"
+    method: get
+  register: fabric_query
+  ignore_errors: true
+
+- name: Base - Assert fabric exists
+  ansible.builtin.assert:
+    that:
+      - fabric_query.status == 200
+    fail_msg: "Fabric '{{ test_data.test_fabric }}' not found (HTTP {{ fabric_query.status }})."
+    success_msg: "Fabric '{{ test_data.test_fabric }}' found."
+
+- name: RMA Base Task - Set Variable
+  ansible.builtin.set_fact:
+    rma_enabled: true
+  when: fabric_query.status == 200 and fabric_query.jsondata.management.day0Bootstrap
+  tags: rma
+
+# TC1
+- name: RMA TC1 - Prepare Validate Config
+  ansible.builtin.set_fact:
+    nd_switches_delete_conf:
+  delegate_to: localhost
+  tags: rma
+
+- name: RMA TC1 - Clean Up Existing Switches
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+  register: deleted_result
+  tags: rma
+
+- name: RMA TC1 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: rma
+
+- name: RMA TC1 - Validate ND Data
+  cisco.nd.nd_inventory_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_delete_conf }}"
+  register: result
+  tags: rma
+
+# Tasks to add a switch to fabric and to configure and deploy
+# the switch in maintenance mode.
+# Please note that the switch should be shutdown after configuring it
+# in maintenance mode
+
+# TC2
+- name: RMA TC2 - Prepare Configuration
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw1 }}"
+        auth_proto: MD5
+  when: rma_enabled == True
+  delegate_to: localhost
+  tags: rma
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: rma
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: rma_enabled == True
+  tags: rma
+
+- name: RMA TC2 - Add Switch to the Fabric
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_rma_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  when: rma_enabled == True
+  register: merged_result
+  tags: rma
+
+- name: RMA TC2 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  when: rma_enabled == True
+  register: query_result
+  tags: rma
+
+- name: RMA TC2 - Validate ND Data
+  cisco.nd.nd_inventory_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_rma_conf }}"
+  when: rma_enabled == True
+  register: result
+  tags: rma
+
+- name: RMA TC2 - Change System Mode to Maintenance, Deploy and Block until Complete
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/inventory/switchActions/changeSystemMode?deploy=true&blocking=true"
+    method: POST
+    content:
+      mode: "maintenance"
+      switchIds:
+        - "{{ test_data.sw1_serial }}"
+  register: change_system_mode_result
+  when: (rma_enabled == True)
+  tags: rma
+
+# TC3
+- block:
+    - name: RMA TC3 - RMA the Existing Switch
+      cisco.nd.nd_manage_switches:
+        fabric: '{{ test_data.test_fabric }}'
+        state: merged
+        config:
+          - seed_ip: '{{ test_data.sw1 }}'
+            user_name: '{{ switch_username }}'
+            password: '{{ switch_password }}'
+            rma:
+              - serial_number: '{{ test_data.sw1_rma_serial }}'
+                old_serial: '{{ test_data.sw1_serial }}'
+                model: '{{ test_data.rma_model }}'
+                version: '{{ test_data.rma_version }}'
+                hostname: '{{ test_data.rma_hostname }}'
+                config_data:
+                  models: '{{ test_data.rma_configmodel }}'
+                  gateway: '{{ test_data.rma_gateway }}'
+      register: result
+
+    - name: ASSERT - Check condition
+      ansible.builtin.assert:
+        that:
+          - 'result.changed == true'
+
+    - name: ASSERT - Check condition
+      ansible.builtin.assert:
+        that:
+          - 'item["RETURN_CODE"] == 200'
+      loop: '{{ result.response }}'
+  when: (rma_enabled == True)
+  tags: rma
+
+# ----------------------------------------------
+# Cleanup Fabric Switches
+# ----------------------------------------------
+
+- name: RMA - Clean Up - Remove Existing Switches
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+  register: result
+  tags: rma

@@ -317,12 +317,16 @@ class RemoteCredentialStore(str, Enum):
 class AnomalyLevel(str, Enum):
     """
     Anomaly level classification.
+
+    Based on: components/schemas/anomalyLevel
     """
     CRITICAL = "critical"
     MAJOR = "major"
     MINOR = "minor"
     WARNING = "warning"
-    INFO = "info"
+    HEALTHY = "healthy"
+    NOT_APPLICABLE = "notApplicable"
+    UNKNOWN = "unknown"
 
     @classmethod
     def choices(cls) -> List[str]:
@@ -332,11 +336,16 @@ class AnomalyLevel(str, Enum):
 class AdvisoryLevel(str, Enum):
     """
     Advisory level classification.
+
+    Based on: components/schemas/advisoryLevel
     """
     CRITICAL = "critical"
     MAJOR = "major"
     MINOR = "minor"
+    WARNING = "warning"
+    HEALTHY = "healthy"
     NONE = "none"
+    NOT_APPLICABLE = "notApplicable"
 
     @classmethod
     def choices(cls) -> List[str]:

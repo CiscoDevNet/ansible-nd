@@ -299,6 +299,7 @@ class SwitchDiffEngine:
                 log.debug(f"Switch {ip} is idempotent — no changes needed")
                 changes["idempotent"].append(prop_sw)
             else:
+                diff_keys = {k for k in set(prop_dict) | set(existing_dict) if prop_dict.get(k) != existing_dict.get(k)}
                 log.info(
                     f"Switch {ip} has differences — marking to_update. "
                     f"Changed fields: {diff_keys}"
@@ -671,7 +672,12 @@ class SwitchDiscoveryService:
                 None,
             )
             if existing_match:
-                proposed.append(existing_match)
+                if cfg.role is not None:
+                    data = existing_match.model_dump(by_alias=True)
+                    data["switchRole"] = cfg.role.value if isinstance(cfg.role, SwitchRole) else cfg.role
+                    proposed.append(SwitchDataModel.model_validate(data))
+                else:
+                    proposed.append(existing_match)
                 log.debug(
                     f"Switch {seed_ip} already in fabric inventory — "
                     f"using existing record (discovery skipped)"
@@ -2794,7 +2800,23 @@ class NDSwitchResourceModule():
 
         diff["to_update"] = []
 
-        # Phase 3: Delegate add + migration to merged state
+        # Phase 3: Re-discover switches that were just deleted (they were
+        # skipped during initial discovery because they were already in the
+        # fabric).
+        update_ips = {sw.fabric_management_ip for sw in switches_to_delete}
+        configs_needing_rediscovery = [
+            cfg for cfg in proposed_config if cfg.seed_ip in update_ips
+        ]
+        if configs_needing_rediscovery:
+            self.log.info(
+                f"Re-discovering {len(configs_needing_rediscovery)} switch(es) "
+                f"after deletion for re-add: "
+                f"{[cfg.seed_ip for cfg in configs_needing_rediscovery]}"
+            )
+            fresh_discovered = self.discovery.discover(configs_needing_rediscovery)
+            discovered_data = {**(discovered_data or {}), **fresh_discovered}
+
+        # Phase 4: Delegate add + migration to merged state
         self._handle_merged_state(diff, proposed_config, discovered_data)
         self.log.debug("EXIT: _handle_overridden_state()")
 
