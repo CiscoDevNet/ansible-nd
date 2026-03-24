@@ -5,14 +5,16 @@
 from __future__ import absolute_import, division, print_function
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
-from typing import ClassVar, Type, Optional
+from typing import ClassVar, Type, Optional, Generic, TypeVar
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
+ModelType = TypeVar("ModelType", bound=NDBaseModel)
 
-class NDBaseOrchestrator(BaseModel):
+
+class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     model_config = ConfigDict(
         use_enum_values=True,
         validate_assignment=True,
@@ -20,7 +22,7 @@ class NDBaseOrchestrator(BaseModel):
         arbitrary_types_allowed=True,
     )
 
-    model_class: ClassVar[Type[NDBaseModel]] = Type[NDBaseModel]
+    model_class: ClassVar[Type[NDBaseModel]] = NDBaseModel
 
     # NOTE: if not defined by subclasses, return an error as they are required
     create_endpoint: Type[NDEndpointBaseModel]
@@ -33,14 +35,14 @@ class NDBaseOrchestrator(BaseModel):
     sender: NDModule
 
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
-    def create(self, model_instance: NDBaseModel, **kwargs) -> ResponseType:
+    def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.create_endpoint()
             return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=model_instance.to_payload())
         except Exception as e:
             raise Exception(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def update(self, model_instance: NDBaseModel, **kwargs) -> ResponseType:
+    def update(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.update_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
@@ -48,7 +50,7 @@ class NDBaseOrchestrator(BaseModel):
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def delete(self, model_instance: NDBaseModel, **kwargs) -> ResponseType:
+    def delete(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.delete_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
@@ -56,7 +58,7 @@ class NDBaseOrchestrator(BaseModel):
         except Exception as e:
             raise Exception(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_one(self, model_instance: NDBaseModel, **kwargs) -> ResponseType:
+    def query_one(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.query_one_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
@@ -64,7 +66,7 @@ class NDBaseOrchestrator(BaseModel):
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: Optional[NDBaseModel] = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: Optional[ModelType] = None, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.query_all_endpoint()
             result = self.sender.query_obj(api_endpoint.path)

@@ -4,13 +4,13 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Type
+from typing import Type, ClassVar
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import LocalUserModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.infra_aaa_local_users import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.aaa_local_users import (
     EpInfraAaaLocalUsersPost,
     EpInfraAaaLocalUsersPut,
     EpInfraAaaLocalUsersDelete,
@@ -18,8 +18,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.infra_
 )
 
 
-class LocalUserOrchestrator(NDBaseOrchestrator):
-    model_class: Type[NDBaseModel] = LocalUserModel
+class LocalUserOrchestrator(NDBaseOrchestrator[LocalUserModel]):
+    model_class: ClassVar[Type[NDBaseModel]] = LocalUserModel
 
     create_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersPost
     update_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersPut
