@@ -22,7 +22,15 @@ Note:
 
 
 def _get_template_config(vpc_pair_model) -> Optional[Dict[str, Any]]:
-    """Extract template configuration from a vPC pair model if present."""
+    """
+    Extract template configuration from a vPC pair model if present.
+
+    Args:
+        vpc_pair_model: VpcPairModel instance with optional vpc_pair_details field
+
+    Returns:
+        Dict with serialized template config, or None if not present.
+    """
     if not hasattr(vpc_pair_model, "vpc_pair_details"):
         return None
 
@@ -34,7 +42,17 @@ def _get_template_config(vpc_pair_model) -> Optional[Dict[str, Any]]:
 
 
 def _build_vpc_pair_payload(vpc_pair_model) -> Dict[str, Any]:
-    """Build pair payload with vpcAction discriminator for ND 4.2 APIs."""
+    """
+    Build pair payload with vpcAction discriminator for ND 4.2 APIs.
+
+    Args:
+        vpc_pair_model: VpcPairModel instance or dict with switchId,
+            peerSwitchId, useVirtualPeerLink fields
+
+    Returns:
+        Dict with vpcAction, switchId, peerSwitchId, useVirtualPeerLink,
+        and optional vpcPairDetails keys.
+    """
     if isinstance(vpc_pair_model, dict):
         switch_id = vpc_pair_model.get(VpcFieldNames.SWITCH_ID)
         peer_switch_id = vpc_pair_model.get(VpcFieldNames.PEER_SWITCH_ID)
@@ -67,7 +85,17 @@ API_FIELD_ALIASES = {
 
 
 def _get_api_field_value(api_response: Dict[str, Any], field_name: str, default=None):
-    """Get a field value across known ND API naming aliases."""
+    """
+    Get a field value across known ND API naming aliases.
+
+    Args:
+        api_response: API response dict to search
+        field_name: Primary field name to look up
+        default: Default value if field not found in any alias
+
+    Returns:
+        Field value from the response, or default if not found.
+    """
     if not isinstance(api_response, dict):
         return default
 

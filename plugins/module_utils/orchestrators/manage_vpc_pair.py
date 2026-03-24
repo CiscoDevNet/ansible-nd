@@ -17,13 +17,25 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_action
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_query import (
     custom_vpc_query_all,
+    normalize_vpc_playbook_switch_identifiers,
 )
 
 
 class _VpcPairQueryContext:
-    """Minimal context object for query_all during NDStateMachine initialization."""
+    """
+    Minimal context object for query_all during NDStateMachine initialization.
+
+    Provides a .module attribute so custom_vpc_query_all can access module params
+    before the full state machine is constructed.
+    """
 
     def __init__(self, module: AnsibleModule):
+        """
+        Initialize query context.
+
+        Args:
+            module: AnsibleModule instance
+        """
         self.module = module
 
 
@@ -43,6 +55,17 @@ class VpcPairOrchestrator:
         sender: Optional[Any] = None,
         **kwargs,
     ):
+        """
+        Initialize VpcPairOrchestrator.
+
+        Args:
+            module: AnsibleModule instance (preferred)
+            sender: Optional NDModule/NDModuleV2 with .module attribute
+            **kwargs: Ignored (for framework compatibility)
+
+        Raises:
+            ValueError: If neither module nor sender provides an AnsibleModule
+        """
         _ = kwargs
         if module is None and sender is not None:
             module = getattr(sender, "module", None)
@@ -57,12 +80,32 @@ class VpcPairOrchestrator:
         self.state_machine = None
 
     def bind_state_machine(self, state_machine: Any) -> None:
+        """
+        Link orchestrator to its parent state machine.
+
+        Args:
+            state_machine: VpcPairStateMachine instance for CRUD handler access
+        """
         self.state_machine = state_machine
 
     def query_all(self):
+        """
+        Query all existing vPC pairs from the controller.
+
+        If suppress_previous is True, skips the controller query and only
+        normalizes switch IP identifiers. Otherwise delegates to
+        custom_vpc_query_all for full discovery.
+
+        Returns:
+            List of existing pair dicts for NDConfigCollection initialization.
+        """
         # Optional performance knob: skip initial query used to build "before"
         # state and baseline diff in NDStateMachine initialization.
         if self.state_machine is None and self.module.params.get("suppress_previous", False):
+            # Even when the before-query is skipped, normalize any IP-based
+            # switch identifiers in playbook config so downstream model/action
+            # code always receives serial numbers.
+            normalize_vpc_playbook_switch_identifiers(self.module)
             return []
 
         context = (
@@ -73,18 +116,57 @@ class VpcPairOrchestrator:
         return custom_vpc_query_all(context)
 
     def create(self, model_instance, **kwargs):
+        """
+        Create a new vPC pair via custom_vpc_create handler.
+
+        Args:
+            model_instance: VpcPairModel instance (unused, context from state machine)
+            **kwargs: Ignored
+
+        Returns:
+            API response from create operation.
+
+        Raises:
+            RuntimeError: If orchestrator is not bound to a state machine
+        """
         _ = (model_instance, kwargs)
         if self.state_machine is None:
             raise RuntimeError("VpcPairOrchestrator is not bound to a state machine")
         return custom_vpc_create(self.state_machine)
 
     def update(self, model_instance, **kwargs):
+        """
+        Update an existing vPC pair via custom_vpc_update handler.
+
+        Args:
+            model_instance: VpcPairModel instance (unused, context from state machine)
+            **kwargs: Ignored
+
+        Returns:
+            API response from update operation.
+
+        Raises:
+            RuntimeError: If orchestrator is not bound to a state machine
+        """
         _ = (model_instance, kwargs)
         if self.state_machine is None:
             raise RuntimeError("VpcPairOrchestrator is not bound to a state machine")
         return custom_vpc_update(self.state_machine)
 
     def delete(self, model_instance, **kwargs):
+        """
+        Delete a vPC pair via custom_vpc_delete handler.
+
+        Args:
+            model_instance: VpcPairModel instance (unused, context from state machine)
+            **kwargs: Ignored
+
+        Returns:
+            API response from delete operation, or False if already unpaired.
+
+        Raises:
+            RuntimeError: If orchestrator is not bound to a state machine
+        """
         _ = (model_instance, kwargs)
         if self.state_machine is None:
             raise RuntimeError("VpcPairOrchestrator is not bound to a state machine")

@@ -39,6 +39,16 @@ class VpcPairStateMachine(NDStateMachine):
     """NDStateMachine adapter with state handling for nd_manage_vpc_pair."""
 
     def __init__(self, module: AnsibleModule):
+        """
+        Initialize VpcPairStateMachine.
+
+        Creates the underlying NDStateMachine with VpcPairOrchestrator, binds
+        the state machine back to the orchestrator, and initializes log/result
+        containers.
+
+        Args:
+            module: AnsibleModule instance with validated params
+        """
         super().__init__(module=module, model_orchestrator=VpcPairOrchestrator)
         self.model_orchestrator.bind_state_machine(self)
         self.current_identifier = None
@@ -55,7 +65,16 @@ class VpcPairStateMachine(NDStateMachine):
         after_data: Optional[Any] = None,
         sent_payload_data: Optional[Any] = None,
     ) -> None:
-        """Collect operation log entries expected by nd_manage_vpc_pair flows."""
+        """
+        Collect operation log entries expected by nd_manage_vpc_pair flows.
+
+        Args:
+            identifier: Pair identifier tuple (switch_id, peer_switch_id)
+            status: Operation status (created, updated, deleted, no_change)
+            before_data: Optional before-state dict for the pair
+            after_data: Optional after-state dict for the pair
+            sent_payload_data: Optional API payload that was sent
+        """
         log_entry: Dict[str, Any] = {"identifier": identifier, "status": status}
         if before_data is not None:
             log_entry["before"] = before_data
@@ -68,6 +87,10 @@ class VpcPairStateMachine(NDStateMachine):
     def add_logs_and_outputs(self) -> None:
         """
         Build final result payload compatible with nd_manage_vpc_pair runtime.
+
+        Refreshes after-state from controller, walks all log entries to build
+        the output dict with before, after, current, diff, created, deleted,
+        updated lists. Populates self.result with the final Ansible output.
         """
         self._refresh_after_state()
         self.output.assign(
@@ -99,7 +122,14 @@ class VpcPairStateMachine(NDStateMachine):
         Optionally refresh the final "after" state from controller query.
 
         Enabled by default for write states to better reflect live controller
-        state. Can be disabled for performance-sensitive runs.
+        state. Can be disabled for performance-sensitive runs via
+        suppress_verification or refresh_after_apply params.
+
+        Skipped when:
+        - State is gathered (read-only)
+        - Running in check mode
+        - suppress_verification is True
+        - refresh_after_apply is False
         """
         state = self.module.params.get("state")
         if state not in ("merged", "replaced", "overridden", "deleted"):
@@ -138,6 +168,12 @@ class VpcPairStateMachine(NDStateMachine):
     def _identifier_to_key(identifier: Any) -> str:
         """
         Build a stable key for de-duplicating identifiers in class diff output.
+
+        Args:
+            identifier: Pair identifier (tuple, string, or any serializable value)
+
+        Returns:
+            JSON string representation of the identifier for use as dict key.
         """
         try:
             return json.dumps(identifier, sort_keys=True, default=str)
@@ -148,6 +184,13 @@ class VpcPairStateMachine(NDStateMachine):
     def _extract_changed_properties(log_entry: Dict[str, Any]) -> List[str]:
         """
         Best-effort changed-property extraction for update operations.
+
+        Args:
+            log_entry: Single log entry dict with before/after/sent_payload keys
+
+        Returns:
+            Sorted list of property names that changed between before and after.
+            Falls back to sent_payload keys if before/after comparison yields nothing.
         """
         before = log_entry.get("before")
         after = log_entry.get("after")
@@ -166,6 +209,12 @@ class VpcPairStateMachine(NDStateMachine):
     def _build_class_diff(self) -> Dict[str, List[Any]]:
         """
         Build class-level diff with created/deleted/updated entries.
+
+        Walks all log entries, deduplicates by identifier key, and sorts each
+        into created/deleted/updated buckets based on operation status.
+
+        Returns:
+            Dict with 'created', 'deleted', 'updated' lists of identifiers.
         """
         created: List[Any] = []
         deleted: List[Any] = []
@@ -210,6 +259,21 @@ class VpcPairStateMachine(NDStateMachine):
         unwanted_keys: Optional[List] = None,
         override_exceptions: Optional[List] = None,
     ) -> None:
+        """
+        Execute state reconciliation for the given state and config items.
+
+        Builds proposed and previous NDConfigCollection objects, then dispatches
+        to create/update or delete handlers based on state.
+
+        Args:
+            state: Desired state (merged, replaced, overridden, deleted)
+            new_configs: List of config dicts from playbook
+            unwanted_keys: Optional keys to exclude from diff comparison
+            override_exceptions: Optional identifiers to skip during override deletions
+
+        Raises:
+            VpcPairResourceError: On validation or processing failures
+        """
         unwanted_keys = unwanted_keys or []
         override_exceptions = override_exceptions or []
 
@@ -247,6 +311,19 @@ class VpcPairStateMachine(NDStateMachine):
             raise VpcPairResourceError(msg=f"Invalid state: {state}")
 
     def _manage_create_update_state(self, state: str, unwanted_keys: List) -> None:
+        """
+        Process proposed config items for create or update operations.
+
+        Loops over each proposed config item, diffs against existing state.
+        Creates new pairs, updates changed pairs, and skips unchanged pairs.
+
+        Args:
+            state: Current state (merged, replaced, overridden)
+            unwanted_keys: Keys to exclude from diff comparison
+
+        Raises:
+            VpcPairResourceError: If create/update fails for an item
+        """
         for proposed_item in self.proposed:
             identifier = proposed_item.get_identifier_value()
             try:
@@ -337,6 +414,17 @@ class VpcPairStateMachine(NDStateMachine):
                     )
 
     def _manage_override_deletions(self, override_exceptions: List) -> None:
+        """
+        Delete pairs that exist on controller but are not in proposed config.
+
+        Used by overridden state to remove unspecified pairs.
+
+        Args:
+            override_exceptions: List of identifiers to skip (not delete)
+
+        Raises:
+            VpcPairResourceError: If deletion fails for a pair
+        """
         diff_identifiers = self.previous.get_diff_identifiers(self.proposed)
         for identifier in diff_identifiers:
             if identifier in override_exceptions:
@@ -374,6 +462,15 @@ class VpcPairStateMachine(NDStateMachine):
                     )
 
     def _manage_delete_state(self) -> None:
+        """
+        Process proposed config items for delete operations.
+
+        Loops over each proposed delete item, finds matching existing pair,
+        calls orchestrator.delete(), and removes from collection.
+
+        Raises:
+            VpcPairResourceError: If deletion fails for an item
+        """
         for proposed_item in self.proposed:
             identifier = proposed_item.get_identifier_value()
             try:
@@ -425,12 +522,33 @@ class VpcPairResourceService:
         deploy_handler: DeployHandler,
         needs_deployment_handler: NeedsDeployHandler,
     ):
+        """
+        Initialize VpcPairResourceService.
+
+        Args:
+            module: AnsibleModule instance with validated params
+            run_state_handler: Callback for state execution (run_vpc_module)
+            deploy_handler: Callback for deployment (custom_vpc_deploy)
+            needs_deployment_handler: Callback to check if deploy is needed (_needs_deployment)
+        """
         self.module = module
         self.run_state_handler = run_state_handler
         self.deploy_handler = deploy_handler
         self.needs_deployment_handler = needs_deployment_handler
 
     def execute(self, fabric_name: str) -> Dict[str, Any]:
+        """
+        Execute the full vpc_pair module lifecycle.
+
+        Creates VpcPairStateMachine, runs state handler, optionally deploys.
+
+        Args:
+            fabric_name: Fabric name to operate on
+
+        Returns:
+            Dict with complete module result including before, after, current,
+            changed, deployment info, and ip_to_sn_mapping.
+        """
         nd_manage_vpc_pair = VpcPairStateMachine(module=self.module)
         result = self.run_state_handler(nd_manage_vpc_pair)
 

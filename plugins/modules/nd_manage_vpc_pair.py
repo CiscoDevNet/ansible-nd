@@ -94,12 +94,12 @@ options:
         suboptions:
             peer1_switch_id:
                 description:
-                - Peer1 switch serial number for the vPC pair.
+                - Peer1 switch serial number or management IP address for the vPC pair.
                 required: true
                 type: str
             peer2_switch_id:
                 description:
-                - Peer2 switch serial number for the vPC pair.
+                - Peer2 switch serial number or management IP address for the vPC pair.
                 required: true
                 type: str
             use_virtual_peer_link:
@@ -133,6 +133,16 @@ EXAMPLES = """
     config:
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
+
+# Create a new vPC pair using management IPs
+- name: Create vPC pair with switch management IPs
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: myFabric
+    state: merged
+    config:
+      - peer1_switch_id: "10.10.10.11"
+        peer2_switch_id: "10.10.10.12"
+        use_virtual_peer_link: true
 
 # Gather existing vPC pairs
 - name: Gather all vPC pairs
@@ -368,10 +378,17 @@ def main():
     """
     Module entry point combining framework + RestSend.
 
+    Builds argument spec from Pydantic models, validates state-level rules,
+    normalizes config keys, creates VpcPairResourceService with handler
+    callbacks, and delegates execution.
+
     Architecture:
     - Thin module entrypoint delegates to VpcPairResourceService
     - VpcPairResourceService handles NDStateMachine orchestration
     - Custom actions use RestSend (NDModuleV2) for HTTP with retry logic
+
+    Raises:
+        VpcPairResourceError: Converted to module.fail_json with structured details
     """
     argument_spec = VpcPairPlaybookConfigModel.get_argument_spec()
 

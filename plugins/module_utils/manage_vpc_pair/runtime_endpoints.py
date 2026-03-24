@@ -72,6 +72,16 @@ class VpcPairEndpoints:
 
     @staticmethod
     def _append_query(path: str, *query_groups: EndpointQueryParams) -> str:
+        """
+        Append query parameters to an endpoint path.
+
+        Args:
+            path: Base URL path
+            *query_groups: One or more EndpointQueryParams to serialize
+
+        Returns:
+            Path with query string appended, or original path if no params.
+        """
         composite_params = CompositeQueryParams()
         for query_group in query_groups:
             composite_params.add(query_group)
@@ -80,36 +90,104 @@ class VpcPairEndpoints:
 
     @staticmethod
     def vpc_pair_base(fabric_name: str) -> str:
+        """
+        Build base path for vPC pairs list endpoint.
+
+        Args:
+            fabric_name: Fabric name
+
+        Returns:
+            Path: /api/v1/manage/fabrics/{fabricName}/vpcPairs
+        """
         endpoint = EpVpcPairsListGet(fabric_name=fabric_name)
         return endpoint.path
 
     @staticmethod
     def vpc_pairs_list(fabric_name: str) -> str:
+        """
+        Build path for listing all vPC pairs in a fabric.
+
+        Args:
+            fabric_name: Fabric name
+
+        Returns:
+            Path: /api/v1/manage/fabrics/{fabricName}/vpcPairs
+        """
         endpoint = EpVpcPairsListGet(fabric_name=fabric_name)
         return endpoint.path
 
     @staticmethod
     def vpc_pair_put(fabric_name: str, switch_id: str) -> str:
+        """
+        Build path for PUT (create/update/delete) on a switch vPC pair.
+
+        Args:
+            fabric_name: Fabric name
+            switch_id: Switch serial number
+
+        Returns:
+            Path: /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPair
+        """
         endpoint = EpVpcPairPut(fabric_name=fabric_name, switch_id=switch_id)
         return endpoint.path
 
     @staticmethod
     def fabric_switches(fabric_name: str) -> str:
+        """
+        Build path for querying fabric switch inventory.
+
+        Args:
+            fabric_name: Fabric name
+
+        Returns:
+            Path: /api/v1/manage/fabrics/{fabricName}/switches
+        """
         endpoint = EpFabricSwitchesGet(fabric_name=fabric_name)
         return endpoint.path
 
     @staticmethod
     def switch_vpc_pair(fabric_name: str, switch_id: str) -> str:
+        """
+        Build path for GET/PUT on a specific switch vPC pair.
+
+        Args:
+            fabric_name: Fabric name
+            switch_id: Switch serial number
+
+        Returns:
+            Path: /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPair
+        """
         endpoint = EpVpcPairGet(fabric_name=fabric_name, switch_id=switch_id)
         return endpoint.path
 
     @staticmethod
     def switch_vpc_recommendations(fabric_name: str, switch_id: str) -> str:
+        """
+        Build path for querying vPC pair recommendations for a switch.
+
+        Args:
+            fabric_name: Fabric name
+            switch_id: Switch serial number
+
+        Returns:
+            Path: .../switches/{switchId}/vpcPairRecommendation
+        """
         endpoint = EpVpcPairRecommendationGet(fabric_name=fabric_name, switch_id=switch_id)
         return endpoint.path
 
     @staticmethod
     def switch_vpc_overview(fabric_name: str, switch_id: str, component_type: str = "full") -> str:
+        """
+        Build path for querying vPC pair overview for a switch.
+
+        Args:
+            fabric_name: Fabric name
+            switch_id: Switch serial number
+            component_type: Overview filter (default: "full")
+
+        Returns:
+            Path: .../switches/{switchId}/vpcPairOverview?componentType={type}
+        """
         endpoint = EpVpcPairOverviewGet(fabric_name=fabric_name, switch_id=switch_id)
         base_path = endpoint.path
         query_params = _ComponentTypeQueryParams(component_type=component_type)
@@ -121,6 +199,17 @@ class VpcPairEndpoints:
         switch_id: str,
         component_type: str = ComponentTypeSupportEnum.CHECK_PAIRING.value,
     ) -> str:
+        """
+        Build path for querying vPC pair support status for a switch.
+
+        Args:
+            fabric_name: Fabric name
+            switch_id: Switch serial number
+            component_type: Support check type (default: checkPairing)
+
+        Returns:
+            Path: .../switches/{switchId}/vpcPairSupport?componentType={type}
+        """
         endpoint = EpVpcPairSupportGet(
             fabric_name=fabric_name,
             switch_id=switch_id,
@@ -132,16 +221,45 @@ class VpcPairEndpoints:
 
     @staticmethod
     def switch_vpc_consistency(fabric_name: str, switch_id: str) -> str:
+        """
+        Build path for querying vPC pair consistency diagnostics.
+
+        Args:
+            fabric_name: Fabric name
+            switch_id: Switch serial number
+
+        Returns:
+            Path: .../switches/{switchId}/vpcPairConsistency
+        """
         endpoint = EpVpcPairConsistencyGet(fabric_name=fabric_name, switch_id=switch_id)
         return endpoint.path
 
     @staticmethod
     def fabric_config_save(fabric_name: str) -> str:
+        """
+        Build path for fabric config-save action.
+
+        Args:
+            fabric_name: Fabric name
+
+        Returns:
+            Path: /api/v1/manage/fabrics/{fabricName}/actions/configSave
+        """
         endpoint = EpFabricConfigSavePost(fabric_name=fabric_name)
         return endpoint.path
 
     @staticmethod
     def fabric_config_deploy(fabric_name: str, force_show_run: bool = True) -> str:
+        """
+        Build path for fabric deploy action.
+
+        Args:
+            fabric_name: Fabric name
+            force_show_run: Whether to include forceShowRun query param (default: True)
+
+        Returns:
+            Path: .../fabrics/{fabricName}/actions/deploy?forceShowRun=true
+        """
         endpoint = EpFabricDeployPost(fabric_name=fabric_name)
         base_path = endpoint.path
         query_params = _ForceShowRunQueryParams(
