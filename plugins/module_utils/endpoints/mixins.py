@@ -74,10 +74,22 @@ class NodeNameMixin(BaseModel):
     node_name: Optional[str] = Field(default=None, min_length=1, description="Node name")
 
 
+class PolicyIdMixin(BaseModel):
+    """Mixin for endpoints that require policy_id parameter."""
+
+    policy_id: Optional[str] = Field(default=None, min_length=1, description="Policy ID (e.g., POLICY-12345)")
+
+
 class SwitchSerialNumberMixin(BaseModel):
     """Mixin for endpoints that require switch_sn parameter."""
 
     switch_sn: Optional[str] = Field(default=None, min_length=1, description="Switch serial number")
+
+
+class TicketIdMixin(BaseModel):
+    """Mixin for endpoints that require ticket_id parameter."""
+
+    ticket_id: Optional[str] = Field(default=None, min_length=1, description="Change control ticket ID")
 
 
 class VrfNameMixin(BaseModel):
