@@ -10,7 +10,7 @@ from types import MappingProxyType
 from copy import deepcopy
 
 
-class NDConstantMapping(Dict):
+class NDConstantMapping:
     def __init__(self, data: Dict):
         self.data = data
         self.new_dict = deepcopy(data)
