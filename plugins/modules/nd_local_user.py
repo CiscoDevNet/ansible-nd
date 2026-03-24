@@ -109,6 +109,7 @@ extends_documentation_fragment:
 notes:
 - This module is only supported on Nexus Dashboard having version 4.2.1 or higher.
 - This module is not idempotent when creating or updating a local user object when O(config.user_password) is used.
+- When using O(state=overridden), admin user configuration must be specified as it cannot be deleted.
 """
 
 EXAMPLES = r"""
@@ -137,13 +138,14 @@ EXAMPLES = r"""
     config:
       - login_id: local_user_min
         user_password: localUserMinuser_password
-        security_domain: all
+        security_domains:
+          - name: all
     state: merged
 
 - name: Update local user
   cisco.nd.nd_local_user:
     config:
-      - email: udpateduser@example.com
+      - email: updateduser@example.com
         login_id: local_user
         first_name: Updated user first name
         last_name: Updated user last name
@@ -155,7 +157,6 @@ EXAMPLES = r"""
             roles: super_admin
           - name: ansible_domain
             roles: observer
-        roles: super_admin
         remote_id_claim: ""
         remote_user_authorization: false
     state: replaced
@@ -173,6 +174,7 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import LocalUserModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.local_user import LocalUserOrchestrator
 
@@ -185,6 +187,7 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
     )
+    require_pydantic(module)
 
     try:
         # Initialize StateMachine
