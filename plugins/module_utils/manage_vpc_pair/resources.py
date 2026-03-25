@@ -51,6 +51,7 @@ class VpcPairStateMachine(NDStateMachine):
         """
         super().__init__(module=module, model_orchestrator=VpcPairOrchestrator)
         self.model_orchestrator.bind_state_machine(self)
+
         self.current_identifier = None
         self.existing_config: Dict[str, Any] = {}
         self.proposed_config: Dict[str, Any] = {}
@@ -113,6 +114,7 @@ class VpcPairStateMachine(NDStateMachine):
         formatted["deleted"] = class_diff["deleted"]
         formatted["updated"] = class_diff["updated"]
         formatted["class_diff"] = class_diff
+
         if self.logs and "logs" not in formatted:
             formatted["logs"] = self.logs
         self.result = formatted
@@ -139,6 +141,13 @@ class VpcPairStateMachine(NDStateMachine):
         if self.module.params.get("suppress_verification", False):
             return
         if not self.module.params.get("refresh_after_apply", True):
+            return
+        if self.logs and not any(
+            log.get("status") in ("created", "updated", "deleted")
+            for log in self.logs
+        ):
+            # Skip refresh for pure no-op runs to avoid false changed flips from
+            # stale/synthetic before-state fallbacks.
             return
 
         refresh_timeout = self.module.params.get("refresh_after_timeout")
@@ -439,11 +448,12 @@ class VpcPairStateMachine(NDStateMachine):
                     by_alias=True, exclude_none=True
                 )
                 delete_changed = self.model_orchestrator.delete(existing_item)
-                self.existing.delete(identifier)
+                if delete_changed is not False:
+                    self.existing.delete(identifier)
                 self.format_log(
                     identifier=identifier,
                     status="deleted" if delete_changed is not False else "no_change",
-                    after_data={},
+                    after_data={} if delete_changed is not False else self.existing_config,
                 )
             except VpcPairResourceError as e:
                 error_msg = f"Failed to delete {identifier}: {e.msg}"
@@ -484,11 +494,12 @@ class VpcPairStateMachine(NDStateMachine):
                     by_alias=True, exclude_none=True
                 )
                 delete_changed = self.model_orchestrator.delete(existing_item)
-                self.existing.delete(identifier)
+                if delete_changed is not False:
+                    self.existing.delete(identifier)
                 self.format_log(
                     identifier=identifier,
                     status="deleted" if delete_changed is not False else "no_change",
-                    after_data={},
+                    after_data={} if delete_changed is not False else self.existing_config,
                 )
             except VpcPairResourceError as e:
                 error_msg = f"Failed to delete {identifier}: {e.msg}"
@@ -556,7 +567,7 @@ class VpcPairResourceService:
             result["ip_to_sn_mapping"] = self.module.params["_ip_to_sn_mapping"]
 
         deploy = self.module.params.get("deploy", False)
-        if deploy and not self.module.check_mode:
+        if deploy:
             deploy_result = self.deploy_handler(nd_manage_vpc_pair, fabric_name, result)
             result["deployment"] = deploy_result
             result["deployment_needed"] = deploy_result.get(

@@ -4,7 +4,7 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 from __future__ import absolute_import, division, print_function
 
-from typing import Literal
+from typing import Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
@@ -38,6 +38,9 @@ class VpcPairRecommendationEndpointParams(
     EndpointQueryParams,
 ):
     """Endpoint-specific query parameters for vPC pair recommendation endpoint."""
+
+    # Keep this optional for this endpoint so query param is omitted unless explicitly set.
+    use_virtual_peer_link: Optional[bool] = Field(default=None, description="Optional virtual peer link flag")
 
 
 class EpVpcPairRecommendationGet(

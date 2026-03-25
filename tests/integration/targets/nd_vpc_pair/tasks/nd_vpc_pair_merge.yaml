@@ -411,13 +411,12 @@
           peer_switch_keep_alive_local_ip: "192.0.2.12"
           keep_alive_vrf: management
   register: result
-  ignore_errors: true
   tags: merge
 
 - name: MERGE - TC7 - ASSERT - Verify default vpc_pair_details path
   ansible.builtin.assert:
     that:
-      - result.failed == false or (result.failed == true and ("Failed to update VPC pair" in result.msg or "Failed to create VPC pair" in result.msg))
+      - result.failed == false
   tags: merge
 
 # TC8 - Merge with vpc_pair_details custom template settings
@@ -436,13 +435,12 @@
             domainId: "20"
             customConfig: "vpc domain 20"
   register: result
-  ignore_errors: true
   tags: merge
 
 - name: MERGE - TC8 - ASSERT - Verify custom vpc_pair_details path
   ansible.builtin.assert:
     that:
-      - result.failed == false or (result.failed == true and ("Failed to update VPC pair" in result.msg or "Failed to create VPC pair" in result.msg))
+      - result.failed == false
   tags: merge
 
 # TC9 - Test invalid configurations

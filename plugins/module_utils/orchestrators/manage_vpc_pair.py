@@ -17,7 +17,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_action
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_query import (
     custom_vpc_query_all,
-    normalize_vpc_playbook_switch_identifiers,
 )
 
 
@@ -92,22 +91,11 @@ class VpcPairOrchestrator:
         """
         Query all existing vPC pairs from the controller.
 
-        If suppress_previous is True, skips the controller query and only
-        normalizes switch IP identifiers. Otherwise delegates to
-        custom_vpc_query_all for full discovery.
+        Delegates to custom_vpc_query_all for discovery and runtime context.
 
         Returns:
             List of existing pair dicts for NDConfigCollection initialization.
         """
-        # Optional performance knob: skip initial query used to build "before"
-        # state and baseline diff in NDStateMachine initialization.
-        if self.state_machine is None and self.module.params.get("suppress_previous", False):
-            # Even when the before-query is skipped, normalize any IP-based
-            # switch identifiers in playbook config so downstream model/action
-            # code always receives serial numbers.
-            normalize_vpc_playbook_switch_identifiers(self.module)
-            return []
-
         context = (
             self.state_machine
             if self.state_machine is not None

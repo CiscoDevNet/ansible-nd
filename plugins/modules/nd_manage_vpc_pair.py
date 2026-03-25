@@ -71,14 +71,6 @@ options:
         - Optional timeout in seconds for the post-apply refresh query.
         - When omitted, C(query_timeout) is used.
         type: int
-    suppress_previous:
-        description:
-        - Skip initial controller query for C(before) state and diff baseline.
-        - Performance optimization for trusted upsert workflows.
-        - May reduce idempotency and diff accuracy because existing controller state is not pre-fetched.
-        - Supported only with C(state=merged).
-        type: bool
-        default: false
     suppress_verification:
         description:
         - Skip post-apply controller query for final C(after) state verification.
@@ -180,15 +172,6 @@ EXAMPLES = """
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
 
-# Advanced performance mode: skip initial before-state query (merged only)
-- name: Create/update vPC pair without initial before query
-  cisco.nd.nd_manage_vpc_pair:
-    fabric_name: myFabric
-    state: merged
-    suppress_previous: true
-    config:
-      - peer1_switch_id: "FDO23040Q85"
-        peer2_switch_id: "FDO23040Q86"
 """
 
 RETURN = """
@@ -201,7 +184,6 @@ before:
     description:
     - vPC pair state before changes.
     - May contain controller read-only properties because it is queried from controller state.
-    - Empty when C(suppress_previous=true).
     type: list
     returned: always
     sample: [{"switchId": "FDO123", "peerSwitchId": "FDO456", "useVirtualPeerLink": false}]
@@ -408,25 +390,10 @@ def main():
     # State-specific parameter validations
     state = module_config.state
     deploy = module_config.deploy
-    suppress_previous = module_config.suppress_previous
     suppress_verification = module_config.suppress_verification
 
     if state == "gathered" and deploy:
         module.fail_json(msg="Deploy parameter cannot be used with 'gathered' state")
-
-    if suppress_previous and state != "merged":
-        module.fail_json(
-            msg=(
-                "Parameter 'suppress_previous' is supported only with state 'merged' "
-                "for nd_manage_vpc_pair."
-            )
-        )
-
-    if suppress_previous:
-        module.warn(
-            "suppress_previous=true skips initial controller query. "
-            "before/diff accuracy and idempotency checks may be reduced."
-        )
 
     if suppress_verification:
         if module.params.get("refresh_after_apply", True):
