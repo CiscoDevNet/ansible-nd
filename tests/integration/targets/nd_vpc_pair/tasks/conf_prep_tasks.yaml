@@ -10,6 +10,13 @@
 # Requires: vpc_pair_conf variable to be set before importing.
 
 - name: Build vPC Pair Config Data from Template
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/../files"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+- name: Build vPC Pair Config Data from Template
   ansible.builtin.template:
     src: "{{ playbook_dir }}/../templates/nd_vpc_pair_conf.j2"
     dest: "{{ playbook_dir }}/../files/nd_vpc_pair_{{ file }}_conf.yaml"

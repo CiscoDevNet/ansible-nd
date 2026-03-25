@@ -184,20 +184,22 @@
       - result.msg is search("Deploy parameter cannot be used")
   tags: gather
 
-# TC9 - gathered with native check_mode should succeed
-- name: GATHER - TC9 - GATHER - Gather with check_mode enabled
+# TC9 - gathered + dry_run validation (must fail)
+- name: GATHER - TC9 - GATHER - Gather with dry_run enabled (invalid)
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
-  check_mode: true
+    dry_run: true
   register: result
+  ignore_errors: true
   tags: gather
 
-- name: GATHER - TC9 - ASSERT - Verify gathered+check_mode behavior
+- name: GATHER - TC9 - ASSERT - Verify gathered+dry_run validation
   ansible.builtin.assert:
     that:
-      - result.failed == false
-      - result.gathered is defined
+      - result.failed == true
+      - result.msg is search("Unsupported parameters")
+      - result.msg is search("dry_run")
   tags: gather
 
 # TC10 - Validate /vpcPairs list API alignment with module gathered output
