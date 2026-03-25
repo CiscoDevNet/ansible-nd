@@ -21,6 +21,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     SortMixin,
     ViewMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    EndpointQueryParams,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
@@ -31,13 +34,19 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
 
-class EpVpcPairsListGet(
-    FabricNameMixin,
+class VpcPairsListEndpointParams(
     FromClusterMixin,
     FilterMixin,
     PaginationMixin,
     SortMixin,
     ViewMixin,
+    EndpointQueryParams,
+):
+    """Endpoint-specific query parameters for vPC pairs list endpoint."""
+
+
+class EpVpcPairsListGet(
+    FabricNameMixin,
     NDEndpointBaseModel,
 ):
     """
@@ -47,17 +56,26 @@ class EpVpcPairsListGet(
     model_config = COMMON_CONFIG
     api_version: Literal["v1"] = Field(default="v1")
     min_controller_version: str = Field(default="3.0.0")
-    class_name: Literal["EpVpcPairsListGet"] = Field(default="EpVpcPairsListGet")
+    class_name: Literal["EpVpcPairsListGet"] = Field(
+        default="EpVpcPairsListGet", frozen=True, description="Class name for backward compatibility"
+    )
+    endpoint_params: VpcPairsListEndpointParams = Field(
+        default_factory=VpcPairsListEndpointParams, description="Endpoint-specific query parameters"
+    )
 
     @property
     def path(self) -> str:
         if self.fabric_name is None:
             raise ValueError("fabric_name is required")
-        return BasePath.path("fabrics", self.fabric_name, "vpcPairs")
+        base_path = BasePath.path("fabrics", self.fabric_name, "vpcPairs")
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{base_path}?{query_string}"
+        return base_path
 
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.GET
 
 
-__all__ = ["EpVpcPairsListGet"]
+__all__ = ["EpVpcPairsListGet", "VpcPairsListEndpointParams"]

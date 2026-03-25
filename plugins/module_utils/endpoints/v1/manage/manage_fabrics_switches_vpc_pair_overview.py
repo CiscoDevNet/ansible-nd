@@ -19,6 +19,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     FromClusterMixin,
     SwitchIdMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    EndpointQueryParams,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
@@ -29,11 +32,17 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
 
+class VpcPairOverviewEndpointParams(
+    FromClusterMixin,
+    ComponentTypeMixin,
+    EndpointQueryParams,
+):
+    """Endpoint-specific query parameters for vPC pair overview endpoint."""
+
+
 class EpVpcPairOverviewGet(
     FabricNameMixin,
     SwitchIdMixin,
-    FromClusterMixin,
-    ComponentTypeMixin,
     NDEndpointBaseModel,
 ):
     """
@@ -43,23 +52,32 @@ class EpVpcPairOverviewGet(
     model_config = COMMON_CONFIG
     api_version: Literal["v1"] = Field(default="v1")
     min_controller_version: str = Field(default="3.0.0")
-    class_name: Literal["EpVpcPairOverviewGet"] = Field(default="EpVpcPairOverviewGet")
+    class_name: Literal["EpVpcPairOverviewGet"] = Field(
+        default="EpVpcPairOverviewGet", frozen=True, description="Class name for backward compatibility"
+    )
+    endpoint_params: VpcPairOverviewEndpointParams = Field(
+        default_factory=VpcPairOverviewEndpointParams, description="Endpoint-specific query parameters"
+    )
 
     @property
     def path(self) -> str:
         if self.fabric_name is None or self.switch_id is None:
             raise ValueError("fabric_name and switch_id are required")
-        return BasePath.path(
+        base_path = BasePath.path(
             "fabrics",
             self.fabric_name,
             "switches",
             self.switch_id,
             "vpcPairOverview",
         )
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{base_path}?{query_string}"
+        return base_path
 
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.GET
 
 
-__all__ = ["EpVpcPairOverviewGet"]
+__all__ = ["EpVpcPairOverviewGet", "VpcPairOverviewEndpointParams"]

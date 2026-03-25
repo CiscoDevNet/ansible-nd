@@ -19,6 +19,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     SwitchIdMixin,
     TicketIdMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    EndpointQueryParams,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
@@ -32,7 +35,6 @@ COMMON_CONFIG = ConfigDict(validate_assignment=True)
 class _EpVpcPairBase(
     FabricNameMixin,
     SwitchIdMixin,
-    FromClusterMixin,
     NDEndpointBaseModel,
 ):
     model_config = COMMON_CONFIG
@@ -41,13 +43,25 @@ class _EpVpcPairBase(
     def path(self) -> str:
         if self.fabric_name is None or self.switch_id is None:
             raise ValueError("fabric_name and switch_id are required")
-        return BasePath.path(
+        base_path = BasePath.path(
             "fabrics",
             self.fabric_name,
             "switches",
             self.switch_id,
             "vpcPair",
         )
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{base_path}?{query_string}"
+        return base_path
+
+
+class VpcPairGetEndpointParams(FromClusterMixin, EndpointQueryParams):
+    """Endpoint-specific query parameters for vPC pair GET endpoint."""
+
+
+class VpcPairPutEndpointParams(VpcPairGetEndpointParams, TicketIdMixin):
+    """Endpoint-specific query parameters for vPC pair PUT endpoint."""
 
 
 class EpVpcPairGet(_EpVpcPairBase):
@@ -57,25 +71,40 @@ class EpVpcPairGet(_EpVpcPairBase):
 
     api_version: Literal["v1"] = Field(default="v1")
     min_controller_version: str = Field(default="3.0.0")
-    class_name: Literal["EpVpcPairGet"] = Field(default="EpVpcPairGet")
+    class_name: Literal["EpVpcPairGet"] = Field(
+        default="EpVpcPairGet", frozen=True, description="Class name for backward compatibility"
+    )
+    endpoint_params: VpcPairGetEndpointParams = Field(
+        default_factory=VpcPairGetEndpointParams, description="Endpoint-specific query parameters"
+    )
 
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.GET
 
 
-class EpVpcPairPut(_EpVpcPairBase, TicketIdMixin):
+class EpVpcPairPut(_EpVpcPairBase):
     """
     PUT /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPair
     """
 
     api_version: Literal["v1"] = Field(default="v1")
     min_controller_version: str = Field(default="3.0.0")
-    class_name: Literal["EpVpcPairPut"] = Field(default="EpVpcPairPut")
+    class_name: Literal["EpVpcPairPut"] = Field(
+        default="EpVpcPairPut", frozen=True, description="Class name for backward compatibility"
+    )
+    endpoint_params: VpcPairPutEndpointParams = Field(
+        default_factory=VpcPairPutEndpointParams, description="Endpoint-specific query parameters"
+    )
 
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.PUT
 
 
-__all__ = ["EpVpcPairGet", "EpVpcPairPut"]
+__all__ = [
+    "EpVpcPairGet",
+    "EpVpcPairPut",
+    "VpcPairGetEndpointParams",
+    "VpcPairPutEndpointParams",
+]

@@ -18,6 +18,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     FromClusterMixin,
     SwitchIdMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    EndpointQueryParams,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
@@ -28,10 +31,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
 
+class VpcPairConsistencyEndpointParams(FromClusterMixin, EndpointQueryParams):
+    """Endpoint-specific query parameters for vPC pair consistency endpoint."""
+
+
 class EpVpcPairConsistencyGet(
     FabricNameMixin,
     SwitchIdMixin,
-    FromClusterMixin,
     NDEndpointBaseModel,
 ):
     """
@@ -41,23 +47,32 @@ class EpVpcPairConsistencyGet(
     model_config = COMMON_CONFIG
     api_version: Literal["v1"] = Field(default="v1")
     min_controller_version: str = Field(default="3.0.0")
-    class_name: Literal["EpVpcPairConsistencyGet"] = Field(default="EpVpcPairConsistencyGet")
+    class_name: Literal["EpVpcPairConsistencyGet"] = Field(
+        default="EpVpcPairConsistencyGet", frozen=True, description="Class name for backward compatibility"
+    )
+    endpoint_params: VpcPairConsistencyEndpointParams = Field(
+        default_factory=VpcPairConsistencyEndpointParams, description="Endpoint-specific query parameters"
+    )
 
     @property
     def path(self) -> str:
         if self.fabric_name is None or self.switch_id is None:
             raise ValueError("fabric_name and switch_id are required")
-        return BasePath.path(
+        base_path = BasePath.path(
             "fabrics",
             self.fabric_name,
             "switches",
             self.switch_id,
             "vpcPairConsistency",
         )
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{base_path}?{query_string}"
+        return base_path
 
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.GET
 
 
-__all__ = ["EpVpcPairConsistencyGet"]
+__all__ = ["EpVpcPairConsistencyGet", "VpcPairConsistencyEndpointParams"]

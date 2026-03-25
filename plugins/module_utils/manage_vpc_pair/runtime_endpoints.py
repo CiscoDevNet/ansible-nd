@@ -25,12 +25,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair_overview import (
     EpVpcPairOverviewGet,
+    VpcPairOverviewEndpointParams,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair_recommendation import (
     EpVpcPairRecommendationGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair_support import (
     EpVpcPairSupportGet,
+    VpcPairSupportEndpointParams,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vpc_pairs import (
     EpVpcPairsListGet,
@@ -41,12 +43,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_deploy import (
     EpFabricDeployPost,
 )
-
-
-class _ComponentTypeQueryParams(EndpointQueryParams):
-    """Query params for endpoints that require componentType."""
-
-    component_type: Optional[str] = None
 
 
 class _ForceShowRunQueryParams(EndpointQueryParams):
@@ -188,10 +184,12 @@ class VpcPairEndpoints:
         Returns:
             Path: .../switches/{switchId}/vpcPairOverview?componentType={type}
         """
-        endpoint = EpVpcPairOverviewGet(fabric_name=fabric_name, switch_id=switch_id)
-        base_path = endpoint.path
-        query_params = _ComponentTypeQueryParams(component_type=component_type)
-        return VpcPairEndpoints._append_query(base_path, query_params)
+        endpoint = EpVpcPairOverviewGet(
+            fabric_name=fabric_name,
+            switch_id=switch_id,
+            endpoint_params=VpcPairOverviewEndpointParams(component_type=component_type),
+        )
+        return endpoint.path
 
     @staticmethod
     def switch_vpc_support(
@@ -213,11 +211,9 @@ class VpcPairEndpoints:
         endpoint = EpVpcPairSupportGet(
             fabric_name=fabric_name,
             switch_id=switch_id,
-            component_type=component_type,
+            endpoint_params=VpcPairSupportEndpointParams(component_type=component_type),
         )
-        base_path = endpoint.path
-        query_params = _ComponentTypeQueryParams(component_type=component_type)
-        return VpcPairEndpoints._append_query(base_path, query_params)
+        return endpoint.path
 
     @staticmethod
     def switch_vpc_consistency(fabric_name: str, switch_id: str) -> str:
