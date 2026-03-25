@@ -30,7 +30,7 @@
   tags: deleted
 
 - name: Deleted TC1 - Validate ND Data
-  cisco.nd.nd_inventory_validate:
+  cisco.nd.nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_base_conf }}"
     changed: "{{merged_result.changed}}"
@@ -66,7 +66,7 @@
   tags: deleted
 
 - name: Deleted TC2 - Validate nd Data
-  cisco.nd.nd_inventory_validate:
+  cisco.nd.nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_delete_conf }}"
     changed: "{{ delete_result.changed }}"
@@ -123,7 +123,7 @@
   tags: deleted
 
 - name: Deleted TC4 - Validate nd Data
-  cisco.nd.nd_inventory_validate:
+  cisco.nd.nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_delete_conf }}"
     changed: "{{ delete_result.changed }}"

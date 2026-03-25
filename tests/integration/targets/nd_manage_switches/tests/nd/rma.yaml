@@ -70,7 +70,7 @@
   tags: rma
 
 - name: RMA TC1 - Validate ND Data
-  cisco.nd.nd_inventory_validate:
+  cisco.nd.nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_delete_conf }}"
   register: result
@@ -117,7 +117,7 @@
   tags: rma
 
 - name: RMA TC2 - Validate ND Data
-  cisco.nd.nd_inventory_validate:
+  cisco.nd.nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_rma_conf }}"
   when: rma_enabled == True

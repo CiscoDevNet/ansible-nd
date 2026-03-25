@@ -25,7 +25,7 @@
   tags: overridden
 
 - name: Overridden TC1 - Validate ND Data
-  cisco.nd.nd_inventory_validate:
+  cisco.nd.nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_base_conf }}"
     changed: " {{ merged_result.changed }}"
@@ -77,7 +77,7 @@
   tags: overridden
 
 - name: Overridden TC3 - Validate ND Data
-  cisco.nd.nd_inventory_validate:
+  cisco.nd.nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_overridden_conf }}"
     changed: "{{ overridden_result.changed }}"
@@ -117,7 +117,7 @@
   tags: overridden
 
 - name: Overridden TC4 - Validate ND Data
-  cisco.nd.nd_inventory_validate:
+  cisco.nd.nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_overridden_conf }}"
     changed: "{{ overridden_result.changed }}"

@@ -103,7 +103,7 @@
   tags: poap
 
 - name: POAP TC1 - Validate ND Data
-  cisco.nd.nd_inventory_validate:
+  cisco.nd.nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_delete_conf }}"
   register: result
@@ -159,7 +159,7 @@
   tags: poap
 
 - name: Poap TC1 - Merged - Validate ND Data
-  cisco.nd.nd_inventory_validate:
+  cisco.nd.nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_poap_conf }}"
     changed: "{{ merged_result.changed }}"
@@ -229,7 +229,7 @@
   tags: poap
 
 - name: Poap TC3 - Merged - Validate ND Data
-  cisco.nd.nd_inventory_validate:
+  cisco.nd.nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_poap_conf }}"
     changed: "{{ merged_result.changed }}"

@@ -4,9 +4,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""ND Inventory Validation Action Plugin.
+"""ND Switches Validation Action Plugin.
 
-Validates switch inventory data returned from nd_rest against expected
+Validates switch data returned from nd_rest against expected
 configuration entries. Checks that every entry in test_data has a matching
 switch in the ND API response (fabricManagementIp == seed_ip,
 switchRole == role).
@@ -47,7 +47,7 @@ display = Display()
 # Validation orchestration model
 # ---------------------------------------------------------------------------
 
-class InventoryValidate(BaseModel):
+class SwitchesValidate(BaseModel):
     """Orchestrates the match between playbook config entries and live ND inventory."""
 
     config_data: Optional[List[Any]] = None
@@ -202,7 +202,7 @@ class ActionModule(ActionBase):
 
         if not HAS_PYDANTIC or not HAS_MODELS:
             results["failed"] = True
-            results["msg"] = "pydantic and the ND collection models are required for nd_inventory_validate"
+            results["msg"] = "pydantic and the ND collection models are required for nd_switches_validate"
             return results
 
         nd_data = self._task.args["nd_data"]
@@ -248,7 +248,7 @@ class ActionModule(ActionBase):
                 # Role mode: only match by role, ignore seed_ip
                 ignore_fields["seed_ip"] = 1
 
-        validation = InventoryValidate(
+        validation = SwitchesValidate(
             config_data=test_data,
             nd_data=switches,
             ignore_fields=ignore_fields,
