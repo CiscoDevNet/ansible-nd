@@ -501,7 +501,6 @@ metadata:
   elements: dict
 """
 
-import copy
 import logging
 
 from ansible.module_utils.basic import AnsibleModule
@@ -513,7 +512,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     nd_argument_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import PlaybookPolicyConfig
 
 
@@ -523,41 +521,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.co
 def main():
     """Main entry point for the nd_policy module."""
 
-    # Per-switch policy suboptions (used inside switch[].policies)
-    switch_policy_spec = dict(
-        name=dict(type="str", required=True),
-        description=dict(type="str", default=""),
-        priority=dict(type="int", default=500),
-        create_additional_policy=dict(type="bool", default=True),
-        template_inputs=dict(type="dict", default={}),
-    )
-
-    # Switch list suboptions
-    switch_spec = dict(
-        serial_number=dict(type="str", required=True, aliases=["ip"]),
-        policies=dict(type="list", elements="dict", default=[], options=switch_policy_spec),
-    )
-
-    # Top-level config entry suboptions
-    config_spec = dict(
-        name=dict(type="str"),
-        description=dict(type="str", default=""),
-        priority=dict(type="int", default=500),
-        create_additional_policy=dict(type="bool", default=True),
-        template_inputs=dict(type="dict", default={}),
-        switch=dict(type="list", elements="dict", options=switch_spec),
-    )
-
     argument_spec = nd_argument_spec()
-    argument_spec.update(
-        fabric_name=dict(type="str", required=True, aliases=["fabric"]),
-        config=dict(type="list", elements="dict", required=True, options=config_spec),
-        use_desc_as_key=dict(type="bool", default=False),
-        deploy=dict(type="bool", default=True),
-        ticket_id=dict(type="str"),
-        cluster_name=dict(type="str"),
-        state=dict(type="str", default="merged", choices=["merged", "deleted", "query"]),
-    )
+    argument_spec.update(PlaybookPolicyConfig.get_argument_spec())
 
     module = AnsibleModule(
         argument_spec=argument_spec,
@@ -572,15 +537,6 @@ def main():
     except ValueError as error:
         module.fail_json(msg=str(error))
 
-    # Get parameters
-    state = module.params.get("state")
-    output_level = module.params.get("output_level")
-
-    if not module.params.get("config"):
-        module.fail_json(
-            msg=f"'config' element is mandatory for state '{state}'."
-        )
-
     # Initialize NDModule (REST client)
     try:
         nd = NDModule(module)
@@ -588,6 +544,8 @@ def main():
         module.fail_json(msg=f"Failed to initialize NDModule: {str(error)}")
 
     # Initialize Results
+    state = module.params.get("state")
+    output_level = module.params.get("output_level")
     results = Results()
     results.state = state
     results.check_mode = module.check_mode
@@ -603,41 +561,8 @@ def main():
             logger=log,
         )
 
-        # Pydantic input validation — fail fast on bad user input
-        use_desc_as_key = module.params.get("use_desc_as_key", False)
-        validation_context = {"state": state, "use_desc_as_key": use_desc_as_key}
-        for idx, entry in enumerate(module.params["config"]):
-            try:
-                PlaybookPolicyConfig.model_validate(entry, context=validation_context)
-            except ValidationError as ve:
-                module.fail_json(
-                    msg=f"Input validation failed for config[{idx}]: {ve}"
-                )
-            except ValueError as ve:
-                module.fail_json(
-                    msg=f"Input validation failed for config[{idx}]: {ve}"
-                )
-
-        # Resolve switch IPs/hostnames → serial numbers
-        translated_input = policy_module.resolve_switch_identifiers(
-            copy.deepcopy(module.params["config"]),
-        )
-
-        # Flatten multi-switch config into one entry per (policy, switch)
-        translated_config = NDPolicyModule.translate_config(
-            translated_input,
-            module.params.get("use_desc_as_key"),
-        )
-
-        # Validate translated config
-        policy_module.validate_translated_config(translated_config)
-
-        # Override module.params["config"] with the flat config
-        module.params["config"] = translated_config
-        policy_module.config = translated_config
-
-        # Manage state for merged, query, deleted
-        log.info(f"Managing state: {state}")
+        # manage_state handles the full pipeline:
+        # pydantic validation → resolve switches → translate → validate → dispatch
         policy_module.manage_state()
 
         # Exit with results

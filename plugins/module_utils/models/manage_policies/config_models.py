@@ -95,6 +95,7 @@ class PlaybookSwitchEntry(NDNestedModel):
     """Validates a switch entry within the config.
 
     Corresponds to ``config[].switch[]`` in the playbook.
+    Accepts ``serial_number`` or the backward-compatible alias ``ip``.
     """
 
     identifiers: ClassVar[List[str]] = []
@@ -102,13 +103,31 @@ class PlaybookSwitchEntry(NDNestedModel):
     serial_number: str = Field(
         ...,
         min_length=1,
-        alias="serial_number",
         description="Switch serial number, management IP, or hostname",
     )
     policies: Optional[List[PlaybookSwitchPolicyConfig]] = Field(
         default_factory=list,
         description="Per-switch policy overrides",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_ip_alias(cls, values: Any) -> Any:
+        """Accept ``ip`` as a backward-compatible alias for ``serial_number``.
+
+        If the user provides ``ip`` but not ``serial_number``, copy the value
+        so validation succeeds on the canonical field name.
+
+        Args:
+            values: Raw input dict before field validation.
+
+        Returns:
+            The (possibly mutated) input dict with ``serial_number`` set.
+        """
+        if isinstance(values, dict):
+            if "serial_number" not in values and "ip" in values:
+                values["serial_number"] = values["ip"]
+        return values
 
 
 # ============================================================================
@@ -181,6 +200,15 @@ class PlaybookPolicyConfig(NDNestedModel):
 
         Switch-only entries (``name`` is None, ``switch`` is present) skip
         these checks since they only declare target switches.
+
+        Args:
+            info: Pydantic ``ValidationInfo`` carrying the context dict.
+
+        Returns:
+            The validated model instance (``self``).
+
+        Raises:
+            ValueError: If required fields are missing for the given state.
         """
         ctx = info.context or {} if info else {}
         state = ctx.get("state")
@@ -215,6 +243,23 @@ class PlaybookPolicyConfig(NDNestedModel):
             )
 
         return self
+
+    @classmethod
+    def get_argument_spec(cls) -> Dict[str, Any]:
+        """Return the Ansible argument spec for nd_policy.
+
+        Returns:
+            Dict suitable for passing to ``AnsibleModule(argument_spec=...)``.
+        """
+        return dict(
+            fabric_name=dict(type="str", required=True, aliases=["fabric"]),
+            config=dict(type="list", elements="dict", required=True),
+            use_desc_as_key=dict(type="bool", default=False),
+            deploy=dict(type="bool", default=True),
+            ticket_id=dict(type="str"),
+            cluster_name=dict(type="str"),
+            state=dict(type="str", default="merged", choices=["merged", "deleted", "query"]),
+        )
 
 
 __all__ = [
