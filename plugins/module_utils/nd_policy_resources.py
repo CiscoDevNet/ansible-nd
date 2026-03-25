@@ -206,90 +206,99 @@ class NDPolicyModule:
               switch dicts, each with ``serial_number`` and optional ``policies``.
 
         This function:
-            1. Pops the switch entry from the config.
-            2. For each switch, adds its serial number to every global policy.
-            3. If a switch has per-switch ``policies``, those override (by template
-               name) the global policies for that switch (when
-               ``use_desc_as_key=false``).  When ``use_desc_as_key=true``,
-               per-switch policies are simply merged with global policies.
-            4. Returns a flat list where each dict has a ``switch`` key with a
+            1. Separates global policy entries from the switch entry (non-destructive).
+            2. Collects per-switch overrides keyed by ``(template_name, switch_sn)``.
+            3. For each (global_policy, switch) pair, emits either the override
+               (when ``use_desc_as_key=false`` and a same-name override exists)
+               or the global.  When ``use_desc_as_key=true``, both are emitted.
+            4. Appends per-switch-only policies (overrides whose template name
+               doesn't appear in any global).
+            5. Returns a flat list where each dict has a ``switch`` key with a
                single serial number string.
 
+        The input ``config`` list is **not** mutated.
+
         Args:
-            config: The raw config list from the playbook (will be mutated).
+            config: The raw config list from the playbook.
             use_desc_as_key: Whether descriptions are used as unique keys.
 
         Returns:
             Flat list of policy dicts, each with a ``switch`` (serial number) key.
         """
-        if config is None:
+        if not config:
             return []
 
-        # Find the switch entry (the dict that has a "switch" key containing a list)
-        pos = next(
-            (index for index, d in enumerate(config) if "switch" in d and isinstance(d["switch"], list)),
-            None,
-        )
+        # ── Step 1: Separate globals from the switch entry ──────────────
+        global_policies = []
+        switch_entry = None
+        for entry in config:
+            if isinstance(entry.get("switch"), list):
+                switch_entry = entry
+            else:
+                global_policies.append(entry)
 
-        if pos is None:
+        # No switch entry → nothing to target
+        if switch_entry is None:
             return config
 
-        sw_dict = config.pop(pos)
-        global_policies = config
+        switches = switch_entry["switch"]
+        if not switches:
+            return []
 
-        override_config = []
-        for sw in sw_dict["switch"]:
+        # ── Step 2: Extract switch serial numbers and per-switch overrides ──
+        #
+        # overrides_by_switch: {sn: [policy_dict, ...]}
+        # override_names:      {sn: {template_name, ...}}  (for fast lookup)
+        switch_serials = []
+        overrides_by_switch = {}
+        override_names = {}
+
+        for sw in switches:
             sn = sw.get("serial_number") or sw.get("ip", "")
+            switch_serials.append(sn)
 
             if sw.get("policies"):
-                for pol in sw["policies"]:
-                    entry = copy.deepcopy(pol)
-                    entry["switch"] = sn
-                    override_config.append(entry)
-
-            for cfg in global_policies:
-                if "switch" not in cfg or not isinstance(cfg["switch"], list):
-                    if "switch" not in cfg or cfg["switch"] is None:
-                        cfg["switch"] = []
-                    elif isinstance(cfg["switch"], str):
-                        cfg["switch"] = [cfg["switch"]]
-                if sn not in cfg["switch"]:
-                    cfg["switch"].append(sn)
-
-        # Switch-only: no global policies AND no per-switch overrides → generate
-        # a bare entry per switch for query/deleted.
-        if not global_policies and not override_config:
-            return [{"switch": sw.get("serial_number") or sw.get("ip", "")} for sw in sw_dict["switch"]]
-
-        # Flatten: when use_desc_as_key is false, per-switch policies override
-        # global policies with the same template name for that switch.
-        if global_policies and not use_desc_as_key:
-            updated_config = []
-            for ovr_cfg in override_config:
-                for cfg in global_policies:
-                    if cfg.get("name") == ovr_cfg.get("name"):
-                        ovr_sw = ovr_cfg["switch"]
-                        if isinstance(cfg.get("switch"), list) and ovr_sw in cfg["switch"]:
-                            cfg["switch"].remove(ovr_sw)
-                if ovr_cfg not in updated_config:
-                    updated_config.append(ovr_cfg)
-            for cfg in global_policies:
-                if isinstance(cfg.get("switch"), list) and cfg["switch"]:
-                    updated_config.append(cfg)
-            flat_config = updated_config
-        else:
-            flat_config = list(global_policies) + override_config
-
-        # Expand multi-switch global policies into one entry per switch
-        result = []
-        for cfg in flat_config:
-            if isinstance(cfg.get("switch"), list):
-                for sw in cfg["switch"]:
-                    entry = copy.deepcopy(cfg)
-                    entry["switch"] = sw
-                    result.append(entry)
+                overrides_by_switch[sn] = sw["policies"]
+                override_names[sn] = {p.get("name") for p in sw["policies"]}
             else:
-                result.append(cfg)
+                overrides_by_switch[sn] = []
+                override_names[sn] = set()
+
+        # ── Step 3: No globals and no overrides → bare switch entries ───
+        if not global_policies and not any(overrides_by_switch.values()):
+            return [{"switch": sn} for sn in switch_serials]
+
+        # ── Step 4: Build the flat result in one pass ───────────────────
+        result = []
+        global_names = {g.get("name") for g in global_policies}
+
+        for sn in switch_serials:
+            sn_override_names = override_names.get(sn, set())
+            sn_overrides = overrides_by_switch.get(sn, [])
+
+            # 4a: Emit global policies for this switch.
+            #     When use_desc_as_key=false, skip globals whose template
+            #     name is overridden for this switch.
+            for g in global_policies:
+                gname = g.get("name")
+                if not use_desc_as_key and gname in sn_override_names:
+                    # Overridden for this switch — skip the global
+                    continue
+                entry = copy.deepcopy(g)
+                entry["switch"] = sn
+                result.append(entry)
+
+            # 4b: Emit per-switch overrides for this switch.
+            #     When use_desc_as_key=false, only overrides whose name
+            #     matches a global were "replacements" (handled above by
+            #     skipping the global).  Overrides with names NOT in
+            #     globals are "extras" — always emitted.
+            #     When use_desc_as_key=true, all overrides are emitted
+            #     (globals were already emitted above, both coexist).
+            for ovr in sn_overrides:
+                entry = copy.deepcopy(ovr)
+                entry["switch"] = sn
+                result.append(entry)
 
         return result
 
@@ -416,8 +425,13 @@ class NDPolicyModule:
         """Validate the translated (flat) config before handing it to manage_state.
 
         Checks performed:
-            - ``name`` is required for each entry when state=merged.
             - Every entry must have a ``switch`` serial number.
+
+        Note:
+            Field-level validation (name required, priority range, description
+            length, etc.) is handled by ``PlaybookPolicyConfig`` Pydantic
+            models before translation.  This method only checks post-
+            translation invariants.
 
         Args:
             translated_config: Flat config list from ``translate_config()``.
@@ -425,13 +439,6 @@ class NDPolicyModule:
         Raises:
             Calls ``module.fail_json`` on validation failure.
         """
-        if self.state == "merged":
-            for idx, entry in enumerate(translated_config):
-                if not entry.get("name"):
-                    self.module.fail_json(
-                        msg=f"config[{idx}].name is required when state=merged."
-                    )
-
         for idx, entry in enumerate(translated_config):
             if not entry.get("switch"):
                 self.module.fail_json(
@@ -505,22 +512,12 @@ class NDPolicyModule:
             if name and self._is_policy_id(name):
                 continue
             if not name:
-                # Switch-only: valid for query/deleted (no description needed)
                 continue
 
-            # Check 1: description must not be empty when use_desc_as_key=true
-            # and a template name is given (merged or deleted state).
-            if self.state in ("merged", "deleted") and not description:
-                self.module.fail_json(
-                    msg=(
-                        f"config[{idx}]: description cannot be empty when "
-                        f"use_desc_as_key=true and name is a template name "
-                        f"('{name}'). Provide a unique description for each "
-                        f"policy or set use_desc_as_key=false."
-                    )
-                )
+            # Note: description-empty check for use_desc_as_key=true is now
+            # handled by PlaybookPolicyConfig Pydantic validation at input time.
 
-            # Check 2: description + switch must be unique within the playbook.
+            # Cross-entry uniqueness: description + switch must be unique.
             if description:
                 key = f"{description}|{switch}"
                 desc_switch_counts[key] = desc_switch_counts.get(key, 0) + 1

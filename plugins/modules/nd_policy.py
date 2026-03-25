@@ -513,6 +513,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     nd_argument_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import PlaybookPolicyConfig
 
 
 # =============================================================================
@@ -600,6 +602,21 @@ def main():
             results=results,
             logger=log,
         )
+
+        # Pydantic input validation — fail fast on bad user input
+        use_desc_as_key = module.params.get("use_desc_as_key", False)
+        validation_context = {"state": state, "use_desc_as_key": use_desc_as_key}
+        for idx, entry in enumerate(module.params["config"]):
+            try:
+                PlaybookPolicyConfig.model_validate(entry, context=validation_context)
+            except ValidationError as ve:
+                module.fail_json(
+                    msg=f"Input validation failed for config[{idx}]: {ve}"
+                )
+            except ValueError as ve:
+                module.fail_json(
+                    msg=f"Input validation failed for config[{idx}]: {ve}"
+                )
 
         # Resolve switch IPs/hostnames → serial numbers
         translated_input = policy_module.resolve_switch_identifiers(

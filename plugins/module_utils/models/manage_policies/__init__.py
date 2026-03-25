@@ -37,6 +37,13 @@ from .policy_actions import (  # noqa: F401
     PolicyIds,
 )
 
+# --- Config (playbook input) models ---
+from .config_models import (  # noqa: F401
+    PlaybookPolicyConfig,
+    PlaybookSwitchEntry,
+    PlaybookSwitchPolicyConfig,
+)
+
 
 __all__ = [
     # Enums
@@ -48,4 +55,8 @@ __all__ = [
     "PolicyUpdate",
     # Action models
     "PolicyIds",
+    # Config (playbook input) models
+    "PlaybookPolicyConfig",
+    "PlaybookSwitchEntry",
+    "PlaybookSwitchPolicyConfig",
 ]
