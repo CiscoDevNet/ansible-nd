@@ -36,6 +36,57 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
 
+class SwitchIds(NDNestedModel):
+    """
+    Request body model for switch-level deploy action.
+
+    ## Description
+
+    Used for ``POST /fabrics/{fabricName}/switchActions/deploy``.
+    Contains a list of switch serial numbers to deploy config to.
+
+    ## Request Body Schema (from manage.json)
+
+    ```json
+    {
+      "switchIds": ["FOC21373AFA", "FVT93126SKE"]
+    }
+    ```
+
+    ## Usage
+
+    ```python
+    body = SwitchIds(switch_ids=["FOC21373AFA", "FVT93126SKE"])
+    payload = body.to_request_dict()
+    # {"switchIds": ["FOC21373AFA", "FVT93126SKE"]}
+    ```
+    """
+
+    identifiers: ClassVar[List[str]] = []
+
+    switch_ids: List[str] = Field(
+        default_factory=list,
+        min_length=1,
+        alias="switchIds",
+        description="List of switch serial numbers to deploy config to",
+    )
+
+    @field_validator("switch_ids")
+    @classmethod
+    def validate_switch_ids(cls, v: List[str]) -> List[str]:
+        """Validate that all switch IDs are non-empty strings."""
+        if not v:
+            raise ValueError("switch_ids must contain at least one switch ID")
+        for sid in v:
+            if not isinstance(sid, str) or not sid.strip():
+                raise ValueError(f"Invalid switch ID: {sid!r}. Must be a non-empty string.")
+        return v
+
+    def to_request_dict(self) -> Dict[str, Any]:
+        """Convert to API request dictionary with camelCase keys."""
+        return self.to_payload()
+
+
 class PolicyIds(NDNestedModel):
     """
     Request body model for policy bulk actions.

@@ -53,6 +53,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManagePolicyActionsPushConfigPost,
     EpManagePolicyActionsRemovePost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switch_actions import (
+    EpManageSwitchActionsDeployPost,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_base import (
     PolicyCreate,
 )
@@ -62,6 +65,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.po
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_actions import (
     PolicyIds,
+    SwitchIds,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule,
@@ -1805,31 +1809,256 @@ class NDPolicyModule:
             self.log.debug("EXIT: _execute_merged()")
             return policy_ids_to_deploy
 
-        # ── Phase 3: Execute delete_and_create removals (bulk) ──────────
+        # ── Phase 3: Execute delete_and_create removals ─────────────────
+        #
+        # We must fully remove old policies BEFORE creating replacements.
+        # This follows the same delete logic as _execute_deleted:
+        #
+        #   1. markDelete → try for all old policies
+        #   2. PYTHON-type fallback → direct DELETE /policies/{policyId}
+        #   3. deploy=true → pushConfig (markDeleted) or switchActions/deploy
+        #      (direct-deleted) to push config removal to the switch
+        #   4. remove → hard-delete markDeleted policy records
+        #
+        # If the old policy's config isn't removed from the switch first,
+        # the old template's config lines will remain on the device even
+        # after the new template is deployed (different templates produce
+        # different config — the new one won't negate the old one).
+        #
+        # If any removal fails, we must NOT create a replacement for that
+        # entry — otherwise we'd create a duplicate.
+        remove_failed_ids: set = set()
         if delete_and_create_batch:
             remove_ids = [
                 d["policy_id"] for d in delete_and_create_batch if d["policy_id"]
             ]
             if remove_ids:
                 self.log.info(
-                    f"Bulk removing {len(remove_ids)} old policies "
+                    f"Phase 3: Removing {len(remove_ids)} old policies "
                     f"for delete_and_create: {remove_ids}"
                 )
-                self._api_remove_policies(remove_ids)
 
-        # ── Phase 4: Bulk create (create + delete_and_create) ───────────
-        all_create_entries = create_batch + delete_and_create_batch
-        if all_create_entries:
-            want_list = [d["want"] for d in all_create_entries]
-            self.log.info(f"Bulk creating {len(want_list)} policies")
+                # Build policy→switch map for switchActions/deploy
+                dac_switch_map: Dict[str, str] = {}
+                for d in delete_and_create_batch:
+                    pid = d.get("policy_id", "")
+                    have = d.get("have") or {}
+                    sw = have.get("switchId", d.get("want", {}).get("switchId", ""))
+                    if pid and sw:
+                        dac_switch_map[pid] = sw
+
+                # Step 3a: Attempt markDelete for all old policies
+                self.log.info(
+                    f"Phase 3a: markDelete for {len(remove_ids)} old policies"
+                )
+                mark_delete_data = self._api_mark_delete(remove_ids)
+
+                mark_succeeded = []
+                mark_failed_python = []
+                mark_failed_other = []
+
+                if isinstance(mark_delete_data, dict):
+                    policies_response = mark_delete_data.get("policies", [])
+                    failed_ids_set: set = set()
+                    for p in policies_response:
+                        pid = p.get("policyId", "")
+                        status = str(p.get("status", "")).lower()
+                        if status != "success":
+                            failed_ids_set.add(pid)
+                            msg = p.get("message", "")
+                            if "content type PYTHON" in msg:
+                                mark_failed_python.append(pid)
+                                self.log.info(
+                                    f"markDelete failed for {pid} "
+                                    "(PYTHON content type) — will use "
+                                    "direct DELETE"
+                                )
+                            else:
+                                mark_failed_other.append(pid)
+                                self.log.error(
+                                    f"markDelete failed for {pid} "
+                                    f"(status={p.get('status')!r}): {msg}"
+                                )
+
+                    mark_succeeded = [
+                        pid for pid in remove_ids if pid not in failed_ids_set
+                    ]
+
+                    if not policies_response and remove_ids:
+                        self.log.warning(
+                            "markDelete returned empty 'policies' list — "
+                            "treating all as succeeded (ambiguous response)"
+                        )
+                        mark_succeeded = list(remove_ids)
+                else:
+                    self.log.warning(
+                        "markDelete returned non-dict response — "
+                        "treating all as succeeded"
+                    )
+                    mark_succeeded = list(remove_ids)
+
+                self.log.info(
+                    f"Phase 3a results: {len(mark_succeeded)} markDeleted, "
+                    f"{len(mark_failed_python)} PYTHON-type, "
+                    f"{len(mark_failed_other)} other failures"
+                )
+
+                # Track truly failed (non-PYTHON) as remove failures
+                remove_failed_ids.update(mark_failed_other)
+
+                # Step 3b: Direct DELETE for PYTHON-type policies
+                if mark_failed_python:
+                    self.log.info(
+                        f"Phase 3b: Direct DELETE for "
+                        f"{len(mark_failed_python)} PYTHON-type policies"
+                    )
+                    direct_deleted = []
+                    for pid in mark_failed_python:
+                        try:
+                            self._api_delete_policy(pid)
+                            direct_deleted.append(pid)
+                        except Exception:  # noqa: BLE001
+                            self.log.error(
+                                f"Direct DELETE also failed for {pid}"
+                            )
+                            remove_failed_ids.add(pid)
+
+                    # Deploy to affected switches to push config removal
+                    if direct_deleted and self.deploy:
+                        affected_switches = list({
+                            dac_switch_map[pid]
+                            for pid in direct_deleted
+                            if pid in dac_switch_map
+                        })
+                        if affected_switches:
+                            self.log.info(
+                                f"Phase 3b: switchActions/deploy for "
+                                f"{len(affected_switches)} switch(es)"
+                            )
+                            self._api_deploy_switches(affected_switches)
+
+                # Step 3c: pushConfig for markDeleted policies (deploy=true)
+                if mark_succeeded and self.deploy:
+                    self.log.info(
+                        f"Phase 3c: pushConfig for "
+                        f"{len(mark_succeeded)} markDeleted policies"
+                    )
+                    deploy_success = self._deploy_policies(
+                        mark_succeeded, state="merged"
+                    )
+                    if not deploy_success:
+                        self.log.error(
+                            "pushConfig failed during delete_and_create — "
+                            "old policy config may not be removed from switch"
+                        )
+
+                # Step 3d: remove markDeleted policy records
+                if mark_succeeded:
+                    self.log.info(
+                        f"Phase 3d: remove {len(mark_succeeded)} "
+                        f"markDeleted policy records"
+                    )
+                    remove_data = self._api_remove_policies(mark_succeeded)
+                    rm_ok, rm_fail = self._inspect_207_policies(remove_data)
+
+                    if not rm_ok and not rm_fail and mark_succeeded:
+                        self.log.warning(
+                            "remove returned no per-policy results — "
+                            "treating as success (ambiguous response)"
+                        )
+
+                    if rm_fail:
+                        for p in rm_fail:
+                            pid = p.get("policyId", "")
+                            if pid:
+                                remove_failed_ids.add(pid)
+                        fail_msgs = [
+                            f"{p.get('policyId', '?')}: "
+                            f"{p.get('message', 'unknown')}"
+                            for p in rm_fail
+                        ]
+                        self.log.error(
+                            f"remove failed for {len(rm_fail)} policy(ies): "
+                            + "; ".join(fail_msgs)
+                        )
+
+        # ── Phase 4: Bulk create ────────────────────────────────────────
+        #
+        # We issue SEPARATE bulk create calls for pure creates vs
+        # delete_and_create replacements.  This is important because:
+        #
+        #   - Pure creates are safe to fail: no data loss, user re-runs.
+        #   - DAC replacements have already deleted the old policy in
+        #     Phase 3.  If the create fails, the policy is ORPHANED
+        #     (old one gone, new one not created).  Keeping them in a
+        #     separate call prevents a pure-create failure from causing
+        #     a bulk 4xx/5xx that takes down DAC entries with it.
+        #
+        # Within each batch, per-policy 207 failures are handled
+        # individually — a single policy failure does not affect others
+        # in the same batch.
+        #
+        # NOTE: The orphan risk for DAC entries is inherent — NDFC has
+        # no atomic "replace policy" API.  dcnm_policy has the same
+        # limitation.  Re-running the playbook will re-create the
+        # policy (it will be seen as "not found" → create).
+
+        # Filter out DAC entries whose old policy failed to be removed
+        eligible_dac = []
+        for d in delete_and_create_batch:
+            if d["policy_id"] in remove_failed_ids:
+                want = d["want"]
+                self._proposed.append(want)
+                if d.get("have"):
+                    self._before.append(d["have"])
+                self._register_result(
+                    action="policy_replace",
+                    operation_type=OperationType.UPDATE,
+                    return_code=207,
+                    message=(
+                        f"Cannot replace policy: removal of old policy "
+                        f"{d['policy_id']} failed. Skipping create to "
+                        f"avoid duplicates."
+                    ),
+                    success=False,
+                    found=True,
+                    diff={
+                        "action": "replace_failed",
+                        "want": want,
+                        "have": d.get("have"),
+                        "error": f"Old policy {d['policy_id']} removal failed",
+                        "failed_policy_id": d["policy_id"],
+                    },
+                )
+            else:
+                eligible_dac.append(d)
+
+        for batch_label, batch_entries in [
+            ("create", create_batch),
+            ("replace", eligible_dac),
+        ]:
+            if not batch_entries:
+                continue
+
+            want_list = [d["want"] for d in batch_entries]
+            self.log.info(
+                f"Bulk creating {len(want_list)} policies "
+                f"(batch={batch_label})"
+            )
 
             try:
                 created_ids = self._api_bulk_create_policies(want_list)
             except NDModuleError as bulk_err:
-                self.log.error(f"Bulk create failed entirely: {bulk_err.msg}")
-                for diff_entry in all_create_entries:
+                self.log.error(
+                    f"Bulk {batch_label} failed entirely: {bulk_err.msg}"
+                )
+                for diff_entry in batch_entries:
                     want = diff_entry["want"]
-                    action_label = "policy_replace" if diff_entry["action"] == "delete_and_create" else "policy_create"
+                    action_label = (
+                        "policy_replace"
+                        if diff_entry["action"] == "delete_and_create"
+                        else "policy_create"
+                    )
                     self._proposed.append(want)
                     if diff_entry.get("have"):
                         self._before.append(diff_entry["have"])
@@ -1841,31 +2070,45 @@ class NDPolicyModule:
                         data=bulk_err.response_payload or {},
                         success=False,
                         found=False,
-                        diff={"action": "fail", "want": want, "error": bulk_err.msg},
+                        diff={
+                            "action": "fail",
+                            "want": want,
+                            "error": bulk_err.msg,
+                        },
                     )
-                all_create_entries = []  # Skip per-entry registration below
-                created_ids = []
+                continue  # Skip per-entry registration for this batch
 
             # Register per-entry results from bulk response
-            for idx, diff_entry in enumerate(all_create_entries):
+            for idx, diff_entry in enumerate(batch_entries):
                 want = diff_entry["want"]
                 have = diff_entry.get("have")
                 field_diff = diff_entry["diff"]
                 is_replace = diff_entry["action"] == "delete_and_create"
 
-                created_id = created_ids[idx] if idx < len(created_ids) else None
+                entry_result = (
+                    created_ids[idx] if idx < len(created_ids)
+                    else {"policy_id": None, "ndfc_error": "No response entry from NDFC"}
+                )
+                created_id = entry_result["policy_id"]
+                ndfc_error = entry_result["ndfc_error"]
                 per_policy_error = None
 
-                # created_id is None when the per-policy response had status=failed
+                # created_id is None when per-policy response had status!=success
                 if created_id is None:
-                    per_policy_error = f"Policy creation failed for {want.get('templateName')} on {want.get('switchId')}"
+                    per_policy_error = (
+                        f"Policy creation failed for "
+                        f"{want.get('templateName')} on "
+                        f"{want.get('switchId')}: {ndfc_error}"
+                    )
 
                 self._proposed.append(want)
                 if have:
                     self._before.append(have)
 
                 if per_policy_error:
-                    action_label = "policy_replace" if is_replace else "policy_create"
+                    action_label = (
+                        "policy_replace" if is_replace else "policy_create"
+                    )
                     self._register_result(
                         action=action_label,
                         operation_type=OperationType.CREATE,
@@ -1873,7 +2116,11 @@ class NDPolicyModule:
                         message=per_policy_error,
                         success=False,
                         found=False,
-                        diff={"action": "fail", "want": want, "error": per_policy_error},
+                        diff={
+                            "action": "fail",
+                            "want": want,
+                            "error": per_policy_error,
+                        },
                     )
                     continue
 
@@ -1924,7 +2171,29 @@ class NDPolicyModule:
             self._proposed.append(want)
             self._before.append(have)
 
-            self._api_update_policy(want, have, policy_id)
+            try:
+                self._api_update_policy(want, have, policy_id)
+            except NDModuleError as update_err:
+                self.log.error(
+                    f"Update failed for {policy_id}: {update_err.msg}"
+                )
+                self._register_result(
+                    action="policy_update",
+                    operation_type=OperationType.UPDATE,
+                    return_code=update_err.status or -1,
+                    message=update_err.msg,
+                    data=update_err.response_payload or {},
+                    success=False,
+                    found=True,
+                    diff={
+                        "action": "update_failed",
+                        "want": want, "have": have, "diff": field_diff,
+                        "policy_id": policy_id,
+                        "error": update_err.msg,
+                    },
+                )
+                continue
+
             policy_ids_to_deploy.append(policy_id)
 
             after_merged = {**have, **want, "policyId": policy_id}
@@ -2222,6 +2491,9 @@ class NDPolicyModule:
         # Map policy ID → templateName so Phase B can route switch_freeform
         # policies through a direct DELETE instead of markDelete.
         policy_template_map: Dict[str, str] = {}
+        # Map policy ID → switchId so we know which switches to deploy after
+        # direct DELETE of PYTHON-type policies.
+        policy_switch_map: Dict[str, str] = {}
 
         for diff_entry in diff_results:
             action = diff_entry["action"]
@@ -2269,7 +2541,7 @@ class NDPolicyModule:
                     message="Policy not found — already absent",
                     success=True,
                     found=False,
-                    diff={"action": action, "want": want},
+                    diff={"action": action, "want": want, "before": None, "after": None},
                 )
                 continue
 
@@ -2282,12 +2554,15 @@ class NDPolicyModule:
                 self._before.extend(policies)  # what existed before deletion
                 all_policy_ids_to_delete.extend(policy_ids)
 
-                # Track templateName per policy for direct-delete routing
+                # Track templateName and switchId per policy
                 for p in policies:
                     pid = p.get("policyId", "")
                     tname = p.get("templateName", "")
+                    sw = p.get("switchId", "")
                     if pid:
                         policy_template_map[pid] = tname
+                        if sw:
+                            policy_switch_map[pid] = sw
 
                 # Collect switch IDs for result tracking
                 for p in policies:
@@ -2300,6 +2575,8 @@ class NDPolicyModule:
                     diff_payload = {
                         "action": action,
                         "want": want,
+                        "before": policies,
+                        "after": None,
                         "policy_ids": policy_ids,
                         "match_count": match_count,
                     }
@@ -2321,9 +2598,10 @@ class NDPolicyModule:
                 diff_payload = {
                     "action": action,
                     "want": want,
+                    "before": policies,
+                    "after": None,
                     "policy_ids": policy_ids,
                     "match_count": match_count,
-                    "policies": policies,
                 }
                 if warning:
                     diff_payload["warning"] = warning
@@ -2356,80 +2634,154 @@ class NDPolicyModule:
         )
 
         # ---------------------------------------------------------------------
-        # Split policies into two buckets:
+        # Delete strategy: markDelete-first with automatic fallback
         #
-        # 1. PYTHON content-type templates (e.g. switch_freeform):
-        #    markDelete FAILS for these ("Policies with content type PYTHON
-        #    or without generated config can't be mark deleted").
-        #    Use direct DELETE /policies/{policyId} instead.
-        #    NDFC may leave a ghost switch_freeform_config (markDeleted,
-        #    negative priority) which gets cleaned up on next
-        #    deploy/recalculate — no explicit cleanup needed.
-        #    This matches the dcnm_policy approach (line 1149).
+        # Rather than trying to predict which templates are PYTHON content-type
+        # upfront, we send ALL policies through markDelete and inspect the
+        # 207 Multi-Status response for per-policy failures.  Any policy that
+        # fails with "content type PYTHON" is automatically retried via
+        # direct DELETE /policies/{policyId}.
         #
-        # 2. Everything else (TEMPLATE_CLI, e.g. feature_enable):
-        #    Normal markDelete → pushConfig → remove flow.
+        # This is more robust than maintaining a hardcoded set of template
+        # names, since the content type is an NDFC-internal property that
+        # varies across templates and NDFC versions.
         # ---------------------------------------------------------------------
-        DIRECT_DELETE_TEMPLATES = {"switch_freeform"}
 
-        direct_delete_ids = [
-            pid for pid in unique_policy_ids
-            if policy_template_map.get(pid, "") in DIRECT_DELETE_TEMPLATES
-        ]
-        normal_delete_ids = [
-            pid for pid in unique_policy_ids
-            if pid not in set(direct_delete_ids)
-        ]
+        # Step 1: Attempt markDelete for all policies
+        self.log.info(
+            f"{'Step 1/3' if self.deploy else 'Step 1/1'}: "
+            f"markDelete for {len(unique_policy_ids)} policies"
+        )
+        mark_delete_data = self._api_mark_delete(unique_policy_ids)
+
+        # Inspect 207 response for per-policy results
+        mark_succeeded = []
+        mark_failed = []
+        mark_failed_python = []  # Failed specifically due to PYTHON content type
+
+        if isinstance(mark_delete_data, dict):
+            policies_response = mark_delete_data.get("policies", [])
+            # Build a set of policy IDs that explicitly failed.
+            # Any status that is NOT "success" (case-insensitive) is
+            # treated as failure (defensive against future values
+            # and potential case variations like "SUCCESS").
+            failed_ids = set()
+            for p in policies_response:
+                pid = p.get("policyId", "")
+                status = str(p.get("status", "")).lower()
+                if status != "success":
+                    failed_ids.add(pid)
+                    msg = p.get("message", "")
+                    if "content type PYTHON" in msg:
+                        mark_failed_python.append(pid)
+                        self.log.info(
+                            f"markDelete failed for {pid} (PYTHON content type) "
+                            "— will retry via direct DELETE"
+                        )
+                    else:
+                        mark_failed.append(pid)
+                        self.log.error(
+                            f"markDelete failed for {pid} "
+                            f"(status={p.get('status')!r}): {msg}"
+                        )
+
+            # Policies not in the failed set are considered successful
+            mark_succeeded = [pid for pid in unique_policy_ids if pid not in failed_ids]
+
+            # Warn if NDFC returned empty policies list (ambiguous)
+            if not policies_response and unique_policy_ids:
+                self.log.warning(
+                    "markDelete returned empty 'policies' list for "
+                    f"{len(unique_policy_ids)} policy IDs — "
+                    "treating all as succeeded (ambiguous response)"
+                )
+                mark_succeeded = list(unique_policy_ids)
+        else:
+            # No structured response — assume all succeeded (pre-existing behavior)
+            self.log.warning(
+                "markDelete returned non-dict response — "
+                "treating all as succeeded"
+            )
+            mark_succeeded = list(unique_policy_ids)
 
         self.log.info(
-            f"Delete routing: {len(direct_delete_ids)} direct-DELETE "
-            f"(PYTHON-type), {len(normal_delete_ids)} markDelete flow"
+            f"markDelete results: {len(mark_succeeded)} succeeded, "
+            f"{len(mark_failed_python)} failed (PYTHON-type, will retry), "
+            f"{len(mark_failed)} failed (other errors)"
         )
 
-        # ----- Direct DELETE for PYTHON-type policies -----
-        if direct_delete_ids:
+        # Register markDelete result
+        if mark_succeeded:
+            self._register_result(
+                action="policy_mark_delete",
+                state="deleted",
+                operation_type=OperationType.DELETE,
+                return_code=200,
+                message=f"Marked {len(mark_succeeded)} policies for deletion",
+                success=True,
+                found=True,
+                diff={
+                    "action": "mark_delete",
+                    "policy_ids": mark_succeeded,
+                },
+            )
+
+        if mark_failed:
+            self._register_result(
+                action="policy_mark_delete",
+                state="deleted",
+                operation_type=OperationType.DELETE,
+                return_code=207,
+                message=(
+                    f"markDelete failed for {len(mark_failed)} policy(ies): "
+                    f"{mark_failed}"
+                ),
+                success=False,
+                found=True,
+                diff={
+                    "action": "mark_delete_failed",
+                    "policy_ids": mark_failed,
+                },
+            )
+
+        # Step 1b: Fallback — direct DELETE for PYTHON-type policies
+        if mark_failed_python:
             self.log.info(
-                f"Direct-deleting {len(direct_delete_ids)} PYTHON-type "
-                f"policies: {direct_delete_ids}"
+                f"Falling back to direct DELETE for {len(mark_failed_python)} "
+                f"PYTHON-type policies: {mark_failed_python}"
             )
             deleted_direct = []
             failed_direct = []
-            for pid in direct_delete_ids:
+            for pid in mark_failed_python:
                 try:
                     self._api_delete_policy(pid)
                     deleted_direct.append(pid)
                 except Exception:  # noqa: BLE001
-                    self.log.error(f"Direct DELETE failed for {pid}")
+                    self.log.error(f"Direct DELETE also failed for {pid}")
                     failed_direct.append(pid)
 
             if deleted_direct:
-                msg = (
-                    f"Directly deleted {len(deleted_direct)} "
-                    f"switch_freeform policy(ies). "
-                    "Note: NDFC may leave a residual "
-                    "switch_freeform_config policy in markDeleted "
-                    "state which is cleaned up automatically on "
-                    "the next deploy or recalculate cycle."
-                )
-                if self.deploy:
-                    msg += (
-                        " deploy=true was requested but does not "
-                        "apply to switch_freeform — these policies "
-                        "are removed via direct DELETE without "
-                        "pushConfig."
-                    )
+                tpl_names = list({
+                    policy_template_map.get(pid, "unknown")
+                    for pid in deleted_direct
+                })
                 self._register_result(
                     action="policy_direct_delete",
                     state="deleted",
                     operation_type=OperationType.DELETE,
                     return_code=200,
-                    message=msg,
+                    message=(
+                        f"Directly deleted {len(deleted_direct)} PYTHON-type "
+                        f"policy(ies) ({', '.join(tpl_names)}). "
+                        "These templates use content type PYTHON and cannot "
+                        "be markDeleted — direct DELETE is used instead."
+                    ),
                     success=True,
                     found=True,
                     diff={
                         "action": "direct_delete",
                         "policy_ids": deleted_direct,
-                        "template": "switch_freeform",
+                        "templates": tpl_names,
                     },
                 )
             if failed_direct:
@@ -2450,35 +2802,95 @@ class NDPolicyModule:
                     },
                 )
 
-        # ----- Normal markDelete → pushConfig → remove for the rest -----
-        if not normal_delete_ids:
-            self.log.info(
-                "No TEMPLATE_CLI policies to process through "
-                "markDelete flow — done"
-            )
+            # Deploy to affected switches so NDFC pushes the config removal
+            # to the devices.  Direct DELETE removes the policy record but
+            # the device still has the running config until we deploy.
+            if deleted_direct and self.deploy:
+                affected_switches = list({
+                    policy_switch_map[pid]
+                    for pid in deleted_direct
+                    if pid in policy_switch_map
+                })
+                if affected_switches:
+                    self.log.info(
+                        f"Deploying config to {len(affected_switches)} switch(es) "
+                        f"after direct DELETE: {affected_switches}"
+                    )
+                    deploy_data = self._api_deploy_switches(affected_switches)
+
+                    # Inspect switchActions/deploy response.
+                    #
+                    # The /fabrics/{fabricName}/switchActions/deploy endpoint
+                    # has a DIFFERENT response shape from policy actions.
+                    # Per the OpenAPI spec it returns a single object:
+                    #   {"status": "Configuration deployment completed for [...]"}
+                    #
+                    # In practice NDFC may return an empty body {} with 207.
+                    # This endpoint does NOT use the per-item
+                    # policyBaseGeneralResponse schema, so we cannot use
+                    # _inspect_207_policies() here.
+                    #
+                    # We inspect the top-level "status" string:
+                    #   - Present and contains "completed" → success
+                    #   - Present but other text → log warning, treat as success
+                    #   - Missing (empty body {}) → ambiguous, log warning,
+                    #     treat as success (NDFC often returns {} on success)
+                    deploy_ok = True
+                    if isinstance(deploy_data, dict) and deploy_data:
+                        status_str = deploy_data.get("status", "")
+                        if status_str:
+                            self.log.info(
+                                f"switchActions/deploy status: {status_str}"
+                            )
+                        else:
+                            self.log.warning(
+                                "switchActions/deploy returned non-empty body "
+                                f"but no 'status' field: {deploy_data}"
+                            )
+                    else:
+                        self.log.warning(
+                            "switchActions/deploy returned empty body — "
+                            "treating as success (NDFC commonly returns {} "
+                            "for this endpoint)"
+                        )
+
+                    self._register_result(
+                        action="policy_switch_deploy",
+                        state="deleted",
+                        operation_type=OperationType.DELETE,
+                        return_code=207,
+                        message=(
+                            f"Deployed config to {len(affected_switches)} "
+                            f"switch(es) to push removal of directly-deleted "
+                            f"PYTHON-type policies"
+                        ),
+                        success=deploy_ok,
+                        found=True,
+                        diff={
+                            "action": "switch_deploy",
+                            "switch_ids": affected_switches,
+                            "policy_ids": deleted_direct,
+                            "deploy_success": deploy_ok,
+                        },
+                    )
+
+        # If nothing succeeded at all, bail out
+        if not mark_succeeded and not mark_failed_python:
+            self.log.info("No policies were successfully deleted — done")
             self.log.debug("EXIT: _execute_deleted()")
             return
 
-        # Step 1: markDelete
-        self.log.info(
-            f"{'Step 1/3' if self.deploy else 'Step 1/1'}: "
-            f"markDelete for {len(normal_delete_ids)} policies"
-        )
-        self._api_mark_delete(normal_delete_ids)
-
-        self._register_result(
-            action="policy_mark_delete",
-            state="deleted",
-            operation_type=OperationType.DELETE,
-            return_code=200,
-            message=f"Marked {len(normal_delete_ids)} policies for deletion",
-            success=True,
-            found=True,
-            diff={
-                "action": "mark_delete",
-                "policy_ids": normal_delete_ids,
-            },
-        )
+        # Only mark_succeeded policies continue through the
+        # pushConfig → remove flow below.  If none succeeded via
+        # markDelete, there's nothing left for pushConfig/remove.
+        normal_delete_ids = mark_succeeded
+        if not normal_delete_ids:
+            self.log.info(
+                "No policies were successfully markDeleted — "
+                "skipping pushConfig/remove"
+            )
+            self.log.debug("EXIT: _execute_deleted()")
+            return
 
         # Step 2 (deploy=true only): pushConfig
         deploy_success = True
@@ -2530,19 +2942,52 @@ class NDPolicyModule:
         self.log.info(
             f"Step 3/3: remove {len(normal_delete_ids)} policies"
         )
-        self._api_remove_policies(normal_delete_ids)
+        remove_data = self._api_remove_policies(normal_delete_ids)
+
+        # Inspect 207 response for per-policy failures
+        rm_ok, rm_fail = self._inspect_207_policies(remove_data)
+        remove_success = len(rm_fail) == 0
+
+        # Warn if NDFC returned no per-policy detail at all
+        if not rm_ok and not rm_fail and normal_delete_ids:
+            self.log.warning(
+                f"remove returned no per-policy results for "
+                f"{len(normal_delete_ids)} policy IDs — treating as success "
+                "(ambiguous response)"
+            )
+
+        if rm_fail:
+            fail_msgs = [
+                f"{p.get('policyId', '?')}: {p.get('message', 'unknown')}"
+                for p in rm_fail
+            ]
+            self.log.error(
+                f"remove failed for {len(rm_fail)} policy(ies): "
+                + "; ".join(fail_msgs)
+            )
 
         self._register_result(
             action="policy_remove",
             state="deleted",
             operation_type=OperationType.DELETE,
-            return_code=200,
-            message=f"Removed {len(normal_delete_ids)} policies",
-            success=True,
+            return_code=200 if remove_success else 207,
+            message=(
+                f"Removed {len(normal_delete_ids)} policies"
+                if remove_success
+                else (
+                    f"Remove partially failed: "
+                    f"{len(rm_ok)} succeeded, {len(rm_fail)} failed"
+                )
+            ),
+            success=remove_success,
             found=True,
             diff={
                 "action": "remove",
                 "policy_ids": normal_delete_ids,
+                "remove_success": remove_success,
+                "failed_policies": [
+                    p.get("policyId") for p in rm_fail
+                ],
             },
         )
 
@@ -2607,11 +3052,15 @@ class NDPolicyModule:
         data = self.nd.request(ep.path, ep.verb, push_body.to_request_dict())
 
         # Inspect 207 body for per-policy failures
-        failed_policies = []
-        if isinstance(data, dict):
-            for p in data.get("policies", []):
-                if p.get("status") == "failed":
-                    failed_policies.append(p)
+        succeeded_policies, failed_policies = self._inspect_207_policies(data)
+
+        # Warn if NDFC returned no per-policy detail at all
+        if not succeeded_policies and not failed_policies and policy_ids:
+            self.log.warning(
+                f"pushConfig returned no per-policy results for "
+                f"{len(policy_ids)} policy IDs — treating as success "
+                "(ambiguous response)"
+            )
 
         deploy_success = len(failed_policies) == 0
 
@@ -2638,10 +3087,76 @@ class NDPolicyModule:
         return deploy_success
 
     # =========================================================================
+    # 207 Multi-Status Response Inspection
+    # =========================================================================
+
+    @staticmethod
+    def _inspect_207_policies(
+        data: Any,
+        key: str = "policies",
+    ) -> Tuple[List[Dict], List[Dict]]:
+        """Inspect a 207 Multi-Status response for per-item success/failure.
+
+        NDFC returns HTTP 207 for most bulk policy actions (create,
+        markDelete, pushConfig, remove).  The response body contains
+        a list of per-item results under a top-level key (``policies``),
+        each with a required ``status`` field (``"success"`` or
+        ``"failed"``) and an optional ``message`` field.
+
+        The per-item schema is ``policyBaseGeneralResponse``::
+
+            {
+                "status": "success" | "failed",   # REQUIRED
+                "message": "...",                   # optional
+                "policyId": "POLICY-...",           # optional
+                "entityName": "SWITCH",             # optional
+                "entityType": "switch",             # optional
+                "templateName": "...",              # optional
+                "switchId": "FDO..."                # optional
+            }
+
+        An item is considered **failed** when ``status`` is anything
+        other than ``"success"`` (defensive against future values
+        like ``"error"``, ``"warning"``, or ``"partial"``).
+
+        Comparison is **case-insensitive**: ``"success"``,
+        ``"SUCCESS"``, and ``"Success"`` are all treated as success.
+
+        If the response body is empty (``{}``) or does not contain
+        the expected key, both returned lists will be empty.  The
+        caller should treat this as an ambiguous result (NDFC did
+        not report per-item status) and decide accordingly.
+
+        Args:
+            data: Response DATA dict from NDFC (or None/non-dict).
+            key: Top-level key holding the items list.
+                 ``"policies"`` for policy action endpoints.
+
+        Returns:
+            Tuple of (succeeded, failed) lists of per-item dicts.
+        """
+        if not isinstance(data, dict):
+            return [], []
+        items = data.get(key, [])
+        if not isinstance(items, list):
+            return [], []
+        succeeded = []
+        failed = []
+        for item in items:
+            status = str(item.get("status", "")).lower()
+            if status == "success":
+                succeeded.append(item)
+            else:
+                # Any non-"success" status is treated as failure.
+                # Known values: "failed", "warning".
+                failed.append(item)
+        return succeeded, failed
+
+    # =========================================================================
     # API Helpers (low-level CRUD)
     # =========================================================================
 
-    def _api_bulk_create_policies(self, want_list: List[Dict]) -> List[Optional[str]]:
+    def _api_bulk_create_policies(self, want_list: List[Dict]) -> List[Dict]:
         """Create multiple policies via a single bulk POST.
 
         Builds one ``PolicyCreateBulk`` containing all entries and sends
@@ -2652,13 +3167,17 @@ class NDPolicyModule:
             want_list: List of want dicts, each with all policy fields.
 
         Returns:
-            List of created policy ID strings (same length as want_list).
-            Entries that failed are ``None``.
+            List of dicts (same length as want_list), each with::
+
+                {
+                    "policy_id": str or None,   # created ID, None on failure
+                    "ndfc_error": str or None,  # NDFC error message on failure
+                }
 
         Raises:
             NDModuleError: If the entire API call fails (e.g., network error).
-                Per-policy failures within a 207 response are returned as
-                ``None`` in the list and do NOT raise.
+                Per-policy failures within a 207 response are returned
+                with ``policy_id=None`` and do NOT raise.
         """
         if not want_list:
             return []
@@ -2695,33 +3214,35 @@ class NDPolicyModule:
         # Parse per-policy results from the 207 response.
         # The controller returns policies in the same order as sent.
         created_policies = data.get("policies", []) if isinstance(data, dict) else []
-        created_ids: List[Optional[str]] = []
+        results: List[Dict] = []
 
         for idx, want in enumerate(want_list):
             if idx < len(created_policies):
                 entry = created_policies[idx]
-                if entry.get("status") == "failed":
-                    error_msg = entry.get("message", "Policy creation failed")
+                entry_status = str(entry.get("status", "")).lower()
+                if entry_status != "success":
+                    ndfc_msg = entry.get("message", "Policy creation failed")
                     self.log.error(
-                        f"Bulk create: policy {idx} failed — "
+                        f"Bulk create: policy {idx} failed "
+                        f"(status={entry.get('status')!r}) — "
                         f"template={want.get('templateName')}, "
-                        f"switch={want.get('switchId')}: {error_msg}"
+                        f"switch={want.get('switchId')}: {ndfc_msg}"
                     )
-                    created_ids.append(None)
+                    results.append({"policy_id": None, "ndfc_error": ndfc_msg})
                 else:
                     pid = entry.get("policyId")
                     self.log.info(f"Bulk create: policy {idx} created — {pid}")
-                    created_ids.append(pid)
+                    results.append({"policy_id": pid, "ndfc_error": None})
             else:
                 self.log.warning(f"Bulk create: no response entry for policy {idx}")
-                created_ids.append(None)
+                results.append({"policy_id": None, "ndfc_error": "No response entry from NDFC"})
 
         self.log.info(
             f"Bulk create complete: "
-            f"{sum(1 for x in created_ids if x)} succeeded, "
-            f"{sum(1 for x in created_ids if x is None)} failed"
+            f"{sum(1 for r in results if r['policy_id'])} succeeded, "
+            f"{sum(1 for r in results if r['policy_id'] is None)} failed"
         )
-        return created_ids
+        return results
 
     def _api_update_policy(self, want: Dict, have: Dict, policy_id: str) -> None:
         """Update an existing policy via PUT.
@@ -2767,14 +3288,26 @@ class NDPolicyModule:
 
         self.nd.request(ep.path, ep.verb, payload)
 
-    def _api_mark_delete(self, policy_ids: List[str]) -> None:
+    def _api_mark_delete(self, policy_ids: List[str]) -> Dict:
         """Mark policies for deletion via POST /policyActions/markDelete.
+
+        NDFC returns HTTP 207 Multi-Status with per-policy results.
+        Policies with content type PYTHON (e.g. ``switch_freeform``,
+        ``Ext_VRF_Lite_SVI``) will fail with::
+
+            "Policies with content type PYTHON or without generated
+             config can't be mark deleted."
+
+        The caller must inspect the returned dict for per-policy
+        failures and fall back to direct DELETE for those.
 
         Args:
             policy_ids: List of policy IDs to mark-delete.
 
         Returns:
-            None.
+            Response DATA dict from NDFC.  Typically contains a
+            ``policies`` list with per-policy ``status`` and
+            ``message`` fields.
         """
         self.log.info(f"Marking {len(policy_ids)} policies for deletion: {policy_ids}")
         body = PolicyIds(policy_ids=policy_ids)
@@ -2786,16 +3319,23 @@ class NDPolicyModule:
         if self.ticket_id:
             ep.endpoint_params.ticket_id = self.ticket_id
 
-        self.nd.request(ep.path, ep.verb, body.to_request_dict())
+        data = self.nd.request(ep.path, ep.verb, body.to_request_dict())
+        return data if isinstance(data, dict) else {}
 
-    def _api_remove_policies(self, policy_ids: List[str]) -> None:
+    def _api_remove_policies(self, policy_ids: List[str]) -> Dict:
         """Hard-delete policies via POST /policyActions/remove.
+
+        NDFC returns HTTP 207 Multi-Status with per-policy results.
+        The caller should inspect the returned dict for per-policy
+        ``status: "failed"`` entries.
 
         Args:
             policy_ids: List of policy IDs to remove from NDFC.
 
         Returns:
-            None.
+            Response DATA dict from NDFC.  Typically contains a
+            ``policies`` list with per-policy ``status`` and
+            ``message`` fields.
         """
         self.log.info(f"Removing {len(policy_ids)} policies: {policy_ids}")
         body = PolicyIds(policy_ids=policy_ids)
@@ -2807,7 +3347,8 @@ class NDPolicyModule:
         if self.ticket_id:
             ep.endpoint_params.ticket_id = self.ticket_id
 
-        self.nd.request(ep.path, ep.verb, body.to_request_dict())
+        data = self.nd.request(ep.path, ep.verb, body.to_request_dict())
+        return data if isinstance(data, dict) else {}
 
     def _api_delete_policy(self, policy_id: str) -> None:
         """Delete a single policy via DELETE /policies/{policyId}.
@@ -2833,6 +3374,36 @@ class NDPolicyModule:
             ep.endpoint_params.ticket_id = self.ticket_id
 
         self.nd.request(ep.path, ep.verb)
+
+    def _api_deploy_switches(self, switch_ids: List[str]) -> dict:
+        """Deploy fabric config to specific switches.
+
+        Used after direct DELETE of PYTHON content-type policies to push
+        the config removal to the actual devices.  Unlike ``pushConfig``
+        (which operates on policy IDs), this endpoint operates on switch
+        serial numbers.
+
+        API: ``POST /fabrics/{fabricName}/switchActions/deploy``
+
+        Args:
+            switch_ids: List of switch serial numbers to deploy to.
+
+        Returns:
+            Response DATA dict from NDFC.  Typically contains a ``status``
+            field like ``"Configuration deployment completed for [...]"``.
+        """
+        self.log.info(
+            f"Deploying config to {len(switch_ids)} switch(es): {switch_ids}"
+        )
+        body = SwitchIds(switch_ids=switch_ids)
+
+        ep = EpManageSwitchActionsDeployPost()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+
+        data = self.nd.request(ep.path, ep.verb, body.to_request_dict())
+        return data if isinstance(data, dict) else {}
 
     # =========================================================================
     # Results Helper
