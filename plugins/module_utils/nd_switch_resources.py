@@ -24,6 +24,7 @@ from pydantic import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches import (
     SwitchRole,
@@ -2355,7 +2356,8 @@ class NDSwitchResourceModule():
                 response_data=self._query_all_switches(),
                 model_class=SwitchDataModel,
             )
-            self.previous: NDConfigCollection = self.existing.copy()
+            self.before: NDConfigCollection = self.existing.copy()
+            self.sent: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
         except Exception as e:
             msg = (
                 f"Failed to query fabric '{self.fabric}' inventory "
@@ -2366,6 +2368,8 @@ class NDSwitchResourceModule():
 
         # Operation tracking
         self.nd_logs: List[Dict[str, Any]] = []
+        self.output: NDOutput = NDOutput(output_level=self.module.params.get("output_level", "normal"))
+        self.output.assign(before=self.before, after=self.existing)
 
         # Utility instances (SwitchWaitUtils / FabricUtils depend on self)
         self.fabric_utils = FabricUtils(self.nd, self.fabric, log)
@@ -2406,16 +2410,17 @@ class NDSwitchResourceModule():
                     )
                     self.log.error(msg)
                     self.nd.module.fail_json(msg=msg)
-            final["gathered"] = gathered
+            self.output.assign(after=self.existing)
+            final.update(self.output.format(gathered=gathered))
         else:
             # Re-query the fabric to get the actual post-operation inventory so
-            # that "current" reflects real state rather than the pre-op snapshot.
+            # that "after" reflects real state rather than the pre-op snapshot.
             if True not in self.results.failed and not self.nd.module.check_mode:
                 self.existing = NDConfigCollection.from_api_response(
                     response_data=self._query_all_switches(), model_class=SwitchDataModel
                 )
-            final["previous"] = self.previous.to_ansible_config()
-            final["current"] = self.existing.to_ansible_config()
+            self.output.assign(after=self.existing, diff=self.sent)
+            final.update(self.output.format())
 
         if True in self.results.failed:
             self.nd.module.fail_json(**final)
@@ -2464,9 +2469,14 @@ class NDSwitchResourceModule():
             self.config, self.state, self.nd, self.log
         )
         # Partition configs by operation type
-        poap_configs = [c for c in proposed_config if c.operation_type == "poap"]
+        poap_configs = [c for c in proposed_config if c.operation_type in ("poap", "preprovision", "swap")]
         rma_configs = [c for c in proposed_config if c.operation_type == "rma"]
-        normal_configs = [c for c in proposed_config if c.operation_type not in ("poap", "rma")]
+        normal_configs = [c for c in proposed_config if c.operation_type == "normal"]
+        # Capture all proposed configs for NDOutput
+        output_proposed: NDConfigCollection = NDConfigCollection(model_class=SwitchConfigModel)
+        for cfg in proposed_config:
+            output_proposed.add(cfg)
+        self.output.assign(proposed=output_proposed)
 
         self.log.info(
             f"Config partition: {len(normal_configs)} normal, "
@@ -2584,6 +2594,7 @@ class NDSwitchResourceModule():
 
         # Collect (serial_number, SwitchConfigModel) pairs for post-processing
         switch_actions: List[Tuple[str, SwitchConfigModel]] = []
+        _bulk_added_ips: set = set()
 
         # Phase 4: Bulk add new switches to fabric
         if switches_to_add and discovered_data:
@@ -2622,6 +2633,7 @@ class NDSwitchResourceModule():
                         platform_type=platform_type,
                         preserve_config=preserve_config,
                     )
+                    _bulk_added_ips.update(cfg.seed_ip for cfg, _ in pairs)
 
                     for cfg, disc in pairs:
                         sn = disc.get("serialNumber")
@@ -2631,6 +2643,13 @@ class NDSwitchResourceModule():
 
         # Phase 5: Collect migration switches for post-processing
         # Migration mode switches get role updates during post-add processing.
+        # Track newly added switches in self.sent
+        if switches_to_add:
+            _sw_by_ip = {sw.fabric_management_ip: sw for sw in switches_to_add}
+            for ip in _bulk_added_ips:
+                sw_data = _sw_by_ip.get(ip)
+                if sw_data:
+                    self.sent.add(sw_data)
 
         have_migration_switches = False
         if migration_switches:
@@ -2826,6 +2845,8 @@ class NDSwitchResourceModule():
                 )
                 self.log.error(msg)
                 self.nd.module.fail_json(msg=msg)
+            for sw in switches_to_delete:
+                self.sent.add(sw)
 
         diff["to_update"] = []
 
@@ -2941,6 +2962,8 @@ class NDSwitchResourceModule():
             f"Proceeding to delete {len(switches_to_delete)} switch(es) from fabric"
         )
         self.fabric_ops.bulk_delete(switches_to_delete)
+        for sw in switches_to_delete:
+            self.sent.add(sw)
         self.log.debug("EXIT: _handle_deleted_state()")
 
     # =====================================================================
