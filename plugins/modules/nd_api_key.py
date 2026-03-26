@@ -146,7 +146,6 @@ def main():
         nd.existing = nd.previous = nd.query_objs(path, key="apiKeys")
 
     if state == "present":
-
         if len(api_key_name) > 32 or len(api_key_name) < 1:
             nd.fail_json("A length of 1 to 32 characters is allowed.")
         elif re.search(r"[^a-zA-Z0-9_.-]", api_key_name):

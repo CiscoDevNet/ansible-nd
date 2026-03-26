@@ -11,11 +11,9 @@ filtering with type safety via Pydantic.
 
 from __future__ import absolute_import, annotations, division, print_function
 
-
 from enum import Enum
 from typing import Optional, Protocol
 from urllib.parse import quote
-
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,

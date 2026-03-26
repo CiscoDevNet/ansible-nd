@@ -1,6 +1,5 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
+# Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -34,10 +33,6 @@ from __future__ import annotations
 # fmt: on
 # isort: on
 
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
-
 import traceback
 from typing import TYPE_CHECKING, Any, Callable, Union
 
@@ -51,11 +46,16 @@ if TYPE_CHECKING:
         Field,
         PydanticExperimentalWarning,
         StrictBool,
+        SecretStr,
         ValidationError,
         field_serializer,
+        model_serializer,
         field_validator,
         model_validator,
         validator,
+        computed_field,
+        FieldSerializationInfo,
+        SerializationInfo,
     )
 
     HAS_PYDANTIC = True  # pylint: disable=invalid-name
@@ -71,11 +71,16 @@ else:
             Field,
             PydanticExperimentalWarning,
             StrictBool,
+            SecretStr,
             ValidationError,
             field_serializer,
+            model_serializer,
             field_validator,
             model_validator,
             validator,
+            computed_field,
+            FieldSerializationInfo,
+            SerializationInfo,
         )
     except ImportError:
         HAS_PYDANTIC = False  # pylint: disable=invalid-name
@@ -127,9 +132,27 @@ else:
 
             return decorator
 
+        # Fallback: model_serializer decorator that does nothing
+        def model_serializer(*args, **kwargs):  # pylint: disable=unused-argument
+            """Pydantic model_serializer fallback when pydantic is not available."""
+
+            def decorator(func):
+                return func
+
+            return decorator
+
         # Fallback: field_validator decorator that does nothing
         def field_validator(*args, **kwargs) -> Callable[..., Any]:  # pylint: disable=unused-argument,invalid-name
             """Pydantic field_validator fallback when pydantic is not available."""
+
+            def decorator(func):
+                return func
+
+            return decorator
+
+        # Fallback: computed_field decorator that does nothing
+        def computed_field(*args, **kwargs):  # pylint: disable=unused-argument
+            """Pydantic computed_field fallback when pydantic is not available."""
 
             def decorator(func):
                 return func
@@ -151,6 +174,9 @@ else:
 
         # Fallback: StrictBool
         StrictBool = bool
+
+        # Fallback: SecretStr
+        SecretStr = str
 
         # Fallback: ValidationError
         class ValidationError(Exception):
@@ -182,6 +208,20 @@ else:
                 return func
 
             return decorator
+
+        # Fallback: FieldSerializationInfo placeholder class that does nothing
+        class FieldSerializationInfo:
+            """Pydantic FieldSerializationInfo fallback when pydantic is not available."""
+
+            def __init__(self, **kwargs):
+                pass
+
+        # Fallback: SerializationInfo placeholder class that does nothing
+        class SerializationInfo:
+            """Pydantic SerializationInfo fallback when pydantic is not available."""
+
+            def __init__(self, **kwargs):
+                pass
 
     else:
         HAS_PYDANTIC = True  # pylint: disable=invalid-name
@@ -234,10 +274,15 @@ __all__ = [
     "PYDANTIC_IMPORT_ERROR",
     "PydanticExperimentalWarning",
     "StrictBool",
+    "SecretStr",
     "ValidationError",
     "field_serializer",
+    "model_serializer",
     "field_validator",
     "model_validator",
     "require_pydantic",
     "validator",
+    "computed_field",
+    "FieldSerializationInfo",
+    "SerializationInfo",
 ]

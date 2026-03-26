@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
 # Copyright: (c) 2024, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
@@ -7,7 +5,25 @@
 
 from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type
+from typing import Dict
+from types import MappingProxyType
+from copy import deepcopy
+
+
+class NDConstantMapping:
+    def __init__(self, data: Dict):
+        self.data = data
+        self.new_dict = deepcopy(data)
+        for k, v in data.items():
+            self.new_dict[v] = k
+        self.new_dict = MappingProxyType(self.new_dict)
+
+    def get_dict(self):
+        return self.new_dict
+
+    def get_original_data(self):
+        return list(self.data.keys())
+
 
 OBJECT_TYPES = {
     "tenant": "OST_TENANT",
@@ -157,6 +173,11 @@ ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED = (
     "restart",
     "delete",
     "update",
+    "merged",
+    "replaced",
+    "overridden",
+    "deleted",
+    "gathered",
 )
 
 INTERFACE_FLOW_RULES_TYPES_MAPPING = {"port_channel": "PORTCHANNEL", "physical": "PHYSICAL", "l3out_sub_interface": "L3_SUBIF", "l3out_svi": "SVI"}

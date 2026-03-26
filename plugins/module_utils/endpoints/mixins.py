@@ -1,4 +1,5 @@
-# Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
+# Copyright: (c) 2026, Allen Robel (@allenrobel) <arobel@cisco.com>
+# Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """
@@ -9,7 +10,6 @@ fields to endpoint models without duplication.
 """
 
 from __future__ import absolute_import, annotations, division, print_function
-
 
 from typing import Optional
 

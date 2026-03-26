@@ -1,6 +1,5 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
+# Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """
@@ -15,10 +14,6 @@ from __future__ import (absolute_import, division, print_function)
 from __future__ import annotations
 # fmt: on
 # isort: on
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
 
 from typing import Any, Optional
 
@@ -144,3 +139,11 @@ class NDModuleError(Exception):
         - None
         """
         return self.error_data.model_dump(exclude_none=True)
+
+
+class NDStateMachineError(Exception):
+    """
+    Raised when NDStateMachine is failing.
+    """
+
+    pass
