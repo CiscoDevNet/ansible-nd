@@ -4,7 +4,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""Multi-phase wait utilities for switch lifecycle operations."""
+"""Utility helpers for nd_manage_switches: exceptions, fabric operations,
+payload construction, credential grouping, bootstrap queries, and
+multi-phase switch wait utilities.
+"""
 
 from __future__ import absolute_import, division, print_function
 
@@ -12,8 +15,12 @@ __metaclass__ = type
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from copy import deepcopy
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_bootstrap import (
+    EpManageFabricsBootstrapGet,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_inventory import (
     EpManageFabricsInventoryDiscoverGet,
 )
@@ -23,8 +30,300 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
     EpManageFabricsSwitchActionsRediscoverPost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.utils import (
+    FabricUtils,
+    SwitchOperationError,
+)
 
-from .fabric_utils import FabricUtils
+
+# =========================================================================
+# Payload Utilities
+# =========================================================================
+
+
+def mask_password(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a deep copy of *payload* with password fields masked.
+
+    Useful for safe logging of API payloads that contain credentials.
+
+    Args:
+        payload: API payload dict (may contain ``password`` keys).
+
+    Returns:
+        Copy with every ``password`` value replaced by ``"********"``.
+    """
+    masked = deepcopy(payload)
+    if "password" in masked:
+        masked["password"] = "********"
+    if isinstance(masked.get("switches"), list):
+        for switch in masked["switches"]:
+            if isinstance(switch, dict) and "password" in switch:
+                switch["password"] = "********"
+    return masked
+
+
+class PayloadUtils:
+    """Stateless helper for building ND Switch Resource API request payloads."""
+
+    def __init__(self, logger: Optional[logging.Logger] = None):
+        """Initialize PayloadUtils.
+
+        Args:
+            logger: Optional logger; defaults to ``nd.PayloadUtils``.
+        """
+        self.log = logger or logging.getLogger("nd.PayloadUtils")
+
+    def build_credentials_payload(
+        self,
+        serial_numbers: List[str],
+        username: str,
+        password: str,
+    ) -> Dict[str, Any]:
+        """Build payload for saving switch credentials.
+
+        Args:
+            serial_numbers: Switch serial numbers.
+            username:       Switch username.
+            password:       Switch password.
+
+        Returns:
+            Credentials API payload dict.
+        """
+        return {
+            "switchIds": serial_numbers,
+            "username": username,
+            "password": password,
+        }
+
+    def build_switch_ids_payload(
+        self,
+        serial_numbers: List[str],
+    ) -> Dict[str, Any]:
+        """Build payload with switch IDs for remove / batch operations.
+
+        Args:
+            serial_numbers: Switch serial numbers.
+
+        Returns:
+            ``{"switchIds": [...]}`` payload dict.
+        """
+        return {"switchIds": serial_numbers}
+
+
+# =========================================================================
+# Switch Helpers
+# =========================================================================
+
+
+def get_switch_field(
+    switch,
+    field_names: List[str],
+) -> Optional[Any]:
+    """Extract a field value from a switch config, trying multiple names.
+
+    Supports Pydantic models and plain dicts with both snake_case and
+    camelCase key lookups.
+
+    Args:
+        switch:      Switch model or dict to extract from.
+        field_names: Candidate field names to try, in priority order.
+
+    Returns:
+        First non-``None`` value found, or ``None``.
+    """
+    for name in field_names:
+        if hasattr(switch, name):
+            value = getattr(switch, name)
+            if value is not None:
+                return value
+        elif isinstance(switch, dict):
+            if name in switch and switch[name] is not None:
+                return switch[name]
+            # Try camelCase variant
+            camel = ''.join(
+                word.capitalize() if i > 0 else word
+                for i, word in enumerate(name.split('_'))
+            )
+            if camel in switch and switch[camel] is not None:
+                return switch[camel]
+    return None
+
+
+def determine_operation_type(switch) -> str:
+    """Determine the operation type from switch configuration.
+
+    Args:
+        switch: A ``SwitchConfigModel``, ``SwitchDiscoveryModel``,
+            or raw dict.
+
+    Returns:
+        ``'normal'``, ``'poap'``, or ``'rma'``.
+    """
+    # Pydantic model with .operation_type attribute
+    if hasattr(switch, 'operation_type'):
+        return switch.operation_type
+
+    if isinstance(switch, dict):
+        if 'poap' in switch or 'bootstrap' in switch:
+            return 'poap'
+        if (
+            'rma' in switch
+            or 'old_serial' in switch
+            or 'oldSerial' in switch
+        ):
+            return 'rma'
+
+    return 'normal'
+
+
+def group_switches_by_credentials(
+    switches,
+    log: logging.Logger,
+) -> Dict[Tuple, list]:
+    """Group switches by shared credentials for bulk API operations.
+
+    Args:
+        switches: Validated ``SwitchConfigModel`` instances.
+        log:      Logger.
+
+    Returns:
+        Dict mapping a ``(username, password_hash, auth_proto,
+        platform_type, preserve_config)`` tuple to the list of switches
+        sharing those credentials.
+    """
+    groups: Dict[Tuple, list] = {}
+
+    for switch in switches:
+        password_hash = hash(switch.password)
+        group_key = (
+            switch.username,
+            password_hash,
+            switch.auth_proto,
+            switch.platform_type,
+            switch.preserve_config,
+        )
+        groups.setdefault(group_key, []).append(switch)
+
+    log.info(
+        f"Grouped {len(switches)} switches into "
+        f"{len(groups)} credential group(s)"
+    )
+
+    for idx, (key, group_switches) in enumerate(groups.items(), 1):
+        username, _, auth_proto, platform_type, preserve_config = key
+        auth_value = (
+            auth_proto.value
+            if hasattr(auth_proto, 'value')
+            else str(auth_proto)
+        )
+        platform_value = (
+            platform_type.value
+            if hasattr(platform_type, 'value')
+            else str(platform_type)
+        )
+        log.debug(
+            f"Group {idx}: {len(group_switches)} switches with "
+            f"username={username}, auth={auth_value}, "
+            f"platform={platform_value}, "
+            f"preserve_config={preserve_config}"
+        )
+
+    return groups
+
+
+# =========================================================================
+# Bootstrap Utilities
+# =========================================================================
+
+
+def query_bootstrap_switches(
+    nd,
+    fabric: str,
+    log: logging.Logger,
+) -> List[Dict[str, Any]]:
+    """GET switches currently in the bootstrap (POAP / PnP) loop.
+
+    Args:
+        nd:     NDModule instance (REST client).
+        fabric: Fabric name.
+        log:    Logger.
+
+    Returns:
+        List of raw switch dicts from the bootstrap API.
+    """
+    log.debug("ENTER: query_bootstrap_switches()")
+
+    endpoint = EpManageFabricsBootstrapGet()
+    endpoint.fabric_name = fabric
+    log.debug(f"Bootstrap endpoint: {endpoint.path}")
+
+    try:
+        result = nd.request(
+            path=endpoint.path, verb=endpoint.verb,
+        )
+    except Exception as e:
+        msg = (
+            f"Failed to query bootstrap switches for "
+            f"fabric '{fabric}': {e}"
+        )
+        log.error(msg)
+        nd.module.fail_json(msg=msg)
+
+    if isinstance(result, dict):
+        switches = result.get("switches", [])
+    elif isinstance(result, list):
+        switches = result
+    else:
+        switches = []
+
+    log.info(
+        f"Bootstrap API returned {len(switches)} "
+        f"switch(es) in POAP loop"
+    )
+    log.debug("EXIT: query_bootstrap_switches()")
+    return switches
+
+
+def build_bootstrap_index(
+    bootstrap_switches: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """Build a serial-number-keyed index from bootstrap API data.
+
+    Args:
+        bootstrap_switches: Raw switch dicts from the bootstrap API.
+
+    Returns:
+        Dict mapping ``serial_number`` -> switch dict.
+    """
+    return {
+        sw.get("serialNumber", sw.get("serial_number", "")): sw
+        for sw in bootstrap_switches
+    }
+
+
+def build_poap_data_block(poap_cfg) -> Optional[Dict[str, Any]]:
+    """Build optional data block for bootstrap and pre-provision models.
+
+    Args:
+        poap_cfg: ``POAPConfigModel`` from the user playbook.
+
+    Returns:
+        Data block dict, or ``None`` if no ``config_data`` is present.
+    """
+    if not poap_cfg.config_data:
+        return None
+    data_block: Dict[str, Any] = {}
+    gateway = poap_cfg.config_data.gateway
+    if gateway:
+        data_block["gatewayIpMask"] = gateway
+    if poap_cfg.config_data.models:
+        data_block["models"] = poap_cfg.config_data.models
+    return data_block or None
+
+
+# =========================================================================
+# Switch Wait Utilities
+# =========================================================================
 
 
 class SwitchWaitUtils:
@@ -80,7 +379,7 @@ class SwitchWaitUtils:
             fabric:        Fabric name.
             logger:        Optional logger; defaults to ``nd.SwitchWaitUtils``.
             max_attempts:  Max polling iterations (default ``300``).
-            wait_interval: Seconds between polls (default ``5``).
+            wait_interval: Override interval in seconds (default ``5``).
             fabric_utils:  Optional ``FabricUtils`` instance for fabric
                            info queries. Created internally if not provided.
         """
@@ -680,5 +979,15 @@ class SwitchWaitUtils:
 
 
 __all__ = [
+    "SwitchOperationError",
+    "PayloadUtils",
+    "FabricUtils",
     "SwitchWaitUtils",
+    "mask_password",
+    "get_switch_field",
+    "determine_operation_type",
+    "group_switches_by_credentials",
+    "query_bootstrap_switches",
+    "build_bootstrap_index",
+    "build_poap_data_block",
 ]

@@ -49,10 +49,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches im
     PreprovisionConfigModel,
     RMAConfigModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.utils.manage_switches import (
+from ansible_collections.cisco.nd.plugins.module_utils.utils import (
     FabricUtils,
-    SwitchWaitUtils,
     SwitchOperationError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
+    SwitchWaitUtils,
     mask_password,
     get_switch_field,
     group_switches_by_credentials,
