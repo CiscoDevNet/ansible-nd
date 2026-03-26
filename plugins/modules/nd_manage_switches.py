@@ -158,6 +158,15 @@ options:
                         - Serial number of the switch to Pre-provision.
                         type: str
                         required: true
+                    discovery_username:
+                        description:
+                        - Username for device discovery during pre-provision.
+                        type: str
+                    discovery_password:
+                        description:
+                        - Password for device discovery during pre-provision.
+                        type: str
+                        no_log: true
                     model:
                         description:
                         - Model of the switch to Pre-provision (e.g., N9K-C93180YC-EX).
@@ -173,6 +182,10 @@ options:
                         - Hostname for the switch during pre-provision.
                         type: str
                         required: true
+                    image_policy:
+                        description:
+                        - Image policy to apply during pre-provision.
+                        type: str
                     config_data:
                         description:
                         - Basic configuration data for the switch during Pre-provision.
@@ -193,19 +206,6 @@ options:
                                 - Gateway IP with subnet mask (e.g., 192.168.0.1/24).
                                 type: str
                                 required: true
-                    discovery_username:
-                        description:
-                        - Username for device discovery during pre-provision.
-                        type: str
-                    discovery_password:
-                        description:
-                        - Password for device discovery during pre-provision.
-                        type: str
-                        no_log: true
-                    image_policy:
-                        description:
-                        - Image policy to apply during pre-provision.
-                        type: str
             rma:
                 description:
                 - RMA an existing switch with a new one.
@@ -214,14 +214,6 @@ options:
                 type: list
                 elements: dict
                 suboptions:
-                    discovery_username:
-                        description:
-                        - Username for device discovery during POAP and RMA discovery.
-                        type: str
-                    discovery_password:
-                        description:
-                        - Password for device discovery during POAP and RMA discovery.
-                        type: str
                     new_serial_number:
                         description:
                         - Serial number of switch to Bootstrap for RMA.
@@ -232,6 +224,15 @@ options:
                         - Serial number of switch to be replaced by RMA.
                         type: str
                         required: true
+                    discovery_username:
+                        description:
+                        - Username for device discovery during POAP and RMA discovery.
+                        type: str
+                    discovery_password:
+                        description:
+                        - Password for device discovery during POAP and RMA discovery.
+                        type: str
+                        no_log: true
                     model:
                         description:
                         - Model of switch to Bootstrap for RMA.
@@ -263,9 +264,6 @@ options:
                                 - Gateway IP with subnet mask (e.g., 192.168.0.1/24).
                                 type: str
                                 required: true
-                        - Serial number of new replacement switch.
-                        type: str
-                        required: true
 
 extends_documentation_fragment:
 - cisco.nd.modules
