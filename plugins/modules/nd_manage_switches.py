@@ -209,8 +209,8 @@ options:
             rma:
                 description:
                 - RMA an existing switch with a new one.
-                - Please note that the existing switch should be configured and deployed in maintenance mode.
-                - Please note that the existing switch being replaced should be shutdown state or out of network.
+                - Please note that the existing switch being replaced should be configured, deployed in maintenance mode
+                  and then shutdown (unreachable state).
                 type: list
                 elements: dict
                 suboptions:
@@ -271,7 +271,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module requires ND 12.x or higher.
+- This module requires ND 4.2 or higher.
 - POAP operations require POAP and DHCP to be enabled in fabric settings.
 - RMA operations require the old switch to be in a replaceable state.
 - Idempotence for B(Bootstrap) - A bootstrap entry is considered idempotent when
