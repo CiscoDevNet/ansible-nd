@@ -14,7 +14,7 @@
 {% if switch.seed_ip is defined %}
 {% set _ = switch_item.update({'seed_ip': switch.seed_ip | default('') }) %}
 {% endif %}
-{% set _ = switch_item.update({'user_name': switch_username}) %}
+{% set _ = switch_item.update({'username': switch_username}) %}
 {% set _ = switch_item.update({'password': switch_password}) %}
 {% if switch.role is defined %}
 {% set _ = switch_item.update({'role': switch.role | default('') }) %}

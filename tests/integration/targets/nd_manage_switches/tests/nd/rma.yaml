@@ -144,11 +144,11 @@
         state: merged
         config:
           - seed_ip: '{{ test_data.sw1 }}'
-            user_name: '{{ switch_username }}'
+            username: '{{ switch_username }}'
             password: '{{ switch_password }}'
             rma:
-              - serial_number: '{{ test_data.sw1_rma_serial }}'
-                old_serial: '{{ test_data.sw1_serial }}'
+              - new_serial_number: '{{ test_data.sw1_rma_serial }}'
+                old_serial_number: '{{ test_data.sw1_serial }}'
                 model: '{{ test_data.rma_model }}'
                 version: '{{ test_data.rma_version }}'
                 hostname: '{{ test_data.rma_hostname }}'

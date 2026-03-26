@@ -96,7 +96,7 @@ def group_switches_by_credentials(
     for switch in switches:
         password_hash = hash(switch.password)
         group_key = (
-            switch.user_name,
+            switch.username,
             password_hash,
             switch.auth_proto,
             switch.platform_type,

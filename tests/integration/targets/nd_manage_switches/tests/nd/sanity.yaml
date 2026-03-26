@@ -51,33 +51,44 @@
   tags: sanity
 
 # ---------------------------------------------- #
-#                  Query                         #
+#                  Gathered                      #
 # ---------------------------------------------- #
 
-# # TC - 3
-# - name: Sanity TC3 - Query - Prepare Conf
-#   ansible.builtin.set_fact:
-#     nd_switches_sanity_conf:
-#       - seed_ip: "{{ test_data.sw1 }}"
-#         role: leaf
-#   delegate_to: localhost
-#   tags: sanity
+# TC - 3
+- name: Sanity TC3 - Gathered - Gather Switch State in Fabric
+  cisco.nd.nd_manage_switches:
+    state: gathered
+    fabric: "{{ test_data.test_fabric }}"
+  register: gathered_result
+  tags: sanity
 
-# - name: Sanity TC3 - Query - Query a Switch - Hostname and Role must match
-#   cisco.nd.nd_manage_switches:
-#     fabric: "{{ test_data.test_fabric }}"
-#     state: query
-#     config: "{{ nd_switches_sanity_conf }}"
-#   register: query_result
-#   tags: sanity
+- name: Sanity TC3 - Gathered - Build Gathered Lookup
+  ansible.builtin.set_fact:
+    gathered_seeds: "{{ gathered_result.gathered | map(attribute='seed_ip') | list }}"
+    gathered_role_map: "{{ gathered_result.gathered | items2dict(key_name='seed_ip', value_name='role') }}"
+  delegate_to: localhost
+  tags: sanity
 
-# - name: Sanity TC3 - Query - Validate ND Data
-#   cisco.nd.nd_switches_validate:
-#     nd_data: "{{ query_result }}"
-#     test_data: "{{ nd_switches_sanity_conf }}"
-#     changed: "{{ create_result.changed }}"
-#   register: result
-#   tags: sanity
+- name: Sanity TC3 - Gathered - Validate Gathered Count
+  ansible.builtin.assert:
+    that:
+      - gathered_result.gathered | length == nd_switches_base_conf | length
+    fail_msg: >-
+      Gathered count {{ gathered_result.gathered | length }} does not match
+      expected {{ nd_switches_base_conf | length }}
+  tags: sanity
+
+- name: Sanity TC3 - Gathered - Validate Each Switch Present and Role Matches
+  ansible.builtin.assert:
+    that:
+      - item.seed_ip in gathered_seeds
+      - "'role' not in item or gathered_role_map[item.seed_ip] == item.role"
+    fail_msg: >-
+      Switch {{ item.seed_ip }} missing from gathered output or role mismatch
+      (expected={{ item.role | default('any') }},
+      got={{ gathered_role_map[item.seed_ip] | default('not found') }})
+  loop: "{{ nd_switches_base_conf }}"
+  tags: sanity
 
 # ---------------------------------------------- #
 #                  Overridden                    #

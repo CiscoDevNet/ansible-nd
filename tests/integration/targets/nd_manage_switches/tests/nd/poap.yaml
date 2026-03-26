@@ -118,7 +118,7 @@
   ansible.builtin.set_fact:
     switch_conf:
       - seed_ip: "{{ test_data.sw2 }}"
-        user_name: '{{ switch_username }}'
+        username: '{{ switch_username }}'
         password: '{{ switch_password }}'
         role: border
         poap:

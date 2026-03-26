@@ -925,10 +925,10 @@ class SwitchFabricOps:
 
         cred_groups: Dict[Tuple[str, str], List[str]] = {}
         for sn, cfg in switch_actions:
-            if not cfg.user_name or not cfg.password:
-                log.debug(f"Skipping credentials for {sn}: missing user_name or password")
+            if not cfg.username or not cfg.password:
+                log.debug(f"Skipping credentials for {sn}: missing username or password")
                 continue
-            key = (cfg.user_name, cfg.password)
+            key = (cfg.username, cfg.password)
             cred_groups.setdefault(key, []).append(sn)
 
         if not cred_groups:
@@ -1960,7 +1960,7 @@ class RMAHandler:
         switch_actions: List[Tuple[str, SwitchConfigModel]] = []
         rma_diff_data: List[Tuple[str, str, SwitchConfigModel]] = []  # (new_serial, old_serial, switch_cfg)
         for switch_cfg, rma_cfg in rma_entries:
-            new_serial = rma_cfg.serial_number
+            new_serial = rma_cfg.new_serial_number
             bootstrap_data = bootstrap_idx.get(new_serial)
 
             if not bootstrap_data:
@@ -1975,7 +1975,7 @@ class RMAHandler:
 
             SwitchDiffEngine.validate_switch_api_fields(
                     nd=nd,
-                    serial=rma_cfg.serial_number,
+                    serial=rma_cfg.new_serial_number,
                     model=rma_cfg.model,
                     version=rma_cfg.version,
                     config_data=rma_cfg.config_data,
@@ -1986,16 +1986,16 @@ class RMAHandler:
 
             rma_model = self._build_rma_model(
                 switch_cfg, rma_cfg, bootstrap_data,
-                old_switch_info[rma_cfg.old_serial],
+                old_switch_info[rma_cfg.old_serial_number],
             )
             log.info(
-                f"Built RMA model: replacing {rma_cfg.old_serial} with "
+                f"Built RMA model: replacing {rma_cfg.old_serial_number} with "
                 f"{rma_model.new_switch_id}"
             )
 
-            self._provision_rma_switch(rma_cfg.old_serial, rma_model)
+            self._provision_rma_switch(rma_cfg.old_serial_number, rma_model)
             switch_actions.append((rma_model.new_switch_id, switch_cfg))
-            rma_diff_data.append((rma_model.new_switch_id, rma_cfg.old_serial, switch_cfg))
+            rma_diff_data.append((rma_model.new_switch_id, rma_cfg.old_serial_number, switch_cfg))
 
         # Post-processing: wait for RMA switches to become ready, then
         # save credentials and finalize.  RMA switches come up via POAP
@@ -2058,7 +2058,7 @@ class RMAHandler:
         result: Dict[str, Dict[str, Any]] = {}
 
         for switch_cfg, rma_cfg in rma_entries:
-            old_serial = rma_cfg.old_serial
+            old_serial = rma_cfg.old_serial_number
 
             old_switch = existing_by_serial.get(old_serial)
             if old_switch is None:
@@ -2147,12 +2147,12 @@ class RMAHandler:
         """
         log = self.ctx.log
         log.debug(
-            f"ENTER: _build_rma_model(new={rma_cfg.serial_number}, "
-            f"old={rma_cfg.old_serial})"
+            f"ENTER: _build_rma_model(new={rma_cfg.new_serial_number}, "
+            f"old={rma_cfg.old_serial_number})"
         )
 
         # User config fields
-        new_switch_id = rma_cfg.serial_number
+        new_switch_id = rma_cfg.new_serial_number
         hostname = old_switch_info.get("hostname", "")
         ip = switch_cfg.seed_ip
         image_policy = rma_cfg.image_policy

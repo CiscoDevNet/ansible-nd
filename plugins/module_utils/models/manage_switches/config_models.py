@@ -255,17 +255,17 @@ class RMAConfigModel(NDNestedModel):
     )
 
     # Required fields for RMA
-    serial_number: str = Field(
+    new_serial_number: str = Field(
         ...,
-        alias="serialNumber",
+        alias="newSerialNumber",
         min_length=1,
-        description="Serial number of switch to Bootstrap for RMA"
+        description="Serial number of the new/replacement switch to Bootstrap for RMA"
     )
-    old_serial: str = Field(
+    old_serial_number: str = Field(
         ...,
-        alias="oldSerial",
+        alias="oldSerialNumber",
         min_length=1,
-        description="Serial number of switch to be replaced by RMA"
+        description="Serial number of the existing switch to be replaced by RMA"
     )
     model: Optional[str] = Field(
         default=None,
@@ -296,7 +296,7 @@ class RMAConfigModel(NDNestedModel):
         ),
     )
 
-    @field_validator('serial_number', 'old_serial', mode='before')
+    @field_validator('new_serial_number', 'old_serial_number', mode='before')
     @classmethod
     def validate_serial_numbers(cls, v: str) -> str:
         """Validate serial numbers are not empty."""
@@ -337,7 +337,7 @@ class SwitchConfigModel(NDBaseModel):
 
     # Fields excluded from diff — only seed_ip + role are compared
     exclude_from_diff: ClassVar[List[str]] = [
-        "user_name", "password", "auth_proto",
+        "username", "password", "auth_proto",
         "preserve_config", "platform_type", "poap", "rma",
         "operation_type",
     ]
@@ -351,7 +351,7 @@ class SwitchConfigModel(NDBaseModel):
     )
 
     # Optional fields — required for merged/overridden, optional for query/deleted
-    user_name: Optional[str] = Field(
+    username: Optional[str] = Field(
         default=None,
         alias="userName",
         description="Login username to the switch (required for merged/overridden states)"
@@ -413,11 +413,11 @@ class SwitchConfigModel(NDBaseModel):
         """Return the playbook config as a dict with all credentials stripped.
 
         Returns:
-            Dict of config fields with ``user_name``, ``password``,
+            Dict of config fields with ``username``, ``password``,
             ``discovery_username``, and ``discovery_password`` excluded.
         """
         return self.to_config(exclude={
-            "user_name": True,
+            "username": True,
             "password": True,
             "poap": {"__all__": {"discovery_username": True, "discovery_password": True}},
             "rma": {"__all__": {"discovery_username": True, "discovery_password": True}},
@@ -455,13 +455,13 @@ class SwitchConfigModel(NDBaseModel):
         """Validate credentials for POAP and RMA operations."""
         if self.poap or self.rma:
             # POAP/RMA require credentials
-            if not self.user_name or not self.password:
+            if not self.username or not self.password:
                 raise ValueError(
-                    "For POAP and RMA operations, user_name and password are required"
+                    "For POAP and RMA operations, username and password are required"
                 )
             # For POAP and RMA, username should be 'admin'
-            if self.user_name != "admin":
-                raise ValueError("For POAP and RMA operations, user_name should be 'admin'")
+            if self.username != "admin":
+                raise ValueError("For POAP and RMA operations, username should be 'admin'")
 
         return self
 
@@ -472,7 +472,7 @@ class SwitchConfigModel(NDBaseModel):
         When ``context={"state": "merged"}`` (or ``"overridden"``) is passed
         to ``model_validate()``, the model:
         - Defaults ``role`` to ``SwitchRole.LEAF`` when not specified.
-        - Enforces that ``user_name`` and ``password`` are provided.
+        - Enforces that ``username`` and ``password`` are provided.
 
         For ``query`` / ``deleted`` (or no context), fields remain as-is.
         """
@@ -495,9 +495,9 @@ class SwitchConfigModel(NDBaseModel):
         if state in ("merged", "overridden"):
             if self.role is None:
                 self.role = SwitchRole.LEAF
-            if not self.user_name or not self.password:
+            if not self.username or not self.password:
                 raise ValueError(
-                    f"user_name and password are required "
+                    f"username and password are required "
                     f"for '{state}' state "
                     f"(switch: {self.seed_ip})"
                 )
@@ -579,7 +579,7 @@ class SwitchConfigModel(NDBaseModel):
         """Build a config-shaped entry from a live inventory record.
 
         Only the fields recoverable from the ND inventory API are populated.
-        Credentials (user_name, password) are intentionally omitted.
+        Credentials (username, password) are intentionally omitted.
 
         Args:
             sw: A SwitchDataModel instance from the fabric inventory.
@@ -616,13 +616,13 @@ class SwitchConfigModel(NDBaseModel):
         """Return a config dict suitable for gathered output.
 
         platform_type is excluded (internal detail not needed by the user).
-        user_name and password are replaced with placeholders so the returned
+        username and password are replaced with placeholders so the returned
         data is immediately usable as ``config:`` input after substituting
         real credentials.
 
         Returns:
             Dict with seed_ip, role, auth_proto, preserve_config,
-            user_name set to ``"<username>"``, password set to ``"<password>"``.
+            username set to ``"<username>"``, password set to ``"<password>"``.
         """
         result = self.to_config(exclude={
                     "platform_type": True,
@@ -630,7 +630,7 @@ class SwitchConfigModel(NDBaseModel):
                     "rma": True,
                     "operation_type": True,
                 })
-        result["user_name"] = "<username>"
+        result["username"] = "<username>"
         result["password"] = "<password>"
         return result
 

@@ -69,7 +69,7 @@ options:
                 type: str
                 default: MD5
                 choices: ['MD5', 'SHA', 'MD5_DES', 'MD5_AES', 'SHA_DES', 'SHA_AES']
-            user_name:
+            username:
                 description:
                 - Login username for the switch.
                 - For POAP and RMA, should be C(admin).
@@ -184,12 +184,12 @@ options:
                         description:
                         - Password for device discovery during POAP and RMA discovery.
                         type: str
-                    serial_number:
+                    new_serial_number:
                         description:
                         - Serial number of switch to Bootstrap for RMA.
                         type: str
                         required: true
-                    old_serial:
+                    old_serial_number:
                         description:
                         - Serial number of switch to be replaced by RMA.
                         type: str
@@ -257,7 +257,7 @@ EXAMPLES = """
     fabric: my-fabric
     config:
       - seed_ip: 192.168.10.201
-        user_name: admin
+        username: admin
         password: "{{ switch_password }}"
         role: leaf
         preserve_config: false
@@ -268,11 +268,11 @@ EXAMPLES = """
     fabric: my-fabric
     config:
       - seed_ip: 192.168.10.201
-        user_name: admin
+        username: admin
         password: "{{ switch_password }}"
         role: leaf
       - seed_ip: 192.168.10.202
-        user_name: admin
+        username: admin
         password: "{{ switch_password }}"
         role: spine
     state: merged
@@ -282,7 +282,7 @@ EXAMPLES = """
     fabric: my-fabric
     config:
       - seed_ip: 192.168.10.1
-        user_name: admin
+        username: admin
         password: "{{ switch_password }}"
         poap:
           - preprovision_serial: SAL1234ABCD
@@ -297,7 +297,7 @@ EXAMPLES = """
     fabric: my-fabric
     config:
       - seed_ip: 192.168.10.1
-        user_name: admin
+        username: admin
         password: "{{ switch_password }}"
         poap:
           - serial_number: SAL5678EFGH
@@ -312,7 +312,7 @@ EXAMPLES = """
     fabric: my-fabric
     config:
       - seed_ip: 192.168.10.1
-        user_name: admin
+        username: admin
         password: "{{ switch_password }}"
         poap:
           - serial_number: SAL5678EFGH
@@ -324,11 +324,11 @@ EXAMPLES = """
     fabric: my-fabric
     config:
       - seed_ip: 192.168.10.1
-        user_name: admin
+        username: admin
         password: "{{ switch_password }}"
         rma:
-          - old_serial: SAL1234ABCD
-            serial_number: SAL9999ZZZZ
+          - old_serial_number: SAL1234ABCD
+            new_serial_number: SAL9999ZZZZ
             model: N9K-C93180YC-EX
             version: "10.3(1)"
             hostname: leaf-replaced
@@ -419,6 +419,7 @@ def main():
     # Initialize logging
     try:
         log_config = Log()
+        log_config.config = "/Users/achengam/Documents/Ansible_Dev/NDBranch/ansible_collections/cisco/nd/ansible_cisco_log_r.json"
         log_config.commit()
         # Create logger instance for this module
         log = logging.getLogger("nd.nd_manage_switches")
