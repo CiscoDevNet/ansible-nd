@@ -121,14 +121,14 @@
         username: '{{ switch_username }}'
         password: '{{ switch_password }}'
         role: border
-        poap:
-          - preprovision_serial: "{{ test_data.sw2_serial }}"
-            model: "{{ test_data.poap_model }}"
-            version: "{{ test_data.poap_version }}"
-            hostname: "{{ test_data.prepro_hostname }}"
-            config_data:
-              models: "{{ test_data.poap_configmodel }}"
-              gateway: "{{ test_data.poap_gateway }}"
+        preprovision:
+          serial_number: "{{ test_data.sw2_serial }}"
+          model: "{{ test_data.poap_model }}"
+          version: "{{ test_data.poap_version }}"
+          hostname: "{{ test_data.prepro_hostname }}"
+          config_data:
+            models: "{{ test_data.poap_configmodel }}"
+            gateway: "{{ test_data.poap_gateway }}"
   when: poap_enabled == True
   delegate_to: localhost
   tags: poap
@@ -187,15 +187,12 @@
   ansible.builtin.set_fact:
     switch_conf:
       - seed_ip: "{{ test_data.sw1 }}"
+        username: '{{ switch_username }}'
+        password: '{{ switch_password }}'
         role: leaf
         poap:
-          - serial_number: "{{ test_data.sw1_serial }}"
-            model: "{{ test_data.poap_model }}"
-            version: "{{ test_data.poap_version }}"
-            hostname: "{{ test_data.poap_hostname }}"
-            config_data:
-              models: "{{ test_data.poap_configmodel }}"
-              gateway: "{{ test_data.poap_gateway }}"
+          serial_number: "{{ test_data.sw1_serial }}"
+          hostname: "{{ test_data.poap_hostname }}"
       - seed_ip: "{{ test_data.sw3 }}"
         auth_proto: MD5
         role: spine

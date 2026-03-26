@@ -215,7 +215,9 @@ class LuceneQueryParams(BaseModel):
                 # Lucene filter expressions require ':' and ' ' to remain unencoded
                 # so the server-side parser can recognise the field:value syntax.
                 if url_encode:
-                    safe_chars = ": " if field_name == "filter" else ""
+                    # Keep ':' unencoded so Lucene field:value syntax is preserved.
+                    # Spaces are encoded as %20 so the query string is valid in URLs.
+                    safe_chars = ":" if field_name == "filter" else ""
                     encoded_value = quote(str(field_value), safe=safe_chars)
                 else:
                     encoded_value = str(field_value)

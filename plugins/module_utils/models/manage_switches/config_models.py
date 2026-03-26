@@ -84,15 +84,29 @@ class ConfigDataModel(NDNestedModel):
 
 
 class POAPConfigModel(NDNestedModel):
-    """
-    POAP configuration entry for a single switch in the playbook config list.
+    """Bootstrap POAP config for a single switch.
 
-    Supports Bootstrap (serial_number only), Pre-provision (preprovision_serial only),
-    and Swap (both serial fields) operation modes.
+    Used when ``poap`` is specified alone (bootstrap-only operation).
+    ``serial_number`` and ``hostname`` are mandatory; all other fields are optional.
+    Model, version, and config data are sourced from the bootstrap API at runtime.
+    If the bootstrap API reports a different hostname or role, the API value overrides
+    the user-provided value and a warning is logged.
     """
     identifiers: ClassVar[List[str]] = []
 
-    # Discovery credentials
+    # Mandatory
+    serial_number: str = Field(
+        ...,
+        alias="serialNumber",
+        min_length=1,
+        description="Serial number of the physical switch to Bootstrap"
+    )
+    hostname: str = Field(
+        ...,
+        description="Hostname for the switch during bootstrap"
+    )
+
+    # Optional
     discovery_username: Optional[str] = Field(
         default=None,
         alias="discoveryUsername",
@@ -103,117 +117,15 @@ class POAPConfigModel(NDNestedModel):
         alias="discoveryPassword",
         description="Password for device discovery during POAP"
     )
-
-    # Bootstrap operation - requires actual switch serial number
-    serial_number: Optional[str] = Field(
-        default=None,
-        alias="serialNumber",
-        min_length=1,
-        description="Serial number of switch to Bootstrap"
-    )
-
-    # Pre-provision operation - requires pre-provision serial number
-    preprovision_serial: Optional[str] = Field(
-        default=None,
-        alias="preprovisionSerial",
-        min_length=1,
-        description="Serial number of switch to Pre-provision"
-    )
-
-    # Common fields for both operations
-    model: Optional[str] = Field(
-        default=None,
-        description="Model of switch to Bootstrap/Pre-provision"
-    )
-    version: Optional[str] = Field(
-        default=None,
-        description="Software version of switch to Bootstrap/Pre-provision"
-    )
-    hostname: Optional[str] = Field(
-        default=None,
-        description="Hostname of switch to Bootstrap/Pre-provision"
-    )
     image_policy: Optional[str] = Field(
         default=None,
         alias="imagePolicy",
         description="Name of the image policy to be applied on switch"
     )
-    config_data: Optional[ConfigDataModel] = Field(
-        default=None,
-        alias="configData",
-        description=(
-            "Basic config data of switch to Bootstrap/Pre-provision. "
-            "'models' (list of module models) and 'gateway' (IP with mask) are mandatory."
-        ),
-    )
-
-    @model_validator(mode='after')
-    def validate_operation_type(self) -> Self:
-        """Validate serial_number / preprovision_serial combinations.
-
-        Allowed combinations:
-        - serial_number only → Bootstrap
-        - preprovision_serial only → Pre-provision
-        - both serial_number AND preprovision_serial → Swap (change serial
-          number of an existing pre-provisioned switch)
-        - neither → error
-        """
-        has_serial = bool(self.serial_number)
-        has_preprov = bool(self.preprovision_serial)
-
-        if not has_serial and not has_preprov:
-            raise ValueError(
-                "Either 'serial_number' (for Bootstrap / Swap) or 'preprovision_serial' "
-                "(for Pre-provision / Swap) must be provided."
-            )
-
-        return self
-
-    @model_validator(mode='after')
-    def validate_required_fields_for_non_swap(self) -> Self:
-        """Validate model/version/hostname/config_data for pre-provision operations.
-
-        Pre-provision (preprovision_serial only):
-          model, version, hostname, config_data are all mandatory because the
-          controller has no physical switch to pull these values from.
-
-        Bootstrap (serial_number only):
-          These fields are optional — they can be omitted and the module will
-          pull them from the bootstrap GET API response at runtime.  If
-          provided, they are validated against the bootstrap data before import.
-
-        Swap (both serials present):
-          No check needed — the swap API only requires the new serial number.
-        """
-        has_serial = bool(self.serial_number)
-        has_preprov = bool(self.preprovision_serial)
-
-        # Pre-provision only: all four descriptor fields are mandatory
-        if has_preprov and not has_serial:
-            missing = []
-            if not self.model:
-                missing.append("model")
-            if not self.version:
-                missing.append("version")
-            if not self.hostname:
-                missing.append("hostname")
-            if not self.config_data:
-                missing.append("config_data")
-            if missing:
-                raise ValueError(
-                    f"model, version, hostname and config_data are required for "
-                    f"Pre-provisioning a switch. Missing: {', '.join(missing)}"
-                )
-        return self
 
     @model_validator(mode='after')
     def validate_discovery_credentials_pair(self) -> Self:
-        """Validate that discovery_username and discovery_password are both set or both absent.
-
-        Mirrors the dcnm_inventory.py bidirectional check:
-          - discovery_username set → discovery_password required
-          - discovery_password set → discovery_username required
-        """
+        """Validate that discovery_username and discovery_password are both set or both absent."""
         has_user = bool(self.discovery_username)
         has_pass = bool(self.discovery_password)
         if has_user and not has_pass:
@@ -226,11 +138,96 @@ class POAPConfigModel(NDNestedModel):
             )
         return self
 
-    @field_validator('serial_number', 'preprovision_serial', mode='before')
+    @field_validator('serial_number', mode='before')
     @classmethod
-    def validate_serial_numbers(cls, v: Optional[str]) -> Optional[str]:
-        """Validate serial numbers are not empty strings."""
-        return SwitchValidators.validate_serial_number(v)
+    def validate_serial_number_field(cls, v: str) -> str:
+        """Validate serial_number is not empty."""
+        result = SwitchValidators.validate_serial_number(v)
+        if result is None:
+            raise ValueError("serial_number cannot be empty")
+        return result
+
+
+class PreprovisionConfigModel(NDNestedModel):
+    """Pre-provision config for a single switch.
+
+    Used when ``preprovision`` is specified alone.
+    All five fields — ``serial_number``, ``model``, ``version``, ``hostname``,
+    and ``config_data`` — are mandatory because the controller has no physical
+    switch to pull these values from.
+    """
+    identifiers: ClassVar[List[str]] = []
+
+    # Mandatory
+    serial_number: str = Field(
+        ...,
+        alias="serialNumber",
+        min_length=1,
+        description="Serial number of switch to Pre-provision"
+    )
+    model: str = Field(
+        ...,
+        min_length=1,
+        description="Model of switch to Pre-provision"
+    )
+    version: str = Field(
+        ...,
+        min_length=1,
+        description="Software version of switch to Pre-provision"
+    )
+    hostname: str = Field(
+        ...,
+        description="Hostname for the switch during pre-provision"
+    )
+    config_data: ConfigDataModel = Field(
+        ...,
+        alias="configData",
+        description=(
+            "Basic config data of switch to Pre-provision. "
+            "'models' (list of module models) and 'gateway' (IP with mask) are mandatory."
+        ),
+    )
+
+    # Optional
+    discovery_username: Optional[str] = Field(
+        default=None,
+        alias="discoveryUsername",
+        description="Username for device discovery during pre-provision"
+    )
+    discovery_password: Optional[str] = Field(
+        default=None,
+        alias="discoveryPassword",
+        description="Password for device discovery during pre-provision"
+    )
+    image_policy: Optional[str] = Field(
+        default=None,
+        alias="imagePolicy",
+        description="Image policy to apply during pre-provision"
+    )
+
+    @model_validator(mode='after')
+    def validate_discovery_credentials_pair(self) -> Self:
+        """Validate that discovery_username and discovery_password are both set or both absent."""
+        has_user = bool(self.discovery_username)
+        has_pass = bool(self.discovery_password)
+        if has_user and not has_pass:
+            raise ValueError(
+                "discovery_password must be set when discovery_username is specified"
+            )
+        if has_pass and not has_user:
+            raise ValueError(
+                "discovery_username must be set when discovery_password is specified"
+            )
+        return self
+
+    @field_validator('serial_number', mode='before')
+    @classmethod
+    def validate_serial_number_field(cls, v: str) -> str:
+        """Validate serial_number is not empty."""
+        result = SwitchValidators.validate_serial_number(v)
+        if result is None:
+            raise ValueError("serial_number cannot be empty")
+        return result
 
 
 class RMAConfigModel(NDNestedModel):
@@ -330,15 +327,16 @@ class SwitchConfigModel(NDBaseModel):
     """
     Per-switch configuration entry in the Ansible playbook config list.
 
-    Supports normal switch addition, POAP (Bootstrap and Pre-provision), and RMA
-    operations. The operation type is derived from the presence of poap or rma fields.
+    Supports normal switch addition, POAP (Bootstrap), Pre-provision, Swap
+    (both poap+preprovision), and RMA operations. The operation type is derived
+    from the presence of poap, preprovision, and/or rma fields.
     """
     identifiers: ClassVar[List[str]] = ["seed_ip"]
 
     # Fields excluded from diff — only seed_ip + role are compared
     exclude_from_diff: ClassVar[List[str]] = [
         "username", "password", "auth_proto",
-        "preserve_config", "platform_type", "poap", "rma",
+        "preserve_config", "platform_type", "poap", "preprovision", "rma",
         "operation_type",
     ]
 
@@ -381,10 +379,14 @@ class SwitchConfigModel(NDBaseModel):
         description="Platform type of the switch (nx-os, ios-xe, etc.)"
     )
 
-    # POAP and RMA configurations
-    poap: Optional[List[POAPConfigModel]] = Field(
+    # POAP, Pre-provision and RMA configurations
+    poap: Optional[POAPConfigModel] = Field(
         default=None,
-        description="POAP (PowerOn Auto Provisioning) configurations for Bootstrap/Pre-provision"
+        description="Bootstrap POAP config (serial_number + hostname mandatory)"
+    )
+    preprovision: Optional[PreprovisionConfigModel] = Field(
+        default=None,
+        description="Pre-provision config (serial_number, model, version, hostname, config_data all mandatory)"
     )
     rma: Optional[List[RMAConfigModel]] = Field(
         default=None,
@@ -395,16 +397,22 @@ class SwitchConfigModel(NDBaseModel):
 
     @computed_field
     @property
-    def operation_type(self) -> Literal["normal", "poap", "rma"]:
+    def operation_type(self) -> Literal["normal", "poap", "preprovision", "swap", "rma"]:
         """Determine the operation type from this config.
 
         Returns:
-            ``'poap'`` if POAP configs are present,
+            ``'swap'`` if both poap and preprovision are present,
+            ``'poap'`` if only bootstrap poap is present,
+            ``'preprovision'`` if only preprovision is present,
             ``'rma'`` if RMA configs are present,
             ``'normal'`` otherwise.
         """
+        if self.poap and self.preprovision:
+            return "swap"
         if self.poap:
             return "poap"
+        if self.preprovision:
+            return "preprovision"
         if self.rma:
             return "rma"
         return "normal"
@@ -419,22 +427,24 @@ class SwitchConfigModel(NDBaseModel):
         return self.to_config(exclude={
             "username": True,
             "password": True,
-            "poap": {"__all__": {"discovery_username": True, "discovery_password": True}},
+            "poap": {"discovery_username": True, "discovery_password": True},
+            "preprovision": {"discovery_username": True, "discovery_password": True},
             "rma": {"__all__": {"discovery_username": True, "discovery_password": True}},
         })
 
     @model_validator(mode='after')
-    def reject_auth_proto_for_poap_rma(self) -> Self:
-        """Reject non-MD5 auth_proto when POAP or RMA is configured.
+    def reject_auth_proto_for_special_ops(self) -> Self:
+        """Reject non-MD5 auth_proto when POAP, Pre-provision, Swap or RMA is configured.
 
-        POAP, Pre-provision, and RMA operations always use MD5 internally.
-        By validating mode='after', all inputs (raw strings, enum instances,
-        or Ansible argspec-injected defaults) have already been coerced by
-        Pydantic into a typed SnmpV3AuthProtocol value, so a direct enum
-        comparison is safe and unambiguous.
+        These operations always use MD5 internally. By validating mode='after',
+        all inputs have already been coerced by Pydantic into a typed
+        SnmpV3AuthProtocol value, so a direct enum comparison is safe.
         """
-        if (self.poap or self.rma) and self.auth_proto != SnmpV3AuthProtocol.MD5:
-            op = "POAP" if self.poap else "RMA"
+        if (self.poap or self.preprovision or self.rma) and self.auth_proto != SnmpV3AuthProtocol.MD5:
+            if self.poap or self.preprovision:
+                op = "POAP/Pre-provision"
+            else:
+                op = "RMA"
             raise ValueError(
                 f"'auth_proto' must not be specified for {op} operations. "
                 f"The authentication protocol is always MD5 and is set "
@@ -443,26 +453,36 @@ class SwitchConfigModel(NDBaseModel):
         return self
 
     @model_validator(mode='after')
-    def validate_poap_rma_mutual_exclusion(self) -> Self:
-        """Validate that POAP and RMA are mutually exclusive."""
-        if self.poap and self.rma:
-            raise ValueError("Cannot specify both 'poap' and 'rma' configurations for the same switch")
+    def validate_special_ops_exclusion(self) -> Self:
+        """Validate mutually exclusive operation combinations.
 
+        Allowed:
+          - poap only (Bootstrap)
+          - preprovision only (Pre-provision)
+          - poap + preprovision (Swap)
+          - rma (RMA)
+        Not allowed:
+          - rma combined with poap or preprovision
+        """
+        if self.rma and (self.poap or self.preprovision):
+            raise ValueError(
+                "Cannot specify 'rma' together with 'poap' or 'preprovision' "
+                "for the same switch"
+            )
         return self
 
     @model_validator(mode='after')
-    def validate_poap_rma_credentials(self) -> Self:
-        """Validate credentials for POAP and RMA operations."""
-        if self.poap or self.rma:
-            # POAP/RMA require credentials
+    def validate_special_ops_credentials(self) -> Self:
+        """Validate credentials for POAP, Pre-provision, Swap and RMA operations."""
+        if self.poap or self.preprovision or self.rma:
             if not self.username or not self.password:
                 raise ValueError(
-                    "For POAP and RMA operations, username and password are required"
+                    "For POAP, Pre-provision, and RMA operations, username and password are required"
                 )
-            # For POAP and RMA, username should be 'admin'
             if self.username != "admin":
-                raise ValueError("For POAP and RMA operations, username should be 'admin'")
-
+                raise ValueError(
+                    "For POAP, Pre-provision, and RMA operations, username should be 'admin'"
+                )
         return self
 
     @model_validator(mode='after')
@@ -478,10 +498,10 @@ class SwitchConfigModel(NDBaseModel):
         """
         state = (info.context or {}).get("state") if info else None
 
-        # POAP only allowed with merged
-        if self.poap and state not in (None, "merged"):
+        # POAP/Pre-provision/Swap only allowed with merged
+        if (self.poap or self.preprovision) and state not in (None, "merged"):
             raise ValueError(
-                f"POAP operations require 'merged' state, "
+                f"POAP/Pre-provision operations require 'merged' state, "
                 f"got '{state}' (switch: {self.seed_ip})"
             )
 
@@ -538,12 +558,12 @@ class SwitchConfigModel(NDBaseModel):
             f"'{v}' is not a valid IP address and could not be resolved via DNS"
         )
 
-    @field_validator('poap', 'rma', mode='before')
+    @field_validator('rma', mode='before')
     @classmethod
-    def validate_lists_not_empty(cls, v: Optional[List]) -> Optional[List]:
-        """Validate that if POAP or RMA lists are provided, they are not empty."""
+    def validate_rma_list_not_empty(cls, v: Optional[List]) -> Optional[List]:
+        """Validate that if RMA list is provided, it is not empty."""
         if v is not None and len(v) == 0:
-            raise ValueError("POAP/RMA list cannot be empty if provided")
+            raise ValueError("RMA list cannot be empty if provided")
         return v
 
     @field_validator('auth_proto', mode='before')
@@ -627,6 +647,7 @@ class SwitchConfigModel(NDBaseModel):
         result = self.to_config(exclude={
                     "platform_type": True,
                     "poap": True,
+                    "preprovision": True,
                     "rma": True,
                     "operation_type": True,
                 })
@@ -653,6 +674,7 @@ class SwitchConfigModel(NDBaseModel):
 __all__ = [
     "ConfigDataModel",
     "POAPConfigModel",
+    "PreprovisionConfigModel",
     "RMAConfigModel",
     "SwitchConfigModel",
 ]

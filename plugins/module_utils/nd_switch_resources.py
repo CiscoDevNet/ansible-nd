@@ -45,6 +45,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches im
     SwitchCredentialsRequestModel,
     ChangeSwitchSerialNumberRequestModel,
     POAPConfigModel,
+    PreprovisionConfigModel,
     RMAConfigModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.utils.manage_switches import (
@@ -1175,28 +1176,44 @@ class POAPHandler:
 
         # Classify entries first so check mode can report per-operation counts
         bootstrap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel]] = []
-        preprov_entries: List[Tuple[SwitchConfigModel, POAPConfigModel]] = []
-        swap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel]] = []
+        preprov_entries: List[Tuple[SwitchConfigModel, PreprovisionConfigModel]] = []
+        swap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel, PreprovisionConfigModel]] = []
 
         for switch_cfg in proposed_config:
-            if not switch_cfg.poap:
-                log.warning(
-                    f"Switch config for {switch_cfg.seed_ip} has no POAP block — skipping"
-                )
-                continue
+            has_poap = bool(switch_cfg.poap)
+            has_preprov = bool(switch_cfg.preprovision)
 
-            for poap_cfg in switch_cfg.poap:
-                if poap_cfg.serial_number and poap_cfg.preprovision_serial:
-                    swap_entries.append((switch_cfg, poap_cfg))
-                elif poap_cfg.preprovision_serial:
-                    preprov_entries.append((switch_cfg, poap_cfg))
-                elif poap_cfg.serial_number:
-                    bootstrap_entries.append((switch_cfg, poap_cfg))
-                else:
+            if has_poap and has_preprov:
+                # Swap: only serial_number is meaningful on each side; warn about extras
+                poap_extra = [
+                    f for f in ["hostname", "image_policy", "discovery_username", "discovery_password"]
+                    if getattr(switch_cfg.poap, f, None)
+                ]
+                preprov_extra = [
+                    f for f in ["model", "version", "hostname", "config_data",
+                                "image_policy", "discovery_username", "discovery_password"]
+                    if getattr(switch_cfg.preprovision, f, None)
+                ]
+                if poap_extra:
                     log.warning(
-                        f"POAP entry for {switch_cfg.seed_ip} has neither "
-                        f"serial_number nor preprovision_serial — skipping"
+                        f"Swap ({switch_cfg.seed_ip}): extra fields in 'poap' will be "
+                        f"ignored during swap: {poap_extra}"
                     )
+                if preprov_extra:
+                    log.warning(
+                        f"Swap ({switch_cfg.seed_ip}): extra fields in 'preprovision' will be "
+                        f"ignored during swap: {preprov_extra}"
+                    )
+                swap_entries.append((switch_cfg, switch_cfg.poap, switch_cfg.preprovision))
+            elif has_preprov:
+                preprov_entries.append((switch_cfg, switch_cfg.preprovision))
+            elif has_poap:
+                bootstrap_entries.append((switch_cfg, switch_cfg.poap))
+            else:
+                log.warning(
+                    f"Switch config for {switch_cfg.seed_ip} has no poap or preprovision "
+                    f"block — skipping"
+                )
 
         log.info(
             f"POAP classification: {len(bootstrap_entries)} bootstrap, "
@@ -1249,14 +1266,14 @@ class POAPHandler:
         bootstrap_entries = active_bootstrap
 
         active_preprov = []
-        for switch_cfg, poap_cfg in preprov_entries:
+        for switch_cfg, preprov_cfg in preprov_entries:
             if switch_cfg.seed_ip in existing_by_ip:
                 log.info(
                     f"PreProvision: IP '{switch_cfg.seed_ip}' already in fabric "
                     f"— idempotent, skipping"
                 )
             else:
-                active_preprov.append((switch_cfg, poap_cfg))
+                active_preprov.append((switch_cfg, preprov_cfg))
         preprov_entries = active_preprov
 
         # Handle swap entries (change serial number on pre-provisioned switches)
@@ -1270,8 +1287,8 @@ class POAPHandler:
         # Handle pre-provision entries
         if preprov_entries:
             preprov_models: List[PreProvisionSwitchModel] = []
-            for switch_cfg, poap_cfg in preprov_entries:
-                pp_model = self._build_preprovision_model(switch_cfg, poap_cfg)
+            for switch_cfg, preprov_cfg in preprov_entries:
+                pp_model = self._build_preprovision_model(switch_cfg, preprov_cfg)
                 preprov_models.append(pp_model)
                 log.info(
                     f"Built pre-provision model for serial="
@@ -1334,20 +1351,6 @@ class POAPHandler:
                 )
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
-
-            # Validate user-supplied fields against bootstrap data (if provided)
-            # and warn about any fields that will be pulled from the API.
-            SwitchDiffEngine.validate_switch_api_fields(
-                    nd=nd,
-                    serial=poap_cfg.serial_number,
-                    model=poap_cfg.model,
-                    version=poap_cfg.version,
-                    config_data=poap_cfg.config_data,
-                    bootstrap_data=bootstrap_data,
-                    log=log,
-                    context="Bootstrap",
-                    hostname=poap_cfg.hostname,
-                )
 
             model = self._build_bootstrap_import_model(
                 switch_cfg, poap_cfg, bootstrap_data
@@ -1413,20 +1416,44 @@ class POAPHandler:
         discovery_username = getattr(poap_cfg, "discovery_username", None)
         discovery_password = getattr(poap_cfg, "discovery_password", None)
 
-        # Use user-provided values when available; fall back to bootstrap API data.
-        model = poap_cfg.model or bs.get("model", "")
-        version = poap_cfg.version or bs.get("softwareVersion", "")
-        hostname = poap_cfg.hostname or bs.get("hostname", "")
+        # model, version and config_data always come from the bootstrap API for
+        # bootstrap-only operations.  POAP no longer carries these fields.
+        model = bs.get("model", "")
+        version = bs.get("softwareVersion", "")
 
         gateway_ip_mask = (
-            (poap_cfg.config_data.gateway if poap_cfg.config_data else None)
-            or bs.get("gatewayIpMask")
+            bs.get("gatewayIpMask")
             or bs_data.get("gatewayIpMask")
         )
-        data_models = (
-            (poap_cfg.config_data.models if poap_cfg.config_data else None)
-            or bs_data.get("models", [])
-        )
+        data_models = bs_data.get("models", [])
+
+        # Hostname: user-provided via poap.hostname is the default; if the
+        # bootstrap API returns a different value, the API wins and we warn.
+        user_hostname = poap_cfg.hostname
+        api_hostname = bs.get("hostname", "")
+        if api_hostname and api_hostname != user_hostname:
+            log.warning(
+                f"Bootstrap ({serial_number}): API hostname '{api_hostname}' overrides "
+                f"user-provided hostname '{user_hostname}'. Using API value."
+            )
+            hostname = api_hostname
+        else:
+            hostname = user_hostname
+
+        # Role: switch_cfg.role is user-provided; if the bootstrap API carries a
+        # role and it differs, the API value wins and we warn.
+        api_role_raw = bs.get("switchRole") or bs_data.get("switchRole")
+        if api_role_raw:
+            try:
+                api_role = SwitchRole.normalize(api_role_raw)
+                if api_role and api_role != switch_role:
+                    log.warning(
+                        f"Bootstrap ({serial_number}): API role '{api_role_raw}' overrides "
+                        f"user-provided role '{switch_role}'. Using API value."
+                    )
+                    switch_role = api_role
+            except Exception:
+                pass
 
         # Build the data block from resolved values (replaces build_poap_data_block)
         data_block: Optional[Dict[str, Any]] = None
@@ -1535,38 +1562,38 @@ class POAPHandler:
     def _build_preprovision_model(
         self,
         switch_cfg: SwitchConfigModel,
-        poap_cfg: POAPConfigModel,
+        preprov_cfg: "PreprovisionConfigModel",
     ) -> PreProvisionSwitchModel:
-        """Build a pre-provision model from POAP configuration.
+        """Build a pre-provision model from PreprovisionConfigModel configuration.
 
         Args:
             switch_cfg: Parent switch config.
-            poap_cfg: POAP config entry.
+            preprov_cfg: Pre-provision config entry.
 
         Returns:
             Completed ``PreProvisionSwitchModel`` for API submission.
         """
         log = self.ctx.log
         log.debug(
-            f"ENTER: _build_preprovision_model(serial={poap_cfg.preprovision_serial})"
+            f"ENTER: _build_preprovision_model(serial={preprov_cfg.serial_number})"
         )
 
-        serial_number = poap_cfg.preprovision_serial
-        hostname = poap_cfg.hostname
+        serial_number = preprov_cfg.serial_number
+        hostname = preprov_cfg.hostname
         ip = switch_cfg.seed_ip
-        model_name = poap_cfg.model
-        version = poap_cfg.version
-        image_policy = poap_cfg.image_policy
-        gateway_ip_mask = poap_cfg.config_data.gateway if poap_cfg.config_data else None
+        model_name = preprov_cfg.model
+        version = preprov_cfg.version
+        image_policy = preprov_cfg.image_policy
+        gateway_ip_mask = preprov_cfg.config_data.gateway
         switch_role = switch_cfg.role
         password = switch_cfg.password
         auth_proto = SnmpV3AuthProtocol.MD5  # Pre-provision always uses MD5
 
-        discovery_username = getattr(poap_cfg, "discovery_username", None)
-        discovery_password = getattr(poap_cfg, "discovery_password", None)
+        discovery_username = getattr(preprov_cfg, "discovery_username", None)
+        discovery_password = getattr(preprov_cfg, "discovery_password", None)
 
-        # Shared data block builder
-        data_block = build_poap_data_block(poap_cfg)
+        # Build data block from mandatory config_data
+        data_block = build_poap_data_block(preprov_cfg)
 
         preprov_model = PreProvisionSwitchModel(
             serialNumber=serial_number,
@@ -1655,13 +1682,15 @@ class POAPHandler:
 
     def _handle_poap_swap(
         self,
-        swap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel]],
+        swap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel, "PreprovisionConfigModel"]],
         existing: List[SwitchDataModel],
     ) -> None:
         """Process POAP serial-swap entries.
 
         Args:
-            swap_entries: ``(SwitchConfigModel, POAPConfigModel)`` swap pairs.
+            swap_entries: ``(SwitchConfigModel, POAPConfigModel, PreprovisionConfigModel)``
+                swap triples where poap carries the new serial and preprovision
+                carries the old (pre-provisioned) serial.
             existing: Current fabric inventory snapshot.
 
         Returns:
@@ -1688,8 +1717,8 @@ class POAPHandler:
             f"{list(fabric_index.keys())}"
         )
 
-        for switch_cfg, poap_cfg in swap_entries:
-            old_serial = poap_cfg.preprovision_serial
+        for switch_cfg, poap_cfg, preprov_cfg in swap_entries:
+            old_serial = preprov_cfg.serial_number
             if old_serial not in fabric_index:
                 msg = (
                     f"Pre-provisioned serial '{old_serial}' not found in "
@@ -1713,7 +1742,7 @@ class POAPHandler:
             f"{list(bootstrap_index.keys())}"
         )
 
-        for switch_cfg, poap_cfg in swap_entries:
+        for switch_cfg, poap_cfg, preprov_cfg in swap_entries:
             new_serial = poap_cfg.serial_number
             if new_serial not in bootstrap_index:
                 msg = (
@@ -1732,8 +1761,8 @@ class POAPHandler:
         # ------------------------------------------------------------------
         # Step 3: Call changeSwitchSerialNumber for each swap entry
         # ------------------------------------------------------------------
-        for switch_cfg, poap_cfg in swap_entries:
-            old_serial = poap_cfg.preprovision_serial
+        for switch_cfg, poap_cfg, preprov_cfg in swap_entries:
+            old_serial = preprov_cfg.serial_number
             new_serial = poap_cfg.serial_number
 
             log.info(
@@ -1804,7 +1833,7 @@ class POAPHandler:
         # Step 5: Build BootstrapImportSwitchModels and POST importBootstrap
         # ------------------------------------------------------------------
         import_models: List[BootstrapImportSwitchModel] = []
-        for switch_cfg, poap_cfg in swap_entries:
+        for switch_cfg, poap_cfg, preprov_cfg in swap_entries:
             new_serial = poap_cfg.serial_number
             bootstrap_data = post_swap_index.get(new_serial)
 
@@ -1844,7 +1873,7 @@ class POAPHandler:
         # Step 6: Wait for manageability, save credentials, finalize
         # ------------------------------------------------------------------
         switch_actions: List[Tuple[str, SwitchConfigModel]] = []
-        for switch_cfg, poap_cfg in swap_entries:
+        for switch_cfg, poap_cfg, preprov_cfg in swap_entries:
             switch_actions.append((poap_cfg.serial_number, switch_cfg))
 
         self.fabric_ops.post_add_processing(

@@ -107,11 +107,28 @@ options:
                 default: false
             poap:
                 description:
-                - POAP (PowerOn Auto Provisioning) configurations for bootstrap/preprovision.
+                - Bootstrap POAP config for the switch.
+                - C(serial_number) and C(hostname) are mandatory.
+                - Model, version, and config data are sourced from the bootstrap API at runtime.
+                - If the bootstrap API reports a different hostname or role, the API value
+                  overrides the user-provided value and a warning is logged.
+                - To perform a B(swap) operation, provide both C(poap) and C(preprovision)
+                  under the same switch config. Only C(serial_number) is required in each.
                 - POAP and DHCP must be enabled in fabric before using.
-                type: list
-                elements: dict
+                type: dict
                 suboptions:
+                    serial_number:
+                        description:
+                        - Serial number of the physical switch to Bootstrap.
+                        - Required for bootstrap and swap operations.
+                        type: str
+                        required: true
+                    hostname:
+                        description:
+                        - Hostname for the switch during bootstrap.
+                        - Overridden by the bootstrap API value when they differ (warning logged).
+                        type: str
+                        required: true
                     discovery_username:
                         description:
                         - Username for device discovery during POAP.
@@ -121,53 +138,74 @@ options:
                         - Password for device discovery during POAP.
                         type: str
                         no_log: true
-                    serial_number:
-                        description:
-                        - Serial number of the physical switch to Bootstrap.
-                        - When used together with C(preprovision_serial), performs a swap operation
-                          that changes the serial number of a pre-provisioned switch and then
-                          imports it via bootstrap.
-                        type: str
-                    preprovision_serial:
-                        description:
-                        - Serial number of switch to Pre-provision.
-                        - When used together with C(serial_number), performs a swap operation
-                          that changes the serial number of this pre-provisioned switch to
-                          C(serial_number) and then imports it via bootstrap.
-                        type: str
-                    model:
-                        description:
-                        - Model of switch to Bootstrap/Pre-provision.
-                        type: str
-                    version:
-                        description:
-                        - Software version of switch.
-                        type: str
-                    hostname:
-                        description:
-                        - Hostname for the switch.
-                        type: str
                     image_policy:
                         description:
-                        - Image policy to apply.
+                        - Name of the image policy to be applied on the switch.
                         type: str
+            preprovision:
+                description:
+                - Pre-provision config for the switch.
+                - All five fields are mandatory since the controller has no physical switch
+                  to pull values from.
+                - To perform a B(swap) operation, provide both C(poap) and C(preprovision)
+                  under the same switch config. Only C(serial_number) is required in each;
+                  extra fields are ignored with a warning.
+                - POAP and DHCP must be enabled in fabric before using.
+                type: dict
+                suboptions:
+                    serial_number:
+                        description:
+                        - Serial number of the switch to Pre-provision.
+                        type: str
+                        required: true
+                    model:
+                        description:
+                        - Model of the switch to Pre-provision (e.g., N9K-C93180YC-EX).
+                        type: str
+                        required: true
+                    version:
+                        description:
+                        - Software version of the switch to Pre-provision (e.g., 10.3(1)).
+                        type: str
+                        required: true
+                    hostname:
+                        description:
+                        - Hostname for the switch during pre-provision.
+                        type: str
+                        required: true
                     config_data:
                         description:
-                        - Basic configuration data for the switch during Bootstrap/Pre-provision.
+                        - Basic configuration data for the switch during Pre-provision.
                         - C(models) and C(gateway) are mandatory.
-                        - C(models) is list of model of modules in switch to Bootstrap/Pre-provision.
+                        - C(models) is a list of module models in the switch.
                         - C(gateway) is the gateway IP with mask for the switch.
                         type: dict
+                        required: true
                         suboptions:
                             models:
                                 description:
-                                - List of module models in the switch (e.g., N9K-X9364v, N9K-vSUP).
+                                - List of module models in the switch (e.g., [N9K-X9364v, N9K-vSUP]).
                                 type: list
                                 elements: str
+                                required: true
                             gateway:
                                 description:
                                 - Gateway IP with subnet mask (e.g., 192.168.0.1/24).
                                 type: str
+                                required: true
+                    discovery_username:
+                        description:
+                        - Username for device discovery during pre-provision.
+                        type: str
+                    discovery_password:
+                        description:
+                        - Password for device discovery during pre-provision.
+                        type: str
+                        no_log: true
+                    image_policy:
+                        description:
+                        - Image policy to apply during pre-provision.
+                        type: str
             rma:
                 description:
                 - RMA an existing switch with a new one.
@@ -243,9 +281,9 @@ notes:
   treated as idempotent and will attempt the bootstrap again.
 - Idempotence for B(Pre-provision) - A pre-provision entry is considered idempotent
   when the C(seed_ip) already exists in the fabric inventory, regardless of the
-  C(preprovision_serial) value. Because the pre-provision serial is a placeholder
-  that may differ from the real hardware serial, only the IP address is used as
-  the stable identity for idempotency checks.
+  C(serial_number) value under C(preprovision). Because the pre-provision serial is
+  a placeholder that may differ from the real hardware serial, only the IP address
+  is used as the stable identity for idempotency checks.
 - Idempotence for B(normal discovery) - A switch is considered idempotent when
   its C(seed_ip) already exists in the fabric inventory with no configuration
   drift (same role).
@@ -284,12 +322,15 @@ EXAMPLES = """
       - seed_ip: 192.168.10.1
         username: admin
         password: "{{ switch_password }}"
-        poap:
-          - preprovision_serial: SAL1234ABCD
-            model: N9K-C93180YC-EX
-            version: "10.3(1)"
-            hostname: leaf-preprov
-            gateway_ip: 192.168.10.1/24
+        preprovision:
+          serial_number: SAL1234ABCD
+          model: N9K-C93180YC-EX
+          version: "10.3(1)"
+          hostname: leaf-preprov
+          config_data:
+            models:
+              - N9K-C93180YC-EX
+            gateway: 192.168.10.1/24
     state: merged
 
 - name: Bootstrap a switch via POAP
@@ -300,11 +341,8 @@ EXAMPLES = """
         username: admin
         password: "{{ switch_password }}"
         poap:
-          - serial_number: SAL5678EFGH
-            model: N9K-C93180YC-EX
-            version: "10.3(1)"
-            hostname: leaf-bootstrap
-            gateway_ip: 192.168.10.1/24
+          serial_number: SAL5678EFGH
+          hostname: leaf-bootstrap
     state: merged
 
 - name: Swap serial number on a pre-provisioned switch (POAP swap)
@@ -315,8 +353,9 @@ EXAMPLES = """
         username: admin
         password: "{{ switch_password }}"
         poap:
-          - serial_number: SAL5678EFGH
-            preprovision_serial: SAL1234ABCD
+          serial_number: SAL5678EFGH
+        preprovision:
+          serial_number: SAL1234ABCD
     state: merged
 
 - name: RMA - Replace a switch

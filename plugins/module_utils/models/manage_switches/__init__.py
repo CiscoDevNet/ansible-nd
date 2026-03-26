@@ -86,6 +86,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.sw
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.config_models import (  # noqa: F401
     ConfigDataModel,
     POAPConfigModel,
+    PreprovisionConfigModel,
     RMAConfigModel,
     SwitchConfigModel,
 )
@@ -136,6 +137,7 @@ __all__ = [
     # Config models
     "ConfigDataModel",
     "POAPConfigModel",
+    "PreprovisionConfigModel",
     "RMAConfigModel",
     "SwitchConfigModel",
 ]
