@@ -60,7 +60,7 @@ options:
         - The license tier for the fabric.
         type: str
         default: premier
-        choices: [ essentials, premier ]
+        choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
         - The alert suspension state for the fabric.
@@ -111,19 +111,19 @@ options:
           bgp_asn:
             description:
             - The BGP Autonomous System Number for the fabric.
-            - Must be a numeric value between 1 and 4294967295.
+            - Accepts a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).
             type: str
             required: true
           site_id:
             description:
-            - The site identifier for the fabric.
-            - Must be a numeric value between 1 and 65535.
+            - The site identifier for the fabric (for EVPN Multi-Site support).
+            - Must be a numeric value between 1 and 281474976710655.
             - Defaults to the value of O(config.management.bgp_asn) if not provided.
             type: str
             default: ""
           target_subnet_mask:
             description:
-            - The target subnet mask for intra-fabric links.
+            - The target subnet mask for intra-fabric links (24-31).
             type: int
             default: 30
           anycast_gateway_mac:
@@ -149,9 +149,11 @@ options:
             default: false
           underlay_multicast_group_address_limit:
             description:
-            - The underlay multicast group address limit (1-255).
+            - The underlay multicast group address limit.
+            - The maximum supported value is 128 for NX-OS version 10.2(1) or earlier and 512 for versions above 10.2(1).
             type: int
             default: 128
+            choices: [ 128, 512 ]
           tenant_routed_multicast:
             description:
             - Enable tenant routed multicast.
@@ -159,9 +161,10 @@ options:
             default: false
           rendezvous_point_count:
             description:
-            - The number of rendezvous points (1-4).
+            - The number of spines acting as Rendezvous-Points (RPs).
             type: int
             default: 2
+            choices: [ 2, 4 ]
           rendezvous_point_loopback_id:
             description:
             - The rendezvous point loopback interface ID (0-1023).
@@ -186,9 +189,10 @@ options:
             default: "0.0.0.0"
           fabric_interface_type:
             description:
-            - The fabric interface type.
+            - The fabric interface type. Numbered (Point-to-Point) or unnumbered.
             type: str
             default: p2p
+            choices: [ p2p, unNumbered ]
           bgp_loopback_id:
             description:
             - The BGP loopback interface ID (0-1023).
@@ -201,9 +205,10 @@ options:
             default: 1
           route_reflector_count:
             description:
-            - The number of BGP route reflectors (1-4).
+            - The number of spines acting as BGP route reflectors.
             type: int
             default: 2
+            choices: [ 2, 4 ]
           bgp_loopback_ip_range:
             description:
             - The BGP loopback IP address pool.
@@ -226,7 +231,7 @@ options:
             default: "10.4.0.0/16"
           router_id_range:
             description:
-            - The router ID IP address pool.
+            - The BGP router ID range in IPv4 subnet format. Used for IPv6 underlay.
             type: str
             default: "10.2.0.0/23"
           l2_vni_range:
@@ -251,14 +256,9 @@ options:
             default: "2000-2299"
           sub_interface_dot1q_range:
             description:
-            - The sub-interface 802.1q range.
+            - The sub-interface 802.1q range (minimum 2, maximum 4093).
             type: str
             default: "2-511"
-          service_network_vlan_range:
-            description:
-            - The service network VLAN range.
-            type: str
-            default: "3000-3199"
           l3_vni_no_vlan_default_option:
             description:
             - Enable L3 VNI no-VLAN default option.
@@ -293,7 +293,8 @@ options:
             description:
             - The vPC peer keep-alive option.
             type: str
-            default: loopback
+            default: management
+            choices: [ loopback, management ]
           vpc_auto_recovery_timer:
             description:
             - The vPC auto recovery timer in seconds (240-3600).
@@ -421,9 +422,10 @@ options:
             default: 10
           greenfield_debug_flag:
             description:
-            - The greenfield debug flag.
+            - Allow switch configuration to be cleared without a reload when preserveConfig is set to false.
             type: str
-            default: enable
+            default: disable
+            choices: [ enable, disable ]
           nxapi:
             description:
             - Enable NX-API (HTTPS).
@@ -436,9 +438,9 @@ options:
             default: 443
           nxapi_http:
             description:
-            - Enable NX-API HTTP.
+            - Enable NX-API over HTTP.
             type: bool
-            default: true
+            default: false
           nxapi_http_port:
             description:
             - The NX-API HTTP port (1-65535).
@@ -451,9 +453,10 @@ options:
             default: false
           bgp_authentication_key_type:
             description:
-            - The BGP authentication key type.
+            - "BGP key encryption type: 3 - 3DES, 6 - Cisco type 6, 7 - Cisco type 7."
             type: str
             default: 3des
+            choices: [ 3des, type6, type7 ]
           bgp_authentication_key:
             description:
             - The BGP authentication key.
@@ -529,6 +532,7 @@ options:
             - The IS-IS level.
             type: str
             default: level-2
+            choices: [ level-1, level-2 ]
           isis_area_number:
             description:
             - The IS-IS area number.
@@ -579,6 +583,7 @@ options:
             - The MACsec cipher suite.
             type: str
             default: GCM-AES-XPN-256
+            choices: [ GCM-AES-128, GCM-AES-256, GCM-AES-XPN-128, GCM-AES-XPN-256 ]
           macsec_key_string:
             description:
             - The MACsec primary key string.
@@ -586,9 +591,10 @@ options:
             default: ""
           macsec_algorithm:
             description:
-            - The MACsec algorithm.
+            - The MACsec primary cryptographic algorithm.
             type: str
             default: AES_128_CMAC
+            choices: [ AES_128_CMAC, AES_256_CMAC ]
           macsec_fallback_key_string:
             description:
             - The MACsec fallback key string.
@@ -596,9 +602,10 @@ options:
             default: ""
           macsec_fallback_algorithm:
             description:
-            - The MACsec fallback algorithm.
+            - The MACsec fallback cryptographic algorithm.
             type: str
             default: AES_128_CMAC
+            choices: [ AES_128_CMAC, AES_256_CMAC ]
           macsec_report_timer:
             description:
             - The MACsec report timer.
@@ -606,9 +613,39 @@ options:
             default: 5
           vrf_lite_macsec:
             description:
-            - Enable MACsec on VRF lite links.
+            - Enable MACsec on DCI links.
             type: bool
             default: false
+          vrf_lite_macsec_cipher_suite:
+            description:
+            - The DCI MACsec cipher suite.
+            type: str
+            default: GCM-AES-XPN-256
+            choices: [ GCM-AES-128, GCM-AES-256, GCM-AES-XPN-128, GCM-AES-XPN-256 ]
+          vrf_lite_macsec_key_string:
+            description:
+            - The DCI MACsec primary key string (Cisco Type 7 Encrypted Octet String).
+            type: str
+            default: ""
+          vrf_lite_macsec_algorithm:
+            description:
+            - The DCI MACsec primary cryptographic algorithm.
+            type: str
+            default: AES_128_CMAC
+            choices: [ AES_128_CMAC, AES_256_CMAC ]
+          vrf_lite_macsec_fallback_key_string:
+            description:
+            - The DCI MACsec fallback key string (Cisco Type 7 Encrypted Octet String).
+            - This parameter is used when DCI link has QKD disabled.
+            type: str
+            default: ""
+          vrf_lite_macsec_fallback_algorithm:
+            description:
+            - The DCI MACsec fallback cryptographic algorithm.
+            - This parameter is used when DCI link has QKD disabled.
+            type: str
+            default: AES_128_CMAC
+            choices: [ AES_128_CMAC, AES_256_CMAC ]
           quantum_key_distribution:
             description:
             - Enable quantum key distribution.
@@ -631,14 +668,22 @@ options:
             default: 0
           trustpoint_label:
             description:
-            - The trustpoint label.
+            - The trustpoint label for TLS authentication.
             type: str
             default: ""
+          skip_certificate_verification:
+            description:
+            - Skip verification of incoming certificate.
+            type: bool
+            default: false
           vrf_lite_auto_config:
             description:
-            - The VRF lite auto-configuration mode.
+            - "VRF Lite Inter-Fabric Connection deployment options. If C(back2BackAndToExternal) is selected,
+              VRF Lite IFCs are auto created between border devices of two Easy Fabrics, and between
+              border devices in Easy Fabric and edge routers in External Fabric."
             type: str
             default: manual
+            choices: [ manual, back2BackAndToExternal ]
           vrf_lite_subnet_range:
             description:
             - The VRF lite subnet IP address pool.
@@ -649,16 +694,6 @@ options:
             - The VRF lite subnet target mask.
             type: int
             default: 30
-          vrf_lite_ipv6_subnet_range:
-            description:
-            - The VRF lite IPv6 subnet range.
-            type: str
-            default: "fd00::a33:0/112"
-          vrf_lite_ipv6_subnet_target_mask:
-            description:
-            - The VRF lite IPv6 subnet target mask (112-128).
-            type: int
-            default: 126
           auto_unique_vrf_lite_ip_prefix:
             description:
             - Enable auto unique VRF lite IP prefix.
@@ -679,6 +714,11 @@ options:
             - Enable auto symmetric default VRF.
             type: bool
             default: false
+          default_vrf_redistribution_bgp_route_map:
+            description:
+            - Route Map used to redistribute BGP routes to IGP in default VRF in auto created VRF Lite IFC links.
+            type: str
+            default: extcon-rmap-filter
           per_vrf_loopback_auto_provision:
             description:
             - Enable per-VRF loopback auto-provisioning.
@@ -699,6 +739,27 @@ options:
             - The per-VRF loopback IPv6 address pool.
             type: str
             default: "fd00::a05:0/112"
+          per_vrf_unique_loopback_auto_provision:
+            description:
+            - Auto provision a unique IPv4 loopback on a VTEP on VRF attachment.
+            - This option and per VRF per VTEP loopback auto-provisioning are mutually exclusive.
+            type: bool
+            default: false
+          per_vrf_unique_loopback_ip_range:
+            description:
+            - Prefix pool to assign unique IPv4 addresses to loopbacks on VTEPs on a per VRF basis.
+            type: str
+            default: "10.6.0.0/22"
+          per_vrf_unique_loopback_auto_provision_v6:
+            description:
+            - Auto provision a unique IPv6 loopback on a VTEP on VRF attachment.
+            type: bool
+            default: false
+          per_vrf_unique_loopback_ipv6_range:
+            description:
+            - Prefix pool to assign unique IPv6 addresses to loopbacks on VTEPs on a per VRF basis.
+            type: str
+            default: "fd00::a06:0/112"
           underlay_ipv6:
             description:
             - Enable IPv6 underlay.
@@ -744,6 +805,63 @@ options:
             - The IPv6 anycast rendezvous point IP address pool.
             type: str
             default: "fd00::254:254:0/118"
+          mvpn_vrf_route_import_id:
+            description:
+            - Enable MVPN VRI ID generation for Tenant Routed Multicast with IPv4 underlay.
+            type: bool
+            default: true
+          mvpn_vrf_route_import_id_range:
+            description:
+            - MVPN VRI ID range (minimum 1, maximum 65535) for vPC.
+            - Applicable when TRM is enabled with IPv6 underlay, or mvpn_vrf_route_import_id is enabled with IPv4 underlay.
+            type: str
+            default: ""
+          vrf_route_import_id_reallocation:
+            description:
+            - One time VRI ID re-allocation based on MVPN VRI ID Range.
+            type: bool
+            default: false
+          l3vni_multicast_group:
+            description:
+            - Default underlay multicast group IPv4 address assigned for every overlay VRF.
+            type: str
+            default: "239.1.1.0"
+          l3_vni_ipv6_multicast_group:
+            description:
+            - Default underlay multicast group IPv6 address assigned for every overlay VRF.
+            type: str
+            default: "ff1e::"
+          rendezvous_point_mode:
+            description:
+            - Multicast rendezvous point mode. For IPv6 underlay, use C(asm) only.
+            type: str
+            default: asm
+            choices: [ asm, bidir ]
+          phantom_rendezvous_point_loopback_id1:
+            description:
+            - Underlay phantom RP loopback primary ID for PIM Bi-dir deployments.
+            type: int
+            default: 2
+          phantom_rendezvous_point_loopback_id2:
+            description:
+            - Underlay phantom RP loopback secondary ID for PIM Bi-dir deployments.
+            type: int
+            default: 3
+          phantom_rendezvous_point_loopback_id3:
+            description:
+            - Underlay phantom RP loopback tertiary ID for PIM Bi-dir deployments.
+            type: int
+            default: 4
+          phantom_rendezvous_point_loopback_id4:
+            description:
+            - Underlay phantom RP loopback quaternary ID for PIM Bi-dir deployments.
+            type: int
+            default: 5
+          anycast_loopback_id:
+            description:
+            - Underlay Anycast Loopback ID. Used for vPC Peering in VXLANv6 Fabrics.
+            type: int
+            default: 10
           auto_bgp_neighbor_description:
             description:
             - Enable automatic BGP neighbor description.
@@ -798,32 +916,119 @@ options:
             description:
             - The security group status.
             type: str
-            default: enabled
+            default: disabled
+            choices: [ enabled, enabledStrict, enabledLoose, enablePending, enablePendingStrict, enablePendingLoose, disablePending, disabled ]
           default_queuing_policy:
             description:
-            - Enable default queuing policy.
+            - Enable default queuing policies.
             type: bool
             default: false
+          default_queuing_policy_cloudscale:
+            description:
+            - Queuing policy for all 92xx, -EX, -FX, -FX2, -FX3, -GX series switches in the fabric.
+            type: str
+            default: queuing_policy_default_8q_cloudscale
+          default_queuing_policy_r_series:
+            description:
+            - Queuing policy for all Nexus R-series switches.
+            type: str
+            default: queuing_policy_default_r_series
+          default_queuing_policy_other:
+            description:
+            - Queuing policy for all other switches in the fabric.
+            type: str
+            default: queuing_policy_default_other
           aiml_qos:
             description:
-            - Enable AI/ML QoS.
+            - Enable AI/ML QoS. Configures QoS and queuing policies specific to N9K Cloud Scale and Silicon One switch fabric
+              for AI network workloads.
             type: bool
             default: false
           aiml_qos_policy:
             description:
-            - The AI/ML QoS policy.
+            - Queuing policy based on predominant fabric link speed.
             type: str
             default: 400G
+            choices: [ 800G, 400G, 100G, 25G, User-defined ]
+          roce_v2:
+            description:
+            - DSCP for RDMA traffic. Numeric (0-63) with ranges/comma, or named values.
+            type: str
+            default: "26"
+          cnp:
+            description:
+            - DSCP value for Congestion Notification. Numeric (0-63) with ranges/comma, or named values.
+            type: str
+            default: "48"
+          wred_min:
+            description:
+            - WRED minimum threshold (in kbytes).
+            type: int
+            default: 950
+          wred_max:
+            description:
+            - WRED maximum threshold (in kbytes).
+            type: int
+            default: 3000
+          wred_drop_probability:
+            description:
+            - WRED drop probability percentage.
+            type: int
+            default: 7
+          wred_weight:
+            description:
+            - Influences how quickly WRED reacts to queue depth changes.
+            type: int
+            default: 0
+          bandwidth_remaining:
+            description:
+            - Percentage of remaining bandwidth allocated to AI traffic queues.
+            type: int
+            default: 50
           dlb:
             description:
-            - Enable dynamic load balancing.
+            - Enable fabric-level Dynamic Load Balancing (DLB). Inter-Switch-Links will be configured as DLB interfaces.
             type: bool
             default: false
           dlb_mode:
             description:
-            - The DLB mode.
+            - "Select system-wide DLB mode: flowlet, per-packet (packet spraying), or policy driven mixed mode.
+              Mixed mode is supported on Silicon One (S1) platform only."
             type: str
             default: flowlet
+            choices: [ flowlet, per-packet, policy-driven-flowlet, policy-driven-per-packet, policy-driven-mixed-mode ]
+          dlb_mixed_mode_default:
+            description:
+            - Default load balancing mode for policy driven mixed mode DLB.
+            type: str
+            default: ecmp
+            choices: [ ecmp, flowlet, per-packet ]
+          flowlet_aging:
+            description:
+            - "Flowlet aging timer in microseconds. Valid range depends on platform: Cloud Scale (CS)=1-2000000,
+              Silicon One (S1)=1-1024."
+            type: int
+            default: 1
+          flowlet_dscp:
+            description:
+            - DSCP values for flowlet load balancing. Numeric (0-63) with ranges/comma, or named values.
+            type: str
+            default: ""
+          per_packet_dscp:
+            description:
+            - DSCP values for per-packet load balancing. Numeric (0-63) with ranges/comma, or named values.
+            type: str
+            default: ""
+          ai_load_sharing:
+            description:
+            - Enable IP load sharing using source and destination address for AI workloads.
+            type: bool
+            default: false
+          priority_flow_control_watch_interval:
+            description:
+            - PFC watch interval in milliseconds (101-1000). Leave blank for system default (100ms).
+            type: int
+            default: 101
           ptp:
             description:
             - Enable Precision Time Protocol (PTP).
@@ -836,24 +1041,31 @@ options:
             default: 0
           ptp_domain_id:
             description:
-            - The PTP domain ID.
+            - The PTP domain ID for multiple independent PTP clocking subdomains on a single network.
             type: int
             default: 0
+          ptp_vlan_id:
+            description:
+            - Precision Time Protocol (PTP) source VLAN ID. SVI used for PTP source on ToRs.
+            type: int
+            default: 2
           stp_root_option:
             description:
-            - The STP root option.
+            - "Which protocol to use for configuring root bridge: rpvst+ (Rapid Per-VLAN Spanning Tree),
+              mst (Multiple Spanning Tree), or unmanaged (STP Root not managed by ND)."
             type: str
-            default: mst
+            default: unmanaged
+            choices: [ rpvst+, mst, unmanaged ]
           stp_vlan_range:
             description:
-            - The STP VLAN range.
+            - The STP VLAN range (minimum 1, maximum 4094).
             type: str
-            default: ""
+            default: "1-3967"
           mst_instance_range:
             description:
-            - The MST instance range.
+            - The MST instance range (minimum 0, maximum 4094).
             type: str
-            default: "0-3,5,7-9"
+            default: "0"
           stp_bridge_priority:
             description:
             - The STP bridge priority.
@@ -866,9 +1078,14 @@ options:
             default: false
           mpls_loopback_identifier:
             description:
-            - The MPLS loopback identifier.
+            - The MPLS loopback identifier used for VXLAN to MPLS SR/LDP Handoff.
             type: int
             default: 101
+          mpls_isis_area_number:
+            description:
+            - IS-IS area number for DCI MPLS link. Used only if routing protocol on DCI MPLS link is IS-IS.
+            type: str
+            default: "0001"
           mpls_loopback_ip_range:
             description:
             - The MPLS loopback IP address pool.
@@ -876,9 +1093,30 @@ options:
             default: "10.101.0.0/25"
           private_vlan:
             description:
-            - Enable private VLAN support.
+            - Enable PVLAN on switches except spines and super spines.
             type: bool
             default: false
+          default_private_vlan_secondary_network_template:
+            description:
+            - Default PVLAN secondary network template.
+            type: str
+            default: Pvlan_Secondary_Network
+          allow_vlan_on_leaf_tor_pairing:
+            description:
+            - "Set trunk allowed VLAN to 'none' or 'all' for leaf-TOR pairing port-channels."
+            type: str
+            default: none
+            choices: [ none, all ]
+          leaf_tor_id_range:
+            description:
+            - Use specific vPC/Port-channel ID range for leaf-TOR pairings.
+            type: bool
+            default: false
+          leaf_tor_vpc_port_channel_id_range:
+            description:
+            - Specify vPC/Port-channel ID range (minimum 1, maximum 4096) for leaf-TOR pairings.
+            type: str
+            default: "1-499"
           ip_service_level_agreement_id_range:
             description:
             - The IP SLA ID range.
@@ -891,9 +1129,14 @@ options:
             default: "100-299"
           route_map_sequence_number_range:
             description:
-            - The route map sequence number range.
+            - The route map sequence number range (minimum 1, maximum 65534).
             type: str
             default: "1-65534"
+          service_network_vlan_range:
+            description:
+            - Per Switch Overlay Service Network VLAN Range (minimum 2, maximum 4094).
+            type: str
+            default: "3000-3199"
           day0_bootstrap:
             description:
             - Enable day-0 bootstrap (POAP).
@@ -906,9 +1149,10 @@ options:
             default: false
           dhcp_protocol_version:
             description:
-            - The DHCP protocol version for bootstrap.
+            - The IP protocol version for local DHCP server.
             type: str
             default: dhcpv4
+            choices: [ dhcpv4, dhcpv6 ]
           dhcp_start_address:
             description:
             - The DHCP start address for bootstrap.
@@ -934,6 +1178,160 @@ options:
             - The management IPv6 prefix length for bootstrap.
             type: int
             default: 64
+          extra_config_nxos_bootstrap:
+            description:
+            - Additional CLIs required during device bootup/login (e.g. AAA/Radius).
+            type: str
+            default: ""
+          un_numbered_bootstrap_loopback_id:
+            description:
+            - Bootstrap Seed Switch Loopback Interface ID.
+            type: int
+            default: 253
+          un_numbered_dhcp_start_address:
+            description:
+            - Switch Loopback DHCP Scope Start Address. Must be a subset of IGP/BGP Loopback Prefix Pool.
+            type: str
+            default: ""
+          un_numbered_dhcp_end_address:
+            description:
+            - Switch Loopback DHCP Scope End Address. Must be a subset of IGP/BGP Loopback Prefix Pool.
+            type: str
+            default: ""
+          inband_management:
+            description:
+            - Manage switches with only inband connectivity.
+            type: bool
+            default: false
+          inband_dhcp_servers:
+            description:
+            - List of external DHCP server IP addresses (Max 3).
+            type: list
+            elements: str
+          seed_switch_core_interfaces:
+            description:
+            - Seed switch fabric interfaces. Core-facing interface list on seed switch.
+            type: list
+            elements: str
+          spine_switch_core_interfaces:
+            description:
+            - Spine switch fabric interfaces. Core-facing interface list on all spines.
+            type: list
+            elements: str
+          bootstrap_subnet_collection:
+            description:
+            - List of IPv4 or IPv6 subnets to be used for bootstrap.
+            type: list
+            elements: dict
+            suboptions:
+              start_ip:
+                description:
+                - Starting IP address of the bootstrap range.
+                type: str
+                required: true
+              end_ip:
+                description:
+                - Ending IP address of the bootstrap range.
+                type: str
+                required: true
+              default_gateway:
+                description:
+                - Default gateway for bootstrap subnet.
+                type: str
+                required: true
+              subnet_prefix:
+                description:
+                - Subnet prefix length (8-30).
+                type: int
+                required: true
+          netflow_settings:
+            description:
+            - Settings associated with netflow.
+            type: dict
+            suboptions:
+              netflow:
+                description:
+                - Enable netflow collection.
+                type: bool
+                default: false
+              netflow_exporter_collection:
+                description:
+                - List of netflow exporters.
+                type: list
+                elements: dict
+                suboptions:
+                  exporter_name:
+                    description:
+                    - Name of the netflow exporter.
+                    type: str
+                    required: true
+                  exporter_ip:
+                    description:
+                    - IP address of the netflow collector.
+                    type: str
+                    required: true
+                  vrf:
+                    description:
+                    - VRF name for the exporter.
+                    type: str
+                    default: management
+                  source_interface_name:
+                    description:
+                    - Source interface name.
+                    type: str
+                    required: true
+                  udp_port:
+                    description:
+                    - UDP port for netflow export (1-65535).
+                    type: int
+                    required: true
+              netflow_record_collection:
+                description:
+                - List of netflow records.
+                type: list
+                elements: dict
+                suboptions:
+                  record_name:
+                    description:
+                    - Name of the netflow record.
+                    type: str
+                    required: true
+                  record_template:
+                    description:
+                    - Template type for the record.
+                    type: str
+                    required: true
+                  layer2_record:
+                    description:
+                    - Enable layer 2 record fields.
+                    type: bool
+                    default: false
+              netflow_monitor_collection:
+                description:
+                - List of netflow monitors.
+                type: list
+                elements: dict
+                suboptions:
+                  monitor_name:
+                    description:
+                    - Name of the netflow monitor.
+                    type: str
+                    required: true
+                  record_name:
+                    description:
+                    - Associated record name.
+                    type: str
+                    required: true
+                  exporter1_name:
+                    description:
+                    - Primary exporter name.
+                    type: str
+                    required: true
+                  exporter2_name:
+                    description:
+                    - Secondary exporter name.
+                    type: str
+                    default: ""
           real_time_backup:
             description:
             - Enable real-time backup.
@@ -956,24 +1354,47 @@ options:
             default: 180
           next_generation_oam:
             description:
-            - Enable next-generation OAM.
+            - Enable the Next Generation (NG) OAM feature for all switches in the fabric.
             type: bool
             default: true
+          ngoam_south_bound_loop_detect:
+            description:
+            - Enable the Next Generation (NG) OAM southbound loop detection.
+            type: bool
+            default: false
+          ngoam_south_bound_loop_detect_probe_interval:
+            description:
+            - Set NG OAM southbound loop detection probe interval in seconds.
+            type: int
+            default: 300
+          ngoam_south_bound_loop_detect_recovery_interval:
+            description:
+            - Set NG OAM southbound loop detection recovery interval in seconds.
+            type: int
+            default: 600
           strict_config_compliance_mode:
             description:
-            - Enable strict configuration compliance mode.
+            - Enable bi-directional compliance checks to flag additional configs in the running config
+              that are not in the intent/expected config.
+            type: bool
+            default: false
+          advanced_ssh_option:
+            description:
+            - Enable AAA IP Authorization. Enable only when IP Authorization is enabled in the AAA Server.
             type: bool
             default: false
           copp_policy:
             description:
-            - The CoPP policy.
+            - The fabric wide CoPP policy. Customized CoPP policy should be provided when C(manual) is selected.
             type: str
-            default: dense
+            default: strict
+            choices: [ dense, lenient, moderate, strict, manual ]
           power_redundancy_mode:
             description:
-            - The power redundancy mode.
+            - Default power supply mode for NX-OS switches.
             type: str
             default: redundant
+            choices: [ redundant, combined, inputSrcRedundant ]
           host_interface_admin_state:
             description:
             - Enable host interface admin state.
@@ -1001,9 +1422,25 @@ options:
             default: false
           allow_smart_switch_onboarding:
             description:
-            - Allow smart switch onboarding.
+            - Enable onboarding of smart switches to Hypershield for firewall service.
             type: bool
             default: false
+          connectivity_domain_name:
+            description:
+            - Domain name to connect to Hypershield.
+            type: str
+          hypershield_connectivity_proxy_server:
+            description:
+            - IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication.
+            type: str
+          hypershield_connectivity_proxy_server_port:
+            description:
+            - Proxy port number for communication with Hypershield.
+            type: int
+          hypershield_connectivity_source_intf:
+            description:
+            - Loopback interface on smart switch for communication with Hypershield.
+            type: str
           aaa:
             description:
             - Enable AAA.
@@ -1034,6 +1471,22 @@ options:
             - Extra freeform AAA configuration.
             type: str
             default: ""
+          pre_interface_config_leaf:
+            description:
+            - Additional CLIs added before interface configurations for all switches with a VTEP
+              unless they have some spine role.
+            type: str
+            default: ""
+          pre_interface_config_spine:
+            description:
+            - Additional CLIs added before interface configurations for all switches with some spine role.
+            type: str
+            default: ""
+          pre_interface_config_tor:
+            description:
+            - Additional CLIs added before interface configurations for all ToRs.
+            type: str
+            default: ""
           banner:
             description:
             - The fabric banner text displayed on switch login.
@@ -1044,9 +1497,19 @@ options:
             - The list of NTP server IP addresses.
             type: list
             elements: str
+          ntp_server_vrf_collection:
+            description:
+            - The list of VRFs for NTP servers.
+            type: list
+            elements: str
           dns_collection:
             description:
             - The list of DNS server IP addresses.
+            type: list
+            elements: str
+          dns_vrf_collection:
+            description:
+            - The list of VRFs for DNS servers.
             type: list
             elements: str
           syslog_server_collection:
