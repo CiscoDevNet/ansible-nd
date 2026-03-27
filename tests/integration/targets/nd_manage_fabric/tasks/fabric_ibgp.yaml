@@ -282,7 +282,7 @@
           auto_generate_multicast_group_address: false
           underlay_multicast_group_address_limit: 128
           tenant_routed_multicast: false
-          rendezvous_point_count: 3  # DIfferent from default  count
+          rendezvous_point_count: 4  # DIfferent from default  count
           rendezvous_point_loopback_id: 253  # DIfferent from default  loopback
           vpc_peer_link_vlan: "3700"  # DIfferent from default  VLAN
           vpc_peer_link_enable_native_vlan: false
@@ -376,7 +376,7 @@
           auto_generate_multicast_group_address: false
           underlay_multicast_group_address_limit: 128
           tenant_routed_multicast: false
-          rendezvous_point_count: 3  # DIfferent from default  count
+          rendezvous_point_count: 4  # DIfferent from default  count
           rendezvous_point_loopback_id: 253  # DIfferent from default  loopback
           vpc_peer_link_vlan: "3700"  # DIfferent from default  VLAN
           vpc_peer_link_enable_native_vlan: false

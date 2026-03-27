@@ -38,6 +38,20 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     SecurityGroupStatusEnum,
     StpRootOptionEnum,
     VpcPeerKeepAliveOptionEnum,
+    AimlQosPolicyEnum,
+    AllowVlanOnLeafTorPairingEnum,
+    BgpAuthenticationKeyTypeEnum,
+    DhcpProtocolVersionEnum,
+    DlbMixedModeDefaultEnum,
+    DlbModeEnum,
+    MacsecAlgorithmEnum,
+    MacsecCipherSuiteEnum,
+    PowerRedundancyModeEnum,
+    RendezvousPointCountEnum,
+    RendezvousPointModeEnum,
+    RouteReflectorCountEnum,
+    UnderlayMulticastGroupAddressLimitEnum,
+    VrfLiteAutoConfigEnum,
 )
 
 
@@ -547,12 +561,10 @@ class VxlanIbgpManagementModel(NDNestedModel):
         description="Auto-generate multicast group addresses",
         default=False
     )
-    underlay_multicast_group_address_limit: int = Field(
+    underlay_multicast_group_address_limit: UnderlayMulticastGroupAddressLimitEnum = Field(
         alias="underlayMulticastGroupAddressLimit",
         description="Underlay multicast group address limit",
-        ge=1,
-        le=255,
-        default=128
+        default=UnderlayMulticastGroupAddressLimitEnum.V_128
     )
     tenant_routed_multicast: bool = Field(
         alias="tenantRoutedMulticast",
@@ -616,12 +628,10 @@ class VxlanIbgpManagementModel(NDNestedModel):
     # Loopback Configuration
     bgp_loopback_id: int = Field(alias="bgpLoopbackId", description="BGP loopback interface ID", ge=0, le=1023, default=0)
     nve_loopback_id: int = Field(alias="nveLoopbackId", description="NVE loopback interface ID", ge=0, le=1023, default=1)
-    route_reflector_count: int = Field(
+    route_reflector_count: RouteReflectorCountEnum = Field(
         alias="routeReflectorCount",
         description="Number of route reflectors",
-        ge=1,
-        le=4,
-        default=2
+        default=RouteReflectorCountEnum.TWO
     )
 
     # Templates
@@ -650,10 +660,10 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # Protocol Settings
     bgp_authentication: bool = Field(alias="bgpAuthentication", description="Enable BGP authentication", default=False)
-    bgp_authentication_key_type: str = Field(
+    bgp_authentication_key_type: BgpAuthenticationKeyTypeEnum = Field(
         alias="bgpAuthenticationKeyType",
         description="BGP authentication key type",
-        default="3des"
+        default=BgpAuthenticationKeyTypeEnum.THREE_DES
     )
     bfd: bool = Field(description="Enable BFD", default=False)
     bfd_ibgp: bool = Field(alias="bfdIbgp", description="Enable BFD for iBGP", default=False)
@@ -680,12 +690,10 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
 
     # Multicast Settings
-    rendezvous_point_count: int = Field(
+    rendezvous_point_count: RendezvousPointCountEnum = Field(
         alias="rendezvousPointCount",
         description="Number of rendezvous points",
-        ge=1,
-        le=4,
-        default=2
+        default=RendezvousPointCountEnum.TWO
     )
     rendezvous_point_loopback_id: int = Field(
         alias="rendezvousPointLoopbackId",
@@ -722,7 +730,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # Bootstrap / Day-0 / DHCP
     local_dhcp_server: bool = Field(alias="localDhcpServer", description="Enable local DHCP server", default=False)
-    dhcp_protocol_version: str = Field(alias="dhcpProtocolVersion", description="DHCP protocol version", default="dhcpv4")
+    dhcp_protocol_version: DhcpProtocolVersionEnum = Field(alias="dhcpProtocolVersion", description="DHCP protocol version", default=DhcpProtocolVersionEnum.DHCPV4)
     dhcp_start_address: str = Field(alias="dhcpStartAddress", description="DHCP start address", default="")
     dhcp_end_address: str = Field(alias="dhcpEndAddress", description="DHCP end address", default="")
     management_gateway: str = Field(alias="managementGateway", description="Management gateway", default="")
@@ -775,7 +783,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     l3vni_multicast_group: str = Field(alias="l3vniMulticastGroup", description="L3 VNI multicast group", default="239.1.1.0")
     l3_vni_ipv6_multicast_group: str = Field(alias="l3VniIpv6MulticastGroup", description="L3 VNI IPv6 multicast group", default="ff1e::")
-    rendezvous_point_mode: str = Field(alias="rendezvousPointMode", description="Rendezvous point mode", default="asm")
+    rendezvous_point_mode: RendezvousPointModeEnum = Field(alias="rendezvousPointMode", description="Rendezvous point mode", default=RendezvousPointModeEnum.ASM)
     phantom_rendezvous_point_loopback_id1: int = Field(
         alias="phantomRendezvousPointLoopbackId1", description="Phantom RP loopback ID 1", default=2
     )
@@ -792,7 +800,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # VRF Lite / Sub-Interface
     sub_interface_dot1q_range: str = Field(alias="subInterfaceDot1qRange", description="Sub-interface 802.1q range", default="2-511")
-    vrf_lite_auto_config: str = Field(alias="vrfLiteAutoConfig", description="VRF lite auto-config mode", default="manual")
+    vrf_lite_auto_config: VrfLiteAutoConfigEnum = Field(alias="vrfLiteAutoConfig", description="VRF lite auto-config mode", default=VrfLiteAutoConfigEnum.MANUAL)
     vrf_lite_subnet_range: str = Field(alias="vrfLiteSubnetRange", description="VRF lite subnet range", default="10.33.0.0/16")
     vrf_lite_subnet_target_mask: int = Field(alias="vrfLiteSubnetTargetMask", description="VRF lite subnet target mask", default=30)
     auto_unique_vrf_lite_ip_prefix: bool = Field(
@@ -868,27 +876,27 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # MACsec
     macsec: bool = Field(description="Enable MACsec", default=False)
-    macsec_cipher_suite: str = Field(alias="macsecCipherSuite", description="MACsec cipher suite", default="GCM-AES-XPN-256")
+    macsec_cipher_suite: MacsecCipherSuiteEnum = Field(alias="macsecCipherSuite", description="MACsec cipher suite", default=MacsecCipherSuiteEnum.GCM_AES_XPN_256)
     macsec_key_string: str = Field(alias="macsecKeyString", description="MACsec key string", default="")
-    macsec_algorithm: str = Field(alias="macsecAlgorithm", description="MACsec algorithm", default="AES_128_CMAC")
+    macsec_algorithm: MacsecAlgorithmEnum = Field(alias="macsecAlgorithm", description="MACsec algorithm", default=MacsecAlgorithmEnum.AES_128_CMAC)
     macsec_fallback_key_string: str = Field(alias="macsecFallbackKeyString", description="MACsec fallback key string", default="")
-    macsec_fallback_algorithm: str = Field(alias="macsecFallbackAlgorithm", description="MACsec fallback algorithm", default="AES_128_CMAC")
+    macsec_fallback_algorithm: MacsecAlgorithmEnum = Field(alias="macsecFallbackAlgorithm", description="MACsec fallback algorithm", default=MacsecAlgorithmEnum.AES_128_CMAC)
     macsec_report_timer: int = Field(alias="macsecReportTimer", description="MACsec report timer", default=5)
 
     # VRF Lite MACsec
     vrf_lite_macsec: bool = Field(alias="vrfLiteMacsec", description="Enable VRF lite MACsec", default=False)
-    vrf_lite_macsec_cipher_suite: str = Field(
-        alias="vrfLiteMacsecCipherSuite", description="VRF lite MACsec cipher suite", default="GCM-AES-XPN-256"
+    vrf_lite_macsec_cipher_suite: MacsecCipherSuiteEnum = Field(
+        alias="vrfLiteMacsecCipherSuite", description="VRF lite MACsec cipher suite", default=MacsecCipherSuiteEnum.GCM_AES_XPN_256
     )
     vrf_lite_macsec_key_string: str = Field(alias="vrfLiteMacsecKeyString", description="VRF lite MACsec key string", default="")
-    vrf_lite_macsec_algorithm: str = Field(
-        alias="vrfLiteMacsecAlgorithm", description="VRF lite MACsec algorithm", default="AES_128_CMAC"
+    vrf_lite_macsec_algorithm: MacsecAlgorithmEnum = Field(
+        alias="vrfLiteMacsecAlgorithm", description="VRF lite MACsec algorithm", default=MacsecAlgorithmEnum.AES_128_CMAC
     )
     vrf_lite_macsec_fallback_key_string: str = Field(
         alias="vrfLiteMacsecFallbackKeyString", description="VRF lite MACsec fallback key string", default=""
     )
-    vrf_lite_macsec_fallback_algorithm: str = Field(
-        alias="vrfLiteMacsecFallbackAlgorithm", description="VRF lite MACsec fallback algorithm", default="AES_128_CMAC"
+    vrf_lite_macsec_fallback_algorithm: MacsecAlgorithmEnum = Field(
+        alias="vrfLiteMacsecFallbackAlgorithm", description="VRF lite MACsec fallback algorithm", default=MacsecAlgorithmEnum.AES_128_CMAC
     )
 
     # Quantum Key Distribution / Trustpoint
@@ -945,7 +953,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="defaultQueuingPolicyOther", description="Default queuing policy other", default="queuing_policy_default_other"
     )
     aiml_qos: bool = Field(alias="aimlQos", description="Enable AI/ML QoS", default=False)
-    aiml_qos_policy: str = Field(alias="aimlQosPolicy", description="AI/ML QoS policy", default="400G")
+    aiml_qos_policy: AimlQosPolicyEnum = Field(alias="aimlQosPolicy", description="AI/ML QoS policy", default=AimlQosPolicyEnum.V_400G)
     roce_v2: str = Field(alias="roceV2", description="RoCEv2 DSCP value", default="26")
     cnp: str = Field(description="CNP value", default="48")
     wred_min: int = Field(alias="wredMin", description="WRED minimum threshold", default=950)
@@ -954,8 +962,8 @@ class VxlanIbgpManagementModel(NDNestedModel):
     wred_weight: int = Field(alias="wredWeight", description="WRED weight", default=0)
     bandwidth_remaining: int = Field(alias="bandwidthRemaining", description="Bandwidth remaining percentage", default=50)
     dlb: bool = Field(description="Enable dynamic load balancing", default=False)
-    dlb_mode: str = Field(alias="dlbMode", description="DLB mode", default="flowlet")
-    dlb_mixed_mode_default: str = Field(alias="dlbMixedModeDefault", description="DLB mixed mode default", default="ecmp")
+    dlb_mode: DlbModeEnum = Field(alias="dlbMode", description="DLB mode", default=DlbModeEnum.FLOWLET)
+    dlb_mixed_mode_default: DlbMixedModeDefaultEnum = Field(alias="dlbMixedModeDefault", description="DLB mixed mode default", default=DlbMixedModeDefaultEnum.ECMP)
     flowlet_aging: int = Field(alias="flowletAging", description="Flowlet aging interval", default=1)
     flowlet_dscp: str = Field(alias="flowletDscp", description="Flowlet DSCP value", default="")
     per_packet_dscp: str = Field(alias="perPacketDscp", description="Per-packet DSCP value", default="")
@@ -989,8 +997,8 @@ class VxlanIbgpManagementModel(NDNestedModel):
         description="Default private VLAN secondary network template",
         default="Pvlan_Secondary_Network"
     )
-    allow_vlan_on_leaf_tor_pairing: str = Field(
-        alias="allowVlanOnLeafTorPairing", description="Allow VLAN on leaf/TOR pairing", default="none"
+    allow_vlan_on_leaf_tor_pairing: AllowVlanOnLeafTorPairingEnum = Field(
+        alias="allowVlanOnLeafTorPairing", description="Allow VLAN on leaf/TOR pairing", default=AllowVlanOnLeafTorPairingEnum.NONE
     )
 
     # Leaf / TOR
@@ -1063,7 +1071,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     advanced_ssh_option: bool = Field(alias="advancedSshOption", description="Enable advanced SSH option", default=False)
     copp_policy: CoppPolicyEnum = Field(alias="coppPolicy", description="CoPP policy", default=CoppPolicyEnum.STRICT)
-    power_redundancy_mode: str = Field(alias="powerRedundancyMode", description="Power redundancy mode", default="redundant")
+    power_redundancy_mode: PowerRedundancyModeEnum = Field(alias="powerRedundancyMode", description="Power redundancy mode", default=PowerRedundancyModeEnum.REDUNDANT)
     host_interface_admin_state: bool = Field(
         alias="hostInterfaceAdminState", description="Host interface admin state", default=True
     )

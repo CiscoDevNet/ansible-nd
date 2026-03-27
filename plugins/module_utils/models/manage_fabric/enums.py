@@ -64,10 +64,12 @@ class LicenseTierEnum(str, Enum):
     ## Values
 
     - `ESSENTIALS` - Essentials license tier
+    - `ADVANTAGE` - Advantage license tier
     - `PREMIER` - Premier license tier
     """
 
     ESSENTIALS = "essentials"
+    ADVANTAGE = "advantage"
     PREMIER = "premier"
 
 
@@ -249,3 +251,145 @@ class FirstHopRedundancyProtocolEnum(str, Enum):
 
     HSRP = "hsrp"
     VRRP = "vrrp"
+
+
+class AimlQosPolicyEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for AI/ML QoS policy options based on fabric link speed.
+    """
+
+    V_800G = "800G"
+    V_400G = "400G"
+    V_100G = "100G"
+    V_25G = "25G"
+    USER_DEFINED = "User-defined"
+
+
+class AllowVlanOnLeafTorPairingEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for allowed VLAN on leaf-TOR pairing port-channels.
+    """
+
+    NONE = "none"
+    ALL = "all"
+
+
+class BgpAuthenticationKeyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for BGP authentication key encryption types.
+    """
+
+    THREE_DES = "3des"
+    TYPE6 = "type6"
+    TYPE7 = "type7"
+
+
+class DlbMixedModeDefaultEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for DLB mixed mode default options.
+    """
+
+    ECMP = "ecmp"
+    FLOWLET = "flowlet"
+    PER_PACKET = "per-packet"
+
+
+class DlbModeEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for DLB mode options.
+    """
+
+    FLOWLET = "flowlet"
+    PER_PACKET = "per-packet"
+    POLICY_DRIVEN_FLOWLET = "policy-driven-flowlet"
+    POLICY_DRIVEN_PER_PACKET = "policy-driven-per-packet"
+    POLICY_DRIVEN_MIXED_MODE = "policy-driven-mixed-mode"
+
+
+class MacsecAlgorithmEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for MACsec cryptographic algorithm options.
+    """
+
+    AES_128_CMAC = "AES_128_CMAC"
+    AES_256_CMAC = "AES_256_CMAC"
+
+
+class MacsecCipherSuiteEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for MACsec cipher suite options.
+    """
+
+    GCM_AES_128 = "GCM-AES-128"
+    GCM_AES_256 = "GCM-AES-256"
+    GCM_AES_XPN_128 = "GCM-AES-XPN-128"
+    GCM_AES_XPN_256 = "GCM-AES-XPN-256"
+
+
+class RendezvousPointCountEnum(int, Enum):
+    """
+    # Summary
+
+    Enumeration for number of spines acting as Rendezvous-Points.
+    """
+
+    TWO = 2
+    FOUR = 4
+
+
+class RendezvousPointModeEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for multicast rendezvous point mode.
+    """
+
+    ASM = "asm"
+    BIDIR = "bidir"
+
+
+class RouteReflectorCountEnum(int, Enum):
+    """
+    # Summary
+
+    Enumeration for number of spines acting as Route-Reflectors.
+    """
+
+    TWO = 2
+    FOUR = 4
+
+
+class UnderlayMulticastGroupAddressLimitEnum(int, Enum):
+    """
+    # Summary
+
+    Enumeration for underlay multicast group address limit.
+    """
+
+    V_128 = 128
+    V_512 = 512
+
+
+class VrfLiteAutoConfigEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for VRF Lite auto-config deployment options.
+    """
+
+    MANUAL = "manual"
+    BACK2BACK_AND_TO_EXTERNAL = "back2BackAndToExternal"
