@@ -252,6 +252,85 @@
   loop: "{{ vpc_pairs_list_result.current.vpcPairs | default([]) }}"
   tags: gather
 
+- name: GATHER - TC10 - PREP - Extract target pair from /vpcPairs response
+  ansible.builtin.set_fact:
+    tc10_pair_from_list: >-
+      {{
+        (
+          vpc_pairs_list_result.current.vpcPairs
+          | default([])
+          | selectattr('switchId', 'equalto', test_switch1)
+          | selectattr('peerSwitchId', 'equalto', test_switch2)
+          | list
+          | first
+        )
+        | default(
+            (
+              vpc_pairs_list_result.current.vpcPairs
+              | default([])
+              | selectattr('switchId', 'equalto', test_switch2)
+              | selectattr('peerSwitchId', 'equalto', test_switch1)
+              | list
+              | first
+            ),
+            true
+          )
+      }}
+  tags: gather
+
+- name: GATHER - TC10 - PREP - Extract target pair from gathered output
+  ansible.builtin.set_fact:
+    tc10_pair_from_gathered: >-
+      {{
+        (
+          gathered_result.gathered.vpc_pairs
+          | selectattr('switch_id', 'equalto', test_switch1)
+          | selectattr('peer_switch_id', 'equalto', test_switch2)
+          | list
+          | first
+        )
+        | default(
+            (
+              gathered_result.gathered.vpc_pairs
+              | selectattr('switch_id', 'equalto', test_switch2)
+              | selectattr('peer_switch_id', 'equalto', test_switch1)
+              | list
+              | first
+            ),
+            true
+          )
+      }}
+  tags: gather
+
+- name: GATHER - TC10 - ASSERT - Verify useVirtualPeerLink alignment for target pair
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - tc10_pair_from_list is mapping
+      - tc10_pair_from_gathered is mapping
+      - tc10_gather_vpl == true
+      - (not tc10_list_has_vpl) or (tc10_list_vpl == tc10_gather_vpl)
+  vars:
+    tc10_list_has_vpl: >-
+      {{
+        (tc10_pair_from_list.useVirtualPeerLink is defined)
+        or
+        (tc10_pair_from_list.useVirtualPeerlink is defined)
+      }}
+    tc10_list_vpl: >-
+      {{
+        tc10_pair_from_list.useVirtualPeerLink
+        | default(tc10_pair_from_list.useVirtualPeerlink | default(false))
+        | bool
+      }}
+    tc10_gather_vpl: >-
+      {{
+        tc10_pair_from_gathered.use_virtual_peer_link
+        | default(tc10_pair_from_gathered.useVirtualPeerLink | default(false))
+        | bool
+      }}
+  tags: gather
+
 # TC11 - Validate normalized pair matching for reversed switch order
 - name: GATHER - TC11 - GATHER - Gather with reversed/duplicate pair filters
   cisco.nd.nd_manage_vpc_pair:

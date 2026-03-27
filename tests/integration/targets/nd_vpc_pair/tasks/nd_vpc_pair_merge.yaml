@@ -474,33 +474,6 @@
   ignore_errors: true
   tags: merge
 
-- name: MERGE - TC10 - PREP - Query fabric peering support for switch1
-  cisco.nd.nd_rest:
-    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairSupport?componentType=checkFabricPeeringSupport"
-    method: get
-  register: tc10_support_switch1
-  ignore_errors: true
-  tags: merge
-
-- name: MERGE - TC10 - PREP - Query fabric peering support for switch2
-  cisco.nd.nd_rest:
-    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch2 }}/vpcPairSupport?componentType=checkFabricPeeringSupport"
-    method: get
-  register: tc10_support_switch2
-  ignore_errors: true
-  tags: merge
-
-- name: MERGE - TC10 - PREP - Decide virtual peer link flag for deploy test
-  ansible.builtin.set_fact:
-    tc10_use_virtual_peer_link: >-
-      {{
-        (not (tc10_support_switch1.failed | default(false))) and
-        (not (tc10_support_switch2.failed | default(false))) and
-        (tc10_support_switch1.current.isVpcFabricPeeringSupported | default(false) | bool) and
-        (tc10_support_switch2.current.isVpcFabricPeeringSupported | default(false) | bool)
-      }}
-  tags: merge
-
 - name: MERGE - TC10 - MERGE - Create vPC pair with deploy true
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
@@ -509,7 +482,7 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-        use_virtual_peer_link: "{{ tc10_use_virtual_peer_link }}"
+        use_virtual_peer_link: true
   register: result
   tags: merge
 
@@ -518,6 +491,223 @@
     that:
       - result.failed == false
       - result.deployment is defined
+  tags: merge
+
+- name: MERGE - TC10 - ASSERT - Verify config-save and deploy API traces
+  ansible.builtin.assert:
+    that:
+      - result.deployment.response is defined
+      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | list
+          | length
+        ) > 0
+  tags: merge
+
+- name: MERGE - TC10 - GATHER - Query gathered pair after deploy flow
+  cisco.nd.nd_manage_vpc_pair:
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: tc10_gather_result
+  tags: merge
+
+- name: MERGE - TC10 - PREP - Extract target pair from gathered output
+  ansible.builtin.set_fact:
+    tc10_gathered_pair: >-
+      {{
+        (
+          tc10_gather_result.gathered.vpc_pairs
+          | selectattr('switch_id', 'equalto', test_switch1)
+          | selectattr('peer_switch_id', 'equalto', test_switch2)
+          | list
+          | first
+        )
+        | default(
+            (
+              tc10_gather_result.gathered.vpc_pairs
+              | selectattr('switch_id', 'equalto', test_switch2)
+              | selectattr('peer_switch_id', 'equalto', test_switch1)
+              | list
+              | first
+            ),
+            true
+          )
+      }}
+  tags: merge
+
+- name: MERGE - TC10 - ASSERT - Verify use_virtual_peer_link is true in gathered output
+  ansible.builtin.assert:
+    that:
+      - tc10_gather_result.failed == false
+      - tc10_gathered_pair is mapping
+      - >
+        (
+          tc10_gathered_pair.use_virtual_peer_link
+          | default(tc10_gathered_pair.useVirtualPeerLink | default(false))
+          | bool
+        ) == true
+  tags: merge
+
+- name: MERGE - TC10 - API - Query vpcPairSupport checkPairing for both peers
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ item }}/vpcPairSupport?componentType=checkPairing"
+    method: get
+  loop:
+    - "{{ test_switch1 }}"
+    - "{{ test_switch2 }}"
+  register: tc10_pairing_support
+  tags: merge
+
+- name: MERGE - TC10 - ASSERT - Verify checkPairing support responses
+  ansible.builtin.assert:
+    that:
+      - item.failed == false
+      - item.current is mapping
+      - item.current.isPairingAllowed is defined
+      - item.current.isPairingAllowed | bool
+  loop: "{{ tc10_pairing_support.results | default([]) }}"
+  tags: merge
+
+- name: MERGE - TC10 - API - Query vpcPairSupport checkFabricPeeringSupport for both peers
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ item }}/vpcPairSupport?componentType=checkFabricPeeringSupport"
+    method: get
+  loop:
+    - "{{ test_switch1 }}"
+    - "{{ test_switch2 }}"
+  register: tc10_fabric_peering_support
+  tags: merge
+
+- name: MERGE - TC10 - ASSERT - Verify fabric peering support endpoint responses
+  ansible.builtin.assert:
+    that:
+      - item.failed == false
+      - item.current is mapping
+      - item.current.isVpcFabricPeeringSupported is defined
+      - >
+        (
+          item.current.isVpcFabricPeeringSupported | bool
+        ) or (
+          (item.current.status | default("") | lower) is search("not supported")
+        )
+    quiet: true
+  loop: "{{ tc10_fabric_peering_support.results | default([]) }}"
+  tags: merge
+
+- name: MERGE - TC10 - API - Query vpcPairOverview with componentType=full
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairOverview?componentType=full"
+    method: get
+  register: tc10_overview_full
+  tags: merge
+
+- name: MERGE - TC10 - API - Query vpcPairOverview with componentType=pairsInfo
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairOverview?componentType=pairsInfo"
+    method: get
+  register: tc10_overview_pairs_info
+  tags: merge
+
+- name: MERGE - TC10 - ASSERT - Verify vpcPairOverview endpoint responses
+  ansible.builtin.assert:
+    that:
+      - tc10_overview_full.failed == false
+      - tc10_overview_full.current is defined
+      - tc10_overview_pairs_info.failed == false
+      - tc10_overview_pairs_info.current is defined
+  tags: merge
+
+- name: MERGE - TC10 - API - Query vpcPairConsistency for switch1
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairConsistency"
+    method: get
+  register: tc10_consistency
+  tags: merge
+
+- name: MERGE - TC10 - ASSERT - Verify vpcPairConsistency endpoint response
+  ansible.builtin.assert:
+    that:
+      - tc10_consistency.failed == false
+      - tc10_consistency.current is defined
+  tags: merge
+
+- name: MERGE - TC10 - API - Query vPC pairs list endpoint directly
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/vpcPairs"
+    method: get
+  register: tc10_vpc_pairs
+  tags: merge
+
+- name: MERGE - TC10 - PREP - Extract target pair from /vpcPairs response
+  ansible.builtin.set_fact:
+    tc10_pair_from_list: >-
+      {{
+        (
+          tc10_vpc_pairs.current.vpcPairs
+          | default([])
+          | selectattr('switchId', 'equalto', test_switch1)
+          | selectattr('peerSwitchId', 'equalto', test_switch2)
+          | list
+          | first
+        )
+        | default(
+            (
+              tc10_vpc_pairs.current.vpcPairs
+              | default([])
+              | selectattr('switchId', 'equalto', test_switch2)
+              | selectattr('peerSwitchId', 'equalto', test_switch1)
+              | list
+              | first
+            ),
+            true
+          )
+      }}
+  tags: merge
+
+- name: MERGE - TC10 - ASSERT - Verify /vpcPairs useVirtualPeerLink alignment
+  ansible.builtin.assert:
+    that:
+      - tc10_vpc_pairs.failed == false
+      - tc10_pair_from_list is mapping
+      - tc10_gather_vpl == true
+      - not tc10_list_has_vpl or tc10_list_vpl == tc10_gather_vpl
+    quiet: true
+  vars:
+    tc10_list_has_vpl: >-
+      {{
+        tc10_pair_from_list.useVirtualPeerLink is defined
+        or
+        tc10_pair_from_list.useVirtualPeerlink is defined
+      }}
+    tc10_list_vpl: >-
+      {{
+        (
+          tc10_pair_from_list.useVirtualPeerLink
+          | default(tc10_pair_from_list.useVirtualPeerlink | default(false))
+        )
+        | bool
+      }}
+    tc10_gather_vpl: >-
+      {{
+        (
+          tc10_gathered_pair.use_virtual_peer_link
+          | default(tc10_gathered_pair.useVirtualPeerLink | default(false))
+        )
+        | bool
+      }}
   tags: merge
 
 # TC11 - Delete with custom api_timeout
