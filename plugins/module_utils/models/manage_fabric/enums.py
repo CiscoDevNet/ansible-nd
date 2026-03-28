@@ -384,6 +384,28 @@ class UnderlayMulticastGroupAddressLimitEnum(int, Enum):
     V_512 = 512
 
 
+class TelemetryCollectionTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for telemetry collection method options.
+    """
+
+    IN_BAND = "inBand"
+    OUT_OF_BAND = "outOfBand"
+
+
+class TelemetryStreamingProtocolEnum(str, Enum):
+    """
+    # Summary
+
+    Enumeration for telemetry streaming protocol options.
+    """
+
+    IPV4 = "ipv4"
+    IPV6 = "ipv6"
+
+
 class VrfLiteAutoConfigEnum(str, Enum):
     """
     # Summary
