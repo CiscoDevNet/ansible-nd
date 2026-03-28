@@ -31,16 +31,16 @@ from __future__ import absolute_import, annotations, division, print_function
 
 # pylint: disable=invalid-name
 __metaclass__ = type
-# pylint: enable=inFinal, valid-name
+# pylint: enable=invalid-name
 
-from typing import ClassVar, Literal, Optional, Final
+from typing import ClassVar, Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, Field
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
@@ -126,6 +126,7 @@ class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):
         if query_string:
             return f"{base_path}?{query_string}"
         return base_path
+
 
 class EpManageFabricsGet(_EpManageFabricsBase):
     """

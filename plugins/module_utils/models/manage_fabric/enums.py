@@ -22,6 +22,7 @@ __metaclass__ = type
 
 from enum import Enum
 
+
 class FabricTypeEnum(str, Enum):
     """
     # Summary

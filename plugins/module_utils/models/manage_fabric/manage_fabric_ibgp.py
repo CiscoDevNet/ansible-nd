@@ -12,13 +12,11 @@ __metaclass__ = type
 
 import re
 # from datetime import datetime
-from enum import Enum
 from typing import List, Dict, Any, Optional, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    BaseModel,
     ConfigDict,
     Field,
     field_validator,
@@ -96,7 +94,12 @@ fabric = FabricModel(**fabric_data)
 # Regex from OpenAPI schema: bgpAsn accepts plain integers (1-4294967295) and
 # dotted four-byte ASN notation (1-65535).(0-65535)
 _BGP_ASN_RE = re.compile(
-    r"^(([1-9]{1}[0-9]{0,8}|[1-3]{1}[0-9]{1,9}|[4]{1}([0-1]{1}[0-9]{8}|[2]{1}([0-8]{1}[0-9]{7}|[9]{1}([0-3]{1}[0-9]{6}|[4]{1}([0-8]{1}[0-9]{5}|[9]{1}([0-5]{1}[0-9]{4}|[6]{1}([0-6]{1}[0-9]{3}|[7]{1}([0-1]{1}[0-9]{2}|[2]{1}([0-8]{1}[0-9]{1}|[9]{1}[0-5]{1})))))))))|([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])(\.([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]|0))?)$"
+    r"^(([1-9]{1}[0-9]{0,8}|[1-3]{1}[0-9]{1,9}|[4]{1}([0-1]{1}[0-9]{8}"
+    r"|[2]{1}([0-8]{1}[0-9]{7}|[9]{1}([0-3]{1}[0-9]{6}|[4]{1}([0-8]{1}[0-9]{5}"
+    r"|[9]{1}([0-5]{1}[0-9]{4}|[6]{1}([0-6]{1}[0-9]{3}|[7]{1}([0-1]{1}[0-9]{2}"
+    r"|[2]{1}([0-8]{1}[0-9]{1}|[9]{1}[0-5]{1})))))))))"
+    r"|([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])"
+    r"(\.([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]|0))?)$"
 )
 
 
@@ -524,8 +527,9 @@ class VxlanIbgpManagementModel(NDNestedModel):
     # leaf_count: Optional[int] = Field(alias="leafCount", description="Number of leaf switches", ge=1, le=128, default=1)
     # spine_count: Optional[int] = Field(alias="spineCount", description="Number of spine switches", ge=1, le=32, default=1)
     # vrf_lite_ipv6_subnet_range: Optional[str] = Field(alias="vrfLiteIpv6SubnetRange", description="VRF Lite IPv6 subnet range", default="fd00::a33:0/112")
-    # vrf_lite_ipv6_subnet_target_mask: Optional[int] = Field(alias="vrfLiteIpv6SubnetTargetMask", description="VRF Lite IPv6 subnet target mask", ge=112, le=128, default=126)
-
+    # vrf_lite_ipv6_subnet_target_mask: Optional[int] = Field(
+    #     alias="vrfLiteIpv6SubnetTargetMask",
+    #     description="VRF Lite IPv6 subnet target mask", ge=112, le=128, default=126)
 
     # Network Addressing
     bgp_loopback_ip_range: str = Field(
@@ -2124,10 +2128,10 @@ class FabricIbgpModel(NDBaseModel):
             state={
                 "type": "str",
                 "default": "merged",
-                "choices": ["merged", "replaced", "deleted", "overridden", "query"],
+                "choices": ["merged", "replaced", "deleted", "overridden"],
             },
             config={"required": False, "type": "list", "elements": "dict"},
-    )
+        )
 
 
 # Export all models for external use
@@ -2145,8 +2149,7 @@ __all__ = [
     "TelemetrySettingsModel",
     "ExternalStreamingSettingsModel",
     "VxlanIbgpManagementModel",
-    "FabricModel",
-    "FabricDeleteModel",
+    "FabricIbgpModel",
     "FabricTypeEnum",
     "AlertSuspendEnum",
     "LicenseTierEnum",

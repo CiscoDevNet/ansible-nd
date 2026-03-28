@@ -11,13 +11,11 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 import re
-from enum import Enum
 from typing import List, Dict, Any, Optional, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    BaseModel,
     ConfigDict,
     Field,
     field_validator,
@@ -74,7 +72,12 @@ fabric = FabricExternalConnectivityModel(**fabric_data)
 # Regex from OpenAPI schema: bgpAsn accepts plain integers (1-4294967295) and
 # dotted four-byte ASN notation (1-65535).(0-65535)
 _BGP_ASN_RE = re.compile(
-    r"^(([1-9]{1}[0-9]{0,8}|[1-3]{1}[0-9]{1,9}|[4]{1}([0-1]{1}[0-9]{8}|[2]{1}([0-8]{1}[0-9]{7}|[9]{1}([0-3]{1}[0-9]{6}|[4]{1}([0-8]{1}[0-9]{5}|[9]{1}([0-5]{1}[0-9]{4}|[6]{1}([0-6]{1}[0-9]{3}|[7]{1}([0-1]{1}[0-9]{2}|[2]{1}([0-8]{1}[0-9]{1}|[9]{1}[0-5]{1})))))))))|([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])(\.([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]|0))?)$"
+    r"^(([1-9]{1}[0-9]{0,8}|[1-3]{1}[0-9]{1,9}|[4]{1}([0-1]{1}[0-9]{8}"
+    r"|[2]{1}([0-8]{1}[0-9]{7}|[9]{1}([0-3]{1}[0-9]{6}|[4]{1}([0-8]{1}[0-9]{5}"
+    r"|[9]{1}([0-5]{1}[0-9]{4}|[6]{1}([0-6]{1}[0-9]{3}|[7]{1}([0-1]{1}[0-9]{2}"
+    r"|[2]{1}([0-8]{1}[0-9]{1}|[9]{1}[0-5]{1})))))))))"
+    r"|([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])"
+    r"(\.([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]|0))?)$"
 )
 
 
@@ -1001,7 +1004,7 @@ class FabricExternalConnectivityModel(NDBaseModel):
             state={
                 "type": "str",
                 "default": "merged",
-                "choices": ["merged", "replaced", "deleted", "overridden", "query"],
+                "choices": ["merged", "replaced", "deleted", "overridden"],
             },
             config={"required": False, "type": "list", "elements": "dict"},
         )
