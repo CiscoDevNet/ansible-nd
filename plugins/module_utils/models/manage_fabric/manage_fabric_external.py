@@ -32,7 +32,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     TelemetryStreamingProtocolEnum,
 )
 
-
 """
 # Comprehensive Pydantic models for External Connectivity fabric management via Nexus Dashboard
 
@@ -92,23 +91,10 @@ class LocationModel(NDNestedModel):
     - `ValueError` - If latitude or longitude are outside valid ranges
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
-    latitude: float = Field(
-        description="Latitude coordinate (-90 to 90)",
-        ge=-90.0,
-        le=90.0
-    )
-    longitude: float = Field(
-        description="Longitude coordinate (-180 to 180)",
-        ge=-180.0,
-        le=180.0
-    )
+    latitude: float = Field(description="Latitude coordinate (-90 to 90)", ge=-90.0, le=90.0)
+    longitude: float = Field(description="Longitude coordinate (-180 to 180)", ge=-180.0, le=180.0)
 
 
 class NetflowExporterModel(NDNestedModel):
@@ -122,12 +108,7 @@ class NetflowExporterModel(NDNestedModel):
     - `ValueError` - If UDP port is outside valid range or IP address is invalid
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     exporter_name: str = Field(alias="exporterName", description="Name of the netflow exporter")
     exporter_ip: str = Field(alias="exporterIp", description="IP address of the netflow collector")
@@ -147,12 +128,7 @@ class NetflowRecordModel(NDNestedModel):
     None
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     record_name: str = Field(alias="recordName", description="Name of the netflow record")
     record_template: str = Field(alias="recordTemplate", description="Template type for the record")
@@ -170,12 +146,7 @@ class NetflowMonitorModel(NDNestedModel):
     None
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     monitor_name: str = Field(alias="monitorName", description="Name of the netflow monitor")
     record_name: str = Field(alias="recordName", description="Associated record name")
@@ -194,28 +165,15 @@ class NetflowSettingsModel(NDNestedModel):
     - `ValueError` - If netflow lists are inconsistent with netflow enabled state
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     netflow: bool = Field(description="Enable netflow collection", default=False)
     netflow_exporter_collection: List[NetflowExporterModel] = Field(
-        alias="netflowExporterCollection",
-        description="List of netflow exporters",
-        default_factory=list
+        alias="netflowExporterCollection", description="List of netflow exporters", default_factory=list
     )
-    netflow_record_collection: List[NetflowRecordModel] = Field(
-        alias="netflowRecordCollection",
-        description="List of netflow records",
-        default_factory=list
-    )
+    netflow_record_collection: List[NetflowRecordModel] = Field(alias="netflowRecordCollection", description="List of netflow records", default_factory=list)
     netflow_monitor_collection: List[NetflowMonitorModel] = Field(
-        alias="netflowMonitorCollection",
-        description="List of netflow monitors",
-        default_factory=list
+        alias="netflowMonitorCollection", description="List of netflow monitors", default_factory=list
     )
 
 
@@ -230,12 +188,7 @@ class BootstrapSubnetModel(NDNestedModel):
     - `ValueError` - If IP addresses or subnet prefix are invalid
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     start_ip: str = Field(alias="startIp", description="Starting IP address of the bootstrap range")
     end_ip: str = Field(alias="endIp", description="Ending IP address of the bootstrap range")
@@ -254,19 +207,10 @@ class TelemetryFlowCollectionModel(NDNestedModel):
     None
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     traffic_analytics: str = Field(alias="trafficAnalytics", description="Traffic analytics state", default="enabled")
-    traffic_analytics_scope: str = Field(
-        alias="trafficAnalyticsScope",
-        description="Traffic analytics scope",
-        default="intraFabric"
-    )
+    traffic_analytics_scope: str = Field(alias="trafficAnalyticsScope", description="Traffic analytics scope", default="intraFabric")
     operating_mode: str = Field(alias="operatingMode", description="Operating mode", default="flowTelemetry")
     udp_categorization: str = Field(alias="udpCategorization", description="UDP categorization", default="enabled")
 
@@ -282,12 +226,7 @@ class TelemetryMicroburstModel(NDNestedModel):
     None
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     microburst: bool = Field(description="Enable microburst detection", default=False)
     sensitivity: str = Field(description="Microburst sensitivity level", default="low")
@@ -304,12 +243,7 @@ class TelemetryAnalysisSettingsModel(NDNestedModel):
     None
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     is_enabled: bool = Field(alias="isEnabled", description="Enable telemetry analysis", default=False)
 
@@ -325,12 +259,7 @@ class TelemetryEnergyManagementModel(NDNestedModel):
     None
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     cost: float = Field(description="Energy cost per unit", default=1.2)
 
@@ -346,12 +275,7 @@ class TelemetryNasExportSettingsModel(NDNestedModel):
     None
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     export_type: str = Field(alias="exportType", description="Export type", default="full")
     export_format: str = Field(alias="exportFormat", description="Export format", default="json")
@@ -368,18 +292,11 @@ class TelemetryNasModel(NDNestedModel):
     None
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     server: str = Field(description="NAS server address", default="")
     export_settings: TelemetryNasExportSettingsModel = Field(
-        alias="exportSettings",
-        description="NAS export settings",
-        default_factory=TelemetryNasExportSettingsModel
+        alias="exportSettings", description="NAS export settings", default_factory=TelemetryNasExportSettingsModel
     )
 
 
@@ -394,35 +311,18 @@ class TelemetrySettingsModel(NDNestedModel):
     None
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     flow_collection: TelemetryFlowCollectionModel = Field(
-        alias="flowCollection",
-        description="Flow collection settings",
-        default_factory=TelemetryFlowCollectionModel
+        alias="flowCollection", description="Flow collection settings", default_factory=TelemetryFlowCollectionModel
     )
-    microburst: TelemetryMicroburstModel = Field(
-        description="Microburst detection settings",
-        default_factory=TelemetryMicroburstModel
-    )
+    microburst: TelemetryMicroburstModel = Field(description="Microburst detection settings", default_factory=TelemetryMicroburstModel)
     analysis_settings: TelemetryAnalysisSettingsModel = Field(
-        alias="analysisSettings",
-        description="Analysis settings",
-        default_factory=TelemetryAnalysisSettingsModel
+        alias="analysisSettings", description="Analysis settings", default_factory=TelemetryAnalysisSettingsModel
     )
-    nas: TelemetryNasModel = Field(
-        description="NAS telemetry configuration",
-        default_factory=TelemetryNasModel
-    )
+    nas: TelemetryNasModel = Field(description="NAS telemetry configuration", default_factory=TelemetryNasModel)
     energy_management: TelemetryEnergyManagementModel = Field(
-        alias="energyManagement",
-        description="Energy management settings",
-        default_factory=TelemetryEnergyManagementModel
+        alias="energyManagement", description="Energy management settings", default_factory=TelemetryEnergyManagementModel
     )
 
 
@@ -437,22 +337,12 @@ class ExternalStreamingSettingsModel(NDNestedModel):
     None
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     email: List[Dict[str, Any]] = Field(description="Email streaming configuration", default_factory=list)
     message_bus: List[Dict[str, Any]] = Field(alias="messageBus", description="Message bus configuration", default_factory=list)
     syslog: Dict[str, Any] = Field(
-        description="Syslog streaming configuration",
-        default_factory=lambda: {
-            "collectionSettings": {"anomalies": []},
-            "facility": "",
-            "servers": []
-        }
+        description="Syslog streaming configuration", default_factory=lambda: {"collectionSettings": {"anomalies": []}, "facility": "", "servers": []}
     )
     webhooks: List[Dict[str, Any]] = Field(description="Webhook configuration", default_factory=list)
 
@@ -472,18 +362,10 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     - `TypeError` - If required string fields are not provided
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     # Fabric Type (required for discriminated union)
-    type: Literal[FabricTypeEnum.EXTERNAL_CONNECTIVITY] = Field(
-        description="Fabric management type",
-        default=FabricTypeEnum.EXTERNAL_CONNECTIVITY
-    )
+    type: Literal[FabricTypeEnum.EXTERNAL_CONNECTIVITY] = Field(description="Fabric management type", default=FabricTypeEnum.EXTERNAL_CONNECTIVITY)
 
     # Core Configuration
     bgp_asn: str = Field(
@@ -510,20 +392,14 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # Loopback
     allow_same_loopback_ip_on_switches: bool = Field(
         alias="allowSameLoopbackIpOnSwitches",
-        description=(
-            "Allow the same loopback IP address to be configured on multiple"
-            " switches (e.g. RP loopback IP)"
-        ),
+        description=("Allow the same loopback IP address to be configured on multiple" " switches (e.g. RP loopback IP)"),
         default=False,
     )
 
     # Smart Switch
     allow_smart_switch_onboarding: bool = Field(
         alias="allowSmartSwitchOnboarding",
-        description=(
-            "Enable onboarding of smart switches to Hypershield"
-            " for firewall service"
-        ),
+        description=("Enable onboarding of smart switches to Hypershield" " for firewall service"),
         default=False,
     )
 
@@ -540,10 +416,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # CoPP Policy
     copp_policy: CoppPolicyEnum = Field(
         alias="coppPolicy",
-        description=(
-            "Fabric wide CoPP policy. Customized CoPP policy should be"
-            " provided when 'manual' is selected."
-        ),
+        description=("Fabric wide CoPP policy. Customized CoPP policy should be" " provided when 'manual' is selected."),
         default=CoppPolicyEnum.MANUAL,
     )
 
@@ -591,10 +464,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
     dns_vrf_collection: List[str] = Field(
         alias="dnsVrfCollection",
-        description=(
-            "DNS Server VRFs. One VRF for all DNS servers or a list of VRFs,"
-            " one per DNS server"
-        ),
+        description=("DNS Server VRFs. One VRF for all DNS servers or a list of VRFs," " one per DNS server"),
         default_factory=list,
     )
 
@@ -608,10 +478,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # DPU Pinning
     enable_dpu_pinning: bool = Field(
         alias="enableDpuPinning",
-        description=(
-            "Enable pinning of VRFs and networks to specific DPUs"
-            " on smart switches"
-        ),
+        description=("Enable pinning of VRFs and networks to specific DPUs" " on smart switches"),
         default=False,
     )
 
@@ -628,18 +495,12 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
     extra_config_nxos_bootstrap: str = Field(
         alias="extraConfigNxosBootstrap",
-        description=(
-            "Additional CLIs required during device bootup/login"
-            " e.g. AAA/Radius (NX-OS)"
-        ),
+        description=("Additional CLIs required during device bootup/login" " e.g. AAA/Radius (NX-OS)"),
         default="",
     )
     extra_config_xe_bootstrap: str = Field(
         alias="extraConfigXeBootstrap",
-        description=(
-            "Additional CLIs required during device bootup/login"
-            " e.g. AAA/Radius (IOS-XE)"
-        ),
+        description=("Additional CLIs required during device bootup/login" " e.g. AAA/Radius (IOS-XE)"),
         default="",
     )
 
@@ -651,10 +512,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
     inband_management: bool = Field(
         alias="inbandManagement",
-        description=(
-            "Import switches with reachability over the switch"
-            " front-panel ports"
-        ),
+        description=("Import switches with reachability over the switch" " front-panel ports"),
         default=False,
     )
 
@@ -692,10 +550,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # Monitored Mode
     monitored_mode: bool = Field(
         alias="monitoredMode",
-        description=(
-            "If enabled, fabric is only monitored."
-            " No configuration will be deployed"
-        ),
+        description=("If enabled, fabric is only monitored." " No configuration will be deployed"),
         default=False,
     )
 
@@ -732,10 +587,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # Performance Monitoring
     performance_monitoring: bool = Field(
         alias="performanceMonitoring",
-        description=(
-            "If enabled, switch metrics are collected through periodic SNMP"
-            " polling. Alternative to real-time telemetry"
-        ),
+        description=("If enabled, switch metrics are collected through periodic SNMP" " polling. Alternative to real-time telemetry"),
         default=False,
     )
 
@@ -750,10 +602,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     ptp: bool = Field(description="Enable Precision Time Protocol (PTP)", default=False)
     ptp_domain_id: int = Field(
         alias="ptpDomainId",
-        description=(
-            "Multiple Independent PTP Clocking Subdomains"
-            " on a Single Network"
-        ),
+        description=("Multiple Independent PTP Clocking Subdomains" " on a Single Network"),
         default=0,
     )
     ptp_loopback_id: int = Field(
@@ -765,20 +614,14 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # Backup / Restore
     real_time_backup: Optional[bool] = Field(
         alias="realTimeBackup",
-        description=(
-            "Hourly Fabric Backup only if there is any config deployment"
-            " since last backup"
-        ),
+        description=("Hourly Fabric Backup only if there is any config deployment" " since last backup"),
         default=None,
     )
 
     # Interface Statistics Collection
     real_time_interface_statistics_collection: bool = Field(
         alias="realTimeInterfaceStatisticsCollection",
-        description=(
-            "Enable Real Time Interface Statistics Collection."
-            " Valid for NX-OS only"
-        ),
+        description=("Enable Real Time Interface Statistics Collection." " Valid for NX-OS only"),
         default=False,
     )
 
@@ -790,10 +633,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
     scheduled_backup_time: str = Field(
         alias="scheduledBackupTime",
-        description=(
-            "Time (UTC) in 24 hour format to take a daily backup"
-            " if enabled (00:00 to 23:59)"
-        ),
+        description=("Time (UTC) in 24 hour format to take a daily backup" " if enabled (00:00 to 23:59)"),
         default="",
     )
 
@@ -807,33 +647,22 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # Sub-Interface
     sub_interface_dot1q_range: str = Field(
         alias="subInterfaceDot1qRange",
-        description=(
-            "Per aggregation dot1q range for VRF-Lite connectivity"
-            " (minimum: 2, maximum: 4093)"
-        ),
+        description=("Per aggregation dot1q range for VRF-Lite connectivity" " (minimum: 2, maximum: 4093)"),
         default="2-511",
     )
 
     # Hypershield / Connectivity
-    connectivity_domain_name: Optional[str] = Field(
-        alias="connectivityDomainName",
-        description="Domain name to connect to Hypershield",
-        default=None
-    )
+    connectivity_domain_name: Optional[str] = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
     hypershield_connectivity_proxy_server: Optional[str] = Field(
         alias="hypershieldConnectivityProxyServer",
         description="IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication",
-        default=None
+        default=None,
     )
     hypershield_connectivity_proxy_server_port: Optional[int] = Field(
-        alias="hypershieldConnectivityProxyServerPort",
-        description="Proxy port number for communication with Hypershield",
-        default=None
+        alias="hypershieldConnectivityProxyServerPort", description="Proxy port number for communication with Hypershield", default=None
     )
     hypershield_connectivity_source_intf: Optional[str] = Field(
-        alias="hypershieldConnectivitySourceIntf",
-        description="Loopback interface on smart switch for communication with Hypershield",
-        default=None
+        alias="hypershieldConnectivitySourceIntf", description="Loopback interface on smart switch for communication with Hypershield", default=None
     )
 
     @field_validator("bgp_asn")
@@ -855,10 +684,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
         - `ValueError` - If the value does not match the expected ASN format
         """
         if not _BGP_ASN_RE.match(value):
-            raise ValueError(
-                f"Invalid BGP ASN '{value}'. "
-                "Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535)."
-            )
+            raise ValueError(f"Invalid BGP ASN '{value}'. " "Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
         return value
 
 
@@ -878,10 +704,7 @@ class FabricExternalConnectivityModel(NDBaseModel):
     """
 
     model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        extra="allow"  # Allow extra fields from API responses
+        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow"  # Allow extra fields from API responses
     )
 
     identifiers: ClassVar[Optional[List[str]]] = ["name"]
@@ -916,18 +739,12 @@ class FabricExternalConnectivityModel(NDBaseModel):
     )
     telemetry_source_interface: str = Field(
         alias="telemetrySourceInterface",
-        description=(
-            "Telemetry Source Interface (VLAN id or Loopback id) only valid"
-            " if Telemetry Collection is set to inBand"
-        ),
+        description=("Telemetry Source Interface (VLAN id or Loopback id) only valid" " if Telemetry Collection is set to inBand"),
         default="",
     )
     telemetry_source_vrf: str = Field(
         alias="telemetrySourceVrf",
-        description=(
-            "VRF over which telemetry is streamed, valid only if telemetry"
-            " collection is set to inband"
-        ),
+        description=("VRF over which telemetry is streamed, valid only if telemetry" " collection is set to inband"),
         default="",
     )
     security_domain: str = Field(
@@ -937,21 +754,12 @@ class FabricExternalConnectivityModel(NDBaseModel):
     )
 
     # Core Management Configuration
-    management: Optional[ExternalConnectivityManagementModel] = Field(
-        description="External Connectivity management configuration",
-        default=None
-    )
+    management: Optional[ExternalConnectivityManagementModel] = Field(description="External Connectivity management configuration", default=None)
 
     # Optional Advanced Settings
-    telemetry_settings: Optional[TelemetrySettingsModel] = Field(
-        alias="telemetrySettings",
-        description="Telemetry configuration",
-        default=None
-    )
+    telemetry_settings: Optional[TelemetrySettingsModel] = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
     external_streaming_settings: ExternalStreamingSettingsModel = Field(
-        alias="externalStreamingSettings",
-        description="External streaming settings",
-        default_factory=ExternalStreamingSettingsModel
+        alias="externalStreamingSettings", description="External streaming settings", default_factory=ExternalStreamingSettingsModel
     )
 
     @field_validator("name")
@@ -966,13 +774,13 @@ class FabricExternalConnectivityModel(NDBaseModel):
 
         - `ValueError` - If name contains invalid characters or format
         """
-        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+        if not re.match(r"^[a-zA-Z0-9_-]+$", value):
             raise ValueError(f"Fabric name can only contain letters, numbers, underscores, and hyphens, got: {value}")
 
         return value
 
-    @model_validator(mode='after')
-    def validate_fabric_consistency(self) -> 'FabricExternalConnectivityModel':
+    @model_validator(mode="after")
+    def validate_fabric_consistency(self) -> "FabricExternalConnectivityModel":
         """
         # Summary
 
