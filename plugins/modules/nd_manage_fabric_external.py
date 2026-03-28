@@ -57,13 +57,13 @@ options:
             required: true
       license_tier:
         description:
-        - The license tier for the fabric.
+        - License Tier value of a fabric.
         type: str
         default: premier
-        choices: [ essentials, premier ]
+        choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
-        - The alert suspension state for the fabric.
+        - Alert Suspend state configured on the fabric.
         type: str
         default: disabled
         choices: [ enabled, disabled ]
@@ -74,27 +74,29 @@ options:
         default: false
       telemetry_collection_type:
         description:
-        - The telemetry collection type.
+        - Telemetry collection method.
         type: str
         default: outOfBand
+        choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
-        - The telemetry streaming protocol.
+        - Telemetry Streaming Protocol.
         type: str
         default: ipv4
+        choices: [ ipv4, ipv6 ]
       telemetry_source_interface:
         description:
-        - The telemetry source interface.
+        - Telemetry Source Interface (VLAN id or Loopback id) only valid if Telemetry Collection is set to inBand.
         type: str
         default: ""
       telemetry_source_vrf:
         description:
-        - The telemetry source VRF.
+        - VRF over which telemetry is streamed, valid only if telemetry collection is set to inband.
         type: str
         default: ""
       security_domain:
         description:
-        - The security domain associated with the fabric.
+        - Security Domain associated with the fabric.
         type: str
         default: all
       management:
@@ -110,194 +112,311 @@ options:
             choices: [ externalConnectivity ]
           bgp_asn:
             description:
-            - The BGP Autonomous System Number for the fabric.
-            - Must be a numeric value between 1 and 4294967295 or dotted notation 1-65535.0-65535.
+            - Autonomous system number 1-4294967295 | 1-65535[.0-65535].
             type: str
             required: true
           aaa:
             description:
-            - Enable AAA.
+            - Include AAA configs from Advanced tab during device bootup.
             type: bool
             default: false
           advanced_ssh_option:
             description:
-            - Enable advanced SSH option.
+            - Enable only, when IP Authorization is enabled in the AAA Server.
             type: bool
             default: false
           allow_same_loopback_ip_on_switches:
             description:
-            - Allow same loopback IP on switches.
+            - Allow the same loopback IP address to be configured on multiple switches (e.g. RP loopback IP).
             type: bool
             default: false
           allow_smart_switch_onboarding:
             description:
-            - Allow smart switch onboarding.
+            - Enable onboarding of smart switches to Hypershield for firewall service.
             type: bool
             default: false
+          bootstrap_subnet_collection:
+            description:
+            - List of IPv4 or IPv6 subnets to be used for bootstrap.
+            type: list
+            elements: dict
+            suboptions:
+              start_ip:
+                description:
+                - Starting IP address of the bootstrap range.
+                type: str
+                required: true
+              end_ip:
+                description:
+                - Ending IP address of the bootstrap range.
+                type: str
+                required: true
+              default_gateway:
+                description:
+                - Default gateway for bootstrap subnet.
+                type: str
+                required: true
+              subnet_prefix:
+                description:
+                - Subnet prefix length (8-30).
+                type: int
+                required: true
           cdp:
             description:
-            - Enable CDP.
+            - Enable CDP on management interface.
             type: bool
             default: false
           copp_policy:
             description:
-            - The CoPP policy.
+            - Fabric wide CoPP policy.
+            - Customized CoPP policy should be provided when C(manual) is selected.
             type: str
             default: manual
             choices: [ dense, lenient, moderate, strict, manual ]
           create_bgp_config:
             description:
-            - Create BGP configuration.
+            - Generate BGP configuration for core and edge routers.
             type: bool
             default: true
           day0_bootstrap:
             description:
-            - Enable day-0 bootstrap (POAP).
+            - Support day 0 touchless switch bringup.
             type: bool
             default: false
           day0_plug_and_play:
             description:
-            - Enable day-0 plug and play.
+            - Enable Plug n Play for Catalyst 9000 switches.
             type: bool
             default: false
           dhcp_end_address:
             description:
-            - The DHCP end address for bootstrap.
+            - DHCP Scope End Address For Switch POAP.
             type: str
             default: ""
           dhcp_protocol_version:
             description:
-            - The DHCP protocol version for bootstrap.
+            - IP protocol version for Local DHCP Server.
             type: str
             default: dhcpv4
             choices: [ dhcpv4, dhcpv6 ]
           dhcp_start_address:
             description:
-            - The DHCP start address for bootstrap.
+            - DHCP Scope Start Address For Switch POAP.
             type: str
             default: ""
           dns_collection:
             description:
-            - The list of DNS server IP addresses.
+            - List of IPv4 and IPv6 DNS addresses.
             type: list
             elements: str
           dns_vrf_collection:
             description:
-            - The list of VRFs for DNS servers.
+            - DNS Server VRFs.
+            - One VRF for all DNS servers or a list of VRFs, one per DNS server.
             type: list
             elements: str
           domain_name:
             description:
-            - The domain name.
+            - Domain name for DHCP server PnP block.
             type: str
             default: ""
           enable_dpu_pinning:
             description:
-            - Enable DPU pinning.
+            - Enable pinning of VRFs and networks to specific DPUs on smart switches.
             type: bool
             default: false
           extra_config_aaa:
             description:
-            - Extra freeform AAA configuration.
+            - Additional CLIs for AAA Configuration.
             type: str
             default: ""
           extra_config_fabric:
             description:
-            - Extra freeform fabric configuration.
+            - Additional CLIs for all switches.
             type: str
             default: ""
           extra_config_nxos_bootstrap:
             description:
-            - Extra NX-OS bootstrap configuration.
+            - Additional CLIs required during device bootup/login e.g. AAA/Radius (NX-OS).
             type: str
             default: ""
           extra_config_xe_bootstrap:
             description:
-            - Extra XE bootstrap configuration.
+            - Additional CLIs required during device bootup/login e.g. AAA/Radius (IOS-XE).
             type: str
             default: ""
           inband_day0_bootstrap:
             description:
-            - Enable inband day-0 bootstrap.
+            - Support day 0 touchless switch bringup via inband management.
             type: bool
             default: false
           inband_management:
             description:
-            - Enable in-band management.
+            - Import switches with reachability over the switch front-panel ports.
             type: bool
             default: false
           interface_statistics_load_interval:
             description:
-            - The interface statistics load interval in seconds.
+            - Interface Statistics Load Interval Time in seconds.
             type: int
             default: 10
           local_dhcp_server:
             description:
-            - Enable local DHCP server for bootstrap.
+            - Automatic IP Assignment For POAP from Local DHCP Server.
             type: bool
             default: false
           management_gateway:
             description:
-            - The management gateway for bootstrap.
+            - Default Gateway For Management VRF On The Switch.
             type: str
             default: ""
           management_ipv4_prefix:
             description:
-            - The management IPv4 prefix length for bootstrap.
+            - Switch Mgmt IP Subnet Prefix if ipv4.
             type: int
             default: 24
           management_ipv6_prefix:
             description:
-            - The management IPv6 prefix length for bootstrap.
+            - Switch Management IP Subnet Prefix if ipv6.
             type: int
             default: 64
           monitored_mode:
             description:
-            - Enable monitored mode.
+            - If enabled, fabric is only monitored.
+            - No configuration will be deployed.
             type: bool
             default: false
           mpls_handoff:
             description:
-            - Enable MPLS handoff.
+            - Enable MPLS Handoff.
             type: bool
             default: false
           mpls_loopback_identifier:
             description:
-            - The MPLS loopback identifier.
+            - Underlay MPLS Loopback Identifier.
             type: int
           mpls_loopback_ip_range:
             description:
-            - The MPLS loopback IP address pool.
+            - MPLS Loopback IP Address Range.
             type: str
             default: "10.102.0.0/25"
+          netflow_settings:
+            description:
+            - Settings associated with netflow.
+            type: dict
+            suboptions:
+              netflow:
+                description:
+                - Enable netflow collection.
+                type: bool
+                default: false
+              netflow_exporter_collection:
+                description:
+                - List of netflow exporters.
+                type: list
+                elements: dict
+                suboptions:
+                  exporter_name:
+                    description:
+                    - Name of the netflow exporter.
+                    type: str
+                    required: true
+                  exporter_ip:
+                    description:
+                    - IP address of the netflow collector.
+                    type: str
+                    required: true
+                  vrf:
+                    description:
+                    - VRF name for the exporter.
+                    type: str
+                    default: management
+                  source_interface_name:
+                    description:
+                    - Source interface name.
+                    type: str
+                    required: true
+                  udp_port:
+                    description:
+                    - UDP port for netflow export (1-65535).
+                    type: int
+                    required: true
+              netflow_record_collection:
+                description:
+                - List of netflow records.
+                type: list
+                elements: dict
+                suboptions:
+                  record_name:
+                    description:
+                    - Name of the netflow record.
+                    type: str
+                    required: true
+                  record_template:
+                    description:
+                    - Template type for the record.
+                    type: str
+                    required: true
+                  layer2_record:
+                    description:
+                    - Enable layer 2 record fields.
+                    type: bool
+                    default: false
+              netflow_monitor_collection:
+                description:
+                - List of netflow monitors.
+                type: list
+                elements: dict
+                suboptions:
+                  monitor_name:
+                    description:
+                    - Name of the netflow monitor.
+                    type: str
+                    required: true
+                  record_name:
+                    description:
+                    - Associated record name.
+                    type: str
+                    required: true
+                  exporter1_name:
+                    description:
+                    - Primary exporter name.
+                    type: str
+                    required: true
+                  exporter2_name:
+                    description:
+                    - Secondary exporter name.
+                    type: str
+                    default: ""
           nxapi:
             description:
-            - Enable NX-API (HTTPS).
+            - Enable NX-API over HTTPS.
             type: bool
             default: false
           nxapi_http:
             description:
-            - Enable NX-API HTTP.
+            - Enable NX-API over HTTP.
             type: bool
             default: false
           nxapi_http_port:
             description:
-            - The NX-API HTTP port (1-65535).
+            - HTTP port for NX-API (1-65535).
             type: int
             default: 80
           nxapi_https_port:
             description:
-            - The NX-API HTTPS port (1-65535).
+            - HTTPS port for NX-API (1-65535).
             type: int
             default: 443
           performance_monitoring:
             description:
-            - Enable performance monitoring.
+            - If enabled, switch metrics are collected through periodic SNMP polling.
+            - Alternative to real-time telemetry.
             type: bool
             default: false
           power_redundancy_mode:
             description:
-            - The power redundancy mode.
+            - Default Power Supply Mode for NX-OS Switches.
             type: str
             default: redundant
             choices: [ redundant, combined, inputSrcRedundant ]
@@ -308,42 +427,173 @@ options:
             default: false
           ptp_domain_id:
             description:
-            - The PTP domain ID.
+            - Multiple Independent PTP Clocking Subdomains on a Single Network.
             type: int
             default: 0
           ptp_loopback_id:
             description:
-            - The PTP loopback ID.
+            - Precision Time Protocol Source Loopback Id.
             type: int
             default: 0
           real_time_backup:
             description:
-            - Enable real-time backup.
+            - Hourly Fabric Backup only if there is any config deployment since last backup.
             type: bool
           real_time_interface_statistics_collection:
             description:
-            - Enable real-time interface statistics collection.
+            - Enable Real Time Interface Statistics Collection.
+            - Valid for NX-OS only.
             type: bool
             default: false
           scheduled_backup:
             description:
-            - Enable scheduled backup.
+            - Enable backup at the specified time daily.
             type: bool
           scheduled_backup_time:
             description:
-            - The scheduled backup time.
+            - Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59).
             type: str
             default: ""
           snmp_trap:
             description:
-            - Enable SNMP traps.
+            - Configure Nexus Dashboard as a receiver for SNMP traps.
             type: bool
             default: true
           sub_interface_dot1q_range:
             description:
-            - The sub-interface 802.1q range.
+            - Per aggregation dot1q range for VRF-Lite connectivity (minimum 2, maximum 4093).
             type: str
             default: "2-511"
+          connectivity_domain_name:
+            description:
+            - Domain name to connect to Hypershield.
+            type: str
+          hypershield_connectivity_proxy_server:
+            description:
+            - IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication.
+            type: str
+          hypershield_connectivity_proxy_server_port:
+            description:
+            - Proxy port number for communication with Hypershield.
+            type: int
+          hypershield_connectivity_source_intf:
+            description:
+            - Loopback interface on smart switch for communication with Hypershield.
+            type: str
+      telemetry_settings:
+        description:
+        - Telemetry configuration for the fabric.
+        type: dict
+        suboptions:
+          flow_collection:
+            description:
+            - Flow collection settings.
+            type: dict
+            suboptions:
+              traffic_analytics:
+                description:
+                - Traffic analytics state.
+                type: str
+                default: enabled
+              traffic_analytics_scope:
+                description:
+                - Traffic analytics scope.
+                type: str
+                default: intraFabric
+              operating_mode:
+                description:
+                - Operating mode.
+                type: str
+                default: flowTelemetry
+              udp_categorization:
+                description:
+                - UDP categorization.
+                type: str
+                default: enabled
+          microburst:
+            description:
+            - Microburst detection settings.
+            type: dict
+            suboptions:
+              microburst:
+                description:
+                - Enable microburst detection.
+                type: bool
+                default: false
+              sensitivity:
+                description:
+                - Microburst sensitivity level.
+                type: str
+                default: low
+          analysis_settings:
+            description:
+            - Analysis settings.
+            type: dict
+            suboptions:
+              is_enabled:
+                description:
+                - Enable telemetry analysis.
+                type: bool
+                default: false
+          nas:
+            description:
+            - NAS telemetry configuration.
+            type: dict
+            suboptions:
+              server:
+                description:
+                - NAS server address.
+                type: str
+                default: ""
+              export_settings:
+                description:
+                - NAS export settings.
+                type: dict
+                suboptions:
+                  export_type:
+                    description:
+                    - Export type.
+                    type: str
+                    default: full
+                  export_format:
+                    description:
+                    - Export format.
+                    type: str
+                    default: json
+          energy_management:
+            description:
+            - Energy management settings.
+            type: dict
+            suboptions:
+              cost:
+                description:
+                - Energy cost per unit.
+                type: float
+                default: 1.2
+      external_streaming_settings:
+        description:
+        - External streaming settings for the fabric.
+        type: dict
+        suboptions:
+          email:
+            description:
+            - Email streaming configuration.
+            type: list
+            elements: dict
+          message_bus:
+            description:
+            - Message bus configuration.
+            type: list
+            elements: dict
+          syslog:
+            description:
+            - Syslog streaming configuration.
+            type: dict
+          webhooks:
+            description:
+            - Webhook configuration.
+            type: list
+            elements: dict
   state:
     description:
     - The desired state of the fabric resources on the Cisco Nexus Dashboard.
