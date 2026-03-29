@@ -42,7 +42,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     Field,
 )
 
-
 # Regex from OpenAPI schema: bgpAsn accepts plain integers (1-4294967295) and
 # dotted four-byte ASN notation (1-65535).(0-65535)
 BGP_ASN_RE = re.compile(
