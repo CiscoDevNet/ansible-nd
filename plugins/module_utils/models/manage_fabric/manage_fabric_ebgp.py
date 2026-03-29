@@ -47,8 +47,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     VrfLiteAutoConfigEnum,
 )
 
-# Re-use shared nested models from the iBGP module
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp import (
+# Re-use shared nested models from the common module
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
+    BGP_ASN_RE,
     LocationModel,
     NetflowSettingsModel,
     BootstrapSubnetModel,
@@ -83,17 +84,6 @@ fabric_data = {
 fabric = FabricEbgpModel(**fabric_data)
 ```
 """
-
-# Regex from OpenAPI schema: bgpAsn accepts plain integers (1-4294967295) and
-# dotted four-byte ASN notation (1-65535).(0-65535)
-_BGP_ASN_RE = re.compile(
-    r"^(([1-9]{1}[0-9]{0,8}|[1-3]{1}[0-9]{1,9}|[4]{1}([0-1]{1}[0-9]{8}"
-    r"|[2]{1}([0-8]{1}[0-9]{7}|[9]{1}([0-3]{1}[0-9]{6}|[4]{1}([0-8]{1}[0-9]{5}"
-    r"|[9]{1}([0-5]{1}[0-9]{4}|[6]{1}([0-6]{1}[0-9]{3}|[7]{1}([0-1]{1}[0-9]{2}"
-    r"|[2]{1}([0-8]{1}[0-9]{1}|[9]{1}[0-5]{1})))))))))"
-    r"|([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])"
-    r"(\.([1-5]\d{4}|[1-9]\d{0,3}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]|0))?)$"
-)
 
 
 class VxlanEbgpManagementModel(NDNestedModel):
@@ -770,7 +760,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         """
         if value is None:
             return value
-        if not _BGP_ASN_RE.match(value):
+        if not BGP_ASN_RE.match(value):
             raise ValueError(f"Invalid BGP ASN '{value}'. " "Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
         return value
 
