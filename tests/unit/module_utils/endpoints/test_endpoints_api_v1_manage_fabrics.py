@@ -95,7 +95,7 @@ def test_endpoints_api_v1_manage_fabrics_00030():
     """
     with pytest.raises(ValueError):
         instance = EpManageFabricsGet()
-        _ = instance.path
+        result = instance.path  # noqa: F841
 
 
 def test_endpoints_api_v1_manage_fabrics_00040():
@@ -430,7 +430,7 @@ def test_endpoints_api_v1_manage_fabrics_00320():
     """
     with pytest.raises(ValueError):
         instance = EpManageFabricsPut()
-        _ = instance.path
+        result = instance.path  # noqa: F841
 
 
 def test_endpoints_api_v1_manage_fabrics_00340():
@@ -523,7 +523,7 @@ def test_endpoints_api_v1_manage_fabrics_00420():
     """
     with pytest.raises(ValueError):
         instance = EpManageFabricsDelete()
-        _ = instance.path
+        result = instance.path  # noqa: F841
 
 
 def test_endpoints_api_v1_manage_fabrics_00430():
@@ -616,7 +616,7 @@ def test_endpoints_api_v1_manage_fabrics_00520():
     """
     with pytest.raises(ValueError):
         instance = EpManageFabricsSummaryGet()
-        _ = instance.path
+        result = instance.path  # noqa: F841
 
 
 def test_endpoints_api_v1_manage_fabrics_00530():
