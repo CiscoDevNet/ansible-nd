@@ -72,7 +72,7 @@ def test_endpoints_api_v1_manage_fabrics_switchactions_00110():
     """
     instance = EpManageFabricsSwitchActionsRemovePost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_switchactions_00120():
@@ -166,7 +166,7 @@ def test_endpoints_api_v1_manage_fabrics_switchactions_00210():
     """
     instance = EpManageFabricsSwitchActionsChangeRolesPost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_switchactions_00220():
@@ -257,7 +257,7 @@ def test_endpoints_api_v1_manage_fabrics_switchactions_00310():
     """
     instance = EpManageFabricsSwitchActionsImportBootstrapPost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_switchactions_00320():
@@ -351,7 +351,7 @@ def test_endpoints_api_v1_manage_fabrics_switchactions_00410():
     """
     instance = EpManageFabricsSwitchActionsPreProvisionPost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_switchactions_00420():
@@ -445,7 +445,7 @@ def test_endpoints_api_v1_manage_fabrics_switchactions_00710():
     """
     instance = EpManageFabricsSwitchActionsRediscoverPost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_switchactions_00720():

@@ -156,7 +156,7 @@ def test_endpoints_api_v1_manage_fabrics_00110():
     """
     instance = EpManageFabricConfigDeployPost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_00120():
@@ -247,7 +247,7 @@ def test_endpoints_api_v1_manage_fabrics_00210():
     """
     instance = EpManageFabricGet()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_00220():

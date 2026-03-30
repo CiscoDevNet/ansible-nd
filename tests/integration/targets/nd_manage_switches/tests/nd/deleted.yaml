@@ -80,7 +80,6 @@
     state: deleted
     config:
       - seed_ip: "{{ test_data.sw1 }}"
-  register: delete_result
   register: result
   tags: deleted
 

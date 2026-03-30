@@ -69,7 +69,7 @@ def test_endpoints_api_v1_manage_fabrics_actions_00110():
     """
     instance = EpManageFabricsActionsShallowDiscoveryPost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_actions_00120():
@@ -138,7 +138,7 @@ def test_endpoints_api_v1_manage_fabrics_actions_00210():
     """
     instance = EpManageFabricsActionsConfigSavePost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_actions_00220():

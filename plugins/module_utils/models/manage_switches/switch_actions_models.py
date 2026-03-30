@@ -13,8 +13,7 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from typing import Any, Dict, List, Literal, Optional, ClassVar
-from typing_extensions import Self
+from typing import List, Literal, Optional, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -80,7 +79,7 @@ class SwitchCredentialsRequestModel(NDBaseModel):
         return validated
 
     @model_validator(mode="after")
-    def validate_credentials(self) -> Self:
+    def validate_credentials(self) -> "SwitchCredentialsRequestModel":
         """Ensure either local or remote credentials are provided."""
         has_local = (
             self.switch_username is not None and self.switch_password is not None

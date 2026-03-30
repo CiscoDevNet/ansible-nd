@@ -25,7 +25,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 from typing import Any, Dict, List, Optional, ClassVar, Literal, Union
-from typing_extensions import Self
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
@@ -132,7 +131,7 @@ class POAPConfigModel(NDNestedModel):
     )
 
     @model_validator(mode="after")
-    def validate_discovery_credentials_pair(self) -> Self:
+    def validate_discovery_credentials_pair(self) -> "POAPConfigModel":
         """Validate that discovery_username and discovery_password are both set or both absent."""
         has_user = bool(self.discovery_username)
         has_pass = bool(self.discovery_password)
@@ -210,7 +209,7 @@ class PreprovisionConfigModel(NDNestedModel):
     )
 
     @model_validator(mode="after")
-    def validate_discovery_credentials_pair(self) -> Self:
+    def validate_discovery_credentials_pair(self) -> "PreprovisionConfigModel":
         """Validate that discovery_username and discovery_password are both set or both absent."""
         has_user = bool(self.discovery_username)
         has_pass = bool(self.discovery_password)
@@ -308,7 +307,7 @@ class RMAConfigModel(NDNestedModel):
         return result
 
     @model_validator(mode="after")
-    def validate_discovery_credentials_pair(self) -> Self:
+    def validate_discovery_credentials_pair(self) -> "RMAConfigModel":
         """Validate that discovery_username and discovery_password are both set or both absent.
 
         Mirrors the dcnm_inventory.py bidirectional check:
@@ -454,7 +453,7 @@ class SwitchConfigModel(NDBaseModel):
         )
 
     @model_validator(mode="after")
-    def reject_auth_proto_for_special_ops(self) -> Self:
+    def reject_auth_proto_for_special_ops(self) -> "SwitchConfigModel":
         """Reject non-MD5 auth_proto when POAP, Pre-provision, Swap or RMA is configured.
 
         These operations always use MD5 internally. By validating mode='after',
@@ -476,7 +475,7 @@ class SwitchConfigModel(NDBaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_special_ops_exclusion(self) -> Self:
+    def validate_special_ops_exclusion(self) -> "SwitchConfigModel":
         """Validate mutually exclusive operation combinations.
 
         Allowed:
@@ -495,7 +494,7 @@ class SwitchConfigModel(NDBaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_special_ops_credentials(self) -> Self:
+    def validate_special_ops_credentials(self) -> "SwitchConfigModel":
         """Validate credentials for POAP, Pre-provision, Swap and RMA operations."""
         if self.poap or self.preprovision or self.rma:
             if not self.username or not self.password:
@@ -509,7 +508,7 @@ class SwitchConfigModel(NDBaseModel):
         return self
 
     @model_validator(mode="after")
-    def apply_state_defaults(self, info: ValidationInfo) -> Self:
+    def apply_state_defaults(self, info: ValidationInfo) -> "SwitchConfigModel":
         """Apply state-aware defaults and enforcement using validation context.
 
         When ``context={"state": "merged"}`` (or ``"overridden"``) is passed

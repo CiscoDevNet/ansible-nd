@@ -166,20 +166,27 @@ class FabricUtils:
                     self.ep_config_save, action="Config save"
                 )
                 self.log.info(
-                    f"Config save succeeded on attempt "
-                    f"{attempt}/{max_retries} for fabric {self.fabric}"
+                    "Config save succeeded on attempt %s/%s for fabric %s",
+                    attempt,
+                    max_retries,
+                    self.fabric,
                 )
                 return response
             except SwitchOperationError as exc:
                 last_error = exc
                 self.log.warning(
-                    f"Config save attempt {attempt}/{max_retries} failed "
-                    f"for fabric {self.fabric}: {exc}"
+                    "Config save attempt %s/%s failed for fabric %s: %s",
+                    attempt,
+                    max_retries,
+                    self.fabric,
+                    exc,
                 )
                 if attempt < max_retries:
                     self.log.info(
-                        f"Retrying config save in {retry_delay}s "
-                        f"(attempt {attempt + 1}/{max_retries})"
+                        "Retrying config save in %ss (attempt %s/%s)",
+                        retry_delay,
+                        attempt + 1,
+                        max_retries,
                     )
                     time.sleep(retry_delay)
         raise SwitchOperationError(
@@ -235,17 +242,13 @@ class FabricUtils:
         Raises:
             SwitchOperationError: On any request failure.
         """
-        self.log.info(f"{action} for fabric: {self.fabric}")
+        self.log.info("%s for fabric: %s", action, self.fabric)
         try:
             response = self.nd.request(endpoint.path, verb=endpoint.verb)
-            self.log.info(
-                f"{action} completed for fabric: {self.fabric}"
-            )
+            self.log.info("%s completed for fabric: %s", action, self.fabric)
             return response
         except Exception as e:
-            self.log.error(
-                f"{action} failed for fabric {self.fabric}: {e}"
-            )
+            self.log.error("%s failed for fabric %s: %s", action, self.fabric, e)
             raise SwitchOperationError(
                 f"{action} failed for fabric {self.fabric}: {e}"
             ) from e

@@ -15,7 +15,6 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import logging
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -30,25 +29,39 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection impo
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import (
     SwitchRole,
     SnmpV3AuthProtocol,
     PlatformType,
     DiscoveryStatus,
     SystemMode,
     ConfigSyncStatus,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.discovery_models import (
     SwitchDiscoveryModel,
-    SwitchDataModel,
     AddSwitchesRequestModel,
     ShallowDiscoveryRequestModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.switch_data_models import (
+    SwitchDataModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.bootstrap_models import (
     BootstrapImportSwitchModel,
     ImportBootstrapSwitchesRequestModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.preprovision_models import (
     PreProvisionSwitchModel,
     PreProvisionSwitchesRequestModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.rma_models import (
     RMASwitchModel,
-    SwitchConfigModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.switch_actions_models import (
     SwitchCredentialsRequestModel,
     ChangeSwitchSerialNumberRequestModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.config_models import (
+    SwitchConfigModel,
     POAPConfigModel,
     PreprovisionConfigModel,
     RMAConfigModel,
@@ -313,13 +326,17 @@ class SwitchDiffEngine:
                     if prop_dict.get(k) != existing_dict.get(k)
                 }
                 log.info(
-                    f"Switch {ip} has differences — marking to_update. "
-                    f"Changed fields: {diff_keys}"
+                    "Switch %s has differences — marking to_update. Changed fields: %s",
+                    ip,
+                    diff_keys,
                 )
+                proposed_diff = {k: prop_dict.get(k) for k in diff_keys}
+                existing_diff = {k: existing_dict.get(k) for k in diff_keys}
                 log.debug(
-                    f"Switch {ip} diff detail — "
-                    f"proposed: { {k: prop_dict.get(k) for k in diff_keys} }, "
-                    f"existing: { {k: existing_dict.get(k) for k in diff_keys} }"
+                    "Switch %s diff detail — proposed: %s, existing: %s",
+                    ip,
+                    proposed_diff,
+                    existing_diff,
                 )
                 changes["to_update"].append(prop_sw)
 
@@ -477,7 +494,7 @@ class SwitchDiscoveryService:
         log.debug("Step 2: Bulk discovering switches")
         all_discovered: Dict[str, Dict[str, Any]] = {}
         for group_key, switches in credential_groups.items():
-            username, _, auth_proto, platform_type, _ = group_key
+            username, _pw_hash, auth_proto, platform_type, _preserve = group_key
             password = switches[0].password
 
             log.debug(
@@ -793,7 +810,7 @@ class SwitchFabricOps:
         )
 
         payload = add_request.to_payload()
-        serial_numbers = [d.get("serialNumber") for _, d in switches]
+        serial_numbers = [d.get("serialNumber") for _cfg, d in switches]
         log.info(
             f"Bulk adding {len(switches)} switches to fabric "
             f"{self.ctx.fabric}: {', '.join(serial_numbers)}"
@@ -1086,7 +1103,7 @@ class SwitchFabricOps:
         """
         nd = self.ctx.nd
         log = self.ctx.log
-        all_serials = [sn for sn, _ in switch_actions]
+        all_serials = [sn for sn, _cfg in switch_actions]
 
         log.info(
             f"Waiting for {len(all_serials)} {context} "
@@ -1253,9 +1270,9 @@ class POAPHandler:
             results.response_current = {"MESSAGE": "check mode — skipped"}
             results.result_current = {"success": True, "changed": False}
             results.diff_current = {
-                "bootstrap": [cfg.seed_ip for cfg, _ in bootstrap_entries],
-                "preprovision": [cfg.seed_ip for cfg, _ in preprov_entries],
-                "swap": [cfg.seed_ip for cfg, _ in swap_entries],
+                "bootstrap": [cfg.seed_ip for cfg, _sw in bootstrap_entries],
+                "preprovision": [cfg.seed_ip for cfg, _sw in preprov_entries],
+                "swap": [cfg.seed_ip for cfg, _sw in swap_entries],
             }
             results.register_api_call()
             return
@@ -1887,7 +1904,7 @@ class POAPHandler:
 
         log.info(
             f"POAP swap completed successfully for {len(swap_entries)} "
-            f"switch(es): {[sn for sn, _ in switch_actions]}"
+            f"switch(es): {[sn for sn, _cfg in switch_actions]}"
         )
         log.debug("EXIT: _handle_poap_swap()")
 
@@ -2041,7 +2058,7 @@ class RMAHandler:
         # RMA-specific wait (unreachable → ok) instead of the generic
         # wait_for_switch_manageable which would time out on the
         # migration-mode phase.
-        all_new_serials = [sn for sn, _ in switch_actions]
+        all_new_serials = [sn for sn, _cfg in switch_actions]
         log.info(
             f"Waiting for {len(all_new_serials)} RMA replacement "
             f"switch(es) to become ready: {all_new_serials}"
@@ -2399,7 +2416,7 @@ class NDSwitchResourceModule:
         self.poap_handler = POAPHandler(self.ctx, self.fabric_ops, self.wait_utils)
         self.rma_handler = RMAHandler(self.ctx, self.fabric_ops, self.wait_utils)
 
-        log.info(f"Initialized NDSwitchResourceModule for fabric: {self.fabric}")
+        log.info("Initialized NDSwitchResourceModule for fabric: %s", self.fabric)
 
     def exit_json(self) -> None:
         """Finalize collected results and exit the Ansible module.
@@ -2457,7 +2474,7 @@ class NDSwitchResourceModule:
         Returns:
             None.
         """
-        self.log.info(f"Managing state: {self.state}")
+        self.log.info("Managing state: %s", self.state)
 
         # gathered — read-only, no config accepted
         if self.state == "gathered":
@@ -2504,8 +2521,10 @@ class NDSwitchResourceModule:
         self.output.assign(proposed=output_proposed)
 
         self.log.info(
-            f"Config partition: {len(normal_configs)} normal, "
-            f"{len(poap_configs)} poap, {len(rma_configs)} rma"
+            "Config partition: %s normal, %s poap, %s rma",
+            len(normal_configs),
+            len(poap_configs),
+            len(rma_configs),
         )
 
         # POAP and RMA are only valid with state=merged
@@ -2523,8 +2542,10 @@ class NDSwitchResourceModule:
             ]
             if configs_to_discover:
                 self.log.info(
-                    f"Discovery needed for {len(configs_to_discover)}/{len(normal_configs)} "
-                    f"switch(es) — {len(normal_configs) - len(configs_to_discover)} already in fabric"
+                    "Discovery needed for %s/%s switch(es) — %s already in fabric",
+                    len(configs_to_discover),
+                    len(normal_configs),
+                    len(normal_configs) - len(configs_to_discover),
                 )
                 discovered_data = self.discovery.discover(configs_to_discover)
             else:
@@ -2577,8 +2598,8 @@ class NDSwitchResourceModule:
         """
         self.log.debug("ENTER: _handle_merged_state()")
         self.log.info("Handling merged state")
-        self.log.debug(f"Proposed configs: {len(self.proposed)}")
-        self.log.debug(f"Existing switches: {len(self.existing)}")
+        self.log.debug("Proposed configs: %s", len(self.proposed))
+        self.log.debug("Existing switches: %s", len(self.existing))
 
         if not self.proposed:
             self.log.info("No configurations provided for merged state")
@@ -2604,9 +2625,10 @@ class NDSwitchResourceModule:
         # Check mode — preview only
         if self.nd.module.check_mode:
             self.log.info(
-                f"Check mode: would add {len(switches_to_add)}, "
-                f"process {len(migration_switches)} migration switch(es), "
-                f"save_deploy_required={idempotent_save_req}"
+                "Check mode: would add %s, process %s migration switch(es), save_deploy_required=%s",
+                len(switches_to_add),
+                len(migration_switches),
+                idempotent_save_req,
             )
             self.results.action = "merge"
             self.results.state = self.state
@@ -2639,7 +2661,8 @@ class NDSwitchResourceModule:
                     add_configs.append(cfg)
                 else:
                     self.log.warning(
-                        f"No config found for switch {sw.fabric_management_ip}, skipping add"
+                        "No config found for switch %s, skipping add",
+                        sw.fabric_management_ip,
                     )
 
             if add_configs:
@@ -2661,7 +2684,8 @@ class NDSwitchResourceModule:
                             pairs.append((cfg, disc))
                         else:
                             self.log.warning(
-                                f"No discovery data for {cfg.seed_ip}, skipping"
+                                "No discovery data for %s, skipping",
+                                cfg.seed_ip,
                             )
 
                     if not pairs:
@@ -2675,7 +2699,7 @@ class NDSwitchResourceModule:
                         platform_type=platform_type,
                         preserve_config=preserve_config,
                     )
-                    _bulk_added_ips.update(cfg.seed_ip for cfg, _ in pairs)
+                    _bulk_added_ips.update(cfg.seed_ip for cfg, _disc in pairs)
 
                     for cfg, disc in pairs:
                         sn = disc.get("serialNumber")
@@ -2712,7 +2736,7 @@ class NDSwitchResourceModule:
         # preserve_config=True the switches will NOT reload after being
         # added to the fabric.  Passing this flag lets the wait utility
         # skip the unreachable/reload detection phases.
-        all_preserve_config = all(cfg.preserve_config for _, cfg in switch_actions)
+        all_preserve_config = all(cfg.preserve_config for _sn, cfg in switch_actions)
         if all_preserve_config:
             self.log.info(
                 "All switches in batch are brownfield (preserve_config=True) — "
@@ -2829,9 +2853,11 @@ class NDSwitchResourceModule:
             n_add = len(diff.get("to_add", []))
             n_migrate = len(diff.get("migration_mode", []))
             self.log.info(
-                f"Check mode: would delete {n_delete}, "
-                f"delete-and-re-add {n_update}, "
-                f"add {n_add}, migrate {n_migrate}"
+                "Check mode: would delete %s, delete-and-re-add %s, add %s, migrate %s",
+                n_delete,
+                n_update,
+                n_add,
+                n_migrate,
             )
             self.results.action = "override"
             self.results.state = self.state
@@ -2855,8 +2881,9 @@ class NDSwitchResourceModule:
         # Phase 1: Switches not in proposed config
         for sw in diff.get("to_delete", []):
             self.log.info(
-                f"Marking for deletion (not in proposed): "
-                f"{sw.fabric_management_ip} ({sw.switch_id})"
+                "Marking for deletion (not in proposed): %s (%s)",
+                sw.fabric_management_ip,
+                sw.switch_id,
             )
             switches_to_delete.append(sw)
             self._log_operation("delete", sw.fabric_management_ip)
@@ -2874,8 +2901,9 @@ class NDSwitchResourceModule:
             )
             if existing_sw:
                 self.log.info(
-                    f"Marking for deletion (re-add update): "
-                    f"{existing_sw.fabric_management_ip} ({existing_sw.switch_id})"
+                    "Marking for deletion (re-add update): %s (%s)",
+                    existing_sw.fabric_management_ip,
+                    existing_sw.switch_id,
                 )
                 switches_to_delete.append(existing_sw)
                 self._log_operation(
@@ -2905,9 +2933,9 @@ class NDSwitchResourceModule:
         ]
         if configs_needing_rediscovery:
             self.log.info(
-                f"Re-discovering {len(configs_needing_rediscovery)} switch(es) "
-                f"after deletion for re-add: "
-                f"{[cfg.seed_ip for cfg in configs_needing_rediscovery]}"
+                "Re-discovering %s switch(es) after deletion for re-add: %s",
+                len(configs_needing_rediscovery),
+                [cfg.seed_ip for cfg in configs_needing_rediscovery],
             )
             fresh_discovered = self.discovery.discover(configs_needing_rediscovery)
             discovered_data = {**(discovered_data or {}), **fresh_discovered}
@@ -2927,10 +2955,10 @@ class NDSwitchResourceModule:
             None.
         """
         self.log.debug("ENTER: _handle_gathered_state()")
-        self.log.info(f"Gathering inventory for fabric '{self.fabric}'")
+        self.log.info("Gathering inventory for fabric '%s'", self.fabric)
 
         if not self.existing:
-            self.log.info(f"Fabric '{self.fabric}' has no switches in inventory")
+            self.log.info("Fabric '%s' has no switches in inventory", self.fabric)
 
         self.results.action = "gathered"
         self.results.state = self.state
@@ -2941,7 +2969,9 @@ class NDSwitchResourceModule:
         self.results.register_api_call()
 
         self.log.info(
-            f"Gathered {len(list(self.existing))} switch(es) from fabric '{self.fabric}'"
+            "Gathered %s switch(es) from fabric '%s'",
+            len(list(self.existing)),
+            self.fabric,
         )
         self.log.debug("EXIT: _handle_gathered_state()")
 
@@ -2985,13 +3015,17 @@ class NDSwitchResourceModule:
                 )
                 if existing_switch:
                     self.log.info(
-                        f"Marking for deletion: {identifier} ({existing_switch.switch_id})"
+                        "Marking for deletion: %s (%s)",
+                        identifier,
+                        existing_switch.switch_id,
                     )
                     switches_to_delete.append(existing_switch)
                 else:
-                    self.log.info(f"Switch not found for deletion: {identifier}")
+                    self.log.info("Switch not found for deletion: %s", identifier)
 
-        self.log.info(f"Total switches marked for deletion: {len(switches_to_delete)}")
+        self.log.info(
+            "Total switches marked for deletion: %s", len(switches_to_delete)
+        )
         if not switches_to_delete:
             self.log.info("No switches to delete")
             return
@@ -2999,7 +3033,7 @@ class NDSwitchResourceModule:
         # Check mode — preview only
         if self.nd.module.check_mode:
             self.log.info(
-                f"Check mode: would delete {len(switches_to_delete)} switch(es)"
+                "Check mode: would delete %s switch(es)", len(switches_to_delete)
             )
             self.results.action = "delete"
             self.results.state = self.state
@@ -3016,7 +3050,8 @@ class NDSwitchResourceModule:
             return
 
         self.log.info(
-            f"Proceeding to delete {len(switches_to_delete)} switch(es) from fabric"
+            "Proceeding to delete %s switch(es) from fabric",
+            len(switches_to_delete),
         )
         self.fabric_ops.bulk_delete(switches_to_delete)
         for sw in switches_to_delete:
@@ -3035,8 +3070,8 @@ class NDSwitchResourceModule:
         """
         endpoint = EpManageFabricsSwitchesGet()
         endpoint.fabric_name = self.fabric
-        self.log.debug(f"Querying all switches with endpoint: {endpoint.path}")
-        self.log.debug(f"Query verb: {endpoint.verb}")
+        self.log.debug("Querying all switches with endpoint: %s", endpoint.path)
+        self.log.debug("Query verb: %s", endpoint.verb)
 
         try:
             result = self.nd.request(path=endpoint.path, verb=endpoint.verb)
@@ -3052,7 +3087,9 @@ class NDSwitchResourceModule:
         else:
             switches = []
 
-        self.log.debug(f"Queried {len(switches)} switches from fabric {self.fabric}")
+        self.log.debug(
+            "Queried %s switches from fabric %s", len(switches), self.fabric
+        )
         return switches
 
     # =====================================================================

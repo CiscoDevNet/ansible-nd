@@ -14,7 +14,6 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from typing import Any, Dict, List, Optional, ClassVar, Literal, Union
-from typing_extensions import Self
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,

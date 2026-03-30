@@ -68,7 +68,7 @@ def test_endpoints_api_v1_manage_fabrics_inventory_00020():
     """
     instance = EpManageFabricsInventoryDiscoverGet()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_inventory_00030():

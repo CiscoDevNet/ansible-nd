@@ -15,7 +15,6 @@ __metaclass__ = type
 
 from ipaddress import ip_network
 from typing import Any, Dict, List, Optional, ClassVar, Literal
-from typing_extensions import Self
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -191,7 +190,7 @@ class PreProvisionSwitchModel(NDBaseModel):
         return self.model_dump(by_alias=True, exclude_none=True)
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> Self:
+    def from_response(cls, response: Dict[str, Any]) -> "PreProvisionSwitchModel":
         """Create model instance from API response."""
         return cls.model_validate(response)
 

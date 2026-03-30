@@ -20,7 +20,7 @@ __metaclass__ = type
 __author__ = "Akshayanat C S"
 # pylint: enable=invalid-name
 
-from typing import Literal, Optional
+from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (

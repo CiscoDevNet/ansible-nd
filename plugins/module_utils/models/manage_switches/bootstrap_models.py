@@ -14,7 +14,6 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from typing import Any, Dict, List, Optional, ClassVar, Literal
-from typing_extensions import Self
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -139,7 +138,7 @@ class BootstrapCredentialModel(NDBaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_credentials(self) -> Self:
+    def validate_credentials(self) -> "BootstrapCredentialModel":
         """Validate credential configuration logic."""
         if self.use_new_credentials:
             if self.remote_credential_store == RemoteCredentialStore.CYBERARK:
@@ -318,7 +317,7 @@ class BootstrapImportSwitchModel(NDBaseModel):
         return self.model_dump(by_alias=True, exclude_none=True)
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> Self:
+    def from_response(cls, response: Dict[str, Any]) -> "BootstrapImportSwitchModel":
         """Create model instance from API response."""
         return cls.model_validate(response)
 

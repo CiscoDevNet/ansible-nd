@@ -79,7 +79,6 @@ options:
                 description:
                 - Login password for the switch.
                 type: str
-                required: true
             role:
                 description:
                 - Role to assign to the switch in the fabric.
@@ -105,6 +104,14 @@ options:
                 - Set to C(false) for greenfield deployment, C(true) for brownfield.
                 type: bool
                 default: false
+            platform_type:
+              description:
+              - Platform type of the switch.
+              type: str
+              default: nx-os
+              choices:
+              - nx-os
+              - ios-xe
             poap:
                 description:
                 - Bootstrap POAP config for the switch.
@@ -137,7 +144,6 @@ options:
                         description:
                         - Password for device discovery during POAP.
                         type: str
-                        no_log: true
                     image_policy:
                         description:
                         - Name of the image policy to be applied on the switch.
@@ -166,7 +172,6 @@ options:
                         description:
                         - Password for device discovery during pre-provision.
                         type: str
-                        no_log: true
                     model:
                         description:
                         - Model of the switch to Pre-provision (e.g., N9K-C93180YC-EX).
@@ -232,7 +237,6 @@ options:
                         description:
                         - Password for device discovery during POAP and RMA discovery.
                         type: str
-                        no_log: true
                     model:
                         description:
                         - Model of switch to Bootstrap for RMA.
@@ -248,7 +252,7 @@ options:
                     config_data:
                         description:
                         - Basic config data of switch to Bootstrap for RMA.
-                        - C(models) and C(gateway) are mandatory.
+                        - C(models) and C(gateway) are optional.
                         - C(models) is list of model of modules in switch to Bootstrap for RMA.
                         - C(gateway) is the gateway IP with mask for the switch to Bootstrap for RMA.
                         type: dict
@@ -258,12 +262,10 @@ options:
                                 - List of module models in the switch.
                                 type: list
                                 elements: str
-                                required: true
                             gateway:
                                 description:
                                 - Gateway IP with subnet mask (e.g., 192.168.0.1/24).
                                 type: str
-                                required: true
 
 extends_documentation_fragment:
 - cisco.nd.modules
@@ -490,12 +492,12 @@ def main():
         sw_module.manage_state()
 
         # Exit with results
-        log.info(f"State management completed successfully. Changed: {results.changed}")
+        log.info("State management completed successfully. Changed: %s", results.changed)
         sw_module.exit_json()
 
     except NDModuleError as error:
         # NDModule-specific errors (API failures, authentication issues, etc.)
-        log.error(f"NDModule error: {error.msg}")
+        log.error("NDModule error: %s", error.msg)
 
         # Try to get response from RestSend if available
         try:
@@ -521,13 +523,13 @@ def main():
         if output_level == "debug":
             results.final_result["error_details"] = error.to_dict()
 
-        log.error(f"Module failed: {results.final_result}")
+        log.error("Module failed: %s", results.final_result)
         module.fail_json(msg=error.msg, **results.final_result)
 
     except Exception as error:
         # Unexpected errors
-        log.error(f"Unexpected error during module execution: {str(error)}")
-        log.error(f"Error type: {type(error).__name__}")
+        log.error("Unexpected error during module execution: %s", str(error))
+        log.error("Error type: %s", error.__class__.__name__)
 
         # Build failed result
         results.response_current = {

@@ -157,7 +157,7 @@ def test_endpoints_api_v1_manage_fabrics_bootstrap_00110():
     """
     instance = EpManageFabricsBootstrapGet()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_bootstrap_00120():

@@ -184,7 +184,7 @@ def test_endpoints_api_v1_manage_fabrics_switches_00110():
     """
     instance = EpManageFabricsSwitchesGet()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_switches_00120():
@@ -275,7 +275,7 @@ def test_endpoints_api_v1_manage_fabrics_switches_00210():
     """
     instance = EpManageFabricsSwitchesPost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_switches_00220():
@@ -430,7 +430,7 @@ def test_endpoints_api_v1_manage_fabrics_switches_00510():
     """
     instance = EpManageFabricsSwitchProvisionRMAPost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_switches_00520():
@@ -450,7 +450,7 @@ def test_endpoints_api_v1_manage_fabrics_switches_00520():
     instance = EpManageFabricsSwitchProvisionRMAPost()
     instance.fabric_name = "MyFabric"
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_switches_00530():
@@ -544,7 +544,7 @@ def test_endpoints_api_v1_manage_fabrics_switches_00610():
     """
     instance = EpManageFabricsSwitchChangeSerialNumberPost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_switches_00620():
@@ -564,7 +564,7 @@ def test_endpoints_api_v1_manage_fabrics_switches_00620():
     instance = EpManageFabricsSwitchChangeSerialNumberPost()
     instance.fabric_name = "MyFabric"
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_fabrics_switches_00630():
@@ -611,4 +611,3 @@ def test_endpoints_api_v1_manage_fabrics_switches_00640():
         instance.endpoint_params.cluster_name = "cluster1"
         result = instance.path
     assert result == "/api/v1/manage/fabrics/MyFabric/switches/SAL1948TRTT/actions/changeSwitchSerialNumber?clusterName=cluster1"
-
