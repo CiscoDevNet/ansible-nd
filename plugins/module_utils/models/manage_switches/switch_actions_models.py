@@ -19,7 +19,9 @@ from typing_extensions import Self
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import SwitchValidators
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import (
+    SwitchValidators,
+)
 
 
 class SwitchCredentialsRequestModel(NDBaseModel):
@@ -29,37 +31,36 @@ class SwitchCredentialsRequestModel(NDBaseModel):
     Supports local credentials or remote credential store (such as CyberArk).
     Path: POST /api/v1/manage/credentials/switches
     """
+
     identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
+    identifier_strategy: ClassVar[
+        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
+    ] = "singleton"
 
     switch_ids: List[str] = Field(
         ...,
         alias="switchIds",
         min_length=1,
-        description="List of switch serial numbers"
+        description="List of switch serial numbers",
     )
     switch_username: Optional[str] = Field(
-        default=None,
-        alias="switchUsername",
-        description="Switch username"
+        default=None, alias="switchUsername", description="Switch username"
     )
     switch_password: Optional[str] = Field(
-        default=None,
-        alias="switchPassword",
-        description="Switch password"
+        default=None, alias="switchPassword", description="Switch password"
     )
     remote_credential_store_key: Optional[str] = Field(
         default=None,
         alias="remoteCredentialStoreKey",
-        description="Remote credential store key (e.g. CyberArk path)"
+        description="Remote credential store key (e.g. CyberArk path)",
     )
     remote_credential_store_type: Optional[str] = Field(
         default=None,
         alias="remoteCredentialStoreType",
-        description="Remote credential store type (e.g. 'cyberark')"
+        description="Remote credential store type (e.g. 'cyberark')",
     )
 
-    @field_validator('switch_ids', mode='before')
+    @field_validator("switch_ids", mode="before")
     @classmethod
     def validate_switch_ids(cls, v: List[str]) -> List[str]:
         """Validate all switch IDs."""
@@ -74,11 +75,16 @@ class SwitchCredentialsRequestModel(NDBaseModel):
             raise ValueError("No valid switch IDs provided")
         return validated
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def validate_credentials(self) -> Self:
         """Ensure either local or remote credentials are provided."""
-        has_local = self.switch_username is not None and self.switch_password is not None
-        has_remote = self.remote_credential_store_key is not None and self.remote_credential_store_type is not None
+        has_local = (
+            self.switch_username is not None and self.switch_password is not None
+        )
+        has_remote = (
+            self.remote_credential_store_key is not None
+            and self.remote_credential_store_type is not None
+        )
         if not has_local and not has_remote:
             raise ValueError(
                 "Either local credentials (switchUsername + switchPassword) "
@@ -93,15 +99,14 @@ class ChangeSwitchSerialNumberRequestModel(NDBaseModel):
 
     Path: POST /fabrics/{fabricName}/switches/{switchId}/actions/changeSwitchSerialNumber
     """
-    identifiers: ClassVar[List[str]] = ["new_switch_id"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
-    new_switch_id: str = Field(
-        ...,
-        alias="newSwitchId",
-        description="New switchId"
-    )
 
-    @field_validator('new_switch_id', mode='before')
+    identifiers: ClassVar[List[str]] = ["new_switch_id"]
+    identifier_strategy: ClassVar[
+        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
+    ] = "single"
+    new_switch_id: str = Field(..., alias="newSwitchId", description="New switchId")
+
+    @field_validator("new_switch_id", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
         result = SwitchValidators.validate_serial_number(v)

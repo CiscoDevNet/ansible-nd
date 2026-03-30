@@ -25,7 +25,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     SnmpV3AuthProtocol,
     SwitchRole,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import SwitchValidators
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import (
+    SwitchValidators,
+)
 
 
 class PreProvisionSwitchModel(NDBaseModel):
@@ -36,7 +38,9 @@ class PreProvisionSwitchModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = ["serial_number"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifier_strategy: ClassVar[
+        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
+    ] = "single"
     exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
 
     # --- preProvisionSpecific fields (required) ---
@@ -196,7 +200,9 @@ class PreProvisionSwitchesRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
+    identifier_strategy: ClassVar[
+        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
+    ] = "singleton"
     switches: List[PreProvisionSwitchModel] = Field(
         ...,
         description="PowerOn Auto Provisioning switches",
@@ -204,9 +210,7 @@ class PreProvisionSwitchesRequestModel(NDBaseModel):
 
     def to_payload(self) -> Dict[str, Any]:
         """Convert to API payload format."""
-        return {
-            "switches": [s.to_payload() for s in self.switches]
-        }
+        return {"switches": [s.to_payload() for s in self.switches]}
 
 
 __all__ = [

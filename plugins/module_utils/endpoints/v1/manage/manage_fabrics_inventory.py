@@ -82,7 +82,9 @@ class EpManageFabricsInventoryDiscoverGet(_EpManageFabricsInventoryBase):
     """
 
     class_name: Literal["EpManageFabricsInventoryDiscoverGet"] = Field(
-        default="EpManageFabricsInventoryDiscoverGet", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricsInventoryDiscoverGet",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
 
     @property

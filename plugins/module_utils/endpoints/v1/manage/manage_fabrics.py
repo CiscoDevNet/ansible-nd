@@ -61,8 +61,12 @@ class FabricConfigDeployEndpointParams(EndpointQueryParams):
     ```
     """
 
-    force_show_run: Optional[bool] = Field(default=None, description="Force show running config before deploy")
-    incl_all_msd_switches: Optional[bool] = Field(default=None, description="Include all MSD fabric switches")
+    force_show_run: Optional[bool] = Field(
+        default=None, description="Force show running config before deploy"
+    )
+    incl_all_msd_switches: Optional[bool] = Field(
+        default=None, description="Include all MSD fabric switches"
+    )
 
 
 class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):
@@ -125,10 +129,13 @@ class EpManageFabricConfigDeployPost(_EpManageFabricsBase):
     """
 
     class_name: Literal["EpManageFabricConfigDeployPost"] = Field(
-        default="EpManageFabricConfigDeployPost", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricConfigDeployPost",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
     endpoint_params: FabricConfigDeployEndpointParams = Field(
-        default_factory=FabricConfigDeployEndpointParams, description="Endpoint-specific query parameters"
+        default_factory=FabricConfigDeployEndpointParams,
+        description="Endpoint-specific query parameters",
     )
 
     @property
@@ -183,7 +190,9 @@ class EpManageFabricGet(_EpManageFabricsBase):
     """
 
     class_name: Literal["EpManageFabricGet"] = Field(
-        default="EpManageFabricGet", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricGet",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
 
     @property

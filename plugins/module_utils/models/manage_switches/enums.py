@@ -16,10 +16,10 @@ __metaclass__ = type
 from enum import Enum
 from typing import List, Union
 
-
 # =============================================================================
 # ENUMS - Extracted from OpenAPI Schema components/schemas
 # =============================================================================
+
 
 class SwitchRole(str, Enum):
     """
@@ -28,6 +28,7 @@ class SwitchRole(str, Enum):
     Based on: components/schemas/switchRole
     Description: The role of the switch, meta is a read-only switch role
     """
+
     BORDER = "border"
     BORDER_GATEWAY = "borderGateway"
     BORDER_GATEWAY_SPINE = "borderGatewaySpine"
@@ -65,12 +66,14 @@ class SwitchRole(str, Enum):
         except ValueError:
             pass
         # Try converting underscore to camelCase
-        parts = value.lower().split('_')
-        camel_case = parts[0] + ''.join(word.capitalize() for word in parts[1:])
+        parts = value.lower().split("_")
+        camel_case = parts[0] + "".join(word.capitalize() for word in parts[1:])
         try:
             return cls(camel_case)
         except ValueError:
-            raise ValueError(f"Invalid switch role: {value}. Valid options: {cls.choices()}")
+            raise ValueError(
+                f"Invalid switch role: {value}. Valid options: {cls.choices()}"
+            )
 
     @classmethod
     def normalize(cls, value: Union[str, "SwitchRole", None]) -> "SwitchRole":
@@ -89,9 +92,9 @@ class SwitchRole(str, Enum):
                 if role.value.lower() == v_lower:
                     return role
             # Try converting underscore to camelCase
-            parts = v_lower.split('_')
+            parts = v_lower.split("_")
             if len(parts) > 1:
-                camel_case = parts[0] + ''.join(word.capitalize() for word in parts[1:])
+                camel_case = parts[0] + "".join(word.capitalize() for word in parts[1:])
                 for role in cls:
                     if role.value == camel_case:
                         return role
@@ -104,6 +107,7 @@ class SystemMode(str, Enum):
 
     Based on: components/schemas/systemMode
     """
+
     NORMAL = "normal"
     MAINTENANCE = "maintenance"
     MIGRATION = "migration"
@@ -124,6 +128,7 @@ class PlatformType(str, Enum):
     Includes all platform types supported by the add-switches endpoint.
     Based on: components/schemas
     """
+
     NX_OS = "nx-os"
     OTHER = "other"
     IOS_XE = "ios-xe"
@@ -146,11 +151,12 @@ class PlatformType(str, Enum):
         if isinstance(value, cls):
             return value
         if isinstance(value, str):
-            v_normalized = value.lower().replace('_', '-')
+            v_normalized = value.lower().replace("_", "-")
             for pt in cls:
                 if pt.value == v_normalized:
                     return pt
         raise ValueError(f"Invalid PlatformType: {value}. Valid: {cls.choices()}")
+
 
 class ShallowDiscoveryPlatformType(str, Enum):
     """
@@ -160,6 +166,7 @@ class ShallowDiscoveryPlatformType(str, Enum):
     Excludes 'apic' which is not supported by the shallowDiscovery endpoint.
     Based on: components/schemas/shallowDiscoveryRequest.platformType
     """
+
     NX_OS = "nx-os"
     OTHER = "other"
     IOS_XE = "ios-xe"
@@ -171,7 +178,9 @@ class ShallowDiscoveryPlatformType(str, Enum):
         return [e.value for e in cls]
 
     @classmethod
-    def normalize(cls, value: Union[str, "ShallowDiscoveryPlatformType", None]) -> "ShallowDiscoveryPlatformType":
+    def normalize(
+        cls, value: Union[str, "ShallowDiscoveryPlatformType", None]
+    ) -> "ShallowDiscoveryPlatformType":
         """
         Normalize input to enum value (case-insensitive).
         Accepts: NX_OS, nx-os, NX-OS, ios_xe, ios-xe, etc.
@@ -181,11 +190,13 @@ class ShallowDiscoveryPlatformType(str, Enum):
         if isinstance(value, cls):
             return value
         if isinstance(value, str):
-            v_normalized = value.lower().replace('_', '-')
+            v_normalized = value.lower().replace("_", "-")
             for pt in cls:
                 if pt.value == v_normalized:
                     return pt
-        raise ValueError(f"Invalid ShallowDiscoveryPlatformType: {value}. Valid: {cls.choices()}")
+        raise ValueError(
+            f"Invalid ShallowDiscoveryPlatformType: {value}. Valid: {cls.choices()}"
+        )
 
 
 class SnmpV3AuthProtocol(str, Enum):
@@ -194,6 +205,7 @@ class SnmpV3AuthProtocol(str, Enum):
 
     Based on: components/schemas/snmpV3AuthProtocol and schemas-snmpV3AuthProtocol
     """
+
     MD5 = "md5"
     SHA = "sha"
     MD5_DES = "md5-des"
@@ -219,7 +231,9 @@ class SnmpV3AuthProtocol(str, Enum):
         return [e.value for e in cls]
 
     @classmethod
-    def normalize(cls, value: Union[str, "SnmpV3AuthProtocol", None]) -> "SnmpV3AuthProtocol":
+    def normalize(
+        cls, value: Union[str, "SnmpV3AuthProtocol", None]
+    ) -> "SnmpV3AuthProtocol":
         """
         Normalize input to enum value (case-insensitive).
         Accepts: MD5, md5, MD5_DES, md5-des, etc.
@@ -229,7 +243,7 @@ class SnmpV3AuthProtocol(str, Enum):
         if isinstance(value, cls):
             return value
         if isinstance(value, str):
-            v_normalized = value.lower().replace('_', '-')
+            v_normalized = value.lower().replace("_", "-")
             for proto in cls:
                 if proto.value == v_normalized:
                     return proto
@@ -242,6 +256,7 @@ class DiscoveryStatus(str, Enum):
 
     Based on: components/schemas/additionalSwitchData.discoveryStatus
     """
+
     OK = "ok"
     DISCOVERING = "discovering"
     REDISCOVERING = "rediscovering"
@@ -267,6 +282,7 @@ class ConfigSyncStatus(str, Enum):
 
     Based on: components/schemas/switchConfigSyncStatus
     """
+
     DEPLOYED = "deployed"
     DEPLOYMENT_IN_PROGRESS = "deploymentInProgress"
     FAILED = "failed"
@@ -289,6 +305,7 @@ class VpcRole(str, Enum):
 
     Based on: components/schemas/schemas-vpcRole
     """
+
     PRIMARY = "primary"
     SECONDARY = "secondary"
     OPERATIONAL_PRIMARY = "operationalPrimary"
@@ -306,6 +323,7 @@ class RemoteCredentialStore(str, Enum):
 
     Based on: components/schemas/remoteCredentialStore
     """
+
     LOCAL = "local"
     CYBERARK = "cyberark"
 
@@ -320,6 +338,7 @@ class AnomalyLevel(str, Enum):
 
     Based on: components/schemas/anomalyLevel
     """
+
     CRITICAL = "critical"
     MAJOR = "major"
     MINOR = "minor"
@@ -339,6 +358,7 @@ class AdvisoryLevel(str, Enum):
 
     Based on: components/schemas/advisoryLevel
     """
+
     CRITICAL = "critical"
     MAJOR = "major"
     MINOR = "minor"

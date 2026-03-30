@@ -82,7 +82,9 @@ class EpManageFabricsActionsShallowDiscoveryPost(_EpManageFabricsActionsBase):
     """
 
     class_name: Literal["EpManageFabricsActionsShallowDiscoveryPost"] = Field(
-        default="EpManageFabricsActionsShallowDiscoveryPost", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricsActionsShallowDiscoveryPost",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
 
     @property
@@ -125,7 +127,9 @@ class EpManageFabricsActionsConfigSavePost(_EpManageFabricsActionsBase):
     """
 
     class_name: Literal["EpManageFabricsActionsConfigSavePost"] = Field(
-        default="EpManageFabricsActionsConfigSavePost", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricsActionsConfigSavePost",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
 
     @property

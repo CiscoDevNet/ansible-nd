@@ -31,7 +31,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
 )
 
 # --- Validators ---
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import SwitchValidators  # noqa: F401
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import (
+    SwitchValidators,
+)  # noqa: F401
 
 # --- Nested / shared models ---
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.switch_data_models import (  # noqa: F401
@@ -90,7 +92,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.co
     RMAConfigModel,
     SwitchConfigModel,
 )
-
 
 __all__ = [
     # Enums

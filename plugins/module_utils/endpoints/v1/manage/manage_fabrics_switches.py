@@ -46,7 +46,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
 
-class FabricSwitchesGetEndpointParams(FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
+
+class FabricSwitchesGetEndpointParams(
+    FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams
+):
     """
     # Summary
 
@@ -68,10 +71,14 @@ class FabricSwitchesGetEndpointParams(FilterMixin, MaxMixin, OffsetMixin, Endpoi
     ```
     """
 
-    hostname: Optional[str] = Field(default=None, min_length=1, description="Filter by switch hostname")
+    hostname: Optional[str] = Field(
+        default=None, min_length=1, description="Filter by switch hostname"
+    )
 
 
-class FabricSwitchesAddEndpointParams(ClusterNameMixin, TicketIdMixin, EndpointQueryParams):
+class FabricSwitchesAddEndpointParams(
+    ClusterNameMixin, TicketIdMixin, EndpointQueryParams
+):
     """
     # Summary
 
@@ -155,10 +162,13 @@ class EpManageFabricsSwitchesGet(_EpManageFabricsSwitchesBase):
     """
 
     class_name: Literal["EpManageFabricsSwitchesGet"] = Field(
-        default="EpManageFabricsSwitchesGet", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricsSwitchesGet",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
     endpoint_params: FabricSwitchesGetEndpointParams = Field(
-        default_factory=FabricSwitchesGetEndpointParams, description="Endpoint-specific query parameters"
+        default_factory=FabricSwitchesGetEndpointParams,
+        description="Endpoint-specific query parameters",
     )
 
     @property
@@ -228,10 +238,13 @@ class EpManageFabricsSwitchesPost(_EpManageFabricsSwitchesBase):
     """
 
     class_name: Literal["EpManageFabricsSwitchesPost"] = Field(
-        default="EpManageFabricsSwitchesPost", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricsSwitchesPost",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
     endpoint_params: FabricSwitchesAddEndpointParams = Field(
-        default_factory=FabricSwitchesAddEndpointParams, description="Endpoint-specific query parameters"
+        default_factory=FabricSwitchesAddEndpointParams,
+        description="Endpoint-specific query parameters",
     )
 
     @property
@@ -259,6 +272,7 @@ class EpManageFabricsSwitchesPost(_EpManageFabricsSwitchesBase):
 # ============================================================================
 # Per-Switch Action Endpoints
 # ============================================================================
+
 
 class SwitchActionsTicketEndpointParams(TicketIdMixin, EndpointQueryParams):
     """
@@ -299,7 +313,10 @@ class SwitchActionsClusterEndpointParams(ClusterNameMixin, EndpointQueryParams):
     ```
     """
 
-class _EpManageFabricsSwitchActionsPerSwitchBase(FabricNameMixin, SwitchSerialNumberMixin, NDEndpointBaseModel):
+
+class _EpManageFabricsSwitchActionsPerSwitchBase(
+    FabricNameMixin, SwitchSerialNumberMixin, NDEndpointBaseModel
+):
     """
     Base class for per-switch action endpoints.
 
@@ -314,7 +331,9 @@ class _EpManageFabricsSwitchActionsPerSwitchBase(FabricNameMixin, SwitchSerialNu
             raise ValueError("fabric_name must be set before accessing path")
         if self.switch_sn is None:
             raise ValueError("switch_sn must be set before accessing path")
-        return BasePath.path("fabrics", self.fabric_name, "switches", self.switch_sn, "actions")
+        return BasePath.path(
+            "fabrics", self.fabric_name, "switches", self.switch_sn, "actions"
+        )
 
 
 class EpManageFabricsSwitchProvisionRMAPost(_EpManageFabricsSwitchActionsPerSwitchBase):
@@ -362,10 +381,13 @@ class EpManageFabricsSwitchProvisionRMAPost(_EpManageFabricsSwitchActionsPerSwit
     """
 
     class_name: Literal["EpManageFabricsSwitchProvisionRMAPost"] = Field(
-        default="EpManageFabricsSwitchProvisionRMAPost", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricsSwitchProvisionRMAPost",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsTicketEndpointParams = Field(
-        default_factory=SwitchActionsTicketEndpointParams, description="Endpoint-specific query parameters"
+        default_factory=SwitchActionsTicketEndpointParams,
+        description="Endpoint-specific query parameters",
     )
 
     @property
@@ -383,7 +405,9 @@ class EpManageFabricsSwitchProvisionRMAPost(_EpManageFabricsSwitchActionsPerSwit
         return HttpVerbEnum.POST
 
 
-class EpManageFabricsSwitchChangeSerialNumberPost(_EpManageFabricsSwitchActionsPerSwitchBase):
+class EpManageFabricsSwitchChangeSerialNumberPost(
+    _EpManageFabricsSwitchActionsPerSwitchBase
+):
     """
     # Summary
 
@@ -428,10 +452,13 @@ class EpManageFabricsSwitchChangeSerialNumberPost(_EpManageFabricsSwitchActionsP
     """
 
     class_name: Literal["EpManageFabricsSwitchChangeSerialNumberPost"] = Field(
-        default="EpManageFabricsSwitchChangeSerialNumberPost", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricsSwitchChangeSerialNumberPost",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsClusterEndpointParams = Field(
-        default_factory=SwitchActionsClusterEndpointParams, description="Endpoint-specific query parameters"
+        default_factory=SwitchActionsClusterEndpointParams,
+        description="Endpoint-specific query parameters",
     )
 
     @property

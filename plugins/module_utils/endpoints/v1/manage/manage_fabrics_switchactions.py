@@ -45,7 +45,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
 
-
 # ============================================================================
 # Endpoint-specific query parameter classes
 # ============================================================================
@@ -94,7 +93,9 @@ class SwitchActionsTicketEndpointParams(TicketIdMixin, EndpointQueryParams):
     """
 
 
-class SwitchActionsImportEndpointParams(ClusterNameMixin, TicketIdMixin, EndpointQueryParams):
+class SwitchActionsImportEndpointParams(
+    ClusterNameMixin, TicketIdMixin, EndpointQueryParams
+):
     """
     # Summary
 
@@ -181,10 +182,13 @@ class EpManageFabricsSwitchActionsRemovePost(_EpManageFabricsSwitchActionsBase):
     """
 
     class_name: Literal["EpManageFabricsSwitchActionsRemovePost"] = Field(
-        default="EpManageFabricsSwitchActionsRemovePost", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricsSwitchActionsRemovePost",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsRemoveEndpointParams = Field(
-        default_factory=SwitchActionsRemoveEndpointParams, description="Endpoint-specific query parameters"
+        default_factory=SwitchActionsRemoveEndpointParams,
+        description="Endpoint-specific query parameters",
     )
 
     @property
@@ -253,11 +257,13 @@ class EpManageFabricsSwitchActionsChangeRolesPost(_EpManageFabricsSwitchActionsB
     """
 
     class_name: Literal["EpManageFabricsSwitchActionsChangeRolesPost"] = Field(
-        default="EpManageFabricsSwitchActionsChangeRolesPost", frozen=True,
+        default="EpManageFabricsSwitchActionsChangeRolesPost",
+        frozen=True,
         description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsTicketEndpointParams = Field(
-        default_factory=SwitchActionsTicketEndpointParams, description="Endpoint-specific query parameters"
+        default_factory=SwitchActionsTicketEndpointParams,
+        description="Endpoint-specific query parameters",
     )
 
     @property
@@ -283,7 +289,9 @@ class EpManageFabricsSwitchActionsChangeRolesPost(_EpManageFabricsSwitchActionsB
         return HttpVerbEnum.POST
 
 
-class EpManageFabricsSwitchActionsImportBootstrapPost(_EpManageFabricsSwitchActionsBase):
+class EpManageFabricsSwitchActionsImportBootstrapPost(
+    _EpManageFabricsSwitchActionsBase
+):
     """
     # Summary
 
@@ -328,10 +336,13 @@ class EpManageFabricsSwitchActionsImportBootstrapPost(_EpManageFabricsSwitchActi
     """
 
     class_name: Literal["EpManageFabricsSwitchActionsImportBootstrapPost"] = Field(
-        default="EpManageFabricsSwitchActionsImportBootstrapPost", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricsSwitchActionsImportBootstrapPost",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsImportEndpointParams = Field(
-        default_factory=SwitchActionsImportEndpointParams, description="Endpoint-specific query parameters"
+        default_factory=SwitchActionsImportEndpointParams,
+        description="Endpoint-specific query parameters",
     )
 
     @property
@@ -410,11 +421,13 @@ class EpManageFabricsSwitchActionsPreProvisionPost(_EpManageFabricsSwitchActions
     """
 
     class_name: Literal["EpManageFabricsSwitchActionsPreProvisionPost"] = Field(
-        default="EpManageFabricsSwitchActionsPreProvisionPost", frozen=True,
+        default="EpManageFabricsSwitchActionsPreProvisionPost",
+        frozen=True,
         description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsImportEndpointParams = Field(
-        default_factory=SwitchActionsImportEndpointParams, description="Endpoint-specific query parameters"
+        default_factory=SwitchActionsImportEndpointParams,
+        description="Endpoint-specific query parameters",
     )
 
     @property
@@ -488,11 +501,13 @@ class EpManageFabricsSwitchActionsRediscoverPost(_EpManageFabricsSwitchActionsBa
     """
 
     class_name: Literal["EpManageFabricsSwitchActionsRediscoverPost"] = Field(
-        default="EpManageFabricsSwitchActionsRediscoverPost", frozen=True,
+        default="EpManageFabricsSwitchActionsRediscoverPost",
+        frozen=True,
         description="Class name for backward compatibility",
     )
     endpoint_params: SwitchActionsTicketEndpointParams = Field(
-        default_factory=SwitchActionsTicketEndpointParams, description="Endpoint-specific query parameters"
+        default_factory=SwitchActionsTicketEndpointParams,
+        description="Endpoint-specific query parameters",
     )
 
     @property

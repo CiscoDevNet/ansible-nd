@@ -43,7 +43,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
 )
 
 
-class FabricsBootstrapEndpointParams(FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
+class FabricsBootstrapEndpointParams(
+    FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams
+):
     """
     # Summary
 
@@ -127,10 +129,13 @@ class EpManageFabricsBootstrapGet(_EpManageFabricsBootstrapBase):
     """
 
     class_name: Literal["EpManageFabricsBootstrapGet"] = Field(
-        default="EpManageFabricsBootstrapGet", frozen=True, description="Class name for backward compatibility"
+        default="EpManageFabricsBootstrapGet",
+        frozen=True,
+        description="Class name for backward compatibility",
     )
     endpoint_params: FabricsBootstrapEndpointParams = Field(
-        default_factory=FabricsBootstrapEndpointParams, description="Endpoint-specific query parameters"
+        default_factory=FabricsBootstrapEndpointParams,
+        description="Endpoint-specific query parameters",
     )
 
     @property

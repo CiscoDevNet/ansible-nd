@@ -24,7 +24,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     SnmpV3AuthProtocol,
     SwitchRole,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import SwitchValidators
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import (
+    SwitchValidators,
+)
+
 
 class RMASwitchModel(NDBaseModel):
     """
@@ -32,98 +35,61 @@ class RMASwitchModel(NDBaseModel):
 
     Path: POST /fabrics/{fabricName}/switches/{switchId}/actions/provisionRMA
     """
+
     identifiers: ClassVar[List[str]] = ["new_switch_id"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifier_strategy: ClassVar[
+        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
+    ] = "single"
     exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
     # From bootstrapBase
     gateway_ip_mask: str = Field(
-        ...,
-        alias="gatewayIpMask",
-        description="Gateway IP address with mask"
+        ..., alias="gatewayIpMask", description="Gateway IP address with mask"
     )
-    model: str = Field(
-        ...,
-        description="Model of the bootstrap switch"
-    )
+    model: str = Field(..., description="Model of the bootstrap switch")
     software_version: str = Field(
         ...,
         alias="softwareVersion",
-        description="Software version of the bootstrap switch"
+        description="Software version of the bootstrap switch",
     )
     image_policy: Optional[str] = Field(
         default=None,
         alias="imagePolicy",
-        description="Image policy associated with the switch during bootstrap"
+        description="Image policy associated with the switch during bootstrap",
     )
-    switch_role: Optional[SwitchRole] = Field(
-        default=None,
-        alias="switchRole"
-    )
+    switch_role: Optional[SwitchRole] = Field(default=None, alias="switchRole")
 
     # From bootstrapCredential
     password: str = Field(
-        ...,
-        description="Switch password to be set during bootstrap for admin user"
+        ..., description="Switch password to be set during bootstrap for admin user"
     )
     discovery_auth_protocol: SnmpV3AuthProtocol = Field(
-        ...,
-        alias="discoveryAuthProtocol"
+        ..., alias="discoveryAuthProtocol"
     )
-    discovery_username: Optional[str] = Field(
-        default=None,
-        alias="discoveryUsername"
-    )
-    discovery_password: Optional[str] = Field(
-        default=None,
-        alias="discoveryPassword"
-    )
+    discovery_username: Optional[str] = Field(default=None, alias="discoveryUsername")
+    discovery_password: Optional[str] = Field(default=None, alias="discoveryPassword")
     remote_credential_store: RemoteCredentialStore = Field(
-        default=RemoteCredentialStore.LOCAL,
-        alias="remoteCredentialStore"
+        default=RemoteCredentialStore.LOCAL, alias="remoteCredentialStore"
     )
     remote_credential_store_key: Optional[str] = Field(
-        default=None,
-        alias="remoteCredentialStoreKey"
+        default=None, alias="remoteCredentialStoreKey"
     )
 
     # From RMASpecific
-    hostname: str = Field(
-        ...,
-        description="Hostname of the switch"
-    )
-    ip: str = Field(
-        ...,
-        description="IP address of the switch"
-    )
+    hostname: str = Field(..., description="Hostname of the switch")
+    ip: str = Field(..., description="IP address of the switch")
     new_switch_id: str = Field(
-        ...,
-        alias="newSwitchId",
-        description="SwitchId (serial number) of the switch"
+        ..., alias="newSwitchId", description="SwitchId (serial number) of the switch"
     )
-    public_key: str = Field(
-        ...,
-        alias="publicKey",
-        description="Public Key"
-    )
-    finger_print: str = Field(
-        ...,
-        alias="fingerPrint",
-        description="Fingerprint"
-    )
-    dhcp_bootstrap_ip: Optional[str] = Field(
-        default=None,
-        alias="dhcpBootstrapIp"
-    )
-    seed_switch: bool = Field(
-        default=False,
-        alias="seedSwitch"
-    )
+    public_key: str = Field(..., alias="publicKey", description="Public Key")
+    finger_print: str = Field(..., alias="fingerPrint", description="Fingerprint")
+    dhcp_bootstrap_ip: Optional[str] = Field(default=None, alias="dhcpBootstrapIp")
+    seed_switch: bool = Field(default=False, alias="seedSwitch")
     data: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Bootstrap configuration data block (gatewayIpMask, models)"
+        description="Bootstrap configuration data block (gatewayIpMask, models)",
     )
 
-    @field_validator('gateway_ip_mask', mode='before')
+    @field_validator("gateway_ip_mask", mode="before")
     @classmethod
     def validate_gateway(cls, v: str) -> str:
         result = SwitchValidators.validate_cidr(v)
@@ -131,7 +97,7 @@ class RMASwitchModel(NDBaseModel):
             raise ValueError("gateway_ip_mask cannot be empty")
         return result
 
-    @field_validator('hostname', mode='before')
+    @field_validator("hostname", mode="before")
     @classmethod
     def validate_host(cls, v: str) -> str:
         result = SwitchValidators.validate_hostname(v)
@@ -139,7 +105,7 @@ class RMASwitchModel(NDBaseModel):
             raise ValueError("hostname cannot be empty")
         return result
 
-    @field_validator('ip', 'dhcp_bootstrap_ip', mode='before')
+    @field_validator("ip", "dhcp_bootstrap_ip", mode="before")
     @classmethod
     def validate_ip(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
@@ -149,7 +115,7 @@ class RMASwitchModel(NDBaseModel):
             raise ValueError(f"Invalid IP address: {v}")
         return result
 
-    @field_validator('new_switch_id', mode='before')
+    @field_validator("new_switch_id", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
         result = SwitchValidators.validate_serial_number(v)
@@ -163,7 +129,7 @@ class RMASwitchModel(NDBaseModel):
         """Derive useNewCredentials from discoveryUsername and discoveryPassword."""
         return bool(self.discovery_username and self.discovery_password)
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def validate_rma_credentials(self) -> Self:
         """Validate RMA credential configuration logic."""
         if self.use_new_credentials:

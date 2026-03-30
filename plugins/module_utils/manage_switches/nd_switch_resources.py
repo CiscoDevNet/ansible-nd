@@ -23,7 +23,9 @@ from pydantic import ValidationError
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches import (
@@ -81,14 +83,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageCredentialsSwitchesPost,
 )
 
-
 # =========================================================================
 # Constants & Globals
 # =========================================================================
 
 # Max hops is not supported by the module.
 _DISCOVERY_MAX_HOPS: int = 0
-
 
 
 @dataclass
@@ -103,6 +103,7 @@ class SwitchServiceContext:
         save_config: Whether to run fabric save after changes.
         deploy_config: Whether to run fabric deploy after changes.
     """
+
     nd: NDModule
     results: Results
     fabric: str
@@ -114,6 +115,7 @@ class SwitchServiceContext:
 # =========================================================================
 # Validation & Diff
 # =========================================================================
+
 
 class SwitchDiffEngine:
     """Provide stateless validation and diff computation helpers."""
@@ -152,13 +154,13 @@ class SwitchDiffEngine:
                 )
                 validated_configs.append(validated)
             except ValidationError as e:
-                error_detail = e.errors() if hasattr(e, 'errors') else str(e)
+                error_detail = e.errors() if hasattr(e, "errors") else str(e)
                 error_msg = (
                     f"Configuration validation failed for "
                     f"config index {idx}: {error_detail}"
                 )
                 log.error(error_msg)
-                if hasattr(nd, 'module'):
+                if hasattr(nd, "module"):
                     nd.module.fail_json(msg=error_msg)
                 else:
                     raise ValueError(error_msg) from e
@@ -168,7 +170,7 @@ class SwitchDiffEngine:
                     f"config index {idx}: {str(e)}"
                 )
                 log.error(error_msg)
-                if hasattr(nd, 'module'):
+                if hasattr(nd, "module"):
                     nd.module.fail_json(msg=error_msg)
                 else:
                     raise ValueError(error_msg) from e
@@ -190,7 +192,7 @@ class SwitchDiffEngine:
                 f"{sorted(duplicate_ips)}. Each switch must appear only once."
             )
             log.error(error_msg)
-            if hasattr(nd, 'module'):
+            if hasattr(nd, "module"):
                 nd.module.fail_json(msg=error_msg)
             else:
                 raise ValueError(error_msg)
@@ -279,16 +281,16 @@ class SwitchDiffEngine:
                 changes["to_add"].append(prop_sw)
                 continue
 
-            log.debug(f"Switch {ip} (id={sid}) found in existing with {match_key} match {existing_sw}")
+            log.debug(
+                f"Switch {ip} (id={sid}) found in existing with {match_key} match {existing_sw}"
+            )
             log.debug(
                 f"Switch {ip} matched existing by {match_key} "
                 f"(existing_id={existing_sw.switch_id})"
             )
 
             if existing_sw.additional_data.system_mode == SystemMode.MIGRATION:
-                log.info(
-                    f"Switch {ip} ({existing_sw.switch_id}) is in Migration mode"
-                )
+                log.info(f"Switch {ip} ({existing_sw.switch_id}) is in Migration mode")
                 changes["migration_mode"].append(prop_sw)
                 continue
 
@@ -303,7 +305,11 @@ class SwitchDiffEngine:
                 log.debug(f"Switch {ip} is idempotent — no changes needed")
                 changes["idempotent"].append(prop_sw)
             else:
-                diff_keys = {k for k in set(prop_dict) | set(existing_dict) if prop_dict.get(k) != existing_dict.get(k)}
+                diff_keys = {
+                    k
+                    for k in set(prop_dict) | set(existing_dict)
+                    if prop_dict.get(k) != existing_dict.get(k)
+                }
                 log.info(
                     f"Switch {ip} has differences — marking to_update. "
                     f"Changed fields: {diff_keys}"
@@ -385,9 +391,8 @@ class SwitchDiffEngine:
             )
 
         if config_data is not None:
-            bs_gateway = (
-                bootstrap_data.get("gatewayIpMask")
-                or bs_data.get("gatewayIpMask")
+            bs_gateway = bootstrap_data.get("gatewayIpMask") or bs_data.get(
+                "gatewayIpMask"
             )
             if config_data.gateway is not None and config_data.gateway != bs_gateway:
                 mismatches.append(
@@ -396,10 +401,7 @@ class SwitchDiffEngine:
                 )
 
             bs_models = bs_data.get("models", [])
-            if (
-                config_data.models
-                and sorted(config_data.models) != sorted(bs_models)
-            ):
+            if config_data.models and sorted(config_data.models) != sorted(bs_models):
                 mismatches.append(
                     f"config_data.models: provided {config_data.models}, "
                     f"bootstrap reports {bs_models}"
@@ -410,8 +412,7 @@ class SwitchDiffEngine:
                 msg=(
                     f"{context} field mismatch for serial '{serial}'. "
                     f"The following provided values do not match the "
-                    f"bootstrap API data:\n"
-                    + "\n".join(f"  - {m}" for m in mismatches)
+                    f"bootstrap API data:\n" + "\n".join(f"  - {m}" for m in mismatches)
                 )
             )
 
@@ -432,14 +433,13 @@ class SwitchDiffEngine:
                 f"{', '.join(pulled)}"
             )
         else:
-            log.debug(
-                f"{context} field validation passed for serial '{serial}'"
-            )
+            log.debug(f"{context} field validation passed for serial '{serial}'")
 
 
 # =========================================================================
 # Switch Discovery Service
 # =========================================================================
+
 
 class SwitchDiscoveryService:
     """Handle switch discovery and proposed-model construction."""
@@ -625,16 +625,11 @@ class SwitchDiscoveryService:
                 f"{len(discovered_results)}/{len(seed_ips)} switches successful"
             )
             log.debug(f"Discovered switches: {list(discovered_results.keys())}")
-            log.debug(
-                f"EXIT: bulk_discover() -> {len(discovered_results)} discovered"
-            )
+            log.debug(f"EXIT: bulk_discover() -> {len(discovered_results)} discovered")
             return discovered_results
 
         except Exception as e:
-            msg = (
-                f"Bulk discovery failed for switches "
-                f"{', '.join(seed_ips)}: {e}"
-            )
+            msg = f"Bulk discovery failed for switches " f"{', '.join(seed_ips)}: {e}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
 
@@ -664,9 +659,7 @@ class SwitchDiscoveryService:
             if discovered:
                 if cfg.role is not None:
                     discovered = {**discovered, "role": cfg.role}
-                proposed.append(
-                    SwitchDataModel.from_response(discovered)
-                )
+                proposed.append(SwitchDataModel.from_response(discovered))
                 log.debug(f"Built proposed model from discovery for {seed_ip}")
                 continue
 
@@ -678,7 +671,9 @@ class SwitchDiscoveryService:
             if existing_match:
                 if cfg.role is not None:
                     data = existing_match.model_dump(by_alias=True)
-                    data["switchRole"] = cfg.role.value if isinstance(cfg.role, SwitchRole) else cfg.role
+                    data["switchRole"] = (
+                        cfg.role.value if isinstance(cfg.role, SwitchRole) else cfg.role
+                    )
                     proposed.append(SwitchDataModel.model_validate(data))
                 else:
                     proposed.append(existing_match)
@@ -701,6 +696,7 @@ class SwitchDiscoveryService:
 # =========================================================================
 # Bulk Fabric Operations
 # =========================================================================
+
 
 class SwitchFabricOps:
     """Run fabric mutation operations for add, delete, credentials, and roles."""
@@ -763,7 +759,7 @@ class SwitchFabricOps:
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
 
-            switch_role = switch_config.role if hasattr(switch_config, 'role') else None
+            switch_role = switch_config.role if hasattr(switch_config, "role") else None
 
             switch_discovery = SwitchDiscoveryModel(
                 hostname=discovered.get("hostname"),
@@ -781,7 +777,9 @@ class SwitchFabricOps:
 
         if not switch_discoveries:
             log.error("No valid switches to add after validation")
-            raise SwitchOperationError("No valid switches to add - all failed validation")
+            raise SwitchOperationError(
+                "No valid switches to add - all failed validation"
+            )
 
         add_request = AddSwitchesRequestModel(
             switches=switch_discoveries,
@@ -859,15 +857,17 @@ class SwitchFabricOps:
         serial_numbers: List[str] = []
         for switch in switches:
             sn = None
-            if hasattr(switch, 'switch_id'):
+            if hasattr(switch, "switch_id"):
                 sn = switch.switch_id
-            elif hasattr(switch, 'serial_number'):
+            elif hasattr(switch, "serial_number"):
                 sn = switch.serial_number
 
             if sn:
                 serial_numbers.append(sn)
             else:
-                ip = getattr(switch, 'fabric_management_ip', None) or getattr(switch, 'ip', None)
+                ip = getattr(switch, "fabric_management_ip", None) or getattr(
+                    switch, "ip", None
+                )
                 log.warning(f"Cannot delete switch {ip}: no serial number/switch_id")
 
         if not serial_numbers:
@@ -930,7 +930,9 @@ class SwitchFabricOps:
         cred_groups: Dict[Tuple[str, str], List[str]] = {}
         for sn, cfg in switch_actions:
             if not cfg.username or not cfg.password:
-                log.debug(f"Skipping credentials for {sn}: missing username or password")
+                log.debug(
+                    f"Skipping credentials for {sn}: missing username or password"
+                )
                 continue
             key = (cfg.username, cfg.password)
             cred_groups.setdefault(key, []).append(sn)
@@ -953,9 +955,7 @@ class SwitchFabricOps:
                 f"Saving credentials for {len(serial_numbers)} switch(es): {serial_numbers}"
             )
             log.debug(f"Credentials endpoint: {endpoint.path}")
-            log.debug(
-                f"Credentials payload (masked): {mask_password(payload)}"
-            )
+            log.debug(f"Credentials payload (masked): {mask_password(payload)}")
 
             try:
                 nd.request(path=endpoint.path, verb=endpoint.verb, data=payload)
@@ -975,8 +975,7 @@ class SwitchFabricOps:
                 log.info(f"Credentials saved for {len(serial_numbers)} switch(es)")
             except Exception as e:
                 msg = (
-                    f"Failed to save credentials for "
-                    f"switches {serial_numbers}: {e}"
+                    f"Failed to save credentials for " f"switches {serial_numbers}: {e}"
                 )
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
@@ -1003,7 +1002,7 @@ class SwitchFabricOps:
 
         switch_roles = []
         for sn, cfg in switch_actions:
-            role = get_switch_field(cfg, ['role'])
+            role = get_switch_field(cfg, ["role"])
             if not role:
                 continue
             role_value = role.value if isinstance(role, SwitchRole) else str(role)
@@ -1035,9 +1034,7 @@ class SwitchFabricOps:
             results.register_api_call()
             log.info(f"Roles updated for {len(switch_roles)} switch(es)")
         except Exception as e:
-            msg = (
-                f"Failed to bulk update roles for switches: {e}"
-            )
+            msg = f"Failed to bulk update roles for switches: {e}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
 
@@ -1133,6 +1130,7 @@ class SwitchFabricOps:
 # POAP Handler (Bootstrap / Pre-Provision)
 # =========================================================================
 
+
 class POAPHandler:
     """Handle POAP workflows for bootstrap, pre-provision, and serial swap."""
 
@@ -1180,7 +1178,9 @@ class POAPHandler:
         # Classify entries first so check mode can report per-operation counts
         bootstrap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel]] = []
         preprov_entries: List[Tuple[SwitchConfigModel, PreprovisionConfigModel]] = []
-        swap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel, PreprovisionConfigModel]] = []
+        swap_entries: List[
+            Tuple[SwitchConfigModel, POAPConfigModel, PreprovisionConfigModel]
+        ] = []
 
         for switch_cfg in proposed_config:
             has_poap = bool(switch_cfg.poap)
@@ -1189,12 +1189,26 @@ class POAPHandler:
             if has_poap and has_preprov:
                 # Swap: only serial_number is meaningful on each side; warn about extras
                 poap_extra = [
-                    f for f in ["hostname", "image_policy", "discovery_username", "discovery_password"]
+                    f
+                    for f in [
+                        "hostname",
+                        "image_policy",
+                        "discovery_username",
+                        "discovery_password",
+                    ]
                     if getattr(switch_cfg.poap, f, None)
                 ]
                 preprov_extra = [
-                    f for f in ["model", "version", "hostname", "config_data",
-                                "image_policy", "discovery_username", "discovery_password"]
+                    f
+                    for f in [
+                        "model",
+                        "version",
+                        "hostname",
+                        "config_data",
+                        "image_policy",
+                        "discovery_username",
+                        "discovery_password",
+                    ]
                     if getattr(switch_cfg.preprovision, f, None)
                 ]
                 if poap_extra:
@@ -1207,7 +1221,9 @@ class POAPHandler:
                         f"Swap ({switch_cfg.seed_ip}): extra fields in 'preprovision' will be "
                         f"ignored during swap: {preprov_extra}"
                     )
-                swap_entries.append((switch_cfg, switch_cfg.poap, switch_cfg.preprovision))
+                swap_entries.append(
+                    (switch_cfg, switch_cfg.poap, switch_cfg.preprovision)
+                )
             elif has_preprov:
                 preprov_entries.append((switch_cfg, switch_cfg.preprovision))
             elif has_poap:
@@ -1247,9 +1263,7 @@ class POAPHandler:
         # Bootstrap: idempotent when both IP address AND serial number match.
         # PreProvision: idempotent when IP address alone matches.
         existing_by_ip = {
-            sw.fabric_management_ip: sw
-            for sw in existing
-            if sw.fabric_management_ip
+            sw.fabric_management_ip: sw for sw in existing if sw.fabric_management_ip
         }
 
         active_bootstrap = []
@@ -1424,10 +1438,7 @@ class POAPHandler:
         model = bs.get("model", "")
         version = bs.get("softwareVersion", "")
 
-        gateway_ip_mask = (
-            bs.get("gatewayIpMask")
-            or bs_data.get("gatewayIpMask")
-        )
+        gateway_ip_mask = bs.get("gatewayIpMask") or bs_data.get("gatewayIpMask")
         data_models = bs_data.get("models", [])
 
         # Hostname: user-provided via poap.hostname is the default; if the
@@ -1523,9 +1534,7 @@ class POAPHandler:
         payload = request_model.to_payload()
 
         log.debug(f"importBootstrap endpoint: {endpoint.path}")
-        log.debug(
-            f"importBootstrap payload (masked): {mask_password(payload)}"
-        )
+        log.debug(f"importBootstrap payload (masked): {mask_password(payload)}")
         log.info(
             f"Importing {len(models)} bootstrap switch(es): "
             f"{[m.serial_number for m in models]}"
@@ -1614,9 +1623,7 @@ class POAPHandler:
             switchRole=switch_role,
         )
 
-        log.debug(
-            f"EXIT: _build_preprovision_model() -> {preprov_model.serial_number}"
-        )
+        log.debug(f"EXIT: _build_preprovision_model() -> {preprov_model.serial_number}")
         return preprov_model
 
     def _preprovision_switches(
@@ -1644,9 +1651,7 @@ class POAPHandler:
         payload = request_model.to_payload()
 
         log.debug(f"preProvision endpoint: {endpoint.path}")
-        log.debug(
-            f"preProvision payload (masked): {mask_password(payload)}"
-        )
+        log.debug(f"preProvision payload (masked): {mask_password(payload)}")
         log.info(
             f"Pre-provisioning {len(models)} switch(es): "
             f"{[m.serial_number for m in models]}"
@@ -1685,7 +1690,9 @@ class POAPHandler:
 
     def _handle_poap_swap(
         self,
-        swap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel, "PreprovisionConfigModel"]],
+        swap_entries: List[
+            Tuple[SwitchConfigModel, POAPConfigModel, "PreprovisionConfigModel"]
+        ],
         existing: List[SwitchDataModel],
     ) -> None:
         """Process POAP serial-swap entries.
@@ -1757,8 +1764,7 @@ class POAPHandler:
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
             log.info(
-                f"Validated: new serial '{new_serial}' exists in "
-                f"bootstrap list"
+                f"Validated: new serial '{new_serial}' exists in " f"bootstrap list"
             )
 
         # ------------------------------------------------------------------
@@ -1777,18 +1783,14 @@ class POAPHandler:
             endpoint.fabric_name = fabric
             endpoint.switch_sn = old_serial
 
-            request_body = ChangeSwitchSerialNumberRequestModel(
-                newSwitchId=new_serial
-            )
+            request_body = ChangeSwitchSerialNumberRequestModel(newSwitchId=new_serial)
             payload = request_body.to_payload()
 
             log.debug(f"changeSwitchSerialNumber endpoint: {endpoint.path}")
             log.debug(f"changeSwitchSerialNumber payload: {payload}")
 
             try:
-                nd.request(
-                    path=endpoint.path, verb=endpoint.verb, data=payload
-                )
+                nd.request(path=endpoint.path, verb=endpoint.verb, data=payload)
             except Exception as e:
                 msg = (
                     f"changeSwitchSerialNumber API call failed for "
@@ -1818,9 +1820,7 @@ class POAPHandler:
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
 
-            log.info(
-                f"Serial number swap successful: {old_serial} → {new_serial}"
-            )
+            log.info(f"Serial number swap successful: {old_serial} → {new_serial}")
 
         # ------------------------------------------------------------------
         # Step 4: Re-query bootstrap API for post-swap data
@@ -1828,8 +1828,7 @@ class POAPHandler:
         post_swap_bootstrap = query_bootstrap_switches(nd, fabric, log)
         post_swap_index = build_bootstrap_index(post_swap_bootstrap)
         log.debug(
-            f"Post-swap bootstrap list contains "
-            f"{len(post_swap_index)} switch(es)"
+            f"Post-swap bootstrap list contains " f"{len(post_swap_index)} switch(es)"
         )
 
         # ------------------------------------------------------------------
@@ -1866,9 +1865,7 @@ class POAPHandler:
         try:
             self._import_bootstrap_switches(import_models)
         except Exception as e:
-            msg = (
-                f"importBootstrap failed after serial swap: {e}"
-            )
+            msg = f"importBootstrap failed after serial swap: {e}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
 
@@ -1896,6 +1893,7 @@ class POAPHandler:
 # =========================================================================
 # RMA Handler (Return Material Authorization)
 # =========================================================================
+
 
 class RMAHandler:
     """Handle RMA workflows for switch replacement."""
@@ -1990,7 +1988,9 @@ class RMAHandler:
 
         # Build and submit each RMA request
         switch_actions: List[Tuple[str, SwitchConfigModel]] = []
-        rma_diff_data: List[Tuple[str, str, SwitchConfigModel]] = []  # (new_serial, old_serial, switch_cfg)
+        rma_diff_data: List[Tuple[str, str, SwitchConfigModel]] = (
+            []
+        )  # (new_serial, old_serial, switch_cfg)
         for switch_cfg, rma_cfg in rma_entries:
             new_serial = rma_cfg.new_serial_number
             bootstrap_data = bootstrap_idx.get(new_serial)
@@ -2006,18 +2006,20 @@ class RMAHandler:
                 nd.module.fail_json(msg=msg)
 
             SwitchDiffEngine.validate_switch_api_fields(
-                    nd=nd,
-                    serial=rma_cfg.new_serial_number,
-                    model=rma_cfg.model,
-                    version=rma_cfg.version,
-                    config_data=rma_cfg.config_data,
-                    bootstrap_data=bootstrap_data,
-                    log=log,
-                    context="RMA",
-                )
+                nd=nd,
+                serial=rma_cfg.new_serial_number,
+                model=rma_cfg.model,
+                version=rma_cfg.version,
+                config_data=rma_cfg.config_data,
+                bootstrap_data=bootstrap_data,
+                log=log,
+                context="RMA",
+            )
 
             rma_model = self._build_rma_model(
-                switch_cfg, rma_cfg, bootstrap_data,
+                switch_cfg,
+                rma_cfg,
+                bootstrap_data,
                 old_switch_info[rma_cfg.old_serial_number],
             )
             log.info(
@@ -2027,7 +2029,9 @@ class RMAHandler:
 
             self._provision_rma_switch(rma_cfg.old_serial_number, rma_model)
             switch_actions.append((rma_model.new_switch_id, switch_cfg))
-            rma_diff_data.append((rma_model.new_switch_id, rma_cfg.old_serial_number, switch_cfg))
+            rma_diff_data.append(
+                (rma_model.new_switch_id, rma_cfg.old_serial_number, switch_cfg)
+            )
 
         # Post-processing: wait for RMA switches to become ready, then
         # save credentials and finalize.  RMA switches come up via POAP
@@ -2211,9 +2215,8 @@ class RMAHandler:
             or bs_data.get("gatewayIpMask")
         )
         data_models = (
-            (rma_cfg.config_data.models if rma_cfg.config_data else None)
-            or bs_data.get("models", [])
-        )
+            rma_cfg.config_data.models if rma_cfg.config_data else None
+        ) or bs_data.get("models", [])
 
         rma_model = RMASwitchModel(
             gatewayIpMask=gateway_ip_mask,
@@ -2230,12 +2233,14 @@ class RMAHandler:
             newSwitchId=new_switch_id,
             publicKey=public_key,
             fingerPrint=finger_print,
-            data={"gatewayIpMask": gateway_ip_mask, "models": data_models} if (gateway_ip_mask or data_models) else None,
+            data=(
+                {"gatewayIpMask": gateway_ip_mask, "models": data_models}
+                if (gateway_ip_mask or data_models)
+                else None
+            ),
         )
 
-        log.debug(
-            f"EXIT: _build_rma_model() -> newSwitchId={rma_model.new_switch_id}"
-        )
+        log.debug(f"EXIT: _build_rma_model() -> newSwitchId={rma_model.new_switch_id}")
         return rma_model
 
     def _provision_rma_switch(
@@ -2307,7 +2312,8 @@ class RMAHandler:
 # Orchestrator (Thin State Router)
 # =========================================================================
 
-class NDSwitchResourceModule():
+
+class NDSwitchResourceModule:
     """Orchestrate switch lifecycle management across supported states."""
 
     # =====================================================================
@@ -2353,13 +2359,17 @@ class NDSwitchResourceModule():
 
         # Switch collections
         try:
-            self.proposed: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
+            self.proposed: NDConfigCollection = NDConfigCollection(
+                model_class=SwitchDataModel
+            )
             self.existing: NDConfigCollection = NDConfigCollection.from_api_response(
                 response_data=self._query_all_switches(),
                 model_class=SwitchDataModel,
             )
             self.before: NDConfigCollection = self.existing.copy()
-            self.sent: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
+            self.sent: NDConfigCollection = NDConfigCollection(
+                model_class=SwitchDataModel
+            )
         except Exception as e:
             msg = (
                 f"Failed to query fabric '{self.fabric}' inventory "
@@ -2370,7 +2380,9 @@ class NDSwitchResourceModule():
 
         # Operation tracking
         self.nd_logs: List[Dict[str, Any]] = []
-        self.output: NDOutput = NDOutput(output_level=self.module.params.get("output_level", "normal"))
+        self.output: NDOutput = NDOutput(
+            output_level=self.module.params.get("output_level", "normal")
+        )
         self.output.assign(before=self.before, after=self.existing)
 
         # Utility instances (SwitchWaitUtils / FabricUtils depend on self)
@@ -2405,11 +2417,11 @@ class NDSwitchResourceModule():
             gathered = []
             for sw in self.existing:
                 try:
-                    gathered.append(SwitchConfigModel.from_switch_data(sw).to_gathered_dict())
-                except (ValueError, Exception) as exc:
-                    msg = (
-                        f"Failed to convert switch {sw.switch_id!r} to gathered format: {exc}"
+                    gathered.append(
+                        SwitchConfigModel.from_switch_data(sw).to_gathered_dict()
                     )
+                except (ValueError, Exception) as exc:
+                    msg = f"Failed to convert switch {sw.switch_id!r} to gathered format: {exc}"
                     self.log.error(msg)
                     self.nd.module.fail_json(msg=msg)
             self.output.assign(after=self.existing)
@@ -2419,7 +2431,8 @@ class NDSwitchResourceModule():
             # that "after" reflects real state rather than the pre-op snapshot.
             if True not in self.results.failed and not self.nd.module.check_mode:
                 self.existing = NDConfigCollection.from_api_response(
-                    response_data=self._query_all_switches(), model_class=SwitchDataModel
+                    response_data=self._query_all_switches(),
+                    model_class=SwitchDataModel,
                 )
             self.output.assign(after=self.existing, diff=self.sent)
             final.update(self.output.format())
@@ -2455,7 +2468,9 @@ class NDSwitchResourceModule():
         # deleted — config is optional
         if self.state == "deleted":
             proposed_config = (
-                SwitchDiffEngine.validate_configs(self.config, self.state, self.nd, self.log)
+                SwitchDiffEngine.validate_configs(
+                    self.config, self.state, self.nd, self.log
+                )
                 if self.config
                 else None
             )
@@ -2471,11 +2486,17 @@ class NDSwitchResourceModule():
             self.config, self.state, self.nd, self.log
         )
         # Partition configs by operation type
-        poap_configs = [c for c in proposed_config if c.operation_type in ("poap", "preprovision", "swap")]
+        poap_configs = [
+            c
+            for c in proposed_config
+            if c.operation_type in ("poap", "preprovision", "swap")
+        ]
         rma_configs = [c for c in proposed_config if c.operation_type == "rma"]
         normal_configs = [c for c in proposed_config if c.operation_type == "normal"]
         # Capture all proposed configs for NDOutput
-        output_proposed: NDConfigCollection = NDConfigCollection(model_class=SwitchConfigModel)
+        output_proposed: NDConfigCollection = NDConfigCollection(
+            model_class=SwitchConfigModel
+        )
         for cfg in proposed_config:
             output_proposed.add(cfg)
         self.output.assign(proposed=output_proposed)
@@ -2495,7 +2516,9 @@ class NDSwitchResourceModule():
         # before POAP/RMA handlers execute.
         if normal_configs:
             existing_ips = {sw.fabric_management_ip for sw in self.existing}
-            configs_to_discover = [cfg for cfg in normal_configs if cfg.seed_ip not in existing_ips]
+            configs_to_discover = [
+                cfg for cfg in normal_configs if cfg.seed_ip not in existing_ips
+            ]
             if configs_to_discover:
                 self.log.info(
                     f"Discovery needed for {len(configs_to_discover)}/{len(normal_configs)} "
@@ -2503,7 +2526,9 @@ class NDSwitchResourceModule():
                 )
                 discovered_data = self.discovery.discover(configs_to_discover)
             else:
-                self.log.info("All proposed switches already in fabric — skipping discovery")
+                self.log.info(
+                    "All proposed switches already in fabric — skipping discovery"
+                )
                 discovered_data = {}
             built = self.discovery.build_proposed(
                 normal_configs, discovered_data, list(self.existing)
@@ -2584,11 +2609,16 @@ class NDSwitchResourceModule():
             self.results.action = "merge"
             self.results.state = self.state
             self.results.operation_type = OperationType.CREATE
-            self.results.response_current = {"MESSAGE": "check mode — skipped", "RETURN_CODE": 200}
+            self.results.response_current = {
+                "MESSAGE": "check mode — skipped",
+                "RETURN_CODE": 200,
+            }
             self.results.result_current = {"success": True, "changed": False}
             self.results.diff_current = {
                 "to_add": [sw.fabric_management_ip for sw in switches_to_add],
-                "migration_mode": [sw.fabric_management_ip for sw in migration_switches],
+                "migration_mode": [
+                    sw.fabric_management_ip for sw in migration_switches
+                ],
                 "save_deploy_required": idempotent_save_req,
             }
             self.results.register_api_call()
@@ -2613,7 +2643,13 @@ class NDSwitchResourceModule():
             if add_configs:
                 credential_groups = group_switches_by_credentials(add_configs, self.log)
                 for group_key, group_switches in credential_groups.items():
-                    username, password_hash, auth_proto, platform_type, preserve_config = group_key
+                    (
+                        username,
+                        password_hash,
+                        auth_proto,
+                        platform_type,
+                        preserve_config,
+                    ) = group_key
                     password = group_switches[0].password
 
                     pairs = []
@@ -2622,7 +2658,9 @@ class NDSwitchResourceModule():
                         if disc:
                             pairs.append((cfg, disc))
                         else:
-                            self.log.warning(f"No discovery data for {cfg.seed_ip}, skipping")
+                            self.log.warning(
+                                f"No discovery data for {cfg.seed_ip}, skipping"
+                            )
 
                     if not pairs:
                         continue
@@ -2672,9 +2710,7 @@ class NDSwitchResourceModule():
         # preserve_config=True the switches will NOT reload after being
         # added to the fabric.  Passing this flag lets the wait utility
         # skip the unreachable/reload detection phases.
-        all_preserve_config = all(
-            cfg.preserve_config for _, cfg in switch_actions
-        )
+        all_preserve_config = all(cfg.preserve_config for _, cfg in switch_actions)
         if all_preserve_config:
             self.log.info(
                 "All switches in batch are brownfield (preserve_config=True) — "
@@ -2798,7 +2834,10 @@ class NDSwitchResourceModule():
             self.results.action = "override"
             self.results.state = self.state
             self.results.operation_type = OperationType.CREATE
-            self.results.response_current = {"MESSAGE": "check mode — skipped", "RETURN_CODE": 200}
+            self.results.response_current = {
+                "MESSAGE": "check mode — skipped",
+                "RETURN_CODE": 200,
+            }
             self.results.result_current = {"success": True, "changed": False}
             self.results.diff_current = {
                 "to_delete": n_delete,
@@ -2823,9 +2862,12 @@ class NDSwitchResourceModule():
         # Phase 2: Switches that need updating (delete-then-re-add)
         for sw in diff.get("to_update", []):
             existing_sw = next(
-                (e for e in self.existing
-                 if e.switch_id == sw.switch_id
-                 or e.fabric_management_ip == sw.fabric_management_ip),
+                (
+                    e
+                    for e in self.existing
+                    if e.switch_id == sw.switch_id
+                    or e.fabric_management_ip == sw.fabric_management_ip
+                ),
                 None,
             )
             if existing_sw:
@@ -2834,7 +2876,9 @@ class NDSwitchResourceModule():
                     f"{existing_sw.fabric_management_ip} ({existing_sw.switch_id})"
                 )
                 switches_to_delete.append(existing_sw)
-                self._log_operation("delete_for_update", existing_sw.fabric_management_ip)
+                self._log_operation(
+                    "delete_for_update", existing_sw.fabric_management_ip
+                )
 
             diff["to_add"].append(sw)
 
@@ -2842,9 +2886,7 @@ class NDSwitchResourceModule():
             try:
                 self.fabric_ops.bulk_delete(switches_to_delete)
             except SwitchOperationError as e:
-                msg = (
-                    f"Failed to delete switches during overridden state: {e}"
-                )
+                msg = f"Failed to delete switches during overridden state: {e}"
                 self.log.error(msg)
                 self.nd.module.fail_json(msg=msg)
             for sw in switches_to_delete:
@@ -2928,9 +2970,15 @@ class NDSwitchResourceModule():
             switches_to_delete: List[SwitchDataModel] = []
             for switch_config in proposed_config:
                 identifier = switch_config.seed_ip
-                self.log.debug(f"Looking for switch to delete with seed IP: {identifier}")
+                self.log.debug(
+                    f"Looking for switch to delete with seed IP: {identifier}"
+                )
                 existing_switch = next(
-                    (sw for sw in self.existing if sw.fabric_management_ip == identifier),
+                    (
+                        sw
+                        for sw in self.existing
+                        if sw.fabric_management_ip == identifier
+                    ),
                     None,
                 )
                 if existing_switch:
@@ -2948,11 +2996,16 @@ class NDSwitchResourceModule():
 
         # Check mode — preview only
         if self.nd.module.check_mode:
-            self.log.info(f"Check mode: would delete {len(switches_to_delete)} switch(es)")
+            self.log.info(
+                f"Check mode: would delete {len(switches_to_delete)} switch(es)"
+            )
             self.results.action = "delete"
             self.results.state = self.state
             self.results.operation_type = OperationType.DELETE
-            self.results.response_current = {"MESSAGE": "check mode — skipped", "RETURN_CODE": 200}
+            self.results.response_current = {
+                "MESSAGE": "check mode — skipped",
+                "RETURN_CODE": 200,
+            }
             self.results.result_current = {"success": True, "changed": False}
             self.results.diff_current = {
                 "to_delete": [sw.fabric_management_ip for sw in switches_to_delete],
@@ -2986,10 +3039,7 @@ class NDSwitchResourceModule():
         try:
             result = self.nd.request(path=endpoint.path, verb=endpoint.verb)
         except Exception as e:
-            msg = (
-                f"Failed to query switches from "
-                f"fabric '{self.fabric}': {e}"
-            )
+            msg = f"Failed to query switches from " f"fabric '{self.fabric}': {e}"
             self.log.error(msg)
             self.nd.module.fail_json(msg=msg)
 
@@ -3017,8 +3067,10 @@ class NDSwitchResourceModule():
         Returns:
             None.
         """
-        self.nd_logs.append({
-            "operation": operation,
-            "identifier": identifier,
-            "status": "success",
-        })
+        self.nd_logs.append(
+            {
+                "operation": operation,
+                "identifier": identifier,
+                "status": "success",
+            }
+        )

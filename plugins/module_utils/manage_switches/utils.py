@@ -35,7 +35,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.utils import (
     SwitchOperationError,
 )
 
-
 # =========================================================================
 # Payload Utilities
 # =========================================================================
@@ -140,9 +139,9 @@ def get_switch_field(
             if name in switch and switch[name] is not None:
                 return switch[name]
             # Try camelCase variant
-            camel = ''.join(
+            camel = "".join(
                 word.capitalize() if i > 0 else word
-                for i, word in enumerate(name.split('_'))
+                for i, word in enumerate(name.split("_"))
             )
             if camel in switch and switch[camel] is not None:
                 return switch[camel]
@@ -160,20 +159,16 @@ def determine_operation_type(switch) -> str:
         ``'normal'``, ``'poap'``, or ``'rma'``.
     """
     # Pydantic model with .operation_type attribute
-    if hasattr(switch, 'operation_type'):
+    if hasattr(switch, "operation_type"):
         return switch.operation_type
 
     if isinstance(switch, dict):
-        if 'poap' in switch or 'bootstrap' in switch:
-            return 'poap'
-        if (
-            'rma' in switch
-            or 'old_serial' in switch
-            or 'oldSerial' in switch
-        ):
-            return 'rma'
+        if "poap" in switch or "bootstrap" in switch:
+            return "poap"
+        if "rma" in switch or "old_serial" in switch or "oldSerial" in switch:
+            return "rma"
 
-    return 'normal'
+    return "normal"
 
 
 def group_switches_by_credentials(
@@ -205,20 +200,17 @@ def group_switches_by_credentials(
         groups.setdefault(group_key, []).append(switch)
 
     log.info(
-        f"Grouped {len(switches)} switches into "
-        f"{len(groups)} credential group(s)"
+        f"Grouped {len(switches)} switches into " f"{len(groups)} credential group(s)"
     )
 
     for idx, (key, group_switches) in enumerate(groups.items(), 1):
         username, _, auth_proto, platform_type, preserve_config = key
         auth_value = (
-            auth_proto.value
-            if hasattr(auth_proto, 'value')
-            else str(auth_proto)
+            auth_proto.value if hasattr(auth_proto, "value") else str(auth_proto)
         )
         platform_value = (
             platform_type.value
-            if hasattr(platform_type, 'value')
+            if hasattr(platform_type, "value")
             else str(platform_type)
         )
         log.debug(
@@ -259,13 +251,11 @@ def query_bootstrap_switches(
 
     try:
         result = nd.request(
-            path=endpoint.path, verb=endpoint.verb,
+            path=endpoint.path,
+            verb=endpoint.verb,
         )
     except Exception as e:
-        msg = (
-            f"Failed to query bootstrap switches for "
-            f"fabric '{fabric}': {e}"
-        )
+        msg = f"Failed to query bootstrap switches for " f"fabric '{fabric}': {e}"
         log.error(msg)
         nd.module.fail_json(msg=msg)
 
@@ -276,10 +266,7 @@ def query_bootstrap_switches(
     else:
         switches = []
 
-    log.info(
-        f"Bootstrap API returned {len(switches)} "
-        f"switch(es) in POAP loop"
-    )
+    log.info(f"Bootstrap API returned {len(switches)} " f"switch(es) in POAP loop")
     log.debug("EXIT: query_bootstrap_switches()")
     return switches
 
@@ -341,23 +328,30 @@ class SwitchWaitUtils:
     MANAGEABLE_STATUSES = frozenset({"ok", "manageable"})
 
     # Status values indicating an operation is still in progress
-    IN_PROGRESS_STATUSES = frozenset({
-        "inProgress", "migration", "discovering", "rediscovering",
-    })
+    IN_PROGRESS_STATUSES = frozenset(
+        {
+            "inProgress",
+            "migration",
+            "discovering",
+            "rediscovering",
+        }
+    )
 
     # Status values indicating failure
-    FAILED_STATUSES = frozenset({
-        "failed",
-        "unreachable",
-        "authenticationFailed",
-        "timeout",
-        "discoveryTimeout",
-        "notReacheable",       # Note: typo matches the API spec
-        "notAuthorized",
-        "unknownUserPassword",
-        "connectionError",
-        "sshSessionError",
-    })
+    FAILED_STATUSES = frozenset(
+        {
+            "failed",
+            "unreachable",
+            "authenticationFailed",
+            "timeout",
+            "discoveryTimeout",
+            "notReacheable",  # Note: typo matches the API spec
+            "notAuthorized",
+            "unknownUserPassword",
+            "connectionError",
+            "sshSessionError",
+        }
+    )
 
     # Sleep multipliers for each phase
     _MIGRATION_SLEEP_FACTOR: float = 2.0
@@ -388,9 +382,7 @@ class SwitchWaitUtils:
         self.log = logger or logging.getLogger("nd.SwitchWaitUtils")
         self.max_attempts = max_attempts or self.DEFAULT_MAX_ATTEMPTS
         self.wait_interval = wait_interval or self.DEFAULT_WAIT_INTERVAL
-        self.fabric_utils = (
-            fabric_utils or FabricUtils(nd_module, fabric, self.log)
-        )
+        self.fabric_utils = fabric_utils or FabricUtils(nd_module, fabric, self.log)
 
         # Pre-configure endpoints
         self.ep_switches_get = EpManageFabricsSwitchesGet()
@@ -433,9 +425,7 @@ class SwitchWaitUtils:
         Returns:
             ``True`` if all switches are manageable, ``False`` on timeout.
         """
-        self.log.info(
-            f"Waiting for switches to become manageable: {serial_numbers}"
-        )
+        self.log.info(f"Waiting for switches to become manageable: {serial_numbers}")
 
         # Phase 1 + 2: migration → normal
         if not self._wait_for_system_mode(serial_numbers):
@@ -450,13 +440,9 @@ class SwitchWaitUtils:
             return True
 
         # Phase 4: greenfield shortcut (skipped for POAP bootstrap)
-        if (
-            not skip_greenfield_check
-            and self._is_greenfield_debug_enabled()
-        ):
+        if not skip_greenfield_check and self._is_greenfield_debug_enabled():
             self.log.info(
-                "Greenfield debug flag enabled — "
-                "skipping reload detection"
+                "Greenfield debug flag enabled — " "skipping reload detection"
             )
             return True
 
@@ -467,15 +453,11 @@ class SwitchWaitUtils:
             )
 
         # Phase 5: wait for "unreachable" (switch is reloading)
-        if not self._wait_for_discovery_state(
-            serial_numbers, "unreachable"
-        ):
+        if not self._wait_for_discovery_state(serial_numbers, "unreachable"):
             return False
 
         # Phase 6: wait for "ok" (switch is ready)
-        return self._wait_for_discovery_state(
-            serial_numbers, "ok"
-        )
+        return self._wait_for_discovery_state(serial_numbers, "ok")
 
     def wait_for_rma_switch_ready(
         self,
@@ -534,25 +516,16 @@ class SwitchWaitUtils:
         for attempt in range(attempts):
             status = self._get_discovery_status(seed_ip)
 
-            if (
-                status
-                and status.get("status") in self.MANAGEABLE_STATUSES
-            ):
+            if status and status.get("status") in self.MANAGEABLE_STATUSES:
                 self.log.info(f"Discovery completed for {seed_ip}")
                 return status
 
-            if (
-                status
-                and status.get("status") in self.FAILED_STATUSES
-            ):
-                self.log.error(
-                    f"Discovery failed for {seed_ip}: {status}"
-                )
+            if status and status.get("status") in self.FAILED_STATUSES:
+                self.log.error(f"Discovery failed for {seed_ip}: {status}")
                 return None
 
             self.log.debug(
-                f"Discovery attempt {attempt + 1}/{attempts} "
-                f"for {seed_ip}"
+                f"Discovery attempt {attempt + 1}/{attempts} " f"for {seed_ip}"
             )
             time.sleep(interval)
 
@@ -563,9 +536,7 @@ class SwitchWaitUtils:
     # Phase Helpers – System Mode
     # =====================================================================
 
-    def _wait_for_system_mode(
-        self, serial_numbers: List[str]
-    ) -> bool:
+    def _wait_for_system_mode(self, serial_numbers: List[str]) -> bool:
         """Poll until all switches transition from migration mode to normal mode.
 
         Args:
@@ -594,8 +565,7 @@ class SwitchWaitUtils:
             return False
 
         self.log.info(
-            "All switches in normal system mode — "
-            "proceeding to discovery checks"
+            "All switches in normal system mode — " "proceeding to discovery checks"
         )
         return True
 
@@ -618,11 +588,7 @@ class SwitchWaitUtils:
             Empty list on success, ``None`` on timeout or API error.
         """
         pending = list(serial_numbers)
-        label = (
-            f"exit '{target_mode}'"
-            if expect_match
-            else f"enter '{target_mode}'"
-        )
+        label = f"exit '{target_mode}'" if expect_match else f"enter '{target_mode}'"
 
         for attempt in range(1, self.max_attempts + 1):
             if not pending:
@@ -637,9 +603,7 @@ class SwitchWaitUtils:
             )
 
             if not remaining:
-                self.log.info(
-                    f"All switches {label} mode (attempt {attempt})"
-                )
+                self.log.info(f"All switches {label} mode (attempt {attempt})")
                 return remaining
 
             pending = remaining
@@ -648,13 +612,9 @@ class SwitchWaitUtils:
                 f"{len(pending)} switch(es) waiting to "
                 f"{label}: {pending}"
             )
-            time.sleep(
-                self.wait_interval * self._MIGRATION_SLEEP_FACTOR
-            )
+            time.sleep(self.wait_interval * self._MIGRATION_SLEEP_FACTOR)
 
-        self.log.warning(
-            f"Timeout waiting for switches to {label}: {pending}"
-        )
+        self.log.warning(f"Timeout waiting for switches to {label}: {pending}")
         return None
 
     # =====================================================================
@@ -681,26 +641,18 @@ class SwitchWaitUtils:
         Returns:
             Serial numbers still waiting.
         """
-        switch_index = {
-            sw.get("serialNumber"): sw for sw in switch_data
-        }
+        switch_index = {sw.get("serialNumber"): sw for sw in switch_data}
         remaining: List[str] = []
         for sn in serial_numbers:
             sw = switch_index.get(sn)
             if sw is None:
                 remaining.append(sn)
                 continue
-            mode = (
-                sw.get("additionalData", {})
-                .get("systemMode", "")
-                .lower()
-            )
+            mode = sw.get("additionalData", {}).get("systemMode", "").lower()
             # expect_match=True:  "still in target_mode" → not done
             # expect_match=False: "not yet in target_mode" → not done
             still_waiting = (
-                (mode == target_mode)
-                if expect_match
-                else (mode != target_mode)
+                (mode == target_mode) if expect_match else (mode != target_mode)
             )
             if still_waiting:
                 remaining.append(sn)
@@ -722,20 +674,14 @@ class SwitchWaitUtils:
         Returns:
             Serial numbers still waiting.
         """
-        switch_index = {
-            sw.get("serialNumber"): sw for sw in switch_data
-        }
+        switch_index = {sw.get("serialNumber"): sw for sw in switch_data}
         remaining: List[str] = []
         for sn in serial_numbers:
             sw = switch_index.get(sn)
             if sw is None:
                 remaining.append(sn)
                 continue
-            status = (
-                sw.get("additionalData", {})
-                .get("discoveryStatus", "")
-                .lower()
-            )
+            status = sw.get("additionalData", {}).get("discoveryStatus", "").lower()
             if status != target_state:
                 remaining.append(sn)
         return remaining
@@ -790,13 +736,10 @@ class SwitchWaitUtils:
                 f"{len(pending)} switch(es) not yet "
                 f"'{target_state}': {pending}"
             )
-            time.sleep(
-                self.wait_interval * self._REDISCOVERY_SLEEP_FACTOR
-            )
+            time.sleep(self.wait_interval * self._REDISCOVERY_SLEEP_FACTOR)
 
         self.log.warning(
-            f"Timeout waiting for '{target_state}' state: "
-            f"{serial_numbers}"
+            f"Timeout waiting for '{target_state}' state: " f"{serial_numbers}"
         )
         return False
 
@@ -837,12 +780,8 @@ class SwitchWaitUtils:
                 time.sleep(self.wait_interval)
                 continue
 
-            known_serials = {
-                sw.get("serialNumber") for sw in switch_data
-            }
-            pending = [
-                sn for sn in pending if sn not in known_serials
-            ]
+            known_serials = {sw.get("serialNumber") for sw in switch_data}
+            pending = [sn for sn in pending if sn not in known_serials]
 
             if not pending:
                 self.log.info(
@@ -857,9 +796,7 @@ class SwitchWaitUtils:
             )
             time.sleep(self.wait_interval)
 
-        self.log.warning(
-            f"Timeout waiting for switches to appear in fabric: {pending}"
-        )
+        self.log.warning(f"Timeout waiting for switches to appear in fabric: {pending}")
         return False
 
     def _fetch_switch_data(
@@ -877,18 +814,14 @@ class SwitchWaitUtils:
             )
             switch_data = response.get("switches", [])
             if not switch_data:
-                self.log.error(
-                    "No switch data returned for fabric"
-                )
+                self.log.error("No switch data returned for fabric")
                 return None
             return switch_data
         except Exception as e:
             self.log.error(f"Failed to fetch switch data: {e}")
             return None
 
-    def _trigger_rediscovery(
-        self, serial_numbers: List[str]
-    ) -> None:
+    def _trigger_rediscovery(self, serial_numbers: List[str]) -> None:
         """POST a rediscovery request for the given switches.
 
         Args:
@@ -898,9 +831,7 @@ class SwitchWaitUtils:
             return
 
         payload = {"switchIds": serial_numbers}
-        self.log.info(
-            f"Triggering rediscovery for: {serial_numbers}"
-        )
+        self.log.info(f"Triggering rediscovery for: {serial_numbers}")
         try:
             self.nd.request(
                 self.ep_rediscover.path,
@@ -908,12 +839,11 @@ class SwitchWaitUtils:
                 data=payload,
             )
         except Exception as e:
-            self.log.warning(
-                f"Failed to trigger rediscovery: {e}"
-            )
+            self.log.warning(f"Failed to trigger rediscovery: {e}")
 
     def _get_discovery_status(
-        self, seed_ip: str,
+        self,
+        seed_ip: str,
     ) -> Optional[Dict[str, Any]]:
         """GET discovery status for a single switch by IP.
 
@@ -929,16 +859,11 @@ class SwitchWaitUtils:
                 verb=self.ep_inventory_discover.verb,
             )
             for switch in response.get("switches", []):
-                if (
-                    switch.get("ip") == seed_ip
-                    or switch.get("ipaddr") == seed_ip
-                ):
+                if switch.get("ip") == seed_ip or switch.get("ipaddr") == seed_ip:
                     return switch
             return None
         except Exception as e:
-            self.log.debug(
-                f"Discovery status check failed: {e}"
-            )
+            self.log.debug(f"Discovery status check failed: {e}")
             return None
 
     def _is_greenfield_debug_enabled(self) -> bool:
@@ -956,23 +881,15 @@ class SwitchWaitUtils:
         try:
             fabric_info = self.fabric_utils.get_fabric_info()
             self.log.debug(
-                f"Fabric info retrieved for greenfield check: "
-                f"{fabric_info}"
+                f"Fabric info retrieved for greenfield check: " f"{fabric_info}"
             )
             flag = (
-                fabric_info
-                .get("management", {})
-                .get("greenfieldDebugFlag", "")
-                .lower()
+                fabric_info.get("management", {}).get("greenfieldDebugFlag", "").lower()
             )
-            self.log.debug(
-                f"Greenfield debug flag value: '{flag}'"
-            )
+            self.log.debug(f"Greenfield debug flag value: '{flag}'")
             self._greenfield_debug_enabled = flag == "enable"
         except Exception as e:
-            self.log.debug(
-                f"Failed to get greenfield debug flag: {e}"
-            )
+            self.log.debug(f"Failed to get greenfield debug flag: {e}")
             self._greenfield_debug_enabled = False
 
         return self._greenfield_debug_enabled

@@ -18,7 +18,9 @@ from typing import Any, Dict, List, Optional, ClassVar, Literal, Union
 from typing_extensions import Self
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
+)
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import (
     AdvisoryLevel,
@@ -38,29 +40,26 @@ class TelemetryIpCollection(NDNestedModel):
     """
     Inband and out-of-band telemetry IP addresses for a switch.
     """
+
     identifiers: ClassVar[List[str]] = []
     inband_ipv4_address: Optional[str] = Field(
-        default=None,
-        alias="inbandIpV4Address",
-        description="Inband IPv4 address"
+        default=None, alias="inbandIpV4Address", description="Inband IPv4 address"
     )
     inband_ipv6_address: Optional[str] = Field(
-        default=None,
-        alias="inbandIpV6Address",
-        description="Inband IPv6 address"
+        default=None, alias="inbandIpV6Address", description="Inband IPv6 address"
     )
     out_of_band_ipv4_address: Optional[str] = Field(
         default=None,
         alias="outOfBandIpV4Address",
-        description="Out of band IPv4 address"
+        description="Out of band IPv4 address",
     )
     out_of_band_ipv6_address: Optional[str] = Field(
         default=None,
         alias="outOfBandIpV6Address",
-        description="Out of band IPv6 address"
+        description="Out of band IPv6 address",
     )
 
-    @field_validator('inband_ipv4_address', 'out_of_band_ipv4_address', mode='before')
+    @field_validator("inband_ipv4_address", "out_of_band_ipv4_address", mode="before")
     @classmethod
     def validate_ipv4(cls, v: Optional[str]) -> Optional[str]:
         return SwitchValidators.validate_ip_address(v)
@@ -70,51 +69,38 @@ class VpcData(NDNestedModel):
     """
     vPC pair configuration and operational status for a switch.
     """
+
     identifiers: ClassVar[List[str]] = []
     vpc_domain: int = Field(
-        ...,
-        alias="vpcDomain",
-        ge=1,
-        le=1000,
-        description="vPC domain ID"
+        ..., alias="vpcDomain", ge=1, le=1000, description="vPC domain ID"
     )
     peer_switch_id: str = Field(
-        ...,
-        alias="peerSwitchId",
-        description="vPC peer switch serial number"
+        ..., alias="peerSwitchId", description="vPC peer switch serial number"
     )
     consistent_status: Optional[bool] = Field(
         default=None,
         alias="consistentStatus",
-        description="Flag to indicate the vPC status is consistent"
+        description="Flag to indicate the vPC status is consistent",
     )
     intended_peer_name: Optional[str] = Field(
         default=None,
         alias="intendedPeerName",
-        description="Intended vPC host name for pre-provisioned peer switch"
+        description="Intended vPC host name for pre-provisioned peer switch",
     )
     keep_alive_status: Optional[str] = Field(
-        default=None,
-        alias="keepAliveStatus",
-        description="vPC peer keep alive status"
+        default=None, alias="keepAliveStatus", description="vPC peer keep alive status"
     )
     peer_link_status: Optional[str] = Field(
-        default=None,
-        alias="peerLinkStatus",
-        description="vPC peer link status"
+        default=None, alias="peerLinkStatus", description="vPC peer link status"
     )
     peer_name: Optional[str] = Field(
-        default=None,
-        alias="peerName",
-        description="vPC peer switch name"
+        default=None, alias="peerName", description="vPC peer switch name"
     )
     vpc_role: Optional[VpcRole] = Field(
-        default=None,
-        alias="vpcRole",
-        description="The vPC role"
+        default=None, alias="vpcRole", description="The vPC role"
     )
 
-    @field_validator('peer_switch_id', mode='before')
+    @field_validator("peer_switch_id", mode="before")
     @classmethod
     def validate_peer_serial(cls, v: str) -> str:
         result = SwitchValidators.validate_serial_number(v)
@@ -127,16 +113,13 @@ class SwitchMetadata(NDNestedModel):
     """
     Internal database identifiers associated with a switch record.
     """
+
     identifiers: ClassVar[List[str]] = []
     switch_db_id: Optional[int] = Field(
-        default=None,
-        alias="switchDbId",
-        description="Database Id of the switch"
+        default=None, alias="switchDbId", description="Database Id of the switch"
     )
     switch_uuid: Optional[str] = Field(
-        default=None,
-        alias="switchUuid",
-        description="Internal unique Id of the switch"
+        default=None, alias="switchUuid", description="Internal unique Id of the switch"
     )
 
 
@@ -144,161 +127,119 @@ class AdditionalSwitchData(NDNestedModel):
     """
     Platform-specific additional data for NX-OS switches.
     """
+
     identifiers: ClassVar[List[str]] = []
     usage: Optional[str] = Field(
-        default="others",
-        description="The usage of additional data"
+        default="others", description="The usage of additional data"
     )
     config_sync_status: Optional[ConfigSyncStatus] = Field(
-        default=None,
-        alias="configSyncStatus",
-        description="Configuration sync status"
+        default=None, alias="configSyncStatus", description="Configuration sync status"
     )
     discovery_status: Optional[DiscoveryStatus] = Field(
-        default=None,
-        alias="discoveryStatus",
-        description="Discovery status"
+        default=None, alias="discoveryStatus", description="Discovery status"
     )
     domain_name: Optional[str] = Field(
-        default=None,
-        alias="domainName",
-        description="Domain name"
+        default=None, alias="domainName", description="Domain name"
     )
     smart_switch: Optional[bool] = Field(
         default=None,
         alias="smartSwitch",
-        description="Flag that indicates if the switch is equipped with DPUs or not"
+        description="Flag that indicates if the switch is equipped with DPUs or not",
     )
     hypershield_connectivity_status: Optional[str] = Field(
         default=None,
         alias="hypershieldConnectivityStatus",
-        description="Smart switch connectivity status to hypershield controller"
+        description="Smart switch connectivity status to hypershield controller",
     )
     hypershield_tenant: Optional[str] = Field(
-        default=None,
-        alias="hypershieldTenant",
-        description="Hypershield tenant name"
+        default=None, alias="hypershieldTenant", description="Hypershield tenant name"
     )
     hypershield_integration_name: Optional[str] = Field(
         default=None,
         alias="hypershieldIntegrationName",
-        description="Hypershield Integration Id"
+        description="Hypershield Integration Id",
     )
     source_interface_name: Optional[str] = Field(
         default=None,
         alias="sourceInterfaceName",
-        description="Source interface for switch discovery"
+        description="Source interface for switch discovery",
     )
     source_vrf_name: Optional[str] = Field(
         default=None,
         alias="sourceVrfName",
-        description="Source VRF for switch discovery"
+        description="Source VRF for switch discovery",
     )
     platform_type: Optional[PlatformType] = Field(
-        default=None,
-        alias="platformType",
-        description="Platform type of the switch"
+        default=None, alias="platformType", description="Platform type of the switch"
     )
     discovered_system_mode: Optional[SystemMode] = Field(
-        default=None,
-        alias="discoveredSystemMode",
-        description="Discovered system mode"
+        default=None, alias="discoveredSystemMode", description="Discovered system mode"
     )
     intended_system_mode: Optional[SystemMode] = Field(
-        default=None,
-        alias="intendedSystemMode",
-        description="Intended system mode"
+        default=None, alias="intendedSystemMode", description="Intended system mode"
     )
     scalable_unit: Optional[str] = Field(
-        default=None,
-        alias="scalableUnit",
-        description="Name of the scalable unit"
+        default=None, alias="scalableUnit", description="Name of the scalable unit"
     )
     system_mode: Optional[SystemMode] = Field(
-        default=None,
-        alias="systemMode",
-        description="System mode"
+        default=None, alias="systemMode", description="System mode"
     )
-    vendor: Optional[str] = Field(
-        default=None,
-        description="Vendor of the switch"
-    )
-    username: Optional[str] = Field(
-        default=None,
-        description="Discovery user name"
-    )
+    vendor: Optional[str] = Field(default=None, description="Vendor of the switch")
+    username: Optional[str] = Field(default=None, description="Discovery user name")
     remote_credential_store: Optional[RemoteCredentialStore] = Field(
-        default=None,
-        alias="remoteCredentialStore"
+        default=None, alias="remoteCredentialStore"
     )
-    meta: Optional[SwitchMetadata] = Field(
-        default=None,
-        description="Switch metadata"
-    )
+    meta: Optional[SwitchMetadata] = Field(default=None, description="Switch metadata")
 
 
 class AdditionalAciSwitchData(NDNestedModel):
     """
     Platform-specific additional data for ACI leaf and spine switches.
     """
+
     identifiers: ClassVar[List[str]] = []
     usage: Optional[str] = Field(
-        default="aci",
-        description="The usage of additional data"
+        default="aci", description="The usage of additional data"
     )
     admin_status: Optional[Literal["inService", "outOfService"]] = Field(
-        default=None,
-        alias="adminStatus",
-        description="Admin status"
+        default=None, alias="adminStatus", description="Admin status"
     )
     health_score: Optional[int] = Field(
         default=None,
         alias="healthScore",
         ge=1,
         le=100,
-        description="Switch health score"
+        description="Switch health score",
     )
     last_reload_time: Optional[str] = Field(
         default=None,
         alias="lastReloadTime",
-        description="Timestamp when the system is last reloaded"
+        description="Timestamp when the system is last reloaded",
     )
     last_software_update_time: Optional[str] = Field(
         default=None,
         alias="lastSoftwareUpdateTime",
-        description="Timestamp when the software is last updated"
+        description="Timestamp when the software is last updated",
     )
     node_id: Optional[int] = Field(
-        default=None,
-        alias="nodeId",
-        ge=1,
-        description="Node ID"
+        default=None, alias="nodeId", ge=1, description="Node ID"
     )
     node_status: Optional[Literal["active", "inActive"]] = Field(
-        default=None,
-        alias="nodeStatus",
-        description="Node status"
+        default=None, alias="nodeStatus", description="Node status"
     )
     pod_id: Optional[int] = Field(
-        default=None,
-        alias="podId",
-        ge=1,
-        description="Pod ID"
+        default=None, alias="podId", ge=1, description="Pod ID"
     )
     remote_leaf_group_name: Optional[str] = Field(
-        default=None,
-        alias="remoteLeafGroupName",
-        description="Remote leaf group name"
+        default=None, alias="remoteLeafGroupName", description="Remote leaf group name"
     )
     switch_added: Optional[str] = Field(
         default=None,
         alias="switchAdded",
-        description="Timestamp when the switch is added"
+        description="Timestamp when the switch is added",
     )
     tep_pool: Optional[str] = Field(
-        default=None,
-        alias="tepPool",
-        description="TEP IP pool"
+        default=None, alias="tepPool", description="TEP IP pool"
     )
 
 
@@ -306,11 +247,11 @@ class Metadata(NDNestedModel):
     """
     Pagination and result-count metadata from a list API response.
     """
+
     identifiers: ClassVar[List[str]] = []
 
     counts: Optional[Dict[str, int]] = Field(
-        default=None,
-        description="Count information including total and remaining"
+        default=None, description="Count information including total and remaining"
     )
 
 
@@ -320,88 +261,64 @@ class SwitchDataModel(NDBaseModel):
 
     Path: GET /fabrics/{fabricName}/switches
     """
+
     identifiers: ClassVar[List[str]] = ["switch_id"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifier_strategy: ClassVar[
+        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
+    ] = "single"
     switch_id: str = Field(
         ...,
         alias="switchId",
-        description="Serial number of Switch or Node Id of ACI switch"
+        description="Serial number of Switch or Node Id of ACI switch",
     )
     serial_number: Optional[str] = Field(
         default=None,
         alias="serialNumber",
-        description="Serial number of switch or APIC controller node"
+        description="Serial number of switch or APIC controller node",
     )
-    additional_data: Optional[Union[AdditionalSwitchData, AdditionalAciSwitchData]] = Field(
-        default=None,
-        alias="additionalData",
-        description="Additional switch data"
+    additional_data: Optional[Union[AdditionalSwitchData, AdditionalAciSwitchData]] = (
+        Field(
+            default=None, alias="additionalData", description="Additional switch data"
+        )
     )
-    advisory_level: Optional[AdvisoryLevel] = Field(
-        default=None,
-        alias="advisoryLevel"
-    )
-    anomaly_level: Optional[AnomalyLevel] = Field(
-        default=None,
-        alias="anomalyLevel"
-    )
-    alert_suspend: Optional[str] = Field(
-        default=None,
-        alias="alertSuspend"
-    )
+    advisory_level: Optional[AdvisoryLevel] = Field(default=None, alias="advisoryLevel")
+    anomaly_level: Optional[AnomalyLevel] = Field(default=None, alias="anomalyLevel")
+    alert_suspend: Optional[str] = Field(default=None, alias="alertSuspend")
     fabric_management_ip: Optional[str] = Field(
         default=None,
         alias="fabricManagementIp",
-        description="Switch IPv4/v6 address used for management"
+        description="Switch IPv4/v6 address used for management",
     )
     fabric_name: Optional[str] = Field(
-        default=None,
-        alias="fabricName",
-        description="Fabric name",
-        max_length=64
+        default=None, alias="fabricName", description="Fabric name", max_length=64
     )
     fabric_type: Optional[str] = Field(
-        default=None,
-        alias="fabricType",
-        description="Fabric type"
+        default=None, alias="fabricType", description="Fabric type"
     )
-    hostname: Optional[str] = Field(
-        default=None,
-        description="Switch host name"
-    )
+    hostname: Optional[str] = Field(default=None, description="Switch host name")
     model: Optional[str] = Field(
-        default=None,
-        description="Model of switch or APIC controller node"
+        default=None, description="Model of switch or APIC controller node"
     )
     software_version: Optional[str] = Field(
         default=None,
         alias="softwareVersion",
-        description="Software version of switch or APIC controller node"
+        description="Software version of switch or APIC controller node",
     )
-    switch_role: Optional[SwitchRole] = Field(
-        default=None,
-        alias="switchRole"
-    )
+    switch_role: Optional[SwitchRole] = Field(default=None, alias="switchRole")
     system_up_time: Optional[str] = Field(
-        default=None,
-        alias="systemUpTime",
-        description="System up time"
+        default=None, alias="systemUpTime", description="System up time"
     )
     vpc_configured: Optional[bool] = Field(
         default=None,
         alias="vpcConfigured",
-        description="Flag to indicate switch is part of a vPC domain"
+        description="Flag to indicate switch is part of a vPC domain",
     )
-    vpc_data: Optional[VpcData] = Field(
-        default=None,
-        alias="vpcData"
-    )
+    vpc_data: Optional[VpcData] = Field(default=None, alias="vpcData")
     telemetry_ip_collection: Optional[TelemetryIpCollection] = Field(
-        default=None,
-        alias="telemetryIpCollection"
+        default=None, alias="telemetryIpCollection"
     )
 
-    @field_validator('additional_data', mode='before')
+    @field_validator("additional_data", mode="before")
     @classmethod
     def parse_additional_data(cls, v: Any) -> Any:
         """Route additionalData to the correct nested model.
@@ -412,11 +329,11 @@ class SwitchDataModel(NDBaseModel):
         """
         if v is None or not isinstance(v, dict):
             return v
-        if 'usage' not in v:
-            v = {**v, 'usage': 'others'}
+        if "usage" not in v:
+            v = {**v, "usage": "others"}
         return v
 
-    @field_validator('switch_id', mode='before')
+    @field_validator("switch_id", mode="before")
     @classmethod
     def validate_switch_id(cls, v: str) -> str:
         result = SwitchValidators.validate_serial_number(v)
@@ -424,7 +341,7 @@ class SwitchDataModel(NDBaseModel):
             raise ValueError("switch_id cannot be empty")
         return result
 
-    @field_validator('fabric_management_ip', mode='before')
+    @field_validator("fabric_management_ip", mode="before")
     @classmethod
     def validate_mgmt_ip(cls, v: Optional[str]) -> Optional[str]:
         return SwitchValidators.validate_ip_address(v)

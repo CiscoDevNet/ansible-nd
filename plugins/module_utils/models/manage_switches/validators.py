@@ -42,7 +42,7 @@ class SwitchValidators:
         v = str(v).strip()
         if not v:
             return None
-        if '/' not in v:
+        if "/" not in v:
             raise ValueError(f"CIDR notation required (IP/mask format): {v}")
         try:
             ip_network(v, strict=False)
@@ -59,7 +59,7 @@ class SwitchValidators:
         if not v:
             return None
         # Serial numbers are typically alphanumeric with optional hyphens
-        if not re.match(r'^[A-Za-z0-9_-]+$', v):
+        if not re.match(r"^[A-Za-z0-9_-]+$", v):
             raise ValueError(
                 f"Serial number must be alphanumeric with optional hyphens/underscores: {v}"
             )
@@ -77,12 +77,12 @@ class SwitchValidators:
         if len(v) > 255:
             raise ValueError("Hostname cannot exceed 255 characters")
         # Allow alphanumeric, dots, hyphens, underscores
-        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', v):
+        if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", v):
             raise ValueError(
                 f"Invalid hostname format. Must start with alphanumeric and "
                 f"contain only alphanumeric, dots, hyphens, underscores: {v}"
             )
-        if v.startswith('.') or v.endswith('.') or '..' in v:
+        if v.startswith(".") or v.endswith(".") or ".." in v:
             raise ValueError(f"Invalid hostname format (dots): {v}")
         return v
 
@@ -95,7 +95,7 @@ class SwitchValidators:
         if not v:
             return None
         # Accept colon or hyphen separated MAC addresses
-        mac_pattern = r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+        mac_pattern = r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
         if not re.match(mac_pattern, v):
             raise ValueError(f"Invalid MAC address format: {v}")
         return v

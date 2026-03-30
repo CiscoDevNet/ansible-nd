@@ -426,8 +426,12 @@ import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.config_models import SwitchConfigModel
-from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources import NDSwitchResourceModule
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.config_models import (
+    SwitchConfigModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.nd_switch_resources import (
+    NDSwitchResourceModule,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule,
     NDModuleError,
@@ -456,7 +460,6 @@ def main():
     # Initialize logging
     try:
         log_config = Log()
-        log_config.config = "/Users/achengam/Documents/Ansible_Dev/NDBranch/ansible_collections/cisco/nd/ansible_cisco_log_r.json"
         log_config.commit()
         # Create logger instance for this module
         log = logging.getLogger("nd.nd_manage_switches")
@@ -476,11 +479,7 @@ def main():
         nd = NDModule(module)
 
         # Create NDSwitchResourceModule
-        sw_module = NDSwitchResourceModule(
-            nd=nd,
-            results=results,
-            logger=log
-        )
+        sw_module = NDSwitchResourceModule(nd=nd, results=results, logger=log)
 
         # Manage state for merged, overridden, deleted
         sw_module.manage_state()
@@ -541,6 +540,7 @@ def main():
 
         if output_level == "debug":
             import traceback
+
             results.final_result["traceback"] = traceback.format_exc()
 
         module.fail_json(msg=str(error), **results.final_result)
