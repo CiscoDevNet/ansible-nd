@@ -17,7 +17,7 @@ __metaclass__ = type
 
 import socket
 from ipaddress import ip_address
-from pydantic import (
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     ValidationInfo,
     computed_field,
@@ -694,7 +694,107 @@ class SwitchConfigModel(NDBaseModel):
             ),
             save=dict(type="bool", default=True),
             deploy=dict(type="bool", default=True),
-            config=dict(type="list", elements="dict"),
+            config=dict(
+                type="list",
+                elements="dict",
+                options=dict(
+                    seed_ip=dict(type="str", required=True),
+                    username=dict(type="str", default="admin"),
+                    password=dict(type="str", no_log=True),
+                    auth_proto=dict(
+                        type="str",
+                        default="MD5",
+                        choices=[
+                            "MD5",
+                            "SHA",
+                            "MD5_DES",
+                            "MD5_AES",
+                            "SHA_DES",
+                            "SHA_AES",
+                        ],
+                    ),
+                    role=dict(
+                        type="str",
+                        default="leaf",
+                        choices=[
+                            "leaf",
+                            "spine",
+                            "border",
+                            "border_spine",
+                            "border_gateway",
+                            "border_gateway_spine",
+                            "super_spine",
+                            "border_super_spine",
+                            "border_gateway_super_spine",
+                            "access",
+                            "aggregation",
+                            "edge_router",
+                            "core_router",
+                            "tor",
+                        ],
+                    ),
+                    preserve_config=dict(type="bool", default=False),
+                    platform_type=dict(
+                        type="str",
+                        default="nx-os",
+                        choices=["nx-os", "ios-xe"],
+                    ),
+                    poap=dict(
+                        type="dict",
+                        options=dict(
+                            serial_number=dict(type="str", required=True),
+                            hostname=dict(type="str", required=True),
+                            discovery_username=dict(type="str"),
+                            discovery_password=dict(type="str", no_log=True),
+                            image_policy=dict(type="str"),
+                        ),
+                    ),
+                    preprovision=dict(
+                        type="dict",
+                        options=dict(
+                            serial_number=dict(type="str", required=True),
+                            model=dict(type="str", required=True),
+                            version=dict(type="str", required=True),
+                            hostname=dict(type="str", required=True),
+                            discovery_username=dict(type="str"),
+                            discovery_password=dict(type="str", no_log=True),
+                            image_policy=dict(type="str"),
+                            config_data=dict(
+                                type="dict",
+                                required=True,
+                                options=dict(
+                                    models=dict(
+                                        type="list",
+                                        elements="str",
+                                        required=True,
+                                    ),
+                                    gateway=dict(type="str", required=True),
+                                ),
+                            ),
+                        ),
+                    ),
+                    rma=dict(
+                        type="list",
+                        elements="dict",
+                        options=dict(
+                            new_serial_number=dict(type="str", required=True),
+                            old_serial_number=dict(type="str", required=True),
+                            discovery_username=dict(type="str"),
+                            discovery_password=dict(type="str", no_log=True),
+                            model=dict(type="str"),
+                            version=dict(type="str"),
+                            image_policy=dict(type="str"),
+                            config_data=dict(
+                                type="dict",
+                                options=dict(
+                                    models=dict(type="list", elements="str"),
+                                    gateway=dict(type="str"),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         )
 
 

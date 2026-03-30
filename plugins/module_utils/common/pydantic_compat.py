@@ -48,6 +48,7 @@ if TYPE_CHECKING:
         StrictBool,
         SecretStr,
         ValidationError,
+        ValidationInfo,
         field_serializer,
         model_serializer,
         field_validator,
@@ -73,6 +74,7 @@ else:
             StrictBool,
             SecretStr,
             ValidationError,
+            ValidationInfo,
             field_serializer,
             model_serializer,
             field_validator,
@@ -117,8 +119,10 @@ else:
             return kwargs
 
         # Fallback: Field that does nothing
-        def Field(**kwargs) -> Any:  # pylint: disable=unused-argument,invalid-name
+        def Field(*args, **kwargs) -> Any:  # pylint: disable=unused-argument,invalid-name
             """Pydantic Field fallback when pydantic is not available."""
+            if args:
+                return args[0]
             if "default_factory" in kwargs:
                 return kwargs["default_factory"]()
             return kwargs.get("default")
@@ -190,6 +194,14 @@ else:
 
             def __str__(self):
                 return f"ValidationError: {self.message}"
+
+        # Fallback: ValidationInfo placeholder class that does nothing
+        class ValidationInfo:
+            """Pydantic ValidationInfo fallback when pydantic is not available."""
+
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
 
         # Fallback: model_validator decorator that does nothing
         def model_validator(*args, **kwargs):  # pylint: disable=unused-argument
@@ -276,6 +288,7 @@ __all__ = [
     "StrictBool",
     "SecretStr",
     "ValidationError",
+    "ValidationInfo",
     "field_serializer",
     "model_serializer",
     "field_validator",

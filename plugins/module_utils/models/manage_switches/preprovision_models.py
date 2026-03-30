@@ -14,10 +14,14 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 from ipaddress import ip_network
-from pydantic import Field, computed_field, field_validator
 from typing import Any, Dict, List, Optional, ClassVar, Literal
 from typing_extensions import Self
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+    computed_field,
+    field_validator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import (

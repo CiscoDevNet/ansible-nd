@@ -13,10 +13,13 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from pydantic import Field, field_validator
 from typing import Any, Dict, List, Optional, ClassVar, Literal, Union
 from typing_extensions import Self
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+    field_validator,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.enums import (

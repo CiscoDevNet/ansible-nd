@@ -26,12 +26,13 @@ from typing import Any, Dict, List, Optional, Union
 
 from ansible.plugins.action import ActionBase
 from ansible.utils.display import Display
-
-try:
-    from pydantic import BaseModel, ValidationError, field_validator, model_validator
-    HAS_PYDANTIC = True
-except ImportError:
-    HAS_PYDANTIC = False
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    BaseModel,
+    HAS_PYDANTIC,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 try:
     from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.config_models import SwitchConfigModel
