@@ -199,11 +199,7 @@ def group_switches_by_credentials(
         )
         groups.setdefault(group_key, []).append(switch)
 
-    log.info(
-        "Grouped %s switches into %s credential group(s)",
-        len(switches),
-        len(groups),
-    )
+    log.info(f"Grouped {len(switches)} switches into {len(groups)} credential group(s)")
 
     for idx, (key, group_switches) in enumerate(groups.items(), 1):
         username, _pw_hash, auth_proto, platform_type, preserve_config = key
@@ -249,7 +245,7 @@ def query_bootstrap_switches(
 
     endpoint = EpManageFabricsBootstrapGet()
     endpoint.fabric_name = fabric
-    log.debug("Bootstrap endpoint: %s", endpoint.path)
+    log.debug(f"Bootstrap endpoint: {endpoint.path}")
 
     try:
         result = nd.request(
@@ -268,7 +264,7 @@ def query_bootstrap_switches(
     else:
         switches = []
 
-    log.info("Bootstrap API returned %s switch(es) in POAP loop", len(switches))
+    log.info(f"Bootstrap API returned {len(switches)} switch(es) in POAP loop")
     log.debug("EXIT: query_bootstrap_switches()")
     return switches
 
@@ -427,7 +423,7 @@ class SwitchWaitUtils:
         Returns:
             ``True`` if all switches are manageable, ``False`` on timeout.
         """
-        self.log.info("Waiting for switches to become manageable: %s", serial_numbers)
+        self.log.info(f"Waiting for switches to become manageable: {serial_numbers}")
 
         # Phase 1 + 2: migration → normal
         if not self._wait_for_system_mode(serial_numbers):
@@ -511,28 +507,23 @@ class SwitchWaitUtils:
         attempts = max_attempts or 30
         interval = wait_interval or self.wait_interval
 
-        self.log.info("Waiting for discovery of: %s", seed_ip)
+        self.log.info(f"Waiting for discovery of: {seed_ip}")
 
         for attempt in range(attempts):
             status = self._get_discovery_status(seed_ip)
 
             if status and status.get("status") in self.MANAGEABLE_STATUSES:
-                self.log.info("Discovery completed for %s", seed_ip)
+                self.log.info(f"Discovery completed for {seed_ip}")
                 return status
 
             if status and status.get("status") in self.FAILED_STATUSES:
-                self.log.error("Discovery failed for %s: %s", seed_ip, status)
+                self.log.error(f"Discovery failed for {seed_ip}: {status}")
                 return None
 
-            self.log.debug(
-                "Discovery attempt %s/%s for %s",
-                attempt + 1,
-                attempts,
-                seed_ip,
-            )
+            self.log.debug(f"Discovery attempt {attempt + 1}/{attempts} for {seed_ip}")
             time.sleep(interval)
 
-        self.log.warning("Discovery timeout for %s", seed_ip)
+        self.log.warning(f"Discovery timeout for {seed_ip}")
         return None
 
     # =====================================================================
@@ -606,21 +597,17 @@ class SwitchWaitUtils:
             )
 
             if not remaining:
-                self.log.info("All switches %s mode (attempt %s)", label, attempt)
+                self.log.info(f"All switches {label} mode (attempt {attempt})")
                 return remaining
 
             pending = remaining
             self.log.debug(
-                "Attempt %s/%s: %s switch(es) waiting to %s: %s",
-                attempt,
-                self.max_attempts,
-                len(pending),
-                label,
-                pending,
+                f"Attempt {attempt}/{self.max_attempts}: {len(pending)} "
+                f"switch(es) waiting to {label}: {pending}"
             )
             time.sleep(self.wait_interval * self._MIGRATION_SLEEP_FACTOR)
 
-        self.log.warning("Timeout waiting for switches to %s: %s", label, pending)
+        self.log.warning(f"Timeout waiting for switches to {label}: {pending}")
         return None
 
     # =====================================================================
@@ -738,17 +725,13 @@ class SwitchWaitUtils:
 
             self._trigger_rediscovery(pending)
             self.log.debug(
-                "Attempt %s/%s: %s switch(es) not yet '%s': %s",
-                attempt,
-                self.max_attempts,
-                len(pending),
-                target_state,
-                pending,
+                f"Attempt {attempt}/{self.max_attempts}: {len(pending)} "
+                f"switch(es) not yet '{target_state}': {pending}"
             )
             time.sleep(self.wait_interval * self._REDISCOVERY_SLEEP_FACTOR)
 
         self.log.warning(
-            "Timeout waiting for '%s' state: %s", target_state, serial_numbers
+            f"Timeout waiting for '{target_state}' state: {serial_numbers}"
         )
         return False
 
@@ -800,17 +783,12 @@ class SwitchWaitUtils:
                 return True
 
             self.log.debug(
-                "Attempt %s/%s: %s switch(es) not yet in fabric: %s",
-                attempt,
-                self.max_attempts,
-                len(pending),
-                pending,
+                f"Attempt {attempt}/{self.max_attempts}: {len(pending)} "
+                f"switch(es) not yet in fabric: {pending}"
             )
             time.sleep(self.wait_interval)
 
-        self.log.warning(
-            "Timeout waiting for switches to appear in fabric: %s", pending
-        )
+        self.log.warning(f"Timeout waiting for switches to appear in fabric: {pending}")
         return False
 
     def _fetch_switch_data(
@@ -832,7 +810,7 @@ class SwitchWaitUtils:
                 return None
             return switch_data
         except Exception as e:
-            self.log.error("Failed to fetch switch data: %s", e)
+            self.log.error(f"Failed to fetch switch data: {e}")
             return None
 
     def _trigger_rediscovery(self, serial_numbers: List[str]) -> None:
@@ -845,7 +823,7 @@ class SwitchWaitUtils:
             return
 
         payload = {"switchIds": serial_numbers}
-        self.log.info("Triggering rediscovery for: %s", serial_numbers)
+        self.log.info(f"Triggering rediscovery for: {serial_numbers}")
         try:
             self.nd.request(
                 self.ep_rediscover.path,
@@ -853,7 +831,7 @@ class SwitchWaitUtils:
                 data=payload,
             )
         except Exception as e:
-            self.log.warning("Failed to trigger rediscovery: %s", e)
+            self.log.warning(f"Failed to trigger rediscovery: {e}")
 
     def _get_discovery_status(
         self,
@@ -877,7 +855,7 @@ class SwitchWaitUtils:
                     return switch
             return None
         except Exception as e:
-            self.log.debug("Discovery status check failed: %s", e)
+            self.log.debug(f"Discovery status check failed: {e}")
             return None
 
     def _is_greenfield_debug_enabled(self) -> bool:
@@ -900,10 +878,10 @@ class SwitchWaitUtils:
             flag = (
                 fabric_info.get("management", {}).get("greenfieldDebugFlag", "").lower()
             )
-            self.log.debug("Greenfield debug flag value: '%s'", flag)
+            self.log.debug(f"Greenfield debug flag value: '{flag}'")
             self._greenfield_debug_enabled = flag == "enable"
         except Exception as e:
-            self.log.debug("Failed to get greenfield debug flag: %s", e)
+            self.log.debug(f"Failed to get greenfield debug flag: {e}")
             self._greenfield_debug_enabled = False
 
         return self._greenfield_debug_enabled
