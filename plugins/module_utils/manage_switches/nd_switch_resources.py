@@ -3023,9 +3023,7 @@ class NDSwitchResourceModule:
                 else:
                     self.log.info("Switch not found for deletion: %s", identifier)
 
-        self.log.info(
-            "Total switches marked for deletion: %s", len(switches_to_delete)
-        )
+        self.log.info("Total switches marked for deletion: %s", len(switches_to_delete))
         if not switches_to_delete:
             self.log.info("No switches to delete")
             return
@@ -3087,9 +3085,7 @@ class NDSwitchResourceModule:
         else:
             switches = []
 
-        self.log.debug(
-            "Queried %s switches from fabric %s", len(switches), self.fabric
-        )
+        self.log.debug("Queried %s switches from fabric %s", len(switches), self.fabric)
         return switches
 
     # =====================================================================

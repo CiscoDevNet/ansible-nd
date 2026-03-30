@@ -209,7 +209,10 @@ def test_endpoints_api_v1_manage_fabrics_switchactions_00230():
         instance.fabric_name = "MyFabric"
         instance.endpoint_params.ticket_id = "CHG12345"
         result = instance.path
-    assert result == "/api/v1/manage/fabrics/MyFabric/switchActions/changeRoles?ticketId=CHG12345"
+    assert (
+        result
+        == "/api/v1/manage/fabrics/MyFabric/switchActions/changeRoles?ticketId=CHG12345"
+    )
 
 
 # =============================================================================
@@ -301,7 +304,9 @@ def test_endpoints_api_v1_manage_fabrics_switchactions_00330():
         instance.endpoint_params.cluster_name = "cluster1"
         instance.endpoint_params.ticket_id = "CHG12345"
         result = instance.path
-    assert result.startswith("/api/v1/manage/fabrics/MyFabric/switchActions/importBootstrap?")
+    assert result.startswith(
+        "/api/v1/manage/fabrics/MyFabric/switchActions/importBootstrap?"
+    )
     assert "clusterName=cluster1" in result
     assert "ticketId=CHG12345" in result
 
@@ -395,7 +400,9 @@ def test_endpoints_api_v1_manage_fabrics_switchactions_00430():
         instance.endpoint_params.cluster_name = "cluster1"
         instance.endpoint_params.ticket_id = "CHG12345"
         result = instance.path
-    assert result.startswith("/api/v1/manage/fabrics/MyFabric/switchActions/preProvision?")
+    assert result.startswith(
+        "/api/v1/manage/fabrics/MyFabric/switchActions/preProvision?"
+    )
     assert "clusterName=cluster1" in result
     assert "ticketId=CHG12345" in result
 
@@ -488,4 +495,7 @@ def test_endpoints_api_v1_manage_fabrics_switchactions_00730():
         instance.fabric_name = "MyFabric"
         instance.endpoint_params.ticket_id = "CHG12345"
         result = instance.path
-    assert result == "/api/v1/manage/fabrics/MyFabric/switchActions/rediscover?ticketId=CHG12345"
+    assert (
+        result
+        == "/api/v1/manage/fabrics/MyFabric/switchActions/rediscover?ticketId=CHG12345"
+    )

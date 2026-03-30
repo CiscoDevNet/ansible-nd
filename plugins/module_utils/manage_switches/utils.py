@@ -567,7 +567,9 @@ class SwitchWaitUtils:
         if pending is None:
             return False
 
-        self.log.info("All switches in normal system mode — proceeding to discovery checks")
+        self.log.info(
+            "All switches in normal system mode — proceeding to discovery checks"
+        )
         return True
 
     def _poll_system_mode(
@@ -806,7 +808,9 @@ class SwitchWaitUtils:
             )
             time.sleep(self.wait_interval)
 
-        self.log.warning("Timeout waiting for switches to appear in fabric: %s", pending)
+        self.log.warning(
+            "Timeout waiting for switches to appear in fabric: %s", pending
+        )
         return False
 
     def _fetch_switch_data(
