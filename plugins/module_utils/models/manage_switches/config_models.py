@@ -698,7 +698,7 @@ class SwitchConfigModel(NDBaseModel):
                 elements="dict",
                 options=dict(
                     seed_ip=dict(type="str", required=True),
-                    username=dict(type="str", default="admin"),
+                    username=dict(type="str"),
                     password=dict(type="str", no_log=True),
                     auth_proto=dict(
                         type="str",
@@ -733,11 +733,6 @@ class SwitchConfigModel(NDBaseModel):
                         ],
                     ),
                     preserve_config=dict(type="bool", default=False),
-                    platform_type=dict(
-                        type="str",
-                        default="nx-os",
-                        choices=["nx-os", "ios-xe"],
-                    ),
                     poap=dict(
                         type="dict",
                         options=dict(

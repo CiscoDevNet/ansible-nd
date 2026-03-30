@@ -74,7 +74,6 @@ options:
                 - Login username for the switch.
                 - For POAP and RMA, should be C(admin).
                 type: str
-                default: admin
             password:
                 description:
                 - Login password for the switch.
@@ -104,14 +103,6 @@ options:
                 - Set to C(false) for greenfield deployment, C(true) for brownfield.
                 type: bool
                 default: false
-            platform_type:
-              description:
-              - Platform type of the switch.
-              type: str
-              default: nx-os
-              choices:
-              - nx-os
-              - ios-xe
             poap:
                 description:
                 - Bootstrap POAP config for the switch.
@@ -492,12 +483,12 @@ def main():
         sw_module.manage_state()
 
         # Exit with results
-        log.info(f"State management completed successfully. Changed: {results.changed}")
+        log.info("State management completed successfully. Changed: %s", results.changed)
         sw_module.exit_json()
 
     except NDModuleError as error:
         # NDModule-specific errors (API failures, authentication issues, etc.)
-        log.error(f"NDModule error: {error.msg}")
+        log.error("NDModule error: %s", error.msg)
 
         # Try to get response from RestSend if available
         try:
@@ -523,13 +514,13 @@ def main():
         if output_level == "debug":
             results.final_result["error_details"] = error.to_dict()
 
-        log.error(f"Module failed: {results.final_result}")
+        log.error("Module failed: %s", results.final_result)
         module.fail_json(msg=error.msg, **results.final_result)
 
     except Exception as error:
         # Unexpected errors
-        log.error(f"Unexpected error during module execution: {str(error)}")
-        log.error(f"Error type: {error.__class__.__name__}")
+        log.error("Unexpected error during module execution: %s", str(error))
+        log.error("Error type: %s", error.__class__.__name__)
 
         # Build failed result
         results.response_current = {
