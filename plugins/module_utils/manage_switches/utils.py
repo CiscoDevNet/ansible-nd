@@ -199,7 +199,9 @@ def group_switches_by_credentials(
         )
         groups.setdefault(group_key, []).append(switch)
 
-    log.info("Grouped %s switches into %s credential group(s)", len(switches), len(groups))
+    log.info(
+        "Grouped %s switches into %s credential group(s)", len(switches), len(groups)
+    )
 
     for idx, (key, group_switches) in enumerate(groups.items(), 1):
         username, _pw_hash, auth_proto, platform_type, preserve_config = key
@@ -479,7 +481,8 @@ class SwitchWaitUtils:
             ``True`` if all switches reach ``ok`` status, ``False`` on timeout.
         """
         self.log.info(
-            "Waiting for RMA replacement switch(es) to become ready (skipping migration-mode phase): %s", serial_numbers
+            "Waiting for RMA replacement switch(es) to become ready (skipping migration-mode phase): %s",
+            serial_numbers,
         )
 
         # Phase 1: wait until all new serials appear in the fabric inventory.
@@ -522,7 +525,9 @@ class SwitchWaitUtils:
                 self.log.error("Discovery failed for %s: %s", seed_ip, status)
                 return None
 
-            self.log.debug("Discovery attempt %s/%s for %s", attempt + 1, attempts, seed_ip)
+            self.log.debug(
+                "Discovery attempt %s/%s for %s", attempt + 1, attempts, seed_ip
+            )
             time.sleep(interval)
 
         self.log.warning("Discovery timeout for %s", seed_ip)
@@ -604,7 +609,12 @@ class SwitchWaitUtils:
 
             pending = remaining
             self.log.debug(
-                "Attempt %s/%s: %s switch(es) waiting to %s: %s", attempt, self.max_attempts, len(pending), label, pending
+                "Attempt %s/%s: %s switch(es) waiting to %s: %s",
+                attempt,
+                self.max_attempts,
+                len(pending),
+                label,
+                pending,
             )
             time.sleep(self.wait_interval * self._MIGRATION_SLEEP_FACTOR)
 
@@ -719,13 +729,20 @@ class SwitchWaitUtils:
 
             if not pending:
                 self.log.info(
-                    "All switches reached '%s' state (attempt %s)", target_state, attempt
+                    "All switches reached '%s' state (attempt %s)",
+                    target_state,
+                    attempt,
                 )
                 return True
 
             self._trigger_rediscovery(pending)
             self.log.debug(
-                "Attempt %s/%s: %s switch(es) not yet '%s': %s", attempt, self.max_attempts, len(pending), target_state, pending
+                "Attempt %s/%s: %s switch(es) not yet '%s': %s",
+                attempt,
+                self.max_attempts,
+                len(pending),
+                target_state,
+                pending,
             )
             time.sleep(self.wait_interval * self._REDISCOVERY_SLEEP_FACTOR)
 
@@ -757,7 +774,9 @@ class SwitchWaitUtils:
         """
         pending = list(serial_numbers)
         self.log.info(
-            "Waiting for %s switch(es) to appear in fabric inventory: %s", len(pending), pending
+            "Waiting for %s switch(es) to appear in fabric inventory: %s",
+            len(pending),
+            pending,
         )
 
         for attempt in range(1, self.max_attempts + 1):
@@ -775,16 +794,23 @@ class SwitchWaitUtils:
 
             if not pending:
                 self.log.info(
-                    "All RMA switch(es) now visible in fabric inventory (attempt %s)", attempt
+                    "All RMA switch(es) now visible in fabric inventory (attempt %s)",
+                    attempt,
                 )
                 return True
 
             self.log.debug(
-                "Attempt %s/%s: %s switch(es) not yet in fabric: %s", attempt, self.max_attempts, len(pending), pending
+                "Attempt %s/%s: %s switch(es) not yet in fabric: %s",
+                attempt,
+                self.max_attempts,
+                len(pending),
+                pending,
             )
             time.sleep(self.wait_interval)
 
-        self.log.warning("Timeout waiting for switches to appear in fabric: %s", pending)
+        self.log.warning(
+            "Timeout waiting for switches to appear in fabric: %s", pending
+        )
         return False
 
     def _fetch_switch_data(
