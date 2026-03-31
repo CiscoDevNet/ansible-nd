@@ -50,6 +50,12 @@ class InclAllMsdSwitchesMixin(BaseModel):
     incl_all_msd_switches: BooleanStringEnum = Field(default=BooleanStringEnum.FALSE, description="Include all MSD switches")
 
 
+class InterfaceNameMixin(BaseModel):
+    """Mixin for endpoints that require interface_name parameter."""
+
+    interface_name: Optional[str] = Field(default=None, min_length=1, description="Interface name")
+
+
 class LinkUuidMixin(BaseModel):
     """Mixin for endpoints that require link_uuid parameter."""
 
