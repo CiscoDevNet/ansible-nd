@@ -133,9 +133,7 @@ def test_endpoints_api_v1_manage_fabrics_switches_00050():
     - FabricSwitchesAddEndpointParams.to_query_string()
     """
     with does_not_raise():
-        params = FabricSwitchesAddEndpointParams(
-            cluster_name="cluster1", ticket_id="CHG12345"
-        )
+        params = FabricSwitchesAddEndpointParams(cluster_name="cluster1", ticket_id="CHG12345")
         result = params.to_query_string()
     assert "clusterName=cluster1" in result
     assert "ticketId=CHG12345" in result
@@ -475,10 +473,7 @@ def test_endpoints_api_v1_manage_fabrics_switches_00530():
         instance.fabric_name = "MyFabric"
         instance.switch_sn = "SAL1948TRTT"
         result = instance.path
-    assert (
-        result
-        == "/api/v1/manage/fabrics/MyFabric/switches/SAL1948TRTT/actions/provisionRMA"
-    )
+    assert result == "/api/v1/manage/fabrics/MyFabric/switches/SAL1948TRTT/actions/provisionRMA"
 
 
 def test_endpoints_api_v1_manage_fabrics_switches_00540():
@@ -501,10 +496,7 @@ def test_endpoints_api_v1_manage_fabrics_switches_00540():
         instance.switch_sn = "SAL1948TRTT"
         instance.endpoint_params.ticket_id = "CHG12345"
         result = instance.path
-    assert (
-        result
-        == "/api/v1/manage/fabrics/MyFabric/switches/SAL1948TRTT/actions/provisionRMA?ticketId=CHG12345"
-    )
+    assert result == "/api/v1/manage/fabrics/MyFabric/switches/SAL1948TRTT/actions/provisionRMA?ticketId=CHG12345"
 
 
 # =============================================================================
@@ -595,10 +587,7 @@ def test_endpoints_api_v1_manage_fabrics_switches_00630():
         instance.fabric_name = "MyFabric"
         instance.switch_sn = "SAL1948TRTT"
         result = instance.path
-    assert (
-        result
-        == "/api/v1/manage/fabrics/MyFabric/switches/SAL1948TRTT/actions/changeSwitchSerialNumber"
-    )
+    assert result == "/api/v1/manage/fabrics/MyFabric/switches/SAL1948TRTT/actions/changeSwitchSerialNumber"
 
 
 def test_endpoints_api_v1_manage_fabrics_switches_00640():
@@ -621,7 +610,4 @@ def test_endpoints_api_v1_manage_fabrics_switches_00640():
         instance.switch_sn = "SAL1948TRTT"
         instance.endpoint_params.cluster_name = "cluster1"
         result = instance.path
-    assert (
-        result
-        == "/api/v1/manage/fabrics/MyFabric/switches/SAL1948TRTT/actions/changeSwitchSerialNumber?clusterName=cluster1"
-    )
+    assert result == "/api/v1/manage/fabrics/MyFabric/switches/SAL1948TRTT/actions/changeSwitchSerialNumber?clusterName=cluster1"

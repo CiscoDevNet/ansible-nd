@@ -73,14 +73,7 @@ class SwitchesValidate(BaseModel):
             return [SwitchConfigModel.model_validate(value)]
         if isinstance(value, list):
             try:
-                return [
-                    (
-                        SwitchConfigModel.model_validate(item)
-                        if isinstance(item, dict)
-                        else item
-                    )
-                    for item in value
-                ]
+                return [(SwitchConfigModel.model_validate(item) if isinstance(item, dict) else item) for item in value]
             except (ValidationError, ValueError) as e:
                 raise ValueError("Invalid format in Config Data: {0}".format(e))
         if value is None:
@@ -93,14 +86,7 @@ class SwitchesValidate(BaseModel):
         """Coerce raw ND API switch dicts into SwitchDataModel instances."""
         if isinstance(value, list):
             try:
-                return [
-                    (
-                        SwitchDataModel.from_response(item)
-                        if isinstance(item, dict)
-                        else item
-                    )
-                    for item in value
-                ]
+                return [(SwitchDataModel.from_response(item) if isinstance(item, dict) else item) for item in value]
             except (ValidationError, ValueError) as e:
                 raise ValueError("Invalid format in ND Response: {0}".format(e))
         if value is None:
@@ -146,34 +132,19 @@ class SwitchesValidate(BaseModel):
                 ip_address = nd_item.fabric_management_ip
                 switch_role = nd_item.switch_role  # SwitchRole enum or None
 
-                seed_ip_match = (
-                    seed_ip is not None
-                    and ip_address is not None
-                    and ip_address == seed_ip
-                ) or bool(ignore_fields["seed_ip"])
-                role_match = (
-                    role_expected is not None
-                    and switch_role is not None
-                    and switch_role == role_expected
-                ) or bool(ignore_fields["role"])
+                seed_ip_match = (seed_ip is not None and ip_address is not None and ip_address == seed_ip) or bool(ignore_fields["seed_ip"])
+                role_match = (role_expected is not None and switch_role is not None and switch_role == role_expected) or bool(ignore_fields["role"])
 
                 if seed_ip_match and role_match:
                     matched_indices.add(i)
                     found_match = True
                     if ignore_fields["seed_ip"]:
                         break
-                elif (
-                    seed_ip_match
-                    and role_expected is not None
-                    and switch_role is not None
-                    and switch_role != role_expected
-                ) or ignore_fields["role"]:
+                elif (seed_ip_match and role_expected is not None and switch_role is not None and switch_role != role_expected) or ignore_fields["role"]:
                     role_mismatches.setdefault(
                         seed_ip or ip_address,
                         {
-                            "expected_role": (
-                                role_expected.value if role_expected else None
-                            ),
+                            "expected_role": (role_expected.value if role_expected else None),
                             "response_role": switch_role.value if switch_role else None,
                         },
                     )
@@ -192,11 +163,7 @@ class SwitchesValidate(BaseModel):
             if missing_ips:
                 display.display("  Missing IPs: {0}".format(missing_ips))
             if role_mismatches:
-                display.display(
-                    "  Role mismatches: {0}".format(
-                        json.dumps(role_mismatches, indent=2)
-                    )
-                )
+                display.display("  Role mismatches: {0}".format(json.dumps(role_mismatches, indent=2)))
             self.response = False
 
         return self
@@ -226,9 +193,7 @@ class ActionModule(ActionBase):
 
         if not HAS_PYDANTIC or not HAS_MODELS:
             results["failed"] = True
-            results["msg"] = (
-                "pydantic and the ND collection models are required for nd_switches_validate"
-            )
+            results["msg"] = "pydantic and the ND collection models are required for nd_switches_validate"
             return results
 
         nd_data = self._task.args["nd_data"]

@@ -44,12 +44,8 @@ class TelemetryIpCollection(NDNestedModel):
     """
 
     identifiers: ClassVar[List[str]] = []
-    inband_ipv4_address: Optional[str] = Field(
-        default=None, alias="inbandIpV4Address", description="Inband IPv4 address"
-    )
-    inband_ipv6_address: Optional[str] = Field(
-        default=None, alias="inbandIpV6Address", description="Inband IPv6 address"
-    )
+    inband_ipv4_address: Optional[str] = Field(default=None, alias="inbandIpV4Address", description="Inband IPv4 address")
+    inband_ipv6_address: Optional[str] = Field(default=None, alias="inbandIpV6Address", description="Inband IPv6 address")
     out_of_band_ipv4_address: Optional[str] = Field(
         default=None,
         alias="outOfBandIpV4Address",
@@ -73,12 +69,8 @@ class VpcData(NDNestedModel):
     """
 
     identifiers: ClassVar[List[str]] = []
-    vpc_domain: int = Field(
-        ..., alias="vpcDomain", ge=1, le=1000, description="vPC domain ID"
-    )
-    peer_switch_id: str = Field(
-        ..., alias="peerSwitchId", description="vPC peer switch serial number"
-    )
+    vpc_domain: int = Field(..., alias="vpcDomain", ge=1, le=1000, description="vPC domain ID")
+    peer_switch_id: str = Field(..., alias="peerSwitchId", description="vPC peer switch serial number")
     consistent_status: Optional[bool] = Field(
         default=None,
         alias="consistentStatus",
@@ -89,18 +81,10 @@ class VpcData(NDNestedModel):
         alias="intendedPeerName",
         description="Intended vPC host name for pre-provisioned peer switch",
     )
-    keep_alive_status: Optional[str] = Field(
-        default=None, alias="keepAliveStatus", description="vPC peer keep alive status"
-    )
-    peer_link_status: Optional[str] = Field(
-        default=None, alias="peerLinkStatus", description="vPC peer link status"
-    )
-    peer_name: Optional[str] = Field(
-        default=None, alias="peerName", description="vPC peer switch name"
-    )
-    vpc_role: Optional[VpcRole] = Field(
-        default=None, alias="vpcRole", description="The vPC role"
-    )
+    keep_alive_status: Optional[str] = Field(default=None, alias="keepAliveStatus", description="vPC peer keep alive status")
+    peer_link_status: Optional[str] = Field(default=None, alias="peerLinkStatus", description="vPC peer link status")
+    peer_name: Optional[str] = Field(default=None, alias="peerName", description="vPC peer switch name")
+    vpc_role: Optional[VpcRole] = Field(default=None, alias="vpcRole", description="The vPC role")
 
     @field_validator("peer_switch_id", mode="before")
     @classmethod
@@ -117,12 +101,8 @@ class SwitchMetadata(NDNestedModel):
     """
 
     identifiers: ClassVar[List[str]] = []
-    switch_db_id: Optional[int] = Field(
-        default=None, alias="switchDbId", description="Database Id of the switch"
-    )
-    switch_uuid: Optional[str] = Field(
-        default=None, alias="switchUuid", description="Internal unique Id of the switch"
-    )
+    switch_db_id: Optional[int] = Field(default=None, alias="switchDbId", description="Database Id of the switch")
+    switch_uuid: Optional[str] = Field(default=None, alias="switchUuid", description="Internal unique Id of the switch")
 
 
 class AdditionalSwitchData(NDNestedModel):
@@ -131,18 +111,10 @@ class AdditionalSwitchData(NDNestedModel):
     """
 
     identifiers: ClassVar[List[str]] = []
-    usage: Optional[str] = Field(
-        default="others", description="The usage of additional data"
-    )
-    config_sync_status: Optional[ConfigSyncStatus] = Field(
-        default=None, alias="configSyncStatus", description="Configuration sync status"
-    )
-    discovery_status: Optional[DiscoveryStatus] = Field(
-        default=None, alias="discoveryStatus", description="Discovery status"
-    )
-    domain_name: Optional[str] = Field(
-        default=None, alias="domainName", description="Domain name"
-    )
+    usage: Optional[str] = Field(default="others", description="The usage of additional data")
+    config_sync_status: Optional[ConfigSyncStatus] = Field(default=None, alias="configSyncStatus", description="Configuration sync status")
+    discovery_status: Optional[DiscoveryStatus] = Field(default=None, alias="discoveryStatus", description="Discovery status")
+    domain_name: Optional[str] = Field(default=None, alias="domainName", description="Domain name")
     smart_switch: Optional[bool] = Field(
         default=None,
         alias="smartSwitch",
@@ -153,9 +125,7 @@ class AdditionalSwitchData(NDNestedModel):
         alias="hypershieldConnectivityStatus",
         description="Smart switch connectivity status to hypershield controller",
     )
-    hypershield_tenant: Optional[str] = Field(
-        default=None, alias="hypershieldTenant", description="Hypershield tenant name"
-    )
+    hypershield_tenant: Optional[str] = Field(default=None, alias="hypershieldTenant", description="Hypershield tenant name")
     hypershield_integration_name: Optional[str] = Field(
         default=None,
         alias="hypershieldIntegrationName",
@@ -171,26 +141,14 @@ class AdditionalSwitchData(NDNestedModel):
         alias="sourceVrfName",
         description="Source VRF for switch discovery",
     )
-    platform_type: Optional[PlatformType] = Field(
-        default=None, alias="platformType", description="Platform type of the switch"
-    )
-    discovered_system_mode: Optional[SystemMode] = Field(
-        default=None, alias="discoveredSystemMode", description="Discovered system mode"
-    )
-    intended_system_mode: Optional[SystemMode] = Field(
-        default=None, alias="intendedSystemMode", description="Intended system mode"
-    )
-    scalable_unit: Optional[str] = Field(
-        default=None, alias="scalableUnit", description="Name of the scalable unit"
-    )
-    system_mode: Optional[SystemMode] = Field(
-        default=None, alias="systemMode", description="System mode"
-    )
+    platform_type: Optional[PlatformType] = Field(default=None, alias="platformType", description="Platform type of the switch")
+    discovered_system_mode: Optional[SystemMode] = Field(default=None, alias="discoveredSystemMode", description="Discovered system mode")
+    intended_system_mode: Optional[SystemMode] = Field(default=None, alias="intendedSystemMode", description="Intended system mode")
+    scalable_unit: Optional[str] = Field(default=None, alias="scalableUnit", description="Name of the scalable unit")
+    system_mode: Optional[SystemMode] = Field(default=None, alias="systemMode", description="System mode")
     vendor: Optional[str] = Field(default=None, description="Vendor of the switch")
     username: Optional[str] = Field(default=None, description="Discovery user name")
-    remote_credential_store: Optional[RemoteCredentialStore] = Field(
-        default=None, alias="remoteCredentialStore"
-    )
+    remote_credential_store: Optional[RemoteCredentialStore] = Field(default=None, alias="remoteCredentialStore")
     meta: Optional[SwitchMetadata] = Field(default=None, description="Switch metadata")
 
 
@@ -200,12 +158,8 @@ class AdditionalAciSwitchData(NDNestedModel):
     """
 
     identifiers: ClassVar[List[str]] = []
-    usage: Optional[str] = Field(
-        default="aci", description="The usage of additional data"
-    )
-    admin_status: Optional[Literal["inService", "outOfService"]] = Field(
-        default=None, alias="adminStatus", description="Admin status"
-    )
+    usage: Optional[str] = Field(default="aci", description="The usage of additional data")
+    admin_status: Optional[Literal["inService", "outOfService"]] = Field(default=None, alias="adminStatus", description="Admin status")
     health_score: Optional[int] = Field(
         default=None,
         alias="healthScore",
@@ -223,26 +177,16 @@ class AdditionalAciSwitchData(NDNestedModel):
         alias="lastSoftwareUpdateTime",
         description="Timestamp when the software is last updated",
     )
-    node_id: Optional[int] = Field(
-        default=None, alias="nodeId", ge=1, description="Node ID"
-    )
-    node_status: Optional[Literal["active", "inActive"]] = Field(
-        default=None, alias="nodeStatus", description="Node status"
-    )
-    pod_id: Optional[int] = Field(
-        default=None, alias="podId", ge=1, description="Pod ID"
-    )
-    remote_leaf_group_name: Optional[str] = Field(
-        default=None, alias="remoteLeafGroupName", description="Remote leaf group name"
-    )
+    node_id: Optional[int] = Field(default=None, alias="nodeId", ge=1, description="Node ID")
+    node_status: Optional[Literal["active", "inActive"]] = Field(default=None, alias="nodeStatus", description="Node status")
+    pod_id: Optional[int] = Field(default=None, alias="podId", ge=1, description="Pod ID")
+    remote_leaf_group_name: Optional[str] = Field(default=None, alias="remoteLeafGroupName", description="Remote leaf group name")
     switch_added: Optional[str] = Field(
         default=None,
         alias="switchAdded",
         description="Timestamp when the switch is added",
     )
-    tep_pool: Optional[str] = Field(
-        default=None, alias="tepPool", description="TEP IP pool"
-    )
+    tep_pool: Optional[str] = Field(default=None, alias="tepPool", description="TEP IP pool")
 
 
 class Metadata(NDNestedModel):
@@ -252,9 +196,7 @@ class Metadata(NDNestedModel):
 
     identifiers: ClassVar[List[str]] = []
 
-    counts: Optional[Dict[str, int]] = Field(
-        default=None, description="Count information including total and remaining"
-    )
+    counts: Optional[Dict[str, int]] = Field(default=None, description="Count information including total and remaining")
 
 
 class SwitchDataModel(NDBaseModel):
@@ -265,9 +207,7 @@ class SwitchDataModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = ["switch_id"]
-    identifier_strategy: ClassVar[
-        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
-    ] = "single"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
     switch_id: str = Field(
         ...,
         alias="switchId",
@@ -278,10 +218,8 @@ class SwitchDataModel(NDBaseModel):
         alias="serialNumber",
         description="Serial number of switch or APIC controller node",
     )
-    additional_data: Optional[Union[AdditionalSwitchData, AdditionalAciSwitchData]] = (
-        Field(
-            default=None, alias="additionalData", description="Additional switch data"
-        )
+    additional_data: Optional[Union[AdditionalSwitchData, AdditionalAciSwitchData]] = Field(
+        default=None, alias="additionalData", description="Additional switch data"
     )
     advisory_level: Optional[AdvisoryLevel] = Field(default=None, alias="advisoryLevel")
     anomaly_level: Optional[AnomalyLevel] = Field(default=None, alias="anomalyLevel")
@@ -291,34 +229,24 @@ class SwitchDataModel(NDBaseModel):
         alias="fabricManagementIp",
         description="Switch IPv4/v6 address used for management",
     )
-    fabric_name: Optional[str] = Field(
-        default=None, alias="fabricName", description="Fabric name", max_length=64
-    )
-    fabric_type: Optional[str] = Field(
-        default=None, alias="fabricType", description="Fabric type"
-    )
+    fabric_name: Optional[str] = Field(default=None, alias="fabricName", description="Fabric name", max_length=64)
+    fabric_type: Optional[str] = Field(default=None, alias="fabricType", description="Fabric type")
     hostname: Optional[str] = Field(default=None, description="Switch host name")
-    model: Optional[str] = Field(
-        default=None, description="Model of switch or APIC controller node"
-    )
+    model: Optional[str] = Field(default=None, description="Model of switch or APIC controller node")
     software_version: Optional[str] = Field(
         default=None,
         alias="softwareVersion",
         description="Software version of switch or APIC controller node",
     )
     switch_role: Optional[SwitchRole] = Field(default=None, alias="switchRole")
-    system_up_time: Optional[str] = Field(
-        default=None, alias="systemUpTime", description="System up time"
-    )
+    system_up_time: Optional[str] = Field(default=None, alias="systemUpTime", description="System up time")
     vpc_configured: Optional[bool] = Field(
         default=None,
         alias="vpcConfigured",
         description="Flag to indicate switch is part of a vPC domain",
     )
     vpc_data: Optional[VpcData] = Field(default=None, alias="vpcData")
-    telemetry_ip_collection: Optional[TelemetryIpCollection] = Field(
-        default=None, alias="telemetryIpCollection"
-    )
+    telemetry_ip_collection: Optional[TelemetryIpCollection] = Field(default=None, alias="telemetryIpCollection")
 
     @field_validator("additional_data", mode="before")
     @classmethod

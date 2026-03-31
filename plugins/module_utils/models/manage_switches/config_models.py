@@ -56,31 +56,18 @@ class ConfigDataModel(NDNestedModel):
         min_length=1,
         description="List of model of modules in switch to Bootstrap/Pre-provision/RMA",
     )
-    gateway: str = Field(
-        ..., description="Gateway IP with mask for the switch (e.g., 192.168.0.1/24)"
-    )
+    gateway: str = Field(..., description="Gateway IP with mask for the switch (e.g., 192.168.0.1/24)")
 
     @field_validator("models", mode="before")
     @classmethod
     def validate_models_list(cls, v: Any) -> List[str]:
         """Validate models is a non-empty list of strings."""
         if v is None:
-            raise ValueError(
-                "'models' is required in config_data. "
-                "Provide a list of module model strings, "
-                "e.g. models: [N9K-X9364v, N9K-vSUP]"
-            )
+            raise ValueError("'models' is required in config_data. Provide a list of module model strings, e.g. models: [N9K-X9364v, N9K-vSUP]")
         if not isinstance(v, list):
-            raise ValueError(
-                f"'models' must be a list of module model strings, got: {type(v).__name__}. "
-                f"e.g. models: [N9K-X9364v, N9K-vSUP]"
-            )
+            raise ValueError(f"'models' must be a list of module model strings, got: {type(v).__name__}. e.g. models: [N9K-X9364v, N9K-vSUP]")
         if len(v) == 0:
-            raise ValueError(
-                "'models' list cannot be empty. "
-                "Provide at least one module model string, "
-                "e.g. models: [N9K-X9364v, N9K-vSUP]"
-            )
+            raise ValueError("'models' list cannot be empty. Provide at least one module model string, e.g. models: [N9K-X9364v, N9K-vSUP]")
         return v
 
     @field_validator("gateway", mode="before")
@@ -136,13 +123,9 @@ class POAPConfigModel(NDNestedModel):
         has_user = bool(self.discovery_username)
         has_pass = bool(self.discovery_password)
         if has_user and not has_pass:
-            raise ValueError(
-                "discovery_password must be set when discovery_username is specified"
-            )
+            raise ValueError("discovery_password must be set when discovery_username is specified")
         if has_pass and not has_user:
-            raise ValueError(
-                "discovery_username must be set when discovery_password is specified"
-            )
+            raise ValueError("discovery_username must be set when discovery_password is specified")
         return self
 
     @field_validator("serial_number", mode="before")
@@ -173,22 +156,13 @@ class PreprovisionConfigModel(NDNestedModel):
         min_length=1,
         description="Serial number of switch to Pre-provision",
     )
-    model: str = Field(
-        ..., min_length=1, description="Model of switch to Pre-provision"
-    )
-    version: str = Field(
-        ..., min_length=1, description="Software version of switch to Pre-provision"
-    )
-    hostname: str = Field(
-        ..., description="Hostname for the switch during pre-provision"
-    )
+    model: str = Field(..., min_length=1, description="Model of switch to Pre-provision")
+    version: str = Field(..., min_length=1, description="Software version of switch to Pre-provision")
+    hostname: str = Field(..., description="Hostname for the switch during pre-provision")
     config_data: ConfigDataModel = Field(
         ...,
         alias="configData",
-        description=(
-            "Basic config data of switch to Pre-provision. "
-            "'models' (list of module models) and 'gateway' (IP with mask) are mandatory."
-        ),
+        description=("Basic config data of switch to Pre-provision. " "'models' (list of module models) and 'gateway' (IP with mask) are mandatory."),
     )
 
     # Optional
@@ -214,13 +188,9 @@ class PreprovisionConfigModel(NDNestedModel):
         has_user = bool(self.discovery_username)
         has_pass = bool(self.discovery_password)
         if has_user and not has_pass:
-            raise ValueError(
-                "discovery_password must be set when discovery_username is specified"
-            )
+            raise ValueError("discovery_password must be set when discovery_username is specified")
         if has_pass and not has_user:
-            raise ValueError(
-                "discovery_username must be set when discovery_password is specified"
-            )
+            raise ValueError("discovery_username must be set when discovery_password is specified")
         return self
 
     @field_validator("serial_number", mode="before")
@@ -317,13 +287,9 @@ class RMAConfigModel(NDNestedModel):
         has_user = bool(self.discovery_username)
         has_pass = bool(self.discovery_password)
         if has_user and not has_pass:
-            raise ValueError(
-                "discovery_password must be set when discovery_username is specified"
-            )
+            raise ValueError("discovery_password must be set when discovery_username is specified")
         if has_pass and not has_user:
-            raise ValueError(
-                "discovery_username must be set when discovery_password is specified"
-            )
+            raise ValueError("discovery_username must be set when discovery_password is specified")
         return self
 
 
@@ -446,9 +412,7 @@ class SwitchConfigModel(NDBaseModel):
                     "discovery_username": True,
                     "discovery_password": True,
                 },
-                "rma": {
-                    "__all__": {"discovery_username": True, "discovery_password": True}
-                },
+                "rma": {"__all__": {"discovery_username": True, "discovery_password": True}},
             }
         )
 
@@ -460,9 +424,7 @@ class SwitchConfigModel(NDBaseModel):
         all inputs have already been coerced by Pydantic into a typed
         SnmpV3AuthProtocol value, so a direct enum comparison is safe.
         """
-        if (
-            self.poap or self.preprovision or self.rma
-        ) and self.auth_proto != SnmpV3AuthProtocol.MD5:
+        if (self.poap or self.preprovision or self.rma) and self.auth_proto != SnmpV3AuthProtocol.MD5:
             if self.poap or self.preprovision:
                 op = "POAP/Pre-provision"
             else:
@@ -487,10 +449,7 @@ class SwitchConfigModel(NDBaseModel):
           - rma combined with poap or preprovision
         """
         if self.rma and (self.poap or self.preprovision):
-            raise ValueError(
-                "Cannot specify 'rma' together with 'poap' or 'preprovision' "
-                "for the same switch"
-            )
+            raise ValueError("Cannot specify 'rma' together with 'poap' or 'preprovision' for the same switch")
         return self
 
     @model_validator(mode="after")
@@ -498,13 +457,9 @@ class SwitchConfigModel(NDBaseModel):
         """Validate credentials for POAP, Pre-provision, Swap and RMA operations."""
         if self.poap or self.preprovision or self.rma:
             if not self.username or not self.password:
-                raise ValueError(
-                    "For POAP, Pre-provision, and RMA operations, username and password are required"
-                )
+                raise ValueError("For POAP, Pre-provision, and RMA operations, username and password are required")
             if self.username != "admin":
-                raise ValueError(
-                    "For POAP, Pre-provision, and RMA operations, username should be 'admin'"
-                )
+                raise ValueError("For POAP, Pre-provision, and RMA operations, username should be 'admin'")
         return self
 
     @model_validator(mode="after")
@@ -522,27 +477,17 @@ class SwitchConfigModel(NDBaseModel):
 
         # POAP/Pre-provision/Swap only allowed with merged
         if (self.poap or self.preprovision) and state not in (None, "merged"):
-            raise ValueError(
-                f"POAP/Pre-provision operations require 'merged' state, "
-                f"got '{state}' (switch: {self.seed_ip})"
-            )
+            raise ValueError(f"POAP/Pre-provision operations require 'merged' state, " f"got '{state}' (switch: {self.seed_ip})")
 
         # RMA only allowed with merged
         if self.rma and state not in (None, "merged"):
-            raise ValueError(
-                f"RMA operations require 'merged' state, "
-                f"got '{state}' (switch: {self.seed_ip})"
-            )
+            raise ValueError(f"RMA operations require 'merged' state, " f"got '{state}' (switch: {self.seed_ip})")
 
         if state in ("merged", "overridden"):
             if self.role is None:
                 self.role = SwitchRole.LEAF
             if not self.username or not self.password:
-                raise ValueError(
-                    f"username and password are required "
-                    f"for '{state}' state "
-                    f"(switch: {self.seed_ip})"
-                )
+                raise ValueError(f"username and password are required " f"for '{state}' state " f"(switch: {self.seed_ip})")
         return self
 
     @field_validator("seed_ip", mode="before")
@@ -576,9 +521,7 @@ class SwitchConfigModel(NDBaseModel):
             except socket.gaierror:
                 continue
 
-        raise ValueError(
-            f"'{v}' is not a valid IP address and could not be resolved via DNS"
-        )
+        raise ValueError(f"'{v}' is not a valid IP address and could not be resolved via DNS")
 
     @field_validator("rma", mode="before")
     @classmethod
@@ -590,9 +533,7 @@ class SwitchConfigModel(NDBaseModel):
 
     @field_validator("auth_proto", mode="before")
     @classmethod
-    def normalize_auth_proto(
-        cls, v: Union[str, SnmpV3AuthProtocol, None]
-    ) -> SnmpV3AuthProtocol:
+    def normalize_auth_proto(cls, v: Union[str, SnmpV3AuthProtocol, None]) -> SnmpV3AuthProtocol:
         """Normalize auth_proto to handle case-insensitive input (MD5, md5, etc.)."""
         return SnmpV3AuthProtocol.normalize(v)
 
@@ -637,16 +578,9 @@ class SwitchConfigModel(NDBaseModel):
                 making it impossible to construct a valid config entry.
         """
         if not sw.fabric_management_ip:
-            raise ValueError(
-                f"Switch {sw.switch_id!r} has no fabric_management_ip — "
-                "cannot build a gathered config entry without a seed IP."
-            )
+            raise ValueError(f"Switch {sw.switch_id!r} has no fabric_management_ip — " "cannot build a gathered config entry without a seed IP.")
 
-        platform_type = (
-            sw.additional_data.platform_type
-            if sw.additional_data and hasattr(sw.additional_data, "platform_type")
-            else None
-        )
+        platform_type = sw.additional_data.platform_type if sw.additional_data and hasattr(sw.additional_data, "platform_type") else None
 
         data: Dict[str, Any] = {"seed_ip": sw.fabric_management_ip}
         if sw.switch_role is not None:

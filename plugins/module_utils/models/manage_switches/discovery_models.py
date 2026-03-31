@@ -41,9 +41,7 @@ class ShallowDiscoveryRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[
-        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
-    ] = "singleton"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
     exclude_from_diff: ClassVar[List[str]] = ["password"]
     seed_ip_collection: List[str] = Field(
         ...,
@@ -62,12 +60,8 @@ class ShallowDiscoveryRequestModel(NDBaseModel):
         alias="snmpV3AuthProtocol",
         description="SNMPv3 authentication protocols",
     )
-    username: Optional[str] = Field(
-        default=None, description="User name for switch login"
-    )
-    password: Optional[str] = Field(
-        default=None, description="User password for switch login"
-    )
+    username: Optional[str] = Field(default=None, description="User name for switch login")
+    password: Optional[str] = Field(default=None, description="User password for switch login")
     remote_credential_store: Optional[RemoteCredentialStore] = Field(
         default=None,
         alias="remoteCredentialStore",
@@ -96,17 +90,13 @@ class ShallowDiscoveryRequestModel(NDBaseModel):
 
     @field_validator("snmp_v3_auth_protocol", mode="before")
     @classmethod
-    def normalize_snmp_auth(
-        cls, v: Union[str, SnmpV3AuthProtocol, None]
-    ) -> SnmpV3AuthProtocol:
+    def normalize_snmp_auth(cls, v: Union[str, SnmpV3AuthProtocol, None]) -> SnmpV3AuthProtocol:
         """Normalize SNMP auth protocol (case-insensitive)."""
         return SnmpV3AuthProtocol.normalize(v)
 
     @field_validator("platform_type", mode="before")
     @classmethod
-    def normalize_platform(
-        cls, v: Union[str, ShallowDiscoveryPlatformType, None]
-    ) -> ShallowDiscoveryPlatformType:
+    def normalize_platform(cls, v: Union[str, ShallowDiscoveryPlatformType, None]) -> ShallowDiscoveryPlatformType:
         """Normalize platform type (case-insensitive)."""
         return ShallowDiscoveryPlatformType.normalize(v)
 
@@ -119,18 +109,12 @@ class SwitchDiscoveryModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = ["serial_number"]
-    identifier_strategy: ClassVar[
-        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
-    ] = "single"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
     hostname: str = Field(..., description="Switch host name")
     ip: str = Field(..., description="Switch IPv4/v6 address")
-    serial_number: str = Field(
-        ..., alias="serialNumber", description="Switch serial number"
-    )
+    serial_number: str = Field(..., alias="serialNumber", description="Switch serial number")
     model: str = Field(..., description="Switch model")
-    software_version: Optional[str] = Field(
-        default=None, alias="softwareVersion", description="Switch software version"
-    )
+    software_version: Optional[str] = Field(default=None, alias="softwareVersion", description="Switch software version")
     vdc_id: Optional[int] = Field(
         default=None,
         alias="vdcId",
@@ -142,9 +126,7 @@ class SwitchDiscoveryModel(NDBaseModel):
         alias="vdcMac",
         description="N7K VDC Mac address. Mandatory for N7K switch discovery",
     )
-    switch_role: Optional[SwitchRole] = Field(
-        default=None, alias="switchRole", description="Switch role"
-    )
+    switch_role: Optional[SwitchRole] = Field(default=None, alias="switchRole", description="Switch role")
 
     @field_validator("hostname", mode="before")
     @classmethod
@@ -184,13 +166,9 @@ class AddSwitchesRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[
-        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
-    ] = "singleton"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
     exclude_from_diff: ClassVar[List[str]] = ["password"]
-    switches: List[SwitchDiscoveryModel] = Field(
-        ..., min_length=1, description="The list of switches to be imported"
-    )
+    switches: List[SwitchDiscoveryModel] = Field(..., min_length=1, description="The list of switches to be imported")
     platform_type: PlatformType = Field(
         default=PlatformType.NX_OS,
         alias="platformType",
@@ -211,12 +189,8 @@ class AddSwitchesRequestModel(NDBaseModel):
         alias="useCredentialForWrite",
         description="Flag to use the discovery credential as LAN credential",
     )
-    username: Optional[str] = Field(
-        default=None, description="User name for switch login"
-    )
-    password: Optional[str] = Field(
-        default=None, description="User password for switch login"
-    )
+    username: Optional[str] = Field(default=None, description="User name for switch login")
+    password: Optional[str] = Field(default=None, description="User password for switch login")
     remote_credential_store: Optional[RemoteCredentialStore] = Field(
         default=None,
         alias="remoteCredentialStore",
@@ -233,16 +207,12 @@ class AddSwitchesRequestModel(NDBaseModel):
         payload = self.model_dump(by_alias=True, exclude_none=True)
         # Convert nested switches to payload format
         if "switches" in payload:
-            payload["switches"] = [
-                s.to_payload() if hasattr(s, "to_payload") else s for s in self.switches
-            ]
+            payload["switches"] = [s.to_payload() if hasattr(s, "to_payload") else s for s in self.switches]
         return payload
 
     @field_validator("snmp_v3_auth_protocol", mode="before")
     @classmethod
-    def normalize_snmp_auth(
-        cls, v: Union[str, SnmpV3AuthProtocol, None]
-    ) -> SnmpV3AuthProtocol:
+    def normalize_snmp_auth(cls, v: Union[str, SnmpV3AuthProtocol, None]) -> SnmpV3AuthProtocol:
         """Normalize SNMP auth protocol (case-insensitive: MD5, md5, etc.)."""
         return SnmpV3AuthProtocol.normalize(v)
 

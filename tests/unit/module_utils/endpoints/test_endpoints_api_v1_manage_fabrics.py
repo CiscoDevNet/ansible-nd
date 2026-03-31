@@ -85,9 +85,7 @@ def test_endpoints_api_v1_manage_fabrics_00030():
     - FabricConfigDeployEndpointParams.to_query_string()
     """
     with does_not_raise():
-        params = FabricConfigDeployEndpointParams(
-            force_show_run=True, incl_all_msd_switches=True
-        )
+        params = FabricConfigDeployEndpointParams(force_show_run=True, incl_all_msd_switches=True)
         result = params.to_query_string()
     assert "forceShowRun=true" in result
     assert "inclAllMsdSwitches=true" in result
@@ -201,10 +199,7 @@ def test_endpoints_api_v1_manage_fabrics_00130():
         instance.fabric_name = "MyFabric"
         instance.endpoint_params.force_show_run = True
         result = instance.path
-    assert (
-        result
-        == "/api/v1/manage/fabrics/MyFabric/actions/configDeploy?forceShowRun=true"
-    )
+    assert result == "/api/v1/manage/fabrics/MyFabric/actions/configDeploy?forceShowRun=true"
 
 
 # =============================================================================

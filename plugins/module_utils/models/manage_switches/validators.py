@@ -60,9 +60,7 @@ class SwitchValidators:
             return None
         # Serial numbers are typically alphanumeric with optional hyphens
         if not re.match(r"^[A-Za-z0-9_-]+$", v):
-            raise ValueError(
-                f"Serial number must be alphanumeric with optional hyphens/underscores: {v}"
-            )
+            raise ValueError(f"Serial number must be alphanumeric with optional hyphens/underscores: {v}")
         return v
 
     @staticmethod
@@ -78,10 +76,7 @@ class SwitchValidators:
             raise ValueError("Hostname cannot exceed 255 characters")
         # Allow alphanumeric, dots, hyphens, underscores
         if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", v):
-            raise ValueError(
-                f"Invalid hostname format. Must start with alphanumeric and "
-                f"contain only alphanumeric, dots, hyphens, underscores: {v}"
-            )
+            raise ValueError(f"Invalid hostname format. Must start with alphanumeric and " f"contain only alphanumeric, dots, hyphens, underscores: {v}")
         if v.startswith(".") or v.endswith(".") or ".." in v:
             raise ValueError(f"Invalid hostname format (dots): {v}")
         return v

@@ -483,9 +483,7 @@ def main():
         sw_module.manage_state()
 
         # Exit with results
-        log.info(
-            "State management completed successfully. Changed: %s", results.changed
-        )
+        log.info("State management completed successfully. Changed: %s", results.changed)
         sw_module.exit_json()
 
     except NDModuleError as error:

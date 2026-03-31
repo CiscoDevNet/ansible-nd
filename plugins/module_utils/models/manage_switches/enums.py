@@ -71,9 +71,7 @@ class SwitchRole(str, Enum):
         try:
             return cls(camel_case)
         except ValueError:
-            raise ValueError(
-                f"Invalid switch role: {value}. Valid options: {cls.choices()}"
-            )
+            raise ValueError(f"Invalid switch role: {value}. Valid options: {cls.choices()}")
 
     @classmethod
     def normalize(cls, value: Union[str, "SwitchRole", None]) -> "SwitchRole":
@@ -178,9 +176,7 @@ class ShallowDiscoveryPlatformType(str, Enum):
         return [e.value for e in cls]
 
     @classmethod
-    def normalize(
-        cls, value: Union[str, "ShallowDiscoveryPlatformType", None]
-    ) -> "ShallowDiscoveryPlatformType":
+    def normalize(cls, value: Union[str, "ShallowDiscoveryPlatformType", None]) -> "ShallowDiscoveryPlatformType":
         """
         Normalize input to enum value (case-insensitive).
         Accepts: NX_OS, nx-os, NX-OS, ios_xe, ios-xe, etc.
@@ -194,9 +190,7 @@ class ShallowDiscoveryPlatformType(str, Enum):
             for pt in cls:
                 if pt.value == v_normalized:
                     return pt
-        raise ValueError(
-            f"Invalid ShallowDiscoveryPlatformType: {value}. Valid: {cls.choices()}"
-        )
+        raise ValueError(f"Invalid ShallowDiscoveryPlatformType: {value}. Valid: {cls.choices()}")
 
 
 class SnmpV3AuthProtocol(str, Enum):
@@ -231,9 +225,7 @@ class SnmpV3AuthProtocol(str, Enum):
         return [e.value for e in cls]
 
     @classmethod
-    def normalize(
-        cls, value: Union[str, "SnmpV3AuthProtocol", None]
-    ) -> "SnmpV3AuthProtocol":
+    def normalize(cls, value: Union[str, "SnmpV3AuthProtocol", None]) -> "SnmpV3AuthProtocol":
         """
         Normalize input to enum value (case-insensitive).
         Accepts: MD5, md5, MD5_DES, md5-des, etc.

@@ -43,9 +43,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
 )
 
 
-class FabricsBootstrapEndpointParams(
-    FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams
-):
+class FabricsBootstrapEndpointParams(FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
     """
     # Summary
 

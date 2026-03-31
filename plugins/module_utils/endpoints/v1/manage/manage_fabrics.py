@@ -61,12 +61,8 @@ class FabricConfigDeployEndpointParams(EndpointQueryParams):
     ```
     """
 
-    force_show_run: Optional[bool] = Field(
-        default=None, description="Force show running config before deploy"
-    )
-    incl_all_msd_switches: Optional[bool] = Field(
-        default=None, description="Include all MSD fabric switches"
-    )
+    force_show_run: Optional[bool] = Field(default=None, description="Force show running config before deploy")
+    incl_all_msd_switches: Optional[bool] = Field(default=None, description="Include all MSD fabric switches")
 
 
 class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):

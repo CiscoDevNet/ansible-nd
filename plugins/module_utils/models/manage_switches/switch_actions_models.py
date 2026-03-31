@@ -36,9 +36,7 @@ class SwitchCredentialsRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[
-        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
-    ] = "singleton"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
 
     switch_ids: List[str] = Field(
         ...,
@@ -46,12 +44,8 @@ class SwitchCredentialsRequestModel(NDBaseModel):
         min_length=1,
         description="List of switch serial numbers",
     )
-    switch_username: Optional[str] = Field(
-        default=None, alias="switchUsername", description="Switch username"
-    )
-    switch_password: Optional[str] = Field(
-        default=None, alias="switchPassword", description="Switch password"
-    )
+    switch_username: Optional[str] = Field(default=None, alias="switchUsername", description="Switch username")
+    switch_password: Optional[str] = Field(default=None, alias="switchPassword", description="Switch password")
     remote_credential_store_key: Optional[str] = Field(
         default=None,
         alias="remoteCredentialStoreKey",
@@ -81,13 +75,8 @@ class SwitchCredentialsRequestModel(NDBaseModel):
     @model_validator(mode="after")
     def validate_credentials(self) -> "SwitchCredentialsRequestModel":
         """Ensure either local or remote credentials are provided."""
-        has_local = (
-            self.switch_username is not None and self.switch_password is not None
-        )
-        has_remote = (
-            self.remote_credential_store_key is not None
-            and self.remote_credential_store_type is not None
-        )
+        has_local = self.switch_username is not None and self.switch_password is not None
+        has_remote = self.remote_credential_store_key is not None and self.remote_credential_store_type is not None
         if not has_local and not has_remote:
             raise ValueError(
                 "Either local credentials (switchUsername + switchPassword) "
@@ -104,9 +93,7 @@ class ChangeSwitchSerialNumberRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = ["new_switch_id"]
-    identifier_strategy: ClassVar[
-        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
-    ] = "single"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
     new_switch_id: str = Field(..., alias="newSwitchId", description="New switchId")
 
     @field_validator("new_switch_id", mode="before")

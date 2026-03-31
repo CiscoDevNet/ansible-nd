@@ -93,9 +93,7 @@ class SwitchActionsTicketEndpointParams(TicketIdMixin, EndpointQueryParams):
     """
 
 
-class SwitchActionsImportEndpointParams(
-    ClusterNameMixin, TicketIdMixin, EndpointQueryParams
-):
+class SwitchActionsImportEndpointParams(ClusterNameMixin, TicketIdMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -289,9 +287,7 @@ class EpManageFabricsSwitchActionsChangeRolesPost(_EpManageFabricsSwitchActionsB
         return HttpVerbEnum.POST
 
 
-class EpManageFabricsSwitchActionsImportBootstrapPost(
-    _EpManageFabricsSwitchActionsBase
-):
+class EpManageFabricsSwitchActionsImportBootstrapPost(_EpManageFabricsSwitchActionsBase):
     """
     # Summary
 

@@ -41,9 +41,7 @@ class PreProvisionSwitchModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = ["serial_number"]
-    identifier_strategy: ClassVar[
-        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
-    ] = "single"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
     exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
 
     # --- preProvisionSpecific fields (required) ---
@@ -170,9 +168,7 @@ class PreProvisionSwitchModel(NDBaseModel):
     @classmethod
     def validate_gateway(cls, v: str) -> str:
         if not v or "/" not in v:
-            raise ValueError(
-                "gatewayIpMask must include subnet mask (e.g., 10.23.244.1/24)"
-            )
+            raise ValueError("gatewayIpMask must include subnet mask (e.g., 10.23.244.1/24)")
         try:
             ip_network(v, strict=False)
         except Exception as exc:
@@ -203,9 +199,7 @@ class PreProvisionSwitchesRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[
-        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
-    ] = "singleton"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
     switches: List[PreProvisionSwitchModel] = Field(
         ...,
         description="PowerOn Auto Provisioning switches",

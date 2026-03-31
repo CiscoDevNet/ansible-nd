@@ -139,10 +139,7 @@ def get_switch_field(
             if name in switch and switch[name] is not None:
                 return switch[name]
             # Try camelCase variant
-            camel = "".join(
-                word.capitalize() if i > 0 else word
-                for i, word in enumerate(name.split("_"))
-            )
+            camel = "".join(word.capitalize() if i > 0 else word for i, word in enumerate(name.split("_")))
             if camel in switch and switch[camel] is not None:
                 return switch[camel]
     return None
@@ -199,20 +196,12 @@ def group_switches_by_credentials(
         )
         groups.setdefault(group_key, []).append(switch)
 
-    log.info(
-        "Grouped %s switches into %s credential group(s)", len(switches), len(groups)
-    )
+    log.info("Grouped %s switches into %s credential group(s)", len(switches), len(groups))
 
     for idx, (key, group_switches) in enumerate(groups.items(), 1):
         username, _pw_hash, auth_proto, platform_type, preserve_config = key
-        auth_value = (
-            auth_proto.value if hasattr(auth_proto, "value") else str(auth_proto)
-        )
-        platform_value = (
-            platform_type.value
-            if hasattr(platform_type, "value")
-            else str(platform_type)
-        )
+        auth_value = auth_proto.value if hasattr(auth_proto, "value") else str(auth_proto)
+        platform_value = platform_type.value if hasattr(platform_type, "value") else str(platform_type)
         log.debug(
             "Group %s: %s switches with username=%s, auth=%s, platform=%s, preserve_config=%s",
             idx,
@@ -285,10 +274,7 @@ def build_bootstrap_index(
     Returns:
         Dict mapping ``serial_number`` -> switch dict.
     """
-    return {
-        sw.get("serialNumber", sw.get("serial_number", "")): sw
-        for sw in bootstrap_switches
-    }
+    return {sw.get("serialNumber", sw.get("serial_number", "")): sw for sw in bootstrap_switches}
 
 
 def build_poap_data_block(poap_cfg) -> Optional[Dict[str, Any]]:
@@ -436,10 +422,7 @@ class SwitchWaitUtils:
 
         # Phase 3: brownfield shortcut — no reload expected
         if all_preserve_config:
-            self.log.info(
-                "All switches are brownfield (preserve_config=True) — "
-                "skipping reload detection (phases 5-6)"
-            )
+            self.log.info("All switches are brownfield (preserve_config=True) — skipping reload detection (phases 5-6)")
             return True
 
         # Phase 4: greenfield shortcut (skipped for POAP bootstrap)
@@ -448,10 +431,7 @@ class SwitchWaitUtils:
             return True
 
         if skip_greenfield_check:
-            self.log.info(
-                "Greenfield debug check skipped "
-                "(POAP bootstrap — device always reboots)"
-            )
+            self.log.info("Greenfield debug check skipped (POAP bootstrap — device always reboots)")
 
         # Phase 5: wait for "unreachable" (switch is reloading)
         if not self._wait_for_discovery_state(serial_numbers, "unreachable"):
@@ -525,9 +505,7 @@ class SwitchWaitUtils:
                 self.log.error("Discovery failed for %s: %s", seed_ip, status)
                 return None
 
-            self.log.debug(
-                "Discovery attempt %s/%s for %s", attempt + 1, attempts, seed_ip
-            )
+            self.log.debug("Discovery attempt %s/%s for %s", attempt + 1, attempts, seed_ip)
             time.sleep(interval)
 
         self.log.warning("Discovery timeout for %s", seed_ip)
@@ -565,9 +543,7 @@ class SwitchWaitUtils:
         if pending is None:
             return False
 
-        self.log.info(
-            "All switches in normal system mode — proceeding to discovery checks"
-        )
+        self.log.info("All switches in normal system mode — proceeding to discovery checks")
         return True
 
     def _poll_system_mode(
@@ -599,9 +575,7 @@ class SwitchWaitUtils:
             if switch_data is None:
                 return None
 
-            remaining = self._filter_by_system_mode(
-                pending, switch_data, target_mode, expect_match
-            )
+            remaining = self._filter_by_system_mode(pending, switch_data, target_mode, expect_match)
 
             if not remaining:
                 self.log.info("All switches %s mode (attempt %s)", label, attempt)
@@ -655,9 +629,7 @@ class SwitchWaitUtils:
             mode = sw.get("additionalData", {}).get("systemMode", "").lower()
             # expect_match=True:  "still in target_mode" → not done
             # expect_match=False: "not yet in target_mode" → not done
-            still_waiting = (
-                (mode == target_mode) if expect_match else (mode != target_mode)
-            )
+            still_waiting = (mode == target_mode) if expect_match else (mode != target_mode)
             if still_waiting:
                 remaining.append(sn)
         return remaining
@@ -723,9 +695,7 @@ class SwitchWaitUtils:
             if switch_data is None:
                 return False
 
-            pending = self._filter_by_discovery_status(
-                pending, switch_data, target_state
-            )
+            pending = self._filter_by_discovery_status(pending, switch_data, target_state)
 
             if not pending:
                 self.log.info(
@@ -746,9 +716,7 @@ class SwitchWaitUtils:
             )
             time.sleep(self.wait_interval * self._REDISCOVERY_SLEEP_FACTOR)
 
-        self.log.warning(
-            "Timeout waiting for '%s' state: %s", target_state, serial_numbers
-        )
+        self.log.warning("Timeout waiting for '%s' state: %s", target_state, serial_numbers)
         return False
 
     # =====================================================================
@@ -808,9 +776,7 @@ class SwitchWaitUtils:
             )
             time.sleep(self.wait_interval)
 
-        self.log.warning(
-            "Timeout waiting for switches to appear in fabric: %s", pending
-        )
+        self.log.warning("Timeout waiting for switches to appear in fabric: %s", pending)
         return False
 
     def _fetch_switch_data(
@@ -894,12 +860,8 @@ class SwitchWaitUtils:
 
         try:
             fabric_info = self.fabric_utils.get_fabric_info()
-            self.log.debug(
-                "Fabric info retrieved for greenfield check: %s", fabric_info
-            )
-            flag = (
-                fabric_info.get("management", {}).get("greenfieldDebugFlag", "").lower()
-            )
+            self.log.debug("Fabric info retrieved for greenfield check: %s", fabric_info)
+            flag = fabric_info.get("management", {}).get("greenfieldDebugFlag", "").lower()
             self.log.debug("Greenfield debug flag value: '%s'", flag)
             self._greenfield_debug_enabled = flag == "enable"
         except Exception as e:

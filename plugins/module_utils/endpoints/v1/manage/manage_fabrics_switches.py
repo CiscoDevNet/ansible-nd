@@ -47,9 +47,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
 )
 
 
-class FabricSwitchesGetEndpointParams(
-    FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams
-):
+class FabricSwitchesGetEndpointParams(FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -71,14 +69,10 @@ class FabricSwitchesGetEndpointParams(
     ```
     """
 
-    hostname: Optional[str] = Field(
-        default=None, min_length=1, description="Filter by switch hostname"
-    )
+    hostname: Optional[str] = Field(default=None, min_length=1, description="Filter by switch hostname")
 
 
-class FabricSwitchesAddEndpointParams(
-    ClusterNameMixin, TicketIdMixin, EndpointQueryParams
-):
+class FabricSwitchesAddEndpointParams(ClusterNameMixin, TicketIdMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -314,9 +308,7 @@ class SwitchActionsClusterEndpointParams(ClusterNameMixin, EndpointQueryParams):
     """
 
 
-class _EpManageFabricsSwitchActionsPerSwitchBase(
-    FabricNameMixin, SwitchSerialNumberMixin, NDEndpointBaseModel
-):
+class _EpManageFabricsSwitchActionsPerSwitchBase(FabricNameMixin, SwitchSerialNumberMixin, NDEndpointBaseModel):
     """
     Base class for per-switch action endpoints.
 
@@ -331,9 +323,7 @@ class _EpManageFabricsSwitchActionsPerSwitchBase(
             raise ValueError("fabric_name must be set before accessing path")
         if self.switch_sn is None:
             raise ValueError("switch_sn must be set before accessing path")
-        return BasePath.path(
-            "fabrics", self.fabric_name, "switches", self.switch_sn, "actions"
-        )
+        return BasePath.path("fabrics", self.fabric_name, "switches", self.switch_sn, "actions")
 
 
 class EpManageFabricsSwitchProvisionRMAPost(_EpManageFabricsSwitchActionsPerSwitchBase):
@@ -405,9 +395,7 @@ class EpManageFabricsSwitchProvisionRMAPost(_EpManageFabricsSwitchActionsPerSwit
         return HttpVerbEnum.POST
 
 
-class EpManageFabricsSwitchChangeSerialNumberPost(
-    _EpManageFabricsSwitchActionsPerSwitchBase
-):
+class EpManageFabricsSwitchChangeSerialNumberPost(_EpManageFabricsSwitchActionsPerSwitchBase):
     """
     # Summary
 

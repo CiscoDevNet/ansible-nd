@@ -41,14 +41,10 @@ class RMASwitchModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = ["new_switch_id"]
-    identifier_strategy: ClassVar[
-        Optional[Literal["single", "composite", "hierarchical", "singleton"]]
-    ] = "single"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
     exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
     # From bootstrapBase
-    gateway_ip_mask: str = Field(
-        ..., alias="gatewayIpMask", description="Gateway IP address with mask"
-    )
+    gateway_ip_mask: str = Field(..., alias="gatewayIpMask", description="Gateway IP address with mask")
     model: str = Field(..., description="Model of the bootstrap switch")
     software_version: str = Field(
         ...,
@@ -63,27 +59,17 @@ class RMASwitchModel(NDBaseModel):
     switch_role: Optional[SwitchRole] = Field(default=None, alias="switchRole")
 
     # From bootstrapCredential
-    password: str = Field(
-        ..., description="Switch password to be set during bootstrap for admin user"
-    )
-    discovery_auth_protocol: SnmpV3AuthProtocol = Field(
-        ..., alias="discoveryAuthProtocol"
-    )
+    password: str = Field(..., description="Switch password to be set during bootstrap for admin user")
+    discovery_auth_protocol: SnmpV3AuthProtocol = Field(..., alias="discoveryAuthProtocol")
     discovery_username: Optional[str] = Field(default=None, alias="discoveryUsername")
     discovery_password: Optional[str] = Field(default=None, alias="discoveryPassword")
-    remote_credential_store: RemoteCredentialStore = Field(
-        default=RemoteCredentialStore.LOCAL, alias="remoteCredentialStore"
-    )
-    remote_credential_store_key: Optional[str] = Field(
-        default=None, alias="remoteCredentialStoreKey"
-    )
+    remote_credential_store: RemoteCredentialStore = Field(default=RemoteCredentialStore.LOCAL, alias="remoteCredentialStore")
+    remote_credential_store_key: Optional[str] = Field(default=None, alias="remoteCredentialStoreKey")
 
     # From RMASpecific
     hostname: str = Field(..., description="Hostname of the switch")
     ip: str = Field(..., description="IP address of the switch")
-    new_switch_id: str = Field(
-        ..., alias="newSwitchId", description="SwitchId (serial number) of the switch"
-    )
+    new_switch_id: str = Field(..., alias="newSwitchId", description="SwitchId (serial number) of the switch")
     public_key: str = Field(..., alias="publicKey", description="Public Key")
     finger_print: str = Field(..., alias="fingerPrint", description="Fingerprint")
     dhcp_bootstrap_ip: Optional[str] = Field(default=None, alias="dhcpBootstrapIp")
@@ -139,15 +125,11 @@ class RMASwitchModel(NDBaseModel):
         if self.use_new_credentials:
             if self.remote_credential_store == RemoteCredentialStore.CYBERARK:
                 if not self.remote_credential_store_key:
-                    raise ValueError(
-                        "remote_credential_store_key is required when "
-                        "remote_credential_store is 'cyberark'"
-                    )
+                    raise ValueError("remote_credential_store_key is required when remote_credential_store is 'cyberark'")
             elif self.remote_credential_store == RemoteCredentialStore.LOCAL:
                 if not self.discovery_username or not self.discovery_password:
                     raise ValueError(
-                        "discovery_username and discovery_password are required when "
-                        "remote_credential_store is 'local' and use_new_credentials is True"
+                        "discovery_username and discovery_password are required when remote_credential_store is 'local' and use_new_credentials is True"
                     )
         return self
 
