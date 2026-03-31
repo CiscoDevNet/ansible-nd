@@ -191,64 +191,291 @@
     merged_fabric_config: "{{ merged_fabric_query.json }}"
   tags: [test_merged, test_merged_validation]
 
-- name: "VALIDATION 1: Verify BGP ASN was updated to 65002"
+#
+# Category 1: Properties CHANGED by TEST 1c merge
+#
+- name: "VALIDATION 1a: Verify changed properties after merge"
   assert:
     that:
       - merged_fabric_config.management.bgpAsn == "65002"
-    fail_msg: "BGP ASN validation failed. Expected: 65002, Actual: {{ merged_fabric_config.management.bgpAsn }}"
-    success_msg: "✓ BGP ASN correctly updated to 65002"
-  tags: [test_merged, test_merged_validation]
-
-- name: "VALIDATION 1: Verify Site ID was updated to 65002"
-  assert:
-    that:
       - merged_fabric_config.management.siteId == "65002"
-    fail_msg: "Site ID validation failed. Expected: 65002, Actual: {{ merged_fabric_config.management.siteId }}"
-    success_msg: "✓ Site ID correctly updated to 65002"
-  tags: [test_merged, test_merged_validation]
-
-- name: "VALIDATION 1: Verify Anycast Gateway MAC was updated to 2020.0000.00bb"
-  assert:
-    that:
       - merged_fabric_config.management.anycastGatewayMac == "2020.0000.00bb"
-    fail_msg: "Anycast Gateway MAC validation failed. Expected: 2020.0000.00bb, Actual: {{ merged_fabric_config.management.anycastGatewayMac }}"
-    success_msg: "✓ Anycast Gateway MAC correctly updated to 2020.0000.00bb"
+      - merged_fabric_config.management.performanceMonitoring == true
+    fail_msg: >-
+      Changed properties validation failed.
+      bgpAsn: {{ merged_fabric_config.management.bgpAsn }} (expected 65002),
+      siteId: {{ merged_fabric_config.management.siteId }} (expected 65002),
+      anycastGatewayMac: {{ merged_fabric_config.management.anycastGatewayMac }} (expected 2020.0000.00bb),
+      performanceMonitoring: {{ merged_fabric_config.management.performanceMonitoring }} (expected true)
+    success_msg: "✓ All 4 changed properties updated correctly (bgpAsn, siteId, anycastGatewayMac, performanceMonitoring)"
   tags: [test_merged, test_merged_validation]
 
-- name: "VALIDATION 1: Verify Performance Monitoring was enabled"
+#
+# Category 2: Properties re-specified in TEST 1c with same values
+#
+- name: "VALIDATION 1b: Verify re-specified management properties (same values)"
   assert:
     that:
-      - merged_fabric_config.management.performanceMonitoring == true
-    fail_msg: "Performance Monitoring validation failed. Expected: true, Actual: {{ merged_fabric_config.management.performanceMonitoring }}"
-    success_msg: "✓ Performance Monitoring correctly enabled"
+      # Core
+      - merged_fabric_config.management.targetSubnetMask == 30
+      - merged_fabric_config.management.fabricMtu == 9216
+      - merged_fabric_config.management.l2HostInterfaceMtu == 9216
+      - merged_fabric_config.management.l3VniNoVlanDefaultOption == false
+      # Multicast / Replication
+      - merged_fabric_config.management.replicationMode == "multicast"
+      - merged_fabric_config.management.multicastGroupSubnet == "239.1.1.0/25"
+      - merged_fabric_config.management.autoGenerateMulticastGroupAddress == false
+      - merged_fabric_config.management.underlayMulticastGroupAddressLimit == 128
+      - merged_fabric_config.management.tenantRoutedMulticast == false
+      - merged_fabric_config.management.rendezvousPointCount == 2
+      - merged_fabric_config.management.rendezvousPointLoopbackId == 254
+      # vPC
+      - merged_fabric_config.management.vpcPeerLinkVlan == "3600"
+      - merged_fabric_config.management.vpcPeerLinkEnableNativeVlan == false
+      - merged_fabric_config.management.vpcPeerKeepAliveOption == "loopback"
+      - merged_fabric_config.management.vpcAutoRecoveryTimer == 360
+      - merged_fabric_config.management.vpcDelayRestoreTimer == 150
+      - merged_fabric_config.management.vpcPeerLinkPortChannelId == "500"
+      # Loopback / Domain IDs
+      - merged_fabric_config.management.vpcDomainIdRange == "1-1000"
+      - merged_fabric_config.management.bgpLoopbackId == 0
+      - merged_fabric_config.management.nveLoopbackId == 1
+      # Templates
+      - merged_fabric_config.management.vrfTemplate == "Default_VRF_Universal"
+      - merged_fabric_config.management.networkTemplate == "Default_Network_Universal"
+      - merged_fabric_config.management.vrfExtensionTemplate == "Default_VRF_Extension_Universal"
+      - merged_fabric_config.management.networkExtensionTemplate == "Default_Network_Extension_Universal"
+    fail_msg: "Re-specified management properties validation failed"
+    success_msg: "✓ All 24 re-specified management properties match expected values"
   tags: [test_merged, test_merged_validation]
 
-- name: "VALIDATION 1: Verify Banner was preserved after merge (not reset to empty)"
+- name: "VALIDATION 1b: Verify re-specified IP ranges and VNI ranges"
+  assert:
+    that:
+      # IP Ranges
+      - merged_fabric_config.management.bgpLoopbackIpRange == "10.2.0.0/22"
+      - merged_fabric_config.management.nveLoopbackIpRange == "10.3.0.0/22"
+      - merged_fabric_config.management.anycastRendezvousPointIpRange == "10.254.254.0/24"
+      - merged_fabric_config.management.intraFabricSubnetRange == "10.4.0.0/16"
+      # VNI / VLAN Ranges
+      - merged_fabric_config.management.l2VniRange == "30000-49000"
+      - merged_fabric_config.management.l3VniRange == "50000-59000"
+      - merged_fabric_config.management.networkVlanRange == "2300-2999"
+      - merged_fabric_config.management.vrfVlanRange == "2000-2299"
+      - merged_fabric_config.management.subInterfaceDot1qRange == "2-511"
+      # VRF Lite / DCI
+      - merged_fabric_config.management.vrfLiteAutoConfig == "manual"
+      - merged_fabric_config.management.vrfLiteSubnetRange == "10.33.0.0/16"
+      - merged_fabric_config.management.vrfLiteSubnetTargetMask == 30
+      - merged_fabric_config.management.autoUniqueVrfLiteIpPrefix == false
+      # Per-VRF Loopback
+      - merged_fabric_config.management.perVrfLoopbackAutoProvision == true
+      - merged_fabric_config.management.perVrfLoopbackIpRange == "10.5.0.0/22"
+    fail_msg: "Re-specified IP/VNI ranges validation failed"
+    success_msg: "✓ All 15 re-specified IP and VNI range properties match expected values"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1b: Verify re-specified system and NX-API settings"
+  assert:
+    that:
+      - merged_fabric_config.management.tenantDhcp == true
+      - merged_fabric_config.management.nxapi == true
+      - merged_fabric_config.management.nxapiHttpsPort == 443
+      - merged_fabric_config.management.nxapiHttp == false
+      - merged_fabric_config.management.nxapiHttpPort == 80
+      - merged_fabric_config.management.snmpTrap == true
+      - merged_fabric_config.management.advertisePhysicalIp == false
+      - merged_fabric_config.management.anycastBorderGatewayAdvertisePhysicalIp == false
+      - merged_fabric_config.management.greenfieldDebugFlag == "enable"
+      - merged_fabric_config.management.tcamAllocation == true
+      - merged_fabric_config.management.realTimeInterfaceStatisticsCollection == false
+      # Bootstrap / DHCP
+      - merged_fabric_config.management.day0Bootstrap == false
+      - merged_fabric_config.management.localDhcpServer == false
+    fail_msg: "Re-specified system/NX-API settings validation failed"
+    success_msg: "✓ All 13 re-specified system and NX-API properties match expected values"
+  tags: [test_merged, test_merged_validation]
+
+#
+# Category 3: Properties NOT in TEST 1c - MUST be preserved from original create
+# These are the critical assertions for validating the merge fix.
+# Prior to the fix, these would be reset to Pydantic model defaults.
+#
+- name: "VALIDATION 1c: Verify preserved underlay/overlay config (not in merge task)"
+  assert:
+    that:
+      - merged_fabric_config.management.overlayMode == "cli"
+      - merged_fabric_config.management.underlayIpv6 == false
+      - merged_fabric_config.management.fabricInterfaceType == "p2p"
+      - merged_fabric_config.management.linkStateRoutingProtocol == "ospf"
+      - merged_fabric_config.management.ospfAreaId == "0.0.0.0"
+      - merged_fabric_config.management.routeReflectorCount == 4
+      - merged_fabric_config.management.staticUnderlayIpAllocation == false
+    fail_msg: >-
+      Preserved underlay/overlay config validation failed. These fields were not
+      in the merge task and should retain their original values from creation.
+    success_msg: "✓ All 7 preserved underlay/overlay properties retained correctly"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1c: Verify preserved multicast/RP settings (not in merge task)"
+  assert:
+    that:
+      - merged_fabric_config.management.tenantRoutedMulticastIpv6 == false
+      - merged_fabric_config.management.rendezvousPointMode == "asm"
+      - merged_fabric_config.management.pimHelloAuthentication == false
+    fail_msg: >-
+      Preserved multicast/RP settings validation failed. These fields were not
+      in the merge task and should retain their original values.
+    success_msg: "✓ All 3 preserved multicast/RP properties retained correctly"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1c: Verify preserved vPC extended settings (not in merge task)"
+  assert:
+    that:
+      - merged_fabric_config.management.vpcIpv6NeighborDiscoverySync == true
+      - merged_fabric_config.management.vpcLayer3PeerRouter == true
+      - merged_fabric_config.management.vpcTorDelayRestoreTimer == 30
+      - merged_fabric_config.management.fabricVpcDomainId == false
+      - merged_fabric_config.management.fabricVpcQos == false
+      - merged_fabric_config.management.enablePeerSwitch == false
+    fail_msg: >-
+      Preserved vPC extended settings validation failed. These fields were not
+      in the merge task and should retain their original values.
+    success_msg: "✓ All 6 preserved vPC extended properties retained correctly"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1c: Verify preserved advertising and protocol auth (not in merge task)"
+  assert:
+    that:
+      - merged_fabric_config.management.advertisePhysicalIpOnBorder == true
+      - merged_fabric_config.management.bgpAuthentication == false
+      - merged_fabric_config.management.ospfAuthentication == false
+      - merged_fabric_config.management.bfd == false
+      - merged_fabric_config.management.macsec == false
+      - merged_fabric_config.management.vrfLiteMacsec == false
+    fail_msg: >-
+      Preserved advertising/protocol auth validation failed. These fields were
+      not in the merge task and should retain their original values.
+    success_msg: "✓ All 6 preserved advertising and protocol authentication properties retained correctly"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1c: Verify preserved BGP/routing enhancements (not in merge task)"
+  assert:
+    that:
+      - merged_fabric_config.management.autoBgpNeighborDescription == true
+      - merged_fabric_config.management.linkStateRoutingTag == "UNDERLAY"
+    fail_msg: >-
+      Preserved BGP/routing enhancements validation failed.
+    success_msg: "✓ All 2 preserved BGP/routing enhancement properties retained correctly"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1c: Verify preserved resource ID ranges (not in merge task)"
+  assert:
+    that:
+      - merged_fabric_config.management.ipServiceLevelAgreementIdRange == "10000-19999"
+      - merged_fabric_config.management.objectTrackingNumberRange == "100-299"
+      - merged_fabric_config.management.serviceNetworkVlanRange == "3000-3199"
+      - merged_fabric_config.management.routeMapSequenceNumberRange == "1-65534"
+      - merged_fabric_config.management.perVrfLoopbackAutoProvisionIpv6 == false
+    fail_msg: >-
+      Preserved resource ID ranges validation failed. These fields were not
+      in the merge task and should retain their original values.
+    success_msg: "✓ All 5 preserved resource ID range properties retained correctly"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1c: Verify preserved system policies (not in merge task)"
+  assert:
+    that:
+      - merged_fabric_config.management.cdp == false
+      - merged_fabric_config.management.inbandManagement == false
+      - merged_fabric_config.management.securityGroupTag == false
+      - merged_fabric_config.management.privateVlan == false
+      - merged_fabric_config.management.defaultQueuingPolicy == false
+      - merged_fabric_config.management.aimlQos == false
+      - merged_fabric_config.management.dlb == false
+      - merged_fabric_config.management.aiLoadSharing == false
+      - merged_fabric_config.management.ptp == false
+      - merged_fabric_config.management.stpRootOption == "unmanaged"
+      - merged_fabric_config.management.mplsHandoff == false
+    fail_msg: >-
+      Preserved system policies validation failed. These fields were not
+      in the merge task and should retain their original values.
+    success_msg: "✓ All 11 preserved system policy properties retained correctly"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1c: Verify preserved OAM/compliance/system settings (not in merge task)"
+  assert:
+    that:
+      - merged_fabric_config.management.allowVlanOnLeafTorPairing == "none"
+      - merged_fabric_config.management.leafTorIdRange == false
+      - merged_fabric_config.management.nveHoldDownTimer == 180
+      - merged_fabric_config.management.strictConfigComplianceMode == false
+      - merged_fabric_config.management.advancedSshOption == false
+      - merged_fabric_config.management.coppPolicy == "strict"
+      - merged_fabric_config.management.powerRedundancyMode == "redundant"
+      - merged_fabric_config.management.hostInterfaceAdminState == true
+      - merged_fabric_config.management.policyBasedRouting == false
+    fail_msg: >-
+      Preserved OAM/compliance/system settings validation failed.
+    success_msg: "✓ All 9 preserved OAM/compliance/system properties retained correctly"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1c: Verify preserved banner (not in merge task - critical merge fix test)"
   assert:
     that:
       - merged_fabric_config.management.banner is defined
       - merged_fabric_config.management.banner | length > 0
       - "'ADVISORY' in merged_fabric_config.management.banner"
     fail_msg: >-
-      Banner validation failed. The banner should be preserved after a merge
-      that does not specify it. Expected banner containing 'ADVISORY', Actual: '{{ merged_fabric_config.management.banner | default("") }}'
+      CRITICAL: Banner was reset to empty by the merge operation!
+      The banner field was not specified in the merge task and must be
+      preserved from the original create. Expected banner containing
+      'ADVISORY', Actual: '{{ merged_fabric_config.management.banner | default("") }}'
     success_msg: "✓ Banner correctly preserved after merge: {{ merged_fabric_config.management.banner }}"
   tags: [test_merged, test_merged_validation]
 
-- name: "VALIDATION 1: Display successful validation summary for test_fabric_merged"
+- name: "VALIDATION 1c: Verify preserved backup and brownfield settings (not in merge task)"
+  assert:
+    that:
+      - merged_fabric_config.management.realTimeBackup == false
+      - merged_fabric_config.management.scheduledBackup == false
+      - merged_fabric_config.management.brownfieldNetworkNameFormat == "Auto_Net_VNI$$VNI$$_VLAN$$VLAN_ID$$"
+      - merged_fabric_config.management.brownfieldSkipOverlayNetworkAttachments == false
+      - merged_fabric_config.management.allowSmartSwitchOnboarding == false
+    fail_msg: >-
+      Preserved backup/brownfield settings validation failed.
+    success_msg: "✓ All 5 preserved backup and brownfield properties retained correctly"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Display comprehensive validation summary"
   debug:
     msg: |
-      ========================================
-      VALIDATION SUMMARY for test_fabric_merged:
-      ========================================
-      ✓ BGP ASN: {{ merged_fabric_config.management.bgpAsn }}
-      ✓ Site ID: {{ merged_fabric_config.management.siteId }}
-      ✓ Anycast Gateway MAC: {{ merged_fabric_config.management.anycastGatewayMac }}
-      ✓ Performance Monitoring: {{ merged_fabric_config.management.performanceMonitoring }}
-      ✓ Banner preserved: {{ merged_fabric_config.management.banner }}
+      ============================================================
+      COMPREHENSIVE VALIDATION SUMMARY for test_fabric_merged
+      ============================================================
+      Category 1 - Changed properties (4 fields):
+        ✓ bgpAsn: {{ merged_fabric_config.management.bgpAsn }}
+        ✓ siteId: {{ merged_fabric_config.management.siteId }}
+        ✓ anycastGatewayMac: {{ merged_fabric_config.management.anycastGatewayMac }}
+        ✓ performanceMonitoring: {{ merged_fabric_config.management.performanceMonitoring }}
 
-      All 5 expected validations passed successfully!
-      ========================================
+      Category 2 - Re-specified properties (52 fields):
+        ✓ Management, IP ranges, VNI ranges, system, NX-API, bootstrap
+
+      Category 3 - Preserved properties NOT in merge task (54 fields):
+        ✓ Underlay/overlay config (7 fields)
+        ✓ Multicast/RP settings (3 fields)
+        ✓ vPC extended settings (6 fields)
+        ✓ Advertising & protocol auth (6 fields)
+        ✓ BGP/routing enhancements (2 fields)
+        ✓ Resource ID ranges (5 fields)
+        ✓ System policies (11 fields)
+        ✓ OAM/compliance/system (9 fields)
+        ✓ Banner: {{ merged_fabric_config.management.banner }}
+        ✓ Backup & brownfield (5 fields)
+
+      Total: 110 properties validated across all categories!
+      ============================================================
   tags: [test_merged, test_merged_validation]
 
 #############################################################################
