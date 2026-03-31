@@ -196,16 +196,64 @@ class NDBaseModel(BaseModel, ABC):
             **kwargs,
         )
 
-    def get_diff(self, other: "NDBaseModel") -> bool:
-        """Diff comparison."""
+    def _to_set_fields_diff_dict(self) -> Dict[str, Any]:
+        """Build diff dict containing only explicitly set fields, recursively.
+
+        Used for merge-state diff comparison where only user-provided fields
+        should be compared against existing configuration. Fields that received
+        their value from model defaults are excluded.
+        """
+        full_dump = self.to_diff_dict()
+        return self._filter_set_fields(full_dump)
+
+    def _filter_set_fields(self, full_dump: Dict[str, Any]) -> Dict[str, Any]:
+        """Filter a serialized dict to only include explicitly set fields."""
+        result = {}
+        exclude = self.exclude_from_diff or set()
+
+        for field_name in self.model_fields_set:
+            if field_name in exclude:
+                continue
+
+            value = getattr(self, field_name)
+            if value is None:
+                continue
+
+            field_info = self.__class__.model_fields.get(field_name)
+            alias = field_info.alias if field_info and field_info.alias else field_name
+
+            if alias not in full_dump:
+                continue
+
+            if isinstance(value, NDBaseModel):
+                result[alias] = value._to_set_fields_diff_dict()
+            else:
+                result[alias] = full_dump[alias]
+
+        return result
+
+    def get_diff(self, other: "NDBaseModel", only_set_fields: bool = False) -> bool:
+        """Diff comparison.
+
+        Args:
+            other: The model to compare against.
+            only_set_fields: When True, only compare fields explicitly set in
+                ``other`` (via model_fields_set). This prevents default values
+                from triggering false diffs during merge operations.
+        """
         self_data = self.to_diff_dict()
-        other_data = other.to_diff_dict()
+        if only_set_fields:
+            other_data = other._to_set_fields_diff_dict()
+        else:
+            other_data = other.to_diff_dict()
         return issubset(other_data, self_data)
 
     def merge(self, other: "NDBaseModel") -> "NDBaseModel":
         """
-        Merge another model's non-None values into this instance.
+        Merge another model's explicitly set, non-None values into this instance.
         Recursively merges nested NDBaseModel fields.
+        Only fields present in ``other.model_fields_set`` are applied so that
+        Pydantic default values do not overwrite existing configuration.
 
         Returns self for chaining.
         """
@@ -214,6 +262,10 @@ class NDBaseModel(BaseModel, ABC):
 
         for field_name, value in other:
             if value is None:
+                continue
+
+            # Only merge fields that were explicitly provided, not defaults
+            if field_name not in other.model_fields_set:
                 continue
 
             current = getattr(self, field_name)

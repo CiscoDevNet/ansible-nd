@@ -77,7 +77,11 @@ class NDStateMachine:
             identifier = proposed_item.get_identifier_value()
             try:
                 # Determine diff status
-                diff_status = self.existing.get_diff_config(proposed_item)
+                # For merged state, only compare fields explicitly provided by
+                # the user so that Pydantic default values do not trigger false
+                # diffs or overwrite existing configuration.
+                only_set = self.state == "merged"
+                diff_status = self.existing.get_diff_config(proposed_item, only_set_fields=only_set)
 
                 # No changes needed
                 if diff_status == "no_diff":

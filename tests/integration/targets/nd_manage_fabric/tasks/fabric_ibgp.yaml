@@ -128,7 +128,6 @@
           auto_unique_vrf_lite_ip_prefix: false
           per_vrf_loopback_auto_provision: true
           per_vrf_loopback_ip_range: "10.5.0.0/22"
-          banner: ""
           day0_bootstrap: false
           local_dhcp_server: false
           dhcp_protocol_version: dhcpv4
@@ -224,6 +223,18 @@
     success_msg: "✓ Performance Monitoring correctly enabled"
   tags: [test_merged, test_merged_validation]
 
+- name: "VALIDATION 1: Verify Banner was preserved after merge (not reset to empty)"
+  assert:
+    that:
+      - merged_fabric_config.management.banner is defined
+      - merged_fabric_config.management.banner | length > 0
+      - "'ADVISORY' in merged_fabric_config.management.banner"
+    fail_msg: >-
+      Banner validation failed. The banner should be preserved after a merge
+      that does not specify it. Expected banner containing 'ADVISORY', Actual: '{{ merged_fabric_config.management.banner | default("") }}'
+    success_msg: "✓ Banner correctly preserved after merge: {{ merged_fabric_config.management.banner }}"
+  tags: [test_merged, test_merged_validation]
+
 - name: "VALIDATION 1: Display successful validation summary for test_fabric_merged"
   debug:
     msg: |
@@ -234,8 +245,9 @@
       ✓ Site ID: {{ merged_fabric_config.management.siteId }}
       ✓ Anycast Gateway MAC: {{ merged_fabric_config.management.anycastGatewayMac }}
       ✓ Performance Monitoring: {{ merged_fabric_config.management.performanceMonitoring }}
+      ✓ Banner preserved: {{ merged_fabric_config.management.banner }}
 
-      All 4 expected changes validated successfully!
+      All 5 expected validations passed successfully!
       ========================================
   tags: [test_merged, test_merged_validation]
 

@@ -119,9 +119,15 @@ class NDConfigCollection:
 
     # Diff Operations
 
-    def get_diff_config(self, new_item: NDBaseModel) -> Literal["new", "no_diff", "changed"]:
+    def get_diff_config(self, new_item: NDBaseModel, only_set_fields: bool = False) -> Literal["new", "no_diff", "changed"]:
         """
         Compare single item against collection.
+
+        Args:
+            new_item: The proposed configuration item.
+            only_set_fields: When True, only compare fields explicitly set in
+                ``new_item``. Useful for merge operations where unspecified
+                fields should not trigger a diff.
         """
         try:
             key = self._extract_key(new_item)
@@ -133,7 +139,7 @@ class NDConfigCollection:
         if existing is None:
             return "new"
 
-        is_subset = existing.get_diff(new_item)
+        is_subset = existing.get_diff(new_item, only_set_fields=only_set_fields)
 
         return "no_diff" if is_subset else "changed"
 
