@@ -7,7 +7,6 @@ from __future__ import absolute_import, division, print_function
 from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    ConfigDict,
     Field,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
@@ -31,7 +30,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 # API path covered by this file:
 # /api/v1/manage/fabrics/{fabricName}/vpcPairs
-COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
 
 class VpcPairsListEndpointParams(
@@ -53,9 +51,6 @@ class EpVpcPairsListGet(
     GET /api/v1/manage/fabrics/{fabricName}/vpcPairs
     """
 
-    model_config = COMMON_CONFIG
-    api_version: Literal["v1"] = Field(default="v1")
-    min_controller_version: str = Field(default="3.0.0")
     class_name: Literal["EpVpcPairsListGet"] = Field(
         default="EpVpcPairsListGet", frozen=True, description="Class name for backward compatibility"
     )

@@ -24,12 +24,13 @@
   delegate_to: localhost
 
 # ------------------------------------------
-# Query Fabric Existence
+# Query Fabric Reachability
 # ------------------------------------------
-- name: BASE - Verify fabric is reachable via API
-  cisco.nd.nd_rest:
-    path: "/api/v1/manage/fabrics/{{ test_fabric }}"
-    method: get
+- name: BASE - Verify fabric is reachable via vPC gather API
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    query_timeout: 60
   register: fabric_query
   ignore_errors: true
 
@@ -37,7 +38,7 @@
   ansible.builtin.assert:
     that:
       - fabric_query.failed == false
-    fail_msg: "Fabric '{{ test_fabric }}' not found or API unreachable."
+    fail_msg: "Fabric '{{ test_fabric }}' not found or vPC API unreachable."
 
 # ------------------------------------------
 # Clean up existing vPC pairs

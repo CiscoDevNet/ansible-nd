@@ -252,6 +252,14 @@
   loop: "{{ vpc_pairs_list_result.current.vpcPairs | default([]) }}"
   tags: gather
 
+- name: GATHER - TC10 - CHECK - Determine if /vpcPairs list has data
+  ansible.builtin.set_fact:
+    tc10_list_has_pairs: "{{ (vpc_pairs_list_result.current.vpcPairs | default([]) | length) > 0 }}"
+  tags: gather
+
+# NOTE: eBGP (VXLAN eBGP) fabrics may return an empty /vpcPairs list even when
+# pairs exist. The module's gathered query works via switch-level fallback
+# endpoints. Skip list-vs-gathered comparison when the list API returns empty.
 - name: GATHER - TC10 - PREP - Extract target pair from /vpcPairs response
   ansible.builtin.set_fact:
     tc10_pair_from_list: >-
@@ -276,6 +284,7 @@
             true
           )
       }}
+  when: tc10_list_has_pairs | bool
   tags: gather
 
 - name: GATHER - TC10 - PREP - Extract target pair from gathered output
@@ -300,6 +309,7 @@
             true
           )
       }}
+  when: tc10_list_has_pairs | bool
   tags: gather
 
 - name: GATHER - TC10 - ASSERT - Verify useVirtualPeerLink alignment for target pair
@@ -329,6 +339,18 @@
         | default(tc10_pair_from_gathered.useVirtualPeerLink | default(false))
         | bool
       }}
+  when: tc10_list_has_pairs | bool
+  tags: gather
+
+- name: GATHER - TC10 - ASSERT - Verify gathered output has pairs when list API is empty (eBGP behavior)
+  ansible.builtin.assert:
+    that:
+      - gathered_result.gathered.vpc_pairs | length > 0
+    fail_msg: >-
+      The /vpcPairs list endpoint returned empty (expected for eBGP fabrics),
+      but the module gathered output should still find pairs via switch-level
+      fallback queries. Found: {{ gathered_result.gathered.vpc_pairs }}
+  when: not (tc10_list_has_pairs | bool)
   tags: gather
 
 # TC11 - Validate normalized pair matching for reversed switch order
@@ -359,5 +381,9 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  ignore_errors: true
   when: cleanup_at_end | default(true)
   tags: gather

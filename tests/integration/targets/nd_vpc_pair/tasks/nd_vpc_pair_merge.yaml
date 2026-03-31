@@ -16,6 +16,12 @@
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
         use_virtual_peer_link: true
+        vpc_pair_details:
+          type: default
+          domain_id: 20
+          switch_keep_alive_local_ip: "192.0.2.21"
+          peer_switch_keep_alive_local_ip: "192.0.2.22"
+          keep_alive_vrf: management
   delegate_to: localhost
   tags: merge
 
@@ -87,6 +93,17 @@
     that:
       - result.failed == false
       - result.changed == true
+  tags: merge
+
+- name: MERGE - TC1 - ASSERT - Verify full config payload includes vpc_pair_details
+  ansible.builtin.assert:
+    that:
+      - result.diff is defined
+      - result.diff | to_json is search('"vpcPairDetails"')
+      - result.diff | to_json is search('"domainId"')
+      - result.diff | to_json is search('"switchKeepAliveLocalIp"')
+      - result.diff | to_json is search('"peerSwitchKeepAliveLocalIp"')
+      - result.diff | to_json is search('"keepAliveVrf"')
   tags: merge
 
 - name: MERGE - TC1 - GATHER - Get vPC pair state in ND
@@ -479,6 +496,7 @@
     fabric_name: "{{ test_fabric }}"
     state: merged
     deploy: true
+    api_timeout: 60
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -651,6 +669,14 @@
   register: tc10_vpc_pairs
   tags: merge
 
+- name: MERGE - TC10 - CHECK - Determine if /vpcPairs list has data
+  ansible.builtin.set_fact:
+    tc10_list_has_pairs: "{{ (tc10_vpc_pairs.current.vpcPairs | default([]) | length) > 0 }}"
+  tags: merge
+
+# NOTE: eBGP (VXLAN eBGP) fabrics may return an empty /vpcPairs list even when
+# pairs exist. The module's gathered query works via switch-level fallback
+# endpoints. Skip list-vs-gathered comparison when the list API returns empty.
 - name: MERGE - TC10 - PREP - Extract target pair from /vpcPairs response
   ansible.builtin.set_fact:
     tc10_pair_from_list: >-
@@ -675,6 +701,7 @@
             true
           )
       }}
+  when: tc10_list_has_pairs | bool
   tags: merge
 
 - name: MERGE - TC10 - ASSERT - Verify /vpcPairs useVirtualPeerLink alignment
@@ -708,6 +735,7 @@
         )
         | bool
       }}
+  when: tc10_list_has_pairs | bool
   tags: merge
 
 # TC11 - Delete with custom api_timeout
@@ -921,5 +949,9 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  ignore_errors: true
   when: cleanup_at_end | default(true)
   tags: merge

@@ -335,8 +335,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_except
 # Static imports so Ansible's AnsiballZ packager includes these files in the
 # module zip. Keep them optional when framework files are intentionally absent.
 try:
-    from ansible_collections.cisco.nd.plugins.module_utils import nd_config_collection as _nd_config_collection
-    from ansible_collections.cisco.nd.plugins.module_utils import utils as _nd_utils
+    import ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection as _nd_config_collection
+    import ansible_collections.cisco.nd.plugins.module_utils.utils as _nd_utils
 except Exception:  # pragma: no cover - compatibility for stripped framework trees
     _nd_config_collection = None  # noqa: F841
     _nd_utils = None  # noqa: F841
@@ -408,17 +408,12 @@ def main():
         module.params["refresh_after_apply"] = False
 
     # Validate force parameter usage:
-    # - state=deleted
-    # - state=overridden with empty config (interpreted as delete-all)
+    # - state=deleted only
     force = module_config.force
-    user_config = module_config.config or []
-    force_applicable = state == "deleted" or (
-        state == "overridden" and len(user_config) == 0
-    )
+    force_applicable = state == "deleted"
     if force and not force_applicable:
         module.warn(
-            "Parameter 'force' only applies to state 'deleted' or to "
-            "state 'overridden' when config is empty (delete-all behavior). "
+            "Parameter 'force' only applies to state 'deleted'. "
             f"Ignoring force for state '{state}'."
         )
 
