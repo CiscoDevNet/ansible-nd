@@ -26,6 +26,9 @@ common_fabric_config:
     type: vxlanIbgp
     bgp_asn: "65001.55"
     site_id: "65001"
+    fabric_interface_type: p2p
+    link_state_routing_protocol: ospf
+    route_reflector_count: 4
     target_subnet_mask: 30
     anycast_gateway_mac: "2020.0000.00aa"
     performance_monitoring: false
@@ -34,7 +37,9 @@ common_fabric_config:
     auto_generate_multicast_group_address: false
     underlay_multicast_group_address_limit: 128
     tenant_routed_multicast: false
+    tenant_routed_multicast_ipv6: false
     rendezvous_point_count: 2
+    rendezvous_point_mode: asm
     rendezvous_point_loopback_id: 254
     vpc_peer_link_vlan: "3600"
     vpc_peer_link_enable_native_vlan: false
@@ -42,6 +47,7 @@ common_fabric_config:
     vpc_auto_recovery_timer: 360
     vpc_delay_restore_timer: 150
     vpc_peer_link_port_channel_id: "500"
+    vpc_ipv6_neighbor_discovery_sync: true
     advertise_physical_ip: false
     vpc_domain_id_range: "1-1000"
     bgp_loopback_id: 0
@@ -79,7 +85,8 @@ common_fabric_config:
     auto_unique_vrf_lite_ip_prefix: false
     per_vrf_loopback_auto_provision: true
     per_vrf_loopback_ip_range: "10.5.0.0/22"
-    banner: ""
+    banner: |
+      @ADVISORY This is a test fabric deployed by Ansible for validation purposes. Do not make changes to this fabric outside of Ansible or use it for production traffic. ADVISORY@
     day0_bootstrap: false
     local_dhcp_server: false
     dhcp_protocol_version: dhcpv4

@@ -58,11 +58,6 @@
     success_msg: "Merged state is idempotent - no changes on second run"
   tags: [test_merged, test_merged_idempotent]
 
-# - name: "PAUSE: Review TEST 1b results before continuing"
-#   ansible.builtin.pause:
-#     prompt: "TEST 1b complete. Review results and press Enter to continue, or Ctrl+C then A to abort"
-#   tags: [test_merged, test_merged_update]
-
 - name: "TEST 1c: Update fabric using state merged (modify existing)"
   cisco.nd.nd_manage_fabric_ibgp:
     state: merged
@@ -133,8 +128,6 @@
           auto_unique_vrf_lite_ip_prefix: false
           per_vrf_loopback_auto_provision: true
           per_vrf_loopback_ip_range: "10.5.0.0/22"
-          # per_vrf_loopback_auto_provision_ipv6: false
-          # per_vrf_loopback_ipv6_range: "fd00::a05:0/112"
           banner: ""
           day0_bootstrap: false
           local_dhcp_server: false
@@ -194,9 +187,6 @@
   tags: [test_merged, test_merged_validation]
   delegate_to: localhost
 
-# - debug: msg="{{ merged_fabric_query }}"
-# - meta: end_play
-
 - name: "VALIDATION 1: Parse fabric configuration response"
   set_fact:
     merged_fabric_config: "{{ merged_fabric_query.json }}"
@@ -248,11 +238,6 @@
       All 4 expected changes validated successfully!
       ========================================
   tags: [test_merged, test_merged_validation]
-
-# - name: "PAUSE: Review TEST 1c results before continuing"
-#   ansible.builtin.pause:
-#     prompt: "TEST 1c complete. Review results and press Enter to continue, or Ctrl+C then A to abort"
-#   tags: [test_merged, test_merged_update]
 
 #############################################################################
 # TEST 2: STATE REPLACED - Create and manage fabric using replaced state
