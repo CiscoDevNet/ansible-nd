@@ -58,7 +58,9 @@ def sanitize_list(list_to_sanitize, keys=None, values=None, list_recursive=True,
 
 def sanitize(obj_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
     """Clean up a Python object of type list or dict from specific keys, values and None values if specified"""
-    if isinstance(obj_to_sanitize, dict):
+    if obj_to_sanitize is None:
+        return None
+    elif isinstance(obj_to_sanitize, dict):
         return sanitize_dict(obj_to_sanitize, keys, values, recursive, remove_none_values)
     elif isinstance(obj_to_sanitize, list):
         return sanitize_list(obj_to_sanitize, keys, values, recursive, recursive, remove_none_values)
