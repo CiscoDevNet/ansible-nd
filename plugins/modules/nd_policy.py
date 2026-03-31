@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Cisco Systems
+# Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, annotations, division, print_function
@@ -9,7 +9,7 @@ from __future__ import absolute_import, annotations, division, print_function
 # pylint: disable=invalid-name
 __metaclass__ = type
 # pylint: enable=invalid-name
-
+__copyright__ = "Copyright (c) 2026 Cisco and/or its affiliates."
 __author__ = "L Nikhil Sri Krishna"
 
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
@@ -20,10 +20,12 @@ module: nd_policy
 version_added: "1.0.0"
 short_description: Manages policies on Nexus Dashboard Fabric Controller (NDFC).
 description:
-- Supports creating, updating, deleting, querying, and deploying policies based on templates.
+- Supports creating, updating, deleting, querying, gathering, and deploying policies based on templates.
 - Supports C(merged) state for idempotent policy management.
 - Supports C(deleted) state for removing policies from NDFC and optionally from switches.
 - Supports C(query) state for retrieving existing policy information.
+- Supports C(gathered) state for exporting existing policies as playbook-compatible config.
+  The gathered output can be copy-pasted directly into a playbook for use with C(merged) state.
 - When O(use_desc_as_key=true), policies are identified by their description instead of policy ID.
 - B(Atomic behavior) — the entire task is treated as a single transaction.
   If any validation check fails (e.g., missing or duplicate descriptions), the module
@@ -55,6 +57,9 @@ options:
   config:
     description:
     - A list of dictionaries containing policy and switch information.
+    - Required for C(merged), C(deleted), and C(query) states.
+    - Optional for C(gathered) state. When omitted with C(gathered), all policies on all
+      fabric switches are exported. When provided, only matching policies are exported.
     - Policy entries define the template, description, priority, and template inputs.
     - A separate C(switch) entry lists the target switches and optional per-switch policy overrides.
     - All global policies (entries without C(switch) key) are applied to every switch listed
@@ -64,7 +69,6 @@ options:
       policies are simply merged with global policies).
     type: list
     elements: dict
-    required: true
     suboptions:
       name:
         description:
@@ -203,8 +207,13 @@ options:
     - B(Exception) — C(switch_freeform) policies skip the C(markDelete) flow entirely
       and are removed via a direct C(DELETE) API call regardless of the O(deploy) setting.
     - Use C(query) to retrieve existing policies without making changes.
+    - Use C(gathered) to export existing policies as playbook-compatible config.
+      When O(config) is provided, only matching policies are exported.
+      When O(config) is omitted, all policies on all fabric switches are exported.
+      The output under the C(gathered) return key can be used directly as O(config)
+      in a subsequent C(merged) task.
     type: str
-    choices: [ merged, deleted, query ]
+    choices: [ merged, deleted, query, gathered ]
     default: merged
 extends_documentation_fragment:
 - cisco.nd.modules
@@ -441,6 +450,28 @@ EXAMPLES = r"""
       - name: POLICY-102102
       - switch:
           - serial_number: "{{ switch1 }}"
+
+- name: Gather all policies on all fabric switches (no config needed)
+  cisco.nd.nd_policy:
+    fabric_name: "{{ fabric_name }}"
+    state: gathered
+  register: all_policies
+
+- name: Gather only switch_freeform policies on a specific switch
+  cisco.nd.nd_policy:
+    fabric_name: "{{ fabric_name }}"
+    state: gathered
+    config:
+      - name: switch_freeform
+      - switch:
+          - serial_number: "{{ switch1 }}"
+  register: freeform_policies
+
+- name: Use gathered output to re-create policies on another fabric
+  cisco.nd.nd_policy:
+    fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ all_policies.gathered }}"
 """
 
 RETURN = r"""
@@ -472,6 +503,27 @@ after:
   returned: always
   type: list
   elements: dict
+gathered:
+  description:
+  - List of policies exported as playbook-compatible config dicts.
+  - Each entry contains C(name) (template name), C(policy_id), C(switch),
+    C(description), C(priority), C(template_inputs), and C(create_additional_policy).
+  - Internal template input keys (e.g., C(FABRIC_NAME), C(POLICY_ID)) are
+    stripped so the output can be used directly as O(config) in a C(merged) task.
+  - Only returned when O(state=gathered).
+  returned: when state is gathered
+  type: list
+  elements: dict
+  sample:
+    - name: switch_freeform
+      policy_id: POLICY-28240
+      switch:
+        - serial_number: FDO29080NBU
+      description: my freeform policy
+      priority: 500
+      template_inputs:
+        CONF: "interface loopback100\n  description gathered"
+      create_additional_policy: false
 proposed:
   description:
   - List of proposed policy changes derived from the playbook config.

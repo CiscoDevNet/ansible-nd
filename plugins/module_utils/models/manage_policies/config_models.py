@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
+# Copyright: (c) 2026, Cisco Systems
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -253,12 +253,12 @@ class PlaybookPolicyConfig(NDNestedModel):
         """
         return dict(
             fabric_name=dict(type="str", required=True, aliases=["fabric"]),
-            config=dict(type="list", elements="dict", required=True),
+            config=dict(type="list", elements="dict"),
             use_desc_as_key=dict(type="bool", default=False),
             deploy=dict(type="bool", default=True),
             ticket_id=dict(type="str"),
             cluster_name=dict(type="str"),
-            state=dict(type="str", default="merged", choices=["merged", "deleted", "query"]),
+            state=dict(type="str", default="merged", choices=["merged", "deleted", "query", "gathered"]),
         )
 
 

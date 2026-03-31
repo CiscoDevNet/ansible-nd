@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Cisco Systems
+# Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """
@@ -29,8 +29,6 @@ from __future__ import absolute_import, annotations, division, print_function
 # pylint: disable=invalid-name
 __metaclass__ = type
 # pylint: enable=invalid-name
-
-__author__ = "L Nikhil Sri Krishna"
 
 import copy
 import logging
@@ -175,9 +173,13 @@ class NDPolicyModule:
         self.check_mode = self.module.check_mode
 
         if not self.config:
-            self.module.fail_json(
-                msg=f"'config' element is mandatory for state '{self.state}'."
-            )
+            if self.state != "gathered":
+                self.module.fail_json(
+                    msg=f"'config' element is mandatory for state '{self.state}'."
+                )
+            # For gathered without config, initialise to empty list so
+            # downstream code can iterate safely.
+            self.config = []
 
         # Template parameter cache: {templateName: [param_dict, ...]}
         # Populated lazily by _fetch_template_params() to avoid
@@ -190,6 +192,7 @@ class NDPolicyModule:
         self._before: List[Dict] = []
         self._after: List[Dict] = []
         self._proposed: List[Dict] = []
+        self._gathered: List[Dict] = []
 
         self.log.info(
             f"Initialized NDPolicyModule for fabric: {self.fabric_name}, state: {self.state}"
@@ -210,6 +213,10 @@ class NDPolicyModule:
         # Attach before/after snapshots
         final["before"] = self._before
         final["after"] = self._after
+
+        # Attach gathered output when gathered state produces results
+        if self._gathered:
+            final["gathered"] = self._gathered
 
         # Only expose proposed at info/debug output levels
         output_level = self.module.params.get("output_level", "normal")
@@ -258,6 +265,51 @@ class NDPolicyModule:
         """
         if not config:
             return []
+
+        # ── Step 0: Detect gathered / self-contained format ─────────────
+        #
+        # ``state=gathered`` returns each policy with its own embedded
+        # ``switch`` list (e.g., ``[{"serial_number": "FDO..."}]``).
+        # This makes the output directly usable as ``config:`` in a
+        # new ``state=merged`` task ("copy-paste round-trip").
+        #
+        # Detect this format: every entry that has a ``name`` also
+        # has a ``switch`` list.  If so, flatten each entry by
+        # extracting the serial number from its embedded switch list
+        # and return immediately — no global/switch separation needed.
+        has_self_contained = False
+        all_self_contained = True
+        for entry in config:
+            if entry.get("name") and isinstance(entry.get("switch"), list):
+                has_self_contained = True
+            elif entry.get("name"):
+                all_self_contained = False
+
+        if has_self_contained and all_self_contained:
+            result = []
+            for entry in config:
+                flat = copy.deepcopy(entry)
+                sw_list = flat.get("switch", [])
+                if isinstance(sw_list, list) and sw_list:
+                    sn = sw_list[0].get("serial_number") or sw_list[0].get("ip", "")
+                    flat["switch"] = sn
+                # Gathered output contains both ``name`` (template name)
+                # and ``policy_id`` (e.g. ``POLICY-28440``).  When
+                # ``policy_id`` is present, promote it to ``name`` so
+                # that merged state updates the existing policy in-place
+                # by ID.  The template name is preserved alongside for
+                # readability.
+                #
+                # If the user wants to create FRESH copies (new IDs)
+                # instead of updating, they simply remove the
+                # ``policy_id`` lines from the gathered output before
+                # feeding it back — ``name`` will remain as the template
+                # name and trigger a create.
+                policy_id = flat.pop("policy_id", None)
+                if policy_id:
+                    flat["name"] = policy_id
+                result.append(flat)
+            return result
 
         # ── Step 1: Separate globals from the switch entry ──────────────
         global_policies = []
@@ -429,7 +481,7 @@ class NDPolicyModule:
 
         return config
 
-    def _query_fabric_switches(self):
+    def _query_fabric_switches(self) -> List[Dict]:
         """Query all switches for the fabric and return raw switch records.
 
         Uses RestSend save_settings/restore_settings to temporarily force
@@ -439,7 +491,7 @@ class NDPolicyModule:
         Returns:
             List of switch record dicts from the fabric inventory API.
         """
-        path = f"{BasePath.nd_manage_fabrics(self.fabric_name, 'switches')}?max=10000"
+        path = f"{BasePath.path('fabrics', self.fabric_name, 'switches')}?max=10000"
 
         rest_send = self.nd._get_rest_send()
         rest_send.save_settings()
@@ -561,6 +613,14 @@ class NDPolicyModule:
             None.
         """
         self.log.info(f"Managing state: {self.state}")
+
+        # Gathered state: skip the full config pipeline when config is empty
+        if self.state == "gathered":
+            if self.config:
+                # With config: validate & prepare, then gather matching policies
+                self.validate_and_prepare_config()
+            self._handle_gathered_state()
+            return
 
         # Full config pipeline: pydantic → resolve → translate → validate
         self.validate_and_prepare_config()
@@ -827,6 +887,282 @@ class NDPolicyModule:
         self.log.info(f"Computed {len(diff_results)} delete results")
         self._execute_deleted(diff_results)
         self.log.debug("EXIT: _handle_deleted_state()")
+
+    # =========================================================================
+    # Gathered State
+    # =========================================================================
+
+    def _handle_gathered_state(self) -> None:
+        """Handle state=gathered: export existing policies as playbook-ready config.
+
+        Two modes:
+            - **With config** — ``self.config`` is non-empty. For each config
+              entry, look up matching policies (same logic as query) and
+              convert each match into a playbook-compatible config dict.
+            - **Without config** — ``self.config`` is empty. Fetch *all*
+              policies on the fabric and convert them.
+
+        The converted output is stored in ``self._gathered`` and surfaced
+        in the module return under the ``gathered`` key.
+
+        Returns:
+            None.
+        """
+        self.log.debug("ENTER: _handle_gathered_state()")
+        self.log.info("Handling gathered state")
+
+        policies: List[Dict] = []
+
+        if self.config:
+            # --- With config: query matching policies per entry ---
+            self.log.info(f"Gathered with config: {len(self.config)} entries")
+            for config_entry in self.config:
+                want = self._build_want(config_entry, state="query")
+                have_list, error_msg = self._build_have(want)
+
+                if error_msg:
+                    self.log.warning(f"Gathered: build_have error: {error_msg}")
+                    self._register_result(
+                        action="policy_gathered",
+                        state="gathered",
+                        operation_type=OperationType.QUERY,
+                        return_code=-1,
+                        message=error_msg,
+                        success=False,
+                        found=False,
+                        diff={"action": "fail", "want": want, "error": error_msg},
+                    )
+                    continue
+
+                policies.extend(have_list)
+        else:
+            # --- Without config: fetch every policy on every switch ---
+            self.log.info("Gathered without config: fetching all fabric switches")
+            switches = self._get_fabric_switches()
+            if not switches:
+                self.log.warning("No switches found in fabric")
+                self._register_result(
+                    action="policy_gathered",
+                    state="gathered",
+                    operation_type=OperationType.QUERY,
+                    return_code=200,
+                    message="No switches found in fabric",
+                    success=True,
+                    found=False,
+                    diff={"action": "not_found"},
+                )
+                self.log.debug("EXIT: _handle_gathered_state()")
+                return
+
+            for switch_sn in switches:
+                self.log.debug(f"Gathering policies for switch {switch_sn}")
+                lucene = self._build_lucene_filter(switchId=switch_sn)
+                switch_policies = self._query_policies(lucene, include_mark_deleted=False)
+                self.log.info(
+                    f"Found {len(switch_policies)} policies on switch {switch_sn}"
+                )
+                policies.extend(switch_policies)
+
+        if not policies:
+            self.log.info("Gathered: no policies found")
+            self._register_result(
+                action="policy_gathered",
+                state="gathered",
+                operation_type=OperationType.QUERY,
+                return_code=200,
+                message="No policies found",
+                success=True,
+                found=False,
+                diff={"action": "not_found", "match_count": 0},
+            )
+            self.log.debug("EXIT: _handle_gathered_state()")
+            return
+
+        # De-duplicate by policyId (multiple config entries might match
+        # the same underlying policy).
+        seen_ids: set = set()
+        unique_policies: List[Dict] = []
+        for pol in policies:
+            pid = pol.get("policyId")
+            if pid and pid in seen_ids:
+                continue
+            if pid:
+                seen_ids.add(pid)
+            unique_policies.append(pol)
+
+        self.log.info(f"Gathered {len(unique_policies)} unique policies (from {len(policies)} total)")
+
+        # Convert each policy to playbook-ready config
+        for policy in unique_policies:
+            config_entry = self._policy_to_config(policy)
+            self._gathered.append(config_entry)
+
+        self._register_result(
+            action="policy_gathered",
+            state="gathered",
+            operation_type=OperationType.QUERY,
+            return_code=200,
+            message=f"Gathered {len(self._gathered)} policies",
+            data=self._gathered,
+            success=True,
+            found=True,
+            diff={"action": "gathered", "match_count": len(self._gathered)},
+        )
+
+        self.log.debug("EXIT: _handle_gathered_state()")
+
+    def _get_fabric_switches(self) -> List[str]:
+        """Fetch all switch serial numbers in the current fabric.
+
+        Delegates to ``_query_fabric_switches()`` for the API call and
+        extracts serial numbers from the raw switch records.
+
+        Returns:
+            List of serial number strings.
+        """
+        self.log.debug("ENTER: _get_fabric_switches()")
+
+        try:
+            records = self._query_fabric_switches()
+        except Exception as exc:
+            self.log.warning(f"Failed to fetch fabric switches: {exc}")
+            return []
+
+        switches = []
+        for sw in records:
+            sn = sw.get("serialNumber") or sw.get("switchId") or sw.get("switchDbID")
+            if sn:
+                switches.append(sn)
+
+        self.log.info(f"Found {len(switches)} switches in fabric '{self.fabric_name}'")
+        self.log.debug(f"EXIT: _get_fabric_switches() -> {switches}")
+        return switches
+
+    def _policy_to_config(self, policy: Dict) -> Dict:
+        """Convert a controller policy dict to a playbook-compatible config entry.
+
+        The output format matches what ``state=merged`` expects, so the
+        user can copy-paste the gathered output directly into a playbook.
+
+        Internal template input keys (e.g., ``FABRIC_NAME``, ``POLICY_ID``,
+        ``SERIAL_NUMBER``) are stripped via ``_clean_template_inputs()``.
+
+        Args:
+            policy: Raw policy dict from the NDFC API.
+
+        Returns:
+            Dict with keys: name, policy_id, switch, description, priority,
+            template_inputs, create_additional_policy.
+        """
+        template_name = policy.get("templateName", "")
+        policy_id = policy.get("policyId", "")
+        description = policy.get("description", "")
+        priority = policy.get("priority", 500)
+        switch_id = policy.get("switchId") or policy.get("serialNumber", "")
+
+        # Parse templateInputs — stored as a JSON-encoded string or dict
+        raw_inputs = policy.get("templateInputs") or policy.get("nvPairs") or {}
+        if isinstance(raw_inputs, str):
+            import json
+            try:
+                raw_inputs = json.loads(raw_inputs)
+            except (json.JSONDecodeError, ValueError):
+                self.log.warning(
+                    f"Failed to parse templateInputs for {policy_id}: {raw_inputs!r}"
+                )
+                raw_inputs = {}
+
+        # Clean internal keys from template inputs
+        cleaned_inputs = self._clean_template_inputs(template_name, raw_inputs)
+
+        config_entry = {
+            "name": template_name,
+            "policy_id": policy_id,
+            "switch": [{"serial_number": switch_id}],
+            "description": description,
+            "priority": priority,
+            "template_inputs": cleaned_inputs,
+            "create_additional_policy": False,
+        }
+
+        self.log.debug(f"Converted policy {policy_id} to config: {config_entry}")
+        return config_entry
+
+    def _clean_template_inputs(
+        self, template_name: str, raw_inputs: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Remove system-injected keys from template inputs.
+
+        Fetches the template's parameter definitions via the
+        configTemplates API and keeps **only** the keys that appear in
+        the template's parameter list.  Any key in ``raw_inputs`` that
+        is not a declared template parameter (e.g. ``FABRIC_NAME``,
+        ``POLICY_ID``, ``SERIAL_NUMBER``) is an NDFC-injected system
+        key and is stripped.
+
+        If the template parameter fetch fails, falls back to a
+        hardcoded set of known NDFC-injected keys and emits a warning.
+
+        Args:
+            template_name: Template name for fetching parameter definitions.
+            raw_inputs:    Raw ``templateInputs`` dict from the controller.
+
+        Returns:
+            Cleaned dict with only actual template parameter keys.
+        """
+        self.log.debug(
+            f"ENTER: _clean_template_inputs(template={template_name}, "
+            f"keys={list(raw_inputs.keys())})"
+        )
+
+        params = self._fetch_template_params(template_name)
+
+        if params:
+            # Build set of ALL parameter names declared in the template.
+            # Only keys present in this set are real template inputs;
+            # everything else is NDFC-injected and should be stripped.
+            template_param_names: set = set()
+            for p in params:
+                name = p.get("name")
+                if name:
+                    template_param_names.add(name)
+
+            self.log.debug(
+                f"Template '{template_name}': {len(template_param_names)} "
+                f"declared params: {sorted(template_param_names)}"
+            )
+
+            cleaned = {
+                k: v for k, v in raw_inputs.items()
+                if k in template_param_names
+            }
+
+            stripped = set(raw_inputs.keys()) - template_param_names
+            if stripped:
+                self.log.debug(
+                    f"Stripped {len(stripped)} non-template keys: {sorted(stripped)}"
+                )
+        else:
+            # Fallback: strip commonly known NDFC-injected keys
+            _KNOWN_INTERNAL_KEYS = {
+                "FABRIC_NAME", "POLICY_ID", "POLICY_DESC", "PRIORITY",
+                "SERIAL_NUMBER", "SECENTITY", "SECENTTYPE", "SOURCE",
+                "MARK_DELETED", "SWITCH_DB_ID", "POLICY_GROUP_ID",
+            }
+            self.log.warning(
+                f"Could not fetch template params for '{template_name}'. "
+                f"Falling back to hardcoded internal keys: {sorted(_KNOWN_INTERNAL_KEYS)}"
+            )
+            cleaned = {
+                k: v for k, v in raw_inputs.items()
+                if k not in _KNOWN_INTERNAL_KEYS
+            }
+
+        self.log.debug(
+            f"EXIT: _clean_template_inputs() -> {len(cleaned)} keys "
+            f"(removed {len(raw_inputs) - len(cleaned)})"
+        )
+        return cleaned
 
     # =========================================================================
     # Helpers: Classification & Filtering
@@ -1439,8 +1775,8 @@ class NDPolicyModule:
             f"Case C: Lookup by switchId={want['switchId']} + "
             f"description='{want_desc}'"
         )
-        # For merged/deleted states, Pydantic already enforces description
-        # non-empty.  This guard is the backstop for query state, where
+        # For merged/deleted states, Pydantic enforces that description
+        # is non-empty.  This guard covers query/gathered states where
         # Pydantic intentionally skips the check.
         if not want_desc:
             self.log.warning("Case C: description is required but not provided")
@@ -1999,9 +2335,9 @@ class NDPolicyModule:
         # in the same batch.
         #
         # NOTE: The orphan risk for DAC entries is inherent — NDFC has
-        # no atomic "replace policy" API.  dcnm_policy has the same
-        # limitation.  Re-running the playbook will re-create the
-        # policy (it will be seen as "not found" → create).
+        # no atomic "replace policy" API.  Re-running the playbook
+        # will re-create the policy (it will be seen as
+        # "not found" → create).
 
         # Filter out DAC entries whose old policy failed to be removed
         eligible_dac = []
@@ -2902,7 +3238,7 @@ class NDPolicyModule:
                 normal_delete_ids, state="deleted"
             )
 
-        # deploy=false legacy behavior: stop after markDelete
+        # deploy=false: stop after markDelete
         if not self.deploy:
             self.log.info(
                 "Deploy=false: skipping pushConfig/remove; "
