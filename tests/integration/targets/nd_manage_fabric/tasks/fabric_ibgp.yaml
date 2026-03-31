@@ -28,7 +28,7 @@
   cisco.nd.nd_manage_fabric_ibgp:
     state: merged
     config:
-      - "{{ {'name': test_fabric_merged} | combine(common_fabric_config) }}"
+      - "{{ {'name': test_fabric_merged} | combine(fabric_config_ibgp) }}"
   register: merged_result_1
   tags: [test_merged, test_merged_create]
 
@@ -45,7 +45,7 @@
   cisco.nd.nd_manage_fabric_ibgp:
     state: merged
     config:
-      - "{{ {'name': test_fabric_merged} | combine(common_fabric_config) }}"
+      - "{{ {'name': test_fabric_merged} | combine(fabric_config_ibgp) }}"
   register: merged_result_2
   tags: [test_merged, test_merged_idempotent]
 
@@ -429,11 +429,6 @@
     fail_msg: "Replaced state is not idempotent - should not change when run twice with same config"
     success_msg: "Replaced state is idempotent - no changes on second run"
   tags: [test_replaced, test_replaced_idempotent]
-
-# - name: "PAUSE: Review TEST 2b results before continuing"
-#   ansible.builtin.pause:
-#     prompt: "TEST 2b complete. Review results and press Enter to continue, or Ctrl+C then A to abort"
-#   tags: [test_replaced, test_replaced_idempotent]
 
 - name: "TEST 2c: Update fabric using state replaced (complete replacement)"
   cisco.nd.nd_manage_fabric_ibgp:
@@ -831,11 +826,6 @@
       ========================================
   tags: [test_replaced, test_replaced_validation]
 
-# - name: "PAUSE: Review TEST 2c results before continuing"
-#   ansible.builtin.pause:
-#     prompt: "TEST 2c complete. Review results and press Enter to continue, or Ctrl+C then A to abort"
-#   tags: [test_replaced, test_replaced_idempotent]
-
 #############################################################################
 # TEST 3: Demonstrate difference between merged and replaced states
 #############################################################################
@@ -843,7 +833,7 @@
   cisco.nd.nd_manage_fabric_ibgp:
     state: replaced
     config:
-      - "{{ {'name': test_fabric_deleted} | combine(common_fabric_config) }}"
+      - "{{ {'name': test_fabric_deleted} | combine(fabric_config_ibgp) }}"
   register: comparison_fabric_creation
   tags: [test_comparison]
 

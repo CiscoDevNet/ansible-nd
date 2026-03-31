@@ -13,7 +13,8 @@ ext_test_fabric_replaced: "ext_test_fabric_replaced"
 ext_test_fabric_deleted: "ext_test_fabric_deleted"
 
 # Common fabric configuration for all tests
-common_fabric_config:
+# common_fabric_config:
+fabric_config_ibgp:
   category: fabric
   location:
     latitude: 37.7749
@@ -26,12 +27,20 @@ common_fabric_config:
     type: vxlanIbgp
     bgp_asn: "65001.55"
     site_id: "65001"
+    overlay_mode: cli
+    underlay_ipv6: false
     fabric_interface_type: p2p
     link_state_routing_protocol: ospf
+    ospf_area_id: "0.0.0.0"
     route_reflector_count: 4
     target_subnet_mask: 30
     anycast_gateway_mac: "2020.0000.00aa"
+    fabric_mtu: 9216
+    l2_host_interface_mtu: 9216
     performance_monitoring: false
+    static_underlay_ip_allocation: false
+
+    # Replication / Multicast
     replication_mode: multicast
     multicast_group_subnet: "239.1.1.0/25"
     auto_generate_multicast_group_address: false
@@ -41,6 +50,9 @@ common_fabric_config:
     rendezvous_point_count: 2
     rendezvous_point_mode: asm
     rendezvous_point_loopback_id: 254
+    pim_hello_authentication: false
+
+    # vPC
     vpc_peer_link_vlan: "3600"
     vpc_peer_link_enable_native_vlan: false
     vpc_peer_keep_alive_option: loopback
@@ -48,45 +60,143 @@ common_fabric_config:
     vpc_delay_restore_timer: 150
     vpc_peer_link_port_channel_id: "500"
     vpc_ipv6_neighbor_discovery_sync: true
+    vpc_layer3_peer_router: true
+    vpc_tor_delay_restore_timer: 30
+    fabric_vpc_domain_id: false
+    fabric_vpc_qos: false
+    enable_peer_switch: false
+
+    # PIP / Advertising
     advertise_physical_ip: false
+    advertise_physical_ip_on_border: true
+    anycast_border_gateway_advertise_physical_ip: false
+
+    # Domain / Loopback IDs
     vpc_domain_id_range: "1-1000"
     bgp_loopback_id: 0
     nve_loopback_id: 1
+
+    # Templates
     vrf_template: Default_VRF_Universal
     network_template: Default_Network_Universal
     vrf_extension_template: Default_VRF_Extension_Universal
     network_extension_template: Default_Network_Extension_Universal
+
+    # Protocol Authentication
+    bgp_authentication: false
+    ospf_authentication: false
+    bfd: false
+    macsec: false
+    vrf_lite_macsec: false
+
+    # BGP / Routing Enhancements
+    auto_bgp_neighbor_description: true
+    ibgp_peer_template: ""
+    leaf_ibgp_peer_template: ""
+    link_state_routing_tag: "UNDERLAY"
+
+    # Resource ID Ranges
     l3_vni_no_vlan_default_option: false
-    fabric_mtu: 9216
-    l2_host_interface_mtu: 9216
+    l2_vni_range: "30000-49000"
+    l3_vni_range: "50000-59000"
+    network_vlan_range: "2300-2999"
+    vrf_vlan_range: "2000-2299"
+    sub_interface_dot1q_range: "2-511"
+    ip_service_level_agreement_id_range: "10000-19999"
+    object_tracking_number_range: "100-299"
+    service_network_vlan_range: "3000-3199"
+    route_map_sequence_number_range: "1-65534"
+
+    # IP Ranges
+    bgp_loopback_ip_range: "10.2.0.0/22"
+    nve_loopback_ip_range: "10.3.0.0/22"
+    anycast_rendezvous_point_ip_range: "10.254.254.0/24"
+    intra_fabric_subnet_range: "10.4.0.0/16"
+
+    # VRF Lite / DCI
+    vrf_lite_auto_config: manual
+    vrf_lite_subnet_range: "10.33.0.0/16"
+    vrf_lite_subnet_target_mask: 30
+    auto_unique_vrf_lite_ip_prefix: false
+
+    # Per-VRF Loopback
+    per_vrf_loopback_auto_provision: true
+    per_vrf_loopback_ip_range: "10.5.0.0/22"
+    per_vrf_loopback_auto_provision_ipv6: false
+
+    # Management / System
     tenant_dhcp: true
     nxapi: true
     nxapi_https_port: 443
     nxapi_http: false
     nxapi_http_port: 80
     snmp_trap: true
-    anycast_border_gateway_advertise_physical_ip: false
-    greenfield_debug_flag: enable
-    tcam_allocation: true
+    cdp: false
     real_time_interface_statistics_collection: false
     interface_statistics_load_interval: 10
-    bgp_loopback_ip_range: "10.2.0.0/22"
-    nve_loopback_ip_range: "10.3.0.0/22"
-    anycast_rendezvous_point_ip_range: "10.254.254.0/24"
-    intra_fabric_subnet_range: "10.4.0.0/16"
-    l2_vni_range: "30000-49000"
-    l3_vni_range: "50000-59000"
-    network_vlan_range: "2300-2999"
-    vrf_vlan_range: "2000-2299"
-    sub_interface_dot1q_range: "2-511"
-    vrf_lite_auto_config: manual
-    vrf_lite_subnet_range: "10.33.0.0/16"
-    vrf_lite_subnet_target_mask: 30
-    auto_unique_vrf_lite_ip_prefix: false
-    per_vrf_loopback_auto_provision: true
-    per_vrf_loopback_ip_range: "10.5.0.0/22"
+    tcam_allocation: true
+    inband_management: false
+
+    # Security
+    security_group_tag: false
+    private_vlan: false
+
+    # QoS / Queuing
+    default_queuing_policy: false
+    aiml_qos: false
+
+    # DLB / AI
+    dlb: false
+    ai_load_sharing: false
+
+    # PTP / STP / MPLS
+    ptp: false
+    stp_root_option: unmanaged
+    mpls_handoff: false
+
+    # Leaf / TOR
+    allow_vlan_on_leaf_tor_pairing: none
+    leaf_tor_id_range: false
+
+    # OAM / Compliance
+    nve_hold_down_timer: 180
+    next_generation_oam: true
+    strict_config_compliance_mode: false
+    greenfield_debug_flag: enable
+
+    # System Policies
+    advanced_ssh_option: false
+    copp_policy: strict
+    power_redundancy_mode: redundant
+    host_interface_admin_state: true
+    policy_based_routing: false
+
+    # Freeform Config
+    extra_config_leaf: ""
+    extra_config_spine: ""
+    extra_config_tor: ""
+    extra_config_intra_fabric_links: ""
+    extra_config_aaa: ""
+    pre_interface_config_leaf: ""
+    pre_interface_config_spine: ""
+    pre_interface_config_tor: ""
+
+    # Banner
     banner: |
       @ADVISORY This is a test fabric deployed by Ansible for validation purposes. Do not make changes to this fabric outside of Ansible or use it for production traffic. ADVISORY@
+
+    # Backup
+    real_time_backup: false
+    scheduled_backup: false
+
+    # Brownfield
+    brownfield_network_name_format: "Auto_Net_VNI$$VNI$$_VLAN$$VLAN_ID$$"
+    brownfield_skip_overlay_network_attachments: false
+
+    # Hypershield
+    allow_smart_switch_onboarding: false
+
+    # Bootstrap / DHCP
     day0_bootstrap: false
     local_dhcp_server: false
     dhcp_protocol_version: dhcpv4
@@ -96,7 +206,8 @@ common_fabric_config:
     management_ipv4_prefix: 24
 
 # Common External Connectivity fabric configuration for all External tests
-common_external_fabric_config:
+# common_external_fabric_config:
+fabric_config_external:
   category: fabric
   location:
     latitude: 37.7749
@@ -135,7 +246,8 @@ common_external_fabric_config:
     management_ipv4_prefix: 24
 
 # Common eBGP fabric configuration for all eBGP tests
-common_ebgp_fabric_config:
+# common_ebgp_fabric_config:
+fabric_config_ebgp:
   category: fabric
   location:
     latitude: 37.7749

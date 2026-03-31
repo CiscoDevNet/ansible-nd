@@ -28,7 +28,7 @@
   cisco.nd.nd_manage_fabric_external:
     state: merged
     config:
-      - "{{ {'name': ext_test_fabric_merged} | combine(common_external_fabric_config) }}"
+      - "{{ {'name': ext_test_fabric_merged} | combine(fabric_config_external) }}"
   register: ext_merged_result_1
   tags: [test_merged, test_merged_create]
 
@@ -45,7 +45,7 @@
   cisco.nd.nd_manage_fabric_external:
     state: merged
     config:
-      - "{{ {'name': ext_test_fabric_merged} | combine(common_external_fabric_config) }}"
+      - "{{ {'name': ext_test_fabric_merged} | combine(fabric_config_external) }}"
   register: ext_merged_result_2
   tags: [test_merged, test_merged_idempotent]
 
@@ -481,7 +481,7 @@
   cisco.nd.nd_manage_fabric_external:
     state: replaced
     config:
-      - "{{ {'name': ext_test_fabric_deleted} | combine(common_external_fabric_config) }}"
+      - "{{ {'name': ext_test_fabric_deleted} | combine(fabric_config_external) }}"
   register: ext_comparison_fabric_creation
   tags: [test_comparison]
 

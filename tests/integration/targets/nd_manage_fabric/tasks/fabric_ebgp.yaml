@@ -28,7 +28,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - "{{ {'name': ebgp_test_fabric_merged} | combine(common_ebgp_fabric_config) }}"
+      - "{{ {'name': ebgp_test_fabric_merged} | combine(fabric_config_ebgp) }}"
   register: ebgp_merged_result_1
   tags: [test_merged, test_merged_create]
 
@@ -45,7 +45,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - "{{ {'name': ebgp_test_fabric_merged} | combine(common_ebgp_fabric_config) }}"
+      - "{{ {'name': ebgp_test_fabric_merged} | combine(fabric_config_ebgp) }}"
   register: ebgp_merged_result_2
   tags: [test_merged, test_merged_idempotent]
 
@@ -888,7 +888,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: replaced
     config:
-      - "{{ {'name': ebgp_test_fabric_deleted} | combine(common_ebgp_fabric_config) }}"
+      - "{{ {'name': ebgp_test_fabric_deleted} | combine(fabric_config_ebgp) }}"
   register: ebgp_comparison_fabric_creation
   tags: [test_comparison]
 
