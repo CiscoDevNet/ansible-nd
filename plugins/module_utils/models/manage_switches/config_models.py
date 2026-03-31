@@ -303,6 +303,7 @@ class SwitchConfigModel(NDBaseModel):
     """
 
     identifiers: ClassVar[List[str]] = ["seed_ip"]
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
 
     # Fields excluded from diff — only seed_ip + role are compared
     exclude_from_diff: ClassVar[List[str]] = [

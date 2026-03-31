@@ -2376,9 +2376,14 @@ class NDSwitchResourceModule:
             proposed_config = SwitchDiffEngine.validate_configs(self.config, self.state, self.nd, self.log) if self.config else None
             return self._handle_deleted_state(proposed_config)
 
-        # merged / overridden — config is required
-        if not self.config:
-            self.nd.module.fail_json(msg=f"'config' is required for '{self.state}' state.")
+        # merged — config is required
+        if self.state == "merged" and not self.config:
+            self.nd.module.fail_json(msg="'config' is required for 'merged' state.")
+
+        # overridden with no/empty config — desired state is zero switches, delete all
+        if self.state == "overridden" and not self.config:
+            self.log.info("Overridden state with no config — deleting all switches from fabric")
+            return self._handle_deleted_state(None)
 
         proposed_config = SwitchDiffEngine.validate_configs(self.config, self.state, self.nd, self.log)
         # Partition configs by operation type
@@ -2585,6 +2590,9 @@ class NDSwitchResourceModule:
 
         if not switch_actions:
             self.log.info("No switch actions to process after add/migration collection")
+            if idempotent_save_req:
+                self.log.info("Config save and deploy required for out-of-sync idempotent switch(es)")
+                self.fabric_ops.finalize()
             return
 
         # Common post-processing for all switches (new + migration)

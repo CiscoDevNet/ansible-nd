@@ -300,10 +300,12 @@ EXAMPLES = """
         username: admin
         password: "{{ switch_password }}"
         role: leaf
+        preserve_config: false
       - seed_ip: 192.168.10.202
         username: admin
         password: "{{ switch_password }}"
         role: spine
+        preserve_config: false
     state: merged
 
 - name: Preprovision a switch via POAP
@@ -313,6 +315,7 @@ EXAMPLES = """
       - seed_ip: 192.168.10.1
         username: admin
         password: "{{ switch_password }}"
+        role: spine
         preprovision:
           serial_number: SAL1234ABCD
           model: N9K-C93180YC-EX
@@ -331,6 +334,7 @@ EXAMPLES = """
       - seed_ip: 192.168.10.1
         username: admin
         password: "{{ switch_password }}"
+        role: leaf
         poap:
           serial_number: SAL5678EFGH
           hostname: leaf-bootstrap
@@ -365,6 +369,7 @@ EXAMPLES = """
             image_policy: my-image-policy
             ip: 192.168.10.50
             gateway_ip: 192.168.10.1/24
+            discovery_username: root
             discovery_password: "{{ discovery_password }}"
     state: merged
 
@@ -384,35 +389,7 @@ EXAMPLES = """
 
 """
 
-RETURN = """
-previous:
-  description: The configuration prior to the module execution.
-  returned: when state is not gathered
-  type: list
-  elements: dict
-proposed:
-  description: The proposed configuration sent to the API.
-  returned: when state is not gathered
-  type: list
-  elements: dict
-sent:
-  description: The configuration sent to the API.
-  returned: when state is not gathered
-  type: list
-  elements: dict
-current:
-  description: The current configuration after module execution.
-  returned: when state is not gathered
-  type: list
-  elements: dict
-gathered:
-  description:
-  - The current fabric switch inventory returned in config format.
-  - Each entry mirrors the C(config) input schema (seed_ip, role,
-    auth_proto, preserve_config). Credentials are replaced with placeholders.
-  returned: when state is gathered
-  type: list
-  elements: dict
+RETURN = r"""
 """
 
 import logging
@@ -449,7 +426,6 @@ def main():
         supports_check_mode=True,
         required_if=[
             ("state", "merged", ["config"]),
-            ("state", "overridden", ["config"]),
         ],
     )
 

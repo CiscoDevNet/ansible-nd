@@ -208,6 +208,7 @@ class SwitchDataModel(NDBaseModel):
 
     identifiers: ClassVar[List[str]] = ["switch_id"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    exclude_from_diff: ClassVar[set] = {"system_up_time", "anomaly_level", "advisory_level", "alert_suspend"}
     switch_id: str = Field(
         ...,
         alias="switchId",

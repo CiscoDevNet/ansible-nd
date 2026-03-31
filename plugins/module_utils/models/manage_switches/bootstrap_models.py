@@ -141,8 +141,8 @@ class BootstrapImportSpecificModel(NDBaseModel):
     Switch-identifying fields returned by the bootstrap GET API prior to import.
     """
 
-    identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
+    identifiers: ClassVar[List[str]] = ["serial_number"]
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
     hostname: str = Field(..., description="Hostname of the bootstrap switch")
     ip: str = Field(..., description="IP address of the bootstrap switch")
     serial_number: str = Field(..., alias="serialNumber", description="Serial number of the bootstrap switch")
