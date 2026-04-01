@@ -13,7 +13,6 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from ipaddress import ip_network
 from typing import Any, Dict, List, Optional, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -141,39 +140,25 @@ class PreProvisionSwitchModel(NDBaseModel):
     @field_validator("ip", "dhcp_bootstrap_ip", mode="before")
     @classmethod
     def validate_ip(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        result = SwitchValidators.validate_ip_address(v)
-        if result is None:
-            raise ValueError(f"Invalid IP address: {v}")
-        return result
+        return SwitchValidators.validate_ip_address(v)
 
     @field_validator("hostname", mode="before")
     @classmethod
     def validate_host(cls, v: str) -> str:
-        result = SwitchValidators.validate_hostname(v)
-        if result is None:
-            raise ValueError("hostname cannot be empty")
-        return result
+        return SwitchValidators.require_hostname(v)
 
     @field_validator("serial_number", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError("serial_number cannot be empty")
-        return result
+        return SwitchValidators.require_serial_number(v)
 
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
     def validate_gateway(cls, v: str) -> str:
-        if not v or "/" not in v:
+        result = SwitchValidators.validate_cidr(v)
+        if result is None:
             raise ValueError("gatewayIpMask must include subnet mask (e.g., 10.23.244.1/24)")
-        try:
-            ip_network(v, strict=False)
-        except Exception as exc:
-            raise ValueError(f"Invalid gatewayIpMask: {v}") from exc
-        return v
+        return result
 
     @computed_field(alias="useNewCredentials")
     @property

@@ -131,26 +131,17 @@ class SwitchDiscoveryModel(NDBaseModel):
     @field_validator("hostname", mode="before")
     @classmethod
     def validate_host(cls, v: str) -> str:
-        result = SwitchValidators.validate_hostname(v)
-        if result is None:
-            raise ValueError("hostname cannot be empty")
-        return result
+        return SwitchValidators.require_hostname(v)
 
     @field_validator("ip", mode="before")
     @classmethod
     def validate_ip(cls, v: str) -> str:
-        result = SwitchValidators.validate_ip_address(v)
-        if result is None:
-            raise ValueError("ip cannot be empty")
-        return result
+        return SwitchValidators.require_ip_address(v)
 
     @field_validator("serial_number", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError("serial_number cannot be empty")
-        return result
+        return SwitchValidators.require_serial_number(v)
 
     @field_validator("vdc_mac", mode="before")
     @classmethod

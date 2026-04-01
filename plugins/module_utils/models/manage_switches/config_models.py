@@ -117,25 +117,23 @@ class POAPConfigModel(NDNestedModel):
         description="Name of the image policy to be applied on switch",
     )
 
+    @field_validator("hostname", mode="before")
+    @classmethod
+    def validate_hostname_field(cls, v: str) -> str:
+        """Validate hostname is not empty and well-formed."""
+        return SwitchValidators.require_hostname(v)
+
     @model_validator(mode="after")
     def validate_discovery_credentials_pair(self) -> "POAPConfigModel":
         """Validate that discovery_username and discovery_password are both set or both absent."""
-        has_user = bool(self.discovery_username)
-        has_pass = bool(self.discovery_password)
-        if has_user and not has_pass:
-            raise ValueError("discovery_password must be set when discovery_username is specified")
-        if has_pass and not has_user:
-            raise ValueError("discovery_username must be set when discovery_password is specified")
+        SwitchValidators.check_discovery_credentials_pair(self.discovery_username, self.discovery_password)
         return self
 
     @field_validator("serial_number", mode="before")
     @classmethod
     def validate_serial_number_field(cls, v: str) -> str:
         """Validate serial_number is not empty."""
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError("serial_number cannot be empty")
-        return result
+        return SwitchValidators.require_serial_number(v)
 
 
 class PreprovisionConfigModel(NDNestedModel):
@@ -182,25 +180,23 @@ class PreprovisionConfigModel(NDNestedModel):
         description="Image policy to apply during pre-provision",
     )
 
+    @field_validator("hostname", mode="before")
+    @classmethod
+    def validate_hostname_field(cls, v: str) -> str:
+        """Validate hostname is not empty and well-formed."""
+        return SwitchValidators.require_hostname(v)
+
     @model_validator(mode="after")
     def validate_discovery_credentials_pair(self) -> "PreprovisionConfigModel":
         """Validate that discovery_username and discovery_password are both set or both absent."""
-        has_user = bool(self.discovery_username)
-        has_pass = bool(self.discovery_password)
-        if has_user and not has_pass:
-            raise ValueError("discovery_password must be set when discovery_username is specified")
-        if has_pass and not has_user:
-            raise ValueError("discovery_username must be set when discovery_password is specified")
+        SwitchValidators.check_discovery_credentials_pair(self.discovery_username, self.discovery_password)
         return self
 
     @field_validator("serial_number", mode="before")
     @classmethod
     def validate_serial_number_field(cls, v: str) -> str:
         """Validate serial_number is not empty."""
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError("serial_number cannot be empty")
-        return result
+        return SwitchValidators.require_serial_number(v)
 
 
 class RMAConfigModel(NDNestedModel):
@@ -246,20 +242,12 @@ class RMAConfigModel(NDNestedModel):
     @classmethod
     def validate_serial_numbers(cls, v: str) -> str:
         """Validate new_serial_number is not empty."""
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError("Serial number cannot be empty")
-        return result
+        return SwitchValidators.require_serial_number(v, "new_serial_number")
 
     @model_validator(mode="after")
     def validate_discovery_credentials_pair(self) -> "RMAConfigModel":
         """Validate that discovery_username and discovery_password are both set or both absent."""
-        has_user = bool(self.discovery_username)
-        has_pass = bool(self.discovery_password)
-        if has_user and not has_pass:
-            raise ValueError("discovery_password must be set when discovery_username is specified")
-        if has_pass and not has_user:
-            raise ValueError("discovery_username must be set when discovery_password is specified")
+        SwitchValidators.check_discovery_credentials_pair(self.discovery_username, self.discovery_password)
         return self
 
 

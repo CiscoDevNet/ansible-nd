@@ -48,7 +48,7 @@ class BootstrapBaseData(NDNestedModel):
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
     def validate_gateway(cls, v: Optional[str]) -> Optional[str]:
-        return SwitchValidators.validate_cidr(v)
+        return SwitchValidators.validate_cidr_optional(v)
 
 
 class BootstrapBaseModel(NDBaseModel):
@@ -76,12 +76,7 @@ class BootstrapBaseModel(NDBaseModel):
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
     def validate_gateway(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        result = SwitchValidators.validate_cidr(v)
-        if result is None:
-            raise ValueError("gateway_ip_mask is not a valid CIDR")
-        return result
+        return SwitchValidators.validate_cidr_optional(v)
 
 
 class BootstrapCredentialModel(NDBaseModel):
@@ -165,25 +160,17 @@ class BootstrapImportSpecificModel(NDBaseModel):
     @field_validator("hostname", mode="before")
     @classmethod
     def validate_host(cls, v: str) -> str:
-        result = SwitchValidators.validate_hostname(v)
-        if result is None:
-            raise ValueError("hostname cannot be empty")
-        return result
+        return SwitchValidators.require_hostname(v)
 
     @field_validator("ip", "dhcp_bootstrap_ip", mode="before")
     @classmethod
     def validate_ip(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
         return SwitchValidators.validate_ip_address(v)
 
     @field_validator("serial_number", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError("serial_number cannot be empty")
-        return result
+        return SwitchValidators.require_serial_number(v)
 
 
 class BootstrapImportSwitchModel(NDBaseModel):
@@ -251,26 +238,17 @@ class BootstrapImportSwitchModel(NDBaseModel):
     @field_validator("ip", mode="before")
     @classmethod
     def validate_ip_field(cls, v: str) -> str:
-        result = SwitchValidators.validate_ip_address(v)
-        if result is None:
-            raise ValueError(f"Invalid IP address: {v}")
-        return result
+        return SwitchValidators.require_ip_address(v)
 
     @field_validator("hostname", mode="before")
     @classmethod
     def validate_host(cls, v: str) -> str:
-        result = SwitchValidators.validate_hostname(v)
-        if result is None:
-            raise ValueError("hostname cannot be empty")
-        return result
+        return SwitchValidators.require_hostname(v)
 
     @field_validator("serial_number", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError("serial_number cannot be empty")
-        return result
+        return SwitchValidators.require_serial_number(v)
 
     @computed_field(alias="useNewCredentials")
     @property

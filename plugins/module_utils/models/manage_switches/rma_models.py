@@ -83,38 +83,27 @@ class RMASwitchModel(NDBaseModel):
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
     def validate_gateway(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        result = SwitchValidators.validate_cidr(v)
-        if result is None:
-            raise ValueError("gateway_ip_mask is not a valid CIDR")
-        return result
+        return SwitchValidators.validate_cidr_optional(v)
 
     @field_validator("hostname", mode="before")
     @classmethod
     def validate_host(cls, v: str) -> str:
-        result = SwitchValidators.validate_hostname(v)
-        if result is None:
-            raise ValueError("hostname cannot be empty")
-        return result
+        return SwitchValidators.require_hostname(v)
 
     @field_validator("ip", "dhcp_bootstrap_ip", mode="before")
     @classmethod
     def validate_ip(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        result = SwitchValidators.validate_ip_address(v)
-        if v is not None and result is None:
-            raise ValueError(f"Invalid IP address: {v}")
-        return result
+        return SwitchValidators.validate_ip_address(v)
 
     @field_validator("new_switch_id", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError("new_switch_id cannot be empty")
-        return result
+        return SwitchValidators.require_serial_number(v, "new_switch_id")
+
+    @field_validator("old_switch_id", mode="before")
+    @classmethod
+    def validate_old_serial(cls, v: str) -> str:
+        return SwitchValidators.require_serial_number(v, "old_switch_id")
 
     @computed_field(alias="useNewCredentials")
     @property

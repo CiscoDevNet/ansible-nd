@@ -57,10 +57,7 @@ class TelemetryIpCollection(NDNestedModel):
         description="Out of band IPv6 address",
     )
 
-    @field_validator("inband_ipv4_address", "out_of_band_ipv4_address", mode="before")
-    @classmethod
-    def validate_ipv4(cls, v: Optional[str]) -> Optional[str]:
-        return SwitchValidators.validate_ip_address(v)
+
 
 
 class VpcData(NDNestedModel):
@@ -89,10 +86,7 @@ class VpcData(NDNestedModel):
     @field_validator("peer_switch_id", mode="before")
     @classmethod
     def validate_peer_serial(cls, v: str) -> str:
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError("peer_switch_id cannot be empty")
-        return result
+        return SwitchValidators.require_serial_number(v, "peer_switch_id")
 
 
 class SwitchMetadata(NDNestedModel):
@@ -267,10 +261,7 @@ class SwitchDataModel(NDBaseModel):
     @field_validator("switch_id", mode="before")
     @classmethod
     def validate_switch_id(cls, v: str) -> str:
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError("switch_id cannot be empty")
-        return result
+        return SwitchValidators.require_serial_number(v, "switch_id")
 
     @field_validator("fabric_management_ip", mode="before")
     @classmethod
