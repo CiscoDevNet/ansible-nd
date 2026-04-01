@@ -58,8 +58,6 @@ class TelemetryIpCollection(NDNestedModel):
     )
 
 
-
-
 class VpcData(NDNestedModel):
     """
     vPC pair configuration and operational status for a switch.

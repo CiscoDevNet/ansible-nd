@@ -314,12 +314,8 @@ class SwitchDiffEngine:
             len(existing),
         )
 
-        existing_by_ip: Dict[str, SwitchDataModel] = {
-            sw.fabric_management_ip: sw for sw in existing if sw.fabric_management_ip
-        }
-        existing_by_id: Dict[str, SwitchDataModel] = {
-            sw.switch_id: sw for sw in existing if sw.switch_id
-        }
+        existing_by_ip: Dict[str, SwitchDataModel] = {sw.fabric_management_ip: sw for sw in existing if sw.fabric_management_ip}
+        existing_by_id: Dict[str, SwitchDataModel] = {sw.switch_id: sw for sw in existing if sw.switch_id}
 
         # Fields compared for normal switches
         compare_fields = {
@@ -387,7 +383,9 @@ class SwitchDiffEngine:
                 if serial_match and role_match:
                     log.info(
                         "Bootstrap %s serial=%s role=%s — idempotent, skipping",
-                        cfg.seed_ip, serial, cfg.role,
+                        cfg.seed_ip,
+                        serial,
+                        cfg.role,
                     )
                     idempotent.append(cfg)
                     continue
@@ -395,7 +393,9 @@ class SwitchDiffEngine:
                 status = existing_sw.additional_data.discovery_status if existing_sw.additional_data else None
                 log.info(
                     "Bootstrap %s differs (serial_match=%s, role_match=%s, status=%s) — deleting existing",
-                    cfg.seed_ip, serial_match, role_match,
+                    cfg.seed_ip,
+                    serial_match,
+                    role_match,
                     getattr(status, "value", status) if status else "unknown",
                 )
                 to_delete_existing.append(existing_sw)
@@ -424,7 +424,9 @@ class SwitchDiffEngine:
                 if serial_match and role_match:
                     log.info(
                         "Preprovision %s serial=%s role=%s — idempotent, skipping",
-                        cfg.seed_ip, serial, cfg.role,
+                        cfg.seed_ip,
+                        serial,
+                        cfg.role,
                     )
                     idempotent.append(cfg)
                     continue
@@ -432,7 +434,9 @@ class SwitchDiffEngine:
                 status = existing_sw.additional_data.discovery_status if existing_sw.additional_data else None
                 log.info(
                     "Preprovision %s differs (serial_match=%s, role_match=%s, status=%s) — deleting existing",
-                    cfg.seed_ip, serial_match, role_match,
+                    cfg.seed_ip,
+                    serial_match,
+                    role_match,
                     getattr(status, "value", status) if status else "unknown",
                 )
                 to_delete_existing.append(existing_sw)
@@ -483,7 +487,9 @@ class SwitchDiffEngine:
                 else:
                     log.info(
                         "Normal %s: role mismatch (config=%s, existing=%s) — marking to_update",
-                        cfg.seed_ip, cfg.role, existing_sw.switch_role,
+                        cfg.seed_ip,
+                        cfg.role,
+                        existing_sw.switch_role,
                     )
                     to_update.append(cfg)
                 continue
@@ -495,7 +501,8 @@ class SwitchDiffEngine:
             if sw.switch_id and sw.switch_id not in accounted_ids and sw.fabric_management_ip not in poap_ips:
                 log.info(
                     "Existing %s (%s) has no config entry — marking to_delete",
-                    sw.fabric_management_ip, sw.switch_id,
+                    sw.fabric_management_ip,
+                    sw.switch_id,
                 )
                 to_delete.append(sw)
 
@@ -516,9 +523,16 @@ class SwitchDiffEngine:
         log.info(
             "compute_changes: to_add=%s, to_update=%s, to_delete=%s, migration=%s, "
             "idempotent=%s, bootstrap=%s, normal_readd=%s, preprov=%s, swap=%s, rma=%s",
-            len(plan.to_add), len(plan.to_update), len(plan.to_delete), len(plan.migration_mode),
-            len(plan.idempotent), len(plan.to_bootstrap), len(plan.normal_readd),
-            len(plan.to_preprovision), len(plan.to_swap), len(plan.to_rma),
+            len(plan.to_add),
+            len(plan.to_update),
+            len(plan.to_delete),
+            len(plan.migration_mode),
+            len(plan.idempotent),
+            len(plan.to_bootstrap),
+            len(plan.normal_readd),
+            len(plan.to_preprovision),
+            len(plan.to_swap),
+            len(plan.to_rma),
         )
         log.debug("EXIT: compute_changes()")
         return plan
@@ -2191,9 +2205,7 @@ class RMAHandler:
 
         log.debug("ENTER: _validate_prerequisites()")
 
-        existing_by_ip: Dict[str, SwitchDataModel] = {
-            sw.fabric_management_ip: sw for sw in existing if sw.fabric_management_ip
-        }
+        existing_by_ip: Dict[str, SwitchDataModel] = {sw.fabric_management_ip: sw for sw in existing if sw.fabric_management_ip}
 
         result: Dict[str, Dict[str, Any]] = {}
 
@@ -2212,12 +2224,7 @@ class RMAHandler:
 
             old_serial = old_switch.serial_number or old_switch.switch_id
             if not old_serial:
-                nd.module.fail_json(
-                    msg=(
-                        f"RMA: Switch at '{seed_ip}' has no serial number in "
-                        f"the inventory response."
-                    )
-                )
+                nd.module.fail_json(msg=(f"RMA: Switch at '{seed_ip}' has no serial number in " f"the inventory response."))
 
             ad = old_switch.additional_data
             if ad is None:
@@ -2321,11 +2328,7 @@ class RMAHandler:
             oldSwitchId=old_serial,
             publicKey=public_key,
             fingerPrint=finger_print,
-            data=(
-                {"gatewayIpMask": gateway_ip_mask, "models": data_models}
-                if (gateway_ip_mask or data_models)
-                else None
-            ),
+            data=({"gatewayIpMask": gateway_ip_mask, "models": data_models} if (gateway_ip_mask or data_models) else None),
         )
 
         log.debug("EXIT: _build_rma_model() -> newSwitchId=%s, oldSwitchId=%s", rma_model.new_switch_id, old_serial)
@@ -2639,11 +2642,7 @@ class NDSwitchResourceModule:
         if plan.to_update:
             ips = [cfg.seed_ip for cfg in plan.to_update]
             self.nd.module.fail_json(
-                msg=(
-                    f"Switches require updates not supported in merged state. "
-                    f"Use 'overridden' state for in-place updates. "
-                    f"Affected switches: {ips}"
-                )
+                msg=(f"Switches require updates not supported in merged state. " f"Use 'overridden' state for in-place updates. " f"Affected switches: {ips}")
             )
 
         # Check whether any idempotent switch (normal or POAP) is out of
@@ -2668,9 +2667,14 @@ class NDSwitchResourceModule:
                     break
 
         has_work = bool(
-            plan.to_add or plan.migration_mode or plan.to_bootstrap
-            or plan.normal_readd or plan.to_preprovision or plan.to_swap
-            or plan.to_rma or idempotent_save_req
+            plan.to_add
+            or plan.migration_mode
+            or plan.to_bootstrap
+            or plan.normal_readd
+            or plan.to_preprovision
+            or plan.to_swap
+            or plan.to_rma
+            or idempotent_save_req
         )
         if not has_work:
             self.log.info("merged: nothing to do — all switches idempotent")
@@ -2679,11 +2683,15 @@ class NDSwitchResourceModule:
         # Check mode
         if self.nd.module.check_mode:
             self.log.info(
-                "Check mode: add=%s, migrate=%s, bootstrap=%s, "
-                "readd=%s, preprov=%s, swap=%s, rma=%s, save_deploy=%s",
-                len(plan.to_add), len(plan.migration_mode), len(plan.to_bootstrap),
-                len(plan.normal_readd), len(plan.to_preprovision), len(plan.to_swap),
-                len(plan.to_rma), idempotent_save_req,
+                "Check mode: add=%s, migrate=%s, bootstrap=%s, readd=%s, preprov=%s, swap=%s, rma=%s, save_deploy=%s",
+                len(plan.to_add),
+                len(plan.migration_mode),
+                len(plan.to_bootstrap),
+                len(plan.normal_readd),
+                len(plan.to_preprovision),
+                len(plan.to_swap),
+                len(plan.to_rma),
+                idempotent_save_req,
             )
             self.results.action = "merge"
             self.results.state = self.state
@@ -2713,11 +2721,7 @@ class NDSwitchResourceModule:
             for group_key, group_switches in credential_groups.items():
                 username, _pw_hash, auth_proto, platform_type, preserve_config = group_key
                 password = group_switches[0].password
-                pairs = [
-                    (cfg, discovered_data[cfg.seed_ip])
-                    for cfg in group_switches
-                    if cfg.seed_ip in discovered_data
-                ]
+                pairs = [(cfg, discovered_data[cfg.seed_ip]) for cfg in group_switches if cfg.seed_ip in discovered_data]
                 if not pairs:
                     self.log.warning(
                         "No discovery data for group %s — skipping bulk_add",
@@ -2794,8 +2798,14 @@ class NDSwitchResourceModule:
         self.log.info("Handling overridden state")
 
         has_work = bool(
-            plan.to_add or plan.to_update or plan.to_delete or plan.migration_mode
-            or plan.to_bootstrap or plan.normal_readd or plan.to_preprovision or plan.to_swap
+            plan.to_add
+            or plan.to_update
+            or plan.to_delete
+            or plan.migration_mode
+            or plan.to_bootstrap
+            or plan.normal_readd
+            or plan.to_preprovision
+            or plan.to_swap
         )
         if not has_work and not self.proposed:
             self.log.info("overridden: nothing to do")
@@ -2804,11 +2814,15 @@ class NDSwitchResourceModule:
         # Check mode
         if self.nd.module.check_mode:
             self.log.info(
-                "Check mode: delete_orphans=%s, update=%s, add=%s, migrate=%s, "
-                "bootstrap=%s, readd=%s, preprov=%s, swap=%s",
-                len(plan.to_delete), len(plan.to_update), len(plan.to_add),
-                len(plan.migration_mode), len(plan.to_bootstrap), len(plan.normal_readd),
-                len(plan.to_preprovision), len(plan.to_swap),
+                "Check mode: delete_orphans=%s, update=%s, add=%s, migrate=%s, bootstrap=%s, readd=%s, preprov=%s, swap=%s",
+                len(plan.to_delete),
+                len(plan.to_update),
+                len(plan.to_add),
+                len(plan.migration_mode),
+                len(plan.to_bootstrap),
+                len(plan.normal_readd),
+                len(plan.to_preprovision),
+                len(plan.to_swap),
             )
             self.results.action = "override"
             self.results.state = self.state
@@ -2885,11 +2899,7 @@ class NDSwitchResourceModule:
             for group_key, group_switches in credential_groups.items():
                 username, _pw_hash, auth_proto, platform_type, preserve_config = group_key
                 password = group_switches[0].password
-                pairs = [
-                    (cfg, discovered_data[cfg.seed_ip])
-                    for cfg in group_switches
-                    if cfg.seed_ip in discovered_data
-                ]
+                pairs = [(cfg, discovered_data[cfg.seed_ip]) for cfg in group_switches if cfg.seed_ip in discovered_data]
                 if not pairs:
                     self.log.warning(
                         "No discovery data for group %s — skipping",
@@ -3007,12 +3017,15 @@ class NDSwitchResourceModule:
                 if cfg.role is not None and cfg.role != existing_sw.switch_role:
                     self.log.info(
                         "deleted: switch %s role mismatch (config=%s, fabric=%s) — skipping",
-                        cfg.seed_ip, cfg.role, existing_sw.switch_role,
+                        cfg.seed_ip,
+                        cfg.role,
+                        existing_sw.switch_role,
                     )
                     continue
                 self.log.info(
                     "deleted: marking %s (%s) for deletion",
-                    cfg.seed_ip, existing_sw.switch_id,
+                    cfg.seed_ip,
+                    existing_sw.switch_id,
                 )
                 switches_to_delete.append(existing_sw)
                 self._log_operation("delete", cfg.seed_ip)
