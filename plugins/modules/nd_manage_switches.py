@@ -30,7 +30,7 @@ options:
     state:
         description:
         - The state of ND and switch(es) after module completion.
-        - C(merged) is the only state supported for POAP.
+        - C(merged) and C(overridden) are supported for POAP and pre-provision operations.
         - C(merged) is the only state supported for RMA.
         - C(gathered) reads the current fabric inventory and returns it in the
           C(gathered) key in config format. No changes are made.
@@ -363,14 +363,6 @@ EXAMPLES = """
         rma:
           - old_serial_number: SAL1234ABCD
             new_serial_number: SAL9999ZZZZ
-            model: N9K-C93180YC-EX
-            version: "10.3(1)"
-            hostname: leaf-replaced
-            image_policy: my-image-policy
-            ip: 192.168.10.50
-            gateway_ip: 192.168.10.1/24
-            discovery_username: root
-            discovery_password: "{{ discovery_password }}"
     state: merged
 
 - name: Remove switches from fabric
