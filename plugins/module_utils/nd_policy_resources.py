@@ -270,17 +270,8 @@ class NDPolicyModule:
         if not config:
             return []
 
-        # ── Step 0: Detect gathered / self-contained format ─────────────
-        #
-        # ``state=gathered`` returns each policy with its own embedded
-        # ``switch`` list (e.g., ``[{"serial_number": "FDO..."}]``).
-        # This makes the output directly usable as ``config:`` in a
-        # new ``state=merged`` task ("copy-paste round-trip").
-        #
-        # Detect this format: every entry that has a ``name`` also
-        # has a ``switch`` list.  If so, flatten each entry by
-        # extracting the serial number from its embedded switch list
-        # and return immediately — no global/switch separation needed.
+        # Detect gathered output format: every named entry already has its own
+        # embedded switch list. Flatten directly — no global/switch separation needed.
         has_self_contained = False
         all_self_contained = True
         for entry in config:
