@@ -58,10 +58,10 @@ class BootstrapBaseModel(NDBaseModel):
 
     identifiers: ClassVar[List[str]] = []
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
-    gateway_ip_mask: str = Field(..., alias="gatewayIpMask", description="Gateway IP address with mask")
-    model: str = Field(..., description="Model of the bootstrap switch")
-    software_version: str = Field(
-        ...,
+    gateway_ip_mask: Optional[str] = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
+    model: Optional[str] = Field(default=None, description="Model of the bootstrap switch")
+    software_version: Optional[str] = Field(
+        default=None,
         alias="softwareVersion",
         description="Software version of the bootstrap switch",
     )
@@ -75,10 +75,12 @@ class BootstrapBaseModel(NDBaseModel):
 
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
-    def validate_gateway(cls, v: str) -> str:
+    def validate_gateway(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         result = SwitchValidators.validate_cidr(v)
         if result is None:
-            raise ValueError("gateway_ip_mask cannot be empty")
+            raise ValueError("gateway_ip_mask is not a valid CIDR")
         return result
 
 
@@ -196,9 +198,9 @@ class BootstrapImportSwitchModel(NDBaseModel):
     exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
 
     serial_number: str = Field(..., alias="serialNumber", description="Serial number of the bootstrap switch")
-    model: str = Field(..., description="Model of the bootstrap switch")
-    software_version: str = Field(
-        ...,
+    model: Optional[str] = Field(default=None, description="Model of the bootstrap switch")
+    software_version: Optional[str] = Field(
+        default=None,
         alias="softwareVersion",
         description="Software version of the bootstrap switch",
     )
@@ -244,7 +246,7 @@ class BootstrapImportSwitchModel(NDBaseModel):
         description="Image policy associated with the switch during bootstrap",
     )
     switch_role: Optional[SwitchRole] = Field(default=None, alias="switchRole")
-    gateway_ip_mask: str = Field(..., alias="gatewayIpMask", description="Gateway IP address with mask")
+    gateway_ip_mask: Optional[str] = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
 
     @field_validator("ip", mode="before")
     @classmethod

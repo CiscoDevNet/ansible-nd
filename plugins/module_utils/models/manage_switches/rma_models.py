@@ -43,11 +43,11 @@ class RMASwitchModel(NDBaseModel):
     identifiers: ClassVar[List[str]] = ["new_switch_id"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
     exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
-    # From bootstrapBase
-    gateway_ip_mask: str = Field(..., alias="gatewayIpMask", description="Gateway IP address with mask")
-    model: str = Field(..., description="Model of the bootstrap switch")
-    software_version: str = Field(
-        ...,
+    # From bootstrapBase (all sourced from bootstrap API, not user config)
+    gateway_ip_mask: Optional[str] = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
+    model: Optional[str] = Field(default=None, description="Model of the bootstrap switch")
+    software_version: Optional[str] = Field(
+        default=None,
         alias="softwareVersion",
         description="Software version of the bootstrap switch",
     )
@@ -69,7 +69,8 @@ class RMASwitchModel(NDBaseModel):
     # From RMASpecific
     hostname: str = Field(..., description="Hostname of the switch")
     ip: str = Field(..., description="IP address of the switch")
-    new_switch_id: str = Field(..., alias="newSwitchId", description="SwitchId (serial number) of the switch")
+    new_switch_id: str = Field(..., alias="newSwitchId", description="SwitchId (serial number) of the replacement switch")
+    old_switch_id: str = Field(..., alias="oldSwitchId", description="SwitchId (serial number) of the switch being replaced")
     public_key: str = Field(..., alias="publicKey", description="Public Key")
     finger_print: str = Field(..., alias="fingerPrint", description="Fingerprint")
     dhcp_bootstrap_ip: Optional[str] = Field(default=None, alias="dhcpBootstrapIp")
@@ -81,10 +82,12 @@ class RMASwitchModel(NDBaseModel):
 
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
-    def validate_gateway(cls, v: str) -> str:
+    def validate_gateway(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         result = SwitchValidators.validate_cidr(v)
         if result is None:
-            raise ValueError("gateway_ip_mask cannot be empty")
+            raise ValueError("gateway_ip_mask is not a valid CIDR")
         return result
 
     @field_validator("hostname", mode="before")

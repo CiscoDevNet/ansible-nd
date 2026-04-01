@@ -207,70 +207,45 @@ class RMAConfigModel(NDNestedModel):
     """
     RMA configuration entry for replacing a single switch via bootstrap.
 
+    The old switch is identified from the fabric inventory using ``seed_ip``.
+    All switch properties (model, version, gateway, modules) are sourced from
+    the bootstrap API at runtime — only the new serial number is required.
+
     The switch being replaced must be in maintenance mode and either shut down
     or disconnected from the network before initiating the RMA operation.
     """
 
     identifiers: ClassVar[List[str]] = []
 
-    # Discovery credentials
-    discovery_username: Optional[str] = Field(
-        default=None,
-        alias="discoveryUsername",
-        description="Username for device discovery during POAP and RMA discovery",
-    )
-    discovery_password: Optional[str] = Field(
-        default=None,
-        alias="discoveryPassword",
-        description="Password for device discovery during POAP and RMA discovery",
-    )
-
-    # Required fields for RMA
+    # Required
     new_serial_number: str = Field(
         ...,
         alias="newSerialNumber",
         min_length=1,
-        description="Serial number of the new/replacement switch to Bootstrap for RMA",
-    )
-    old_serial_number: str = Field(
-        ...,
-        alias="oldSerialNumber",
-        min_length=1,
-        description="Serial number of the existing switch to be replaced by RMA",
-    )
-    model: Optional[str] = Field(
-        default=None,
-        min_length=1,
-        description="Model of switch to Bootstrap for RMA. If omitted, sourced from bootstrap API.",
-    )
-    version: Optional[str] = Field(
-        default=None,
-        min_length=1,
-        description="Software version of switch to Bootstrap for RMA. If omitted, sourced from bootstrap API.",
+        description="Serial number of the replacement switch to bootstrap for RMA",
     )
 
-    # Optional fields
+    # Optional
     image_policy: Optional[str] = Field(
         default=None,
         alias="imagePolicy",
-        description="Name of the image policy to be applied on switch during Bootstrap for RMA",
+        description="Name of the image policy to be applied on the replacement switch",
     )
-
-    # Optional config data for RMA (models list + gateway); sourced from bootstrap API if omitted
-    config_data: Optional[ConfigDataModel] = Field(
+    discovery_username: Optional[str] = Field(
         default=None,
-        alias="configData",
-        description=(
-            "Basic config data of switch to Bootstrap for RMA. "
-            "'models' (list of module models) and 'gateway' (IP with mask) are mandatory "
-            "when provided. If omitted, sourced from bootstrap API."
-        ),
+        alias="discoveryUsername",
+        description="Username for device discovery during RMA bootstrap",
+    )
+    discovery_password: Optional[str] = Field(
+        default=None,
+        alias="discoveryPassword",
+        description="Password for device discovery during RMA bootstrap",
     )
 
-    @field_validator("new_serial_number", "old_serial_number", mode="before")
+    @field_validator("new_serial_number", mode="before")
     @classmethod
     def validate_serial_numbers(cls, v: str) -> str:
-        """Validate serial numbers are not empty."""
+        """Validate new_serial_number is not empty."""
         result = SwitchValidators.validate_serial_number(v)
         if result is None:
             raise ValueError("Serial number cannot be empty")
@@ -278,12 +253,7 @@ class RMAConfigModel(NDNestedModel):
 
     @model_validator(mode="after")
     def validate_discovery_credentials_pair(self) -> "RMAConfigModel":
-        """Validate that discovery_username and discovery_password are both set or both absent.
-
-        Mirrors the dcnm_inventory.py bidirectional check:
-          - discovery_username set → discovery_password required
-          - discovery_password set → discovery_username required
-        """
+        """Validate that discovery_username and discovery_password are both set or both absent."""
         has_user = bool(self.discovery_username)
         has_pass = bool(self.discovery_password)
         if has_user and not has_pass:
@@ -707,19 +677,9 @@ class SwitchConfigModel(NDBaseModel):
                         elements="dict",
                         options=dict(
                             new_serial_number=dict(type="str", required=True),
-                            old_serial_number=dict(type="str", required=True),
                             discovery_username=dict(type="str"),
                             discovery_password=dict(type="str", no_log=True),
-                            model=dict(type="str"),
-                            version=dict(type="str"),
                             image_policy=dict(type="str"),
-                            config_data=dict(
-                                type="dict",
-                                options=dict(
-                                    models=dict(type="list", elements="str"),
-                                    gateway=dict(type="str"),
-                                ),
-                            ),
                         ),
                     ),
                 ),

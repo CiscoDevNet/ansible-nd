@@ -1577,7 +1577,7 @@ class POAPHandler:
         discovery_password = getattr(poap_cfg, "discovery_password", None)
 
         # model, version and config_data always come from the bootstrap API for
-        # bootstrap-only operations.  POAP no longer carries these fields.
+        # bootstrap-only operations.
         model = bs.get("model", "")
         version = bs.get("softwareVersion", "")
 
@@ -1626,7 +1626,7 @@ class POAPHandler:
                 data_block["models"] = data_models
 
         # Bootstrap API response fields
-        fingerprint = bs.get("fingerPrint", bs.get("fingerprint", ""))
+        fingerprint = bs.get("fingerPrint") or bs.get("fingerprint", "")
         public_key = bs.get("publicKey", "")
         re_add = bs.get("reAdd", False)
         in_inventory = bs.get("inInventory", False)
@@ -2094,10 +2094,10 @@ class RMAHandler:
 
         log.info("Found %s RMA entry/entries to process", len(rma_entries))
 
-        # Validate old switches exist and are in correct state
+        # Validate old switches exist and are in correct state; look up by seed_ip
         old_switch_info = self._validate_prerequisites(rma_entries, existing)
 
-        # Query bootstrap API for publicKey / fingerPrint of new switches
+        # Query bootstrap API for new switch data
         bootstrap_switches = query_bootstrap_switches(nd, self.ctx.fabric, log)
         bootstrap_idx = build_bootstrap_index(bootstrap_switches)
         log.debug(
@@ -2108,9 +2108,9 @@ class RMAHandler:
 
         # Build and submit each RMA request
         switch_actions: List[Tuple[str, SwitchConfigModel]] = []
-        rma_diff_data: List[Tuple[str, str, SwitchConfigModel]] = []  # (new_serial, old_serial, switch_cfg)
         for switch_cfg, rma_cfg in rma_entries:
             new_serial = rma_cfg.new_serial_number
+            old_serial = old_switch_info[switch_cfg.seed_ip]["old_serial"]
             bootstrap_data = bootstrap_idx.get(new_serial)
 
             if not bootstrap_data:
@@ -2123,32 +2123,20 @@ class RMAHandler:
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
 
-            SwitchDiffEngine.validate_switch_api_fields(
-                nd=nd,
-                serial=rma_cfg.new_serial_number,
-                model=rma_cfg.model,
-                version=rma_cfg.version,
-                config_data=rma_cfg.config_data,
-                bootstrap_data=bootstrap_data,
-                log=log,
-                context="RMA",
-            )
-
             rma_model = self._build_rma_model(
                 switch_cfg,
                 rma_cfg,
                 bootstrap_data,
-                old_switch_info[rma_cfg.old_serial_number],
+                old_switch_info[switch_cfg.seed_ip],
             )
             log.info(
                 "Built RMA model: replacing %s with %s",
-                rma_cfg.old_serial_number,
+                old_serial,
                 rma_model.new_switch_id,
             )
 
-            self._provision_rma_switch(rma_cfg.old_serial_number, rma_model)
+            self._provision_rma_switch(rma_model)
             switch_actions.append((rma_model.new_switch_id, switch_cfg))
-            rma_diff_data.append((rma_model.new_switch_id, rma_cfg.old_serial_number, switch_cfg))
 
         # Post-processing: wait for RMA switches to become ready, then
         # save credentials and finalize.  RMA switches come up via POAP
@@ -2186,46 +2174,48 @@ class RMAHandler:
     ) -> Dict[str, Dict[str, Any]]:
         """Validate RMA prerequisites for each requested replacement.
 
+        Looks up the switch to be replaced by ``seed_ip`` (the fabric management
+        IP).  The serial number of the old switch is derived from inventory —
+        it is not required in the playbook config.
+
         Args:
             rma_entries: ``(SwitchConfigModel, RMAConfigModel)`` pairs.
             existing: Current fabric inventory snapshot.
 
         Returns:
-            Dict keyed by old serial with prerequisite metadata.
+            Dict keyed by ``seed_ip`` with prerequisite metadata including
+            ``old_serial``, ``hostname``, and ``switch_data``.
         """
         nd = self.ctx.nd
         log = self.ctx.log
 
         log.debug("ENTER: _validate_prerequisites()")
 
-        existing_by_serial: Dict[str, SwitchDataModel] = {sw.serial_number: sw for sw in existing if sw.serial_number}
+        existing_by_ip: Dict[str, SwitchDataModel] = {
+            sw.fabric_management_ip: sw for sw in existing if sw.fabric_management_ip
+        }
 
         result: Dict[str, Dict[str, Any]] = {}
 
-        for switch_cfg, rma_cfg in rma_entries:
-            old_serial = rma_cfg.old_serial_number
+        for switch_cfg, _rma_cfg in rma_entries:
+            seed_ip = switch_cfg.seed_ip
 
-            old_switch = existing_by_serial.get(old_serial)
+            old_switch = existing_by_ip.get(seed_ip)
             if old_switch is None:
                 nd.module.fail_json(
                     msg=(
-                        f"RMA: old_serial '{old_serial}' not found in "
-                        f"fabric '{self.ctx.fabric}'. The switch being "
-                        f"replaced must exist in the inventory."
+                        f"RMA: seed_ip '{seed_ip}' not found in "
+                        f"fabric '{self.ctx.fabric}' inventory. The switch "
+                        f"being replaced must exist in the fabric."
                     )
                 )
 
-            # Verify the seed_ip in config matches the IP of the switch
-            # identified by old_serial in the fabric inventory.
-            seed_ip = switch_cfg.seed_ip
-            inventory_ip = old_switch.fabric_management_ip
-            if seed_ip != inventory_ip:
+            old_serial = old_switch.serial_number or old_switch.switch_id
+            if not old_serial:
                 nd.module.fail_json(
                     msg=(
-                        f"RMA: seed_ip '{seed_ip}' does not match the "
-                        f"fabric management IP '{inventory_ip}' of switch "
-                        f"with serial '{old_serial}'. Verify that seed_ip "
-                        f"and old_serial refer to the same switch."
+                        f"RMA: Switch at '{seed_ip}' has no serial number in "
+                        f"the inventory response."
                     )
                 )
 
@@ -2233,14 +2223,16 @@ class RMAHandler:
             if ad is None:
                 nd.module.fail_json(
                     msg=(
-                        f"RMA: Switch '{old_serial}' has no additional data " f"in the inventory response. Cannot verify discovery " f"status and system mode."
+                        f"RMA: Switch at '{seed_ip}' (serial '{old_serial}') has no "
+                        f"additional data in the inventory response. Cannot verify "
+                        f"discovery status and system mode."
                     )
                 )
 
             if ad.discovery_status != DiscoveryStatus.UNREACHABLE:
                 nd.module.fail_json(
                     msg=(
-                        f"RMA: Switch '{old_serial}' has discovery status "
+                        f"RMA: Switch at '{seed_ip}' (serial '{old_serial}') has discovery status "
                         f"'{getattr(ad.discovery_status, 'value', ad.discovery_status) if ad.discovery_status else 'unknown'}', "
                         f"expected 'unreachable'. The old switch must be "
                         f"unreachable before RMA can proceed."
@@ -2250,21 +2242,22 @@ class RMAHandler:
             if ad.system_mode != SystemMode.MAINTENANCE:
                 nd.module.fail_json(
                     msg=(
-                        f"RMA: Switch '{old_serial}' is in "
+                        f"RMA: Switch at '{seed_ip}' (serial '{old_serial}') is in "
                         f"'{getattr(ad.system_mode, 'value', ad.system_mode) if ad.system_mode else 'unknown'}' "
                         f"mode, expected 'maintenance'. Put the switch in "
                         f"maintenance mode before initiating RMA."
                     )
                 )
 
-            result[old_serial] = {
+            result[seed_ip] = {
+                "old_serial": old_serial,
                 "hostname": old_switch.hostname or "",
                 "switch_data": old_switch,
             }
             log.info(
-                "RMA prerequisite check passed for old_serial '%s' (hostname=%s, discovery=%s, mode=%s)",
+                "RMA prerequisite check passed for '%s' (serial=%s, discovery=%s, mode=%s)",
+                seed_ip,
                 old_serial,
-                old_switch.hostname,
                 ad.discovery_status,
                 ad.system_mode,
             )
@@ -2281,75 +2274,73 @@ class RMAHandler:
     ) -> RMASwitchModel:
         """Build an RMA model from config and bootstrap data.
 
+        All switch properties (model, version, gateway, modules) are sourced
+        exclusively from the bootstrap API response.  Only the new serial number,
+        optional image policy, and optional discovery credentials come from the
+        playbook config.
+
         Args:
             switch_cfg: Parent switch config.
             rma_cfg: RMA config entry.
             bootstrap_data: Bootstrap response entry for the replacement switch.
-            old_switch_info: Prerequisite metadata for the switch being replaced.
+            old_switch_info: Prerequisite metadata keyed from _validate_prerequisites.
 
         Returns:
             Completed ``RMASwitchModel`` for API submission.
         """
         log = self.ctx.log
+        old_serial = old_switch_info["old_serial"]
         log.debug(
             "ENTER: _build_rma_model(new=%s, old=%s)",
             rma_cfg.new_serial_number,
-            rma_cfg.old_serial_number,
+            old_serial,
         )
 
-        # User config fields
-        new_switch_id = rma_cfg.new_serial_number
-        hostname = old_switch_info.get("hostname", "")
-        ip = switch_cfg.seed_ip
-        image_policy = rma_cfg.image_policy
-        switch_role = switch_cfg.role
-        password = switch_cfg.password
-        auth_proto = SnmpV3AuthProtocol.MD5  # RMA always uses MD5
-
-        discovery_username = rma_cfg.discovery_username
-        discovery_password = rma_cfg.discovery_password
-
-        # Bootstrap API response fields
-        public_key = bootstrap_data.get("publicKey", "")
-        finger_print = bootstrap_data.get("fingerPrint", bootstrap_data.get("fingerprint", ""))
         bs_data = bootstrap_data.get("data") or {}
 
-        # Use user-provided values when available; fall back to bootstrap API data.
-        model_name = rma_cfg.model or bootstrap_data.get("model", "")
-        version = rma_cfg.version or bootstrap_data.get("softwareVersion", "")
-        gateway_ip_mask = (rma_cfg.config_data.gateway if rma_cfg.config_data else None) or bootstrap_data.get("gatewayIpMask") or bs_data.get("gatewayIpMask")
-        data_models = (rma_cfg.config_data.models if rma_cfg.config_data else None) or bs_data.get("models", [])
+        gateway_ip_mask = bootstrap_data.get("gatewayIpMask") or bs_data.get("gatewayIpMask", "")
+        data_models = bs_data.get("models", [])
+        model = bootstrap_data.get("model", "")
+        software_version = bootstrap_data.get("softwareVersion", "")
+        public_key = bootstrap_data.get("publicKey", "")
+        finger_print = bootstrap_data.get("fingerPrint") or bootstrap_data.get("fingerprint", "")
 
         rma_model = RMASwitchModel(
             gatewayIpMask=gateway_ip_mask,
-            model=model_name,
-            softwareVersion=version,
-            imagePolicy=image_policy,
-            switchRole=switch_role,
-            password=password,
-            discoveryAuthProtocol=auth_proto,
-            discoveryUsername=discovery_username,
-            discoveryPassword=discovery_password,
-            hostname=hostname,
-            ip=ip,
-            newSwitchId=new_switch_id,
+            model=model,
+            softwareVersion=software_version,
+            imagePolicy=rma_cfg.image_policy,
+            switchRole=switch_cfg.role,
+            password=switch_cfg.password,
+            discoveryAuthProtocol=SnmpV3AuthProtocol.MD5,
+            discoveryUsername=rma_cfg.discovery_username,
+            discoveryPassword=rma_cfg.discovery_password,
+            hostname=old_switch_info.get("hostname", ""),
+            ip=switch_cfg.seed_ip,
+            newSwitchId=rma_cfg.new_serial_number,
+            oldSwitchId=old_serial,
             publicKey=public_key,
             fingerPrint=finger_print,
-            data=({"gatewayIpMask": gateway_ip_mask, "models": data_models} if (gateway_ip_mask or data_models) else None),
+            data=(
+                {"gatewayIpMask": gateway_ip_mask, "models": data_models}
+                if (gateway_ip_mask or data_models)
+                else None
+            ),
         )
 
-        log.debug("EXIT: _build_rma_model() -> newSwitchId=%s", rma_model.new_switch_id)
+        log.debug("EXIT: _build_rma_model() -> newSwitchId=%s, oldSwitchId=%s", rma_model.new_switch_id, old_serial)
         return rma_model
 
     def _provision_rma_switch(
         self,
-        old_switch_id: str,
         rma_model: RMASwitchModel,
     ) -> None:
         """Submit an RMA provisioning request for one switch.
 
+        The old and new switch IDs are embedded in the payload via
+        ``oldSwitchId`` and ``newSwitchId`` fields on the model.
+
         Args:
-            old_switch_id: Identifier of the switch being replaced.
             rma_model: RMA model for the replacement switch.
 
         Returns:
@@ -2363,18 +2354,18 @@ class RMAHandler:
 
         endpoint = EpManageFabricsSwitchProvisionRMAPost()
         endpoint.fabric_name = self.ctx.fabric
-        endpoint.switch_sn = old_switch_id
+        endpoint.switch_sn = rma_model.old_switch_id
 
         payload = rma_model.to_payload()
 
-        log.info("RMA: Replacing %s with %s", old_switch_id, rma_model.new_switch_id)
+        log.info("RMA: Replacing %s with %s", rma_model.old_switch_id, rma_model.new_switch_id)
         log.debug("RMA endpoint: %s", endpoint.path)
         log.debug("RMA payload (masked): %s", mask_password(payload))
 
         try:
             nd.request(path=endpoint.path, verb=endpoint.verb, data=payload)
         except Exception as e:
-            msg = f"RMA provision API call failed for " f"{old_switch_id} → {rma_model.new_switch_id}: {e}"
+            msg = f"RMA provision API call failed for {rma_model.old_switch_id} → {rma_model.new_switch_id}: {e}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
 
@@ -2386,13 +2377,13 @@ class RMAHandler:
         results.response_current = response
         results.result_current = result
         results.diff_current = {
-            "old_switch_id": old_switch_id,
+            "old_switch_id": rma_model.old_switch_id,
             "new_switch_id": rma_model.new_switch_id,
         }
         results.register_api_call()
 
         if not result.get("success"):
-            msg = f"RMA provision failed for {old_switch_id} → " f"{rma_model.new_switch_id}: {response}"
+            msg = f"RMA provision failed for {rma_model.old_switch_id} → {rma_model.new_switch_id}: {response}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
 

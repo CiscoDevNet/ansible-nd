@@ -14,11 +14,6 @@
       sw1: "{{ ansible_switch1 }}"
       sw1_serial: "1ABC23DEFGH"
       sw1_rma_serial: "1ABC23DERMA"
-      rma_model: "SW1-K1234v"
-      rma_version: "12.3(4)"
-      rma_hostname: "RMA-SW"
-      rma_configmodel: "['SW1-K1234v']"
-      rma_gateway: "192.168.2.1/24"
       deploy: "{{ deploy }}"
       rma_enabled: false
   delegate_to: localhost
@@ -148,13 +143,6 @@
             password: '{{ switch_password }}'
             rma:
               - new_serial_number: '{{ test_data.sw1_rma_serial }}'
-                old_serial_number: '{{ test_data.sw1_serial }}'
-                model: '{{ test_data.rma_model }}'
-                version: '{{ test_data.rma_version }}'
-                hostname: '{{ test_data.rma_hostname }}'
-                config_data:
-                  models: '{{ test_data.rma_configmodel }}'
-                  gateway: '{{ test_data.rma_gateway }}'
       register: result
 
     - name: ASSERT - Check condition

@@ -205,58 +205,29 @@ options:
             rma:
                 description:
                 - RMA an existing switch with a new one.
-                - Please note that the existing switch being replaced should be configured, deployed in maintenance mode
-                  and then shutdown (unreachable state).
+                - The switch being replaced is identified by C(seed_ip).
+                - The existing switch must be configured, deployed in maintenance mode,
+                  and then shutdown (unreachable state) before initiating RMA.
                 type: list
                 elements: dict
                 suboptions:
                     new_serial_number:
                         description:
-                        - Serial number of switch to Bootstrap for RMA.
+                        - Serial number of the replacement switch in the POAP/bootstrap loop.
                         type: str
                         required: true
-                    old_serial_number:
+                    image_policy:
                         description:
-                        - Serial number of switch to be replaced by RMA.
+                        - Name of the image policy to be applied on the replacement switch.
                         type: str
-                        required: true
                     discovery_username:
                         description:
-                        - Username for device discovery during POAP and RMA discovery.
+                        - Username for device discovery during RMA bootstrap.
                         type: str
                     discovery_password:
                         description:
-                        - Password for device discovery during POAP and RMA discovery.
+                        - Password for device discovery during RMA bootstrap.
                         type: str
-                    model:
-                        description:
-                        - Model of switch to Bootstrap for RMA.
-                        type: str
-                    version:
-                        description:
-                        - Software version of switch to Bootstrap for RMA.
-                        type: str
-                    image_policy:
-                        description:
-                        - Name of the image policy to be applied on switch during Bootstrap for RMA.
-                        type: str
-                    config_data:
-                        description:
-                        - Basic config data of switch to Bootstrap for RMA.
-                        - C(models) and C(gateway) are optional.
-                        - C(models) is list of model of modules in switch to Bootstrap for RMA.
-                        - C(gateway) is the gateway IP with mask for the switch to Bootstrap for RMA.
-                        type: dict
-                        suboptions:
-                            models:
-                                description:
-                                - List of module models in the switch.
-                                type: list
-                                elements: str
-                            gateway:
-                                description:
-                                - Gateway IP with subnet mask (e.g., 192.168.0.1/24).
-                                type: str
 
 extends_documentation_fragment:
 - cisco.nd.modules
@@ -321,6 +292,9 @@ EXAMPLES = """
           model: N9K-C93180YC-EX
           version: "10.3(1)"
           hostname: leaf-preprov
+          image_policy: my-image-policy
+          discovery_username: root
+          discovery_password: "{{ discovery_password }}"
           config_data:
             models:
               - N9K-C93180YC-EX
@@ -338,6 +312,9 @@ EXAMPLES = """
         poap:
           serial_number: SAL5678EFGH
           hostname: leaf-bootstrap
+          image_policy: my-image-policy
+          discovery_username: root
+          discovery_password: "{{ discovery_password }}"
     state: merged
 
 - name: Swap serial number on a pre-provisioned switch (POAP swap)
@@ -361,8 +338,10 @@ EXAMPLES = """
         username: admin
         password: "{{ switch_password }}"
         rma:
-          - old_serial_number: SAL1234ABCD
-            new_serial_number: SAL9999ZZZZ
+          - new_serial_number: SAL9999ZZZZ
+            image_policy: my-image-policy
+            discovery_username: root
+            discovery_password: "{{ discovery_password }}"
     state: merged
 
 - name: Remove switches from fabric
