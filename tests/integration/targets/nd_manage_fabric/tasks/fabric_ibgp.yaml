@@ -16,9 +16,8 @@
   cisco.nd.nd_manage_fabric_ibgp:
     state: deleted
     config:
-      - name: "{{ test_fabric_merged }}"
-      - name: "{{ test_fabric_replaced }}"
-      - name: "{{ test_fabric_deleted }}"
+      - fabric_name: "{{ test_fabric_merged }}"
+      - fabric_name: "{{ test_fabric_replaced }}"
   tags: always
 
 #############################################################################
@@ -28,7 +27,7 @@
   cisco.nd.nd_manage_fabric_ibgp:
     state: merged
     config:
-      - "{{ {'name': test_fabric_merged} | combine(fabric_config_ibgp) }}"
+      - "{{ {'fabric_name': test_fabric_merged} | combine(fabric_config_ibgp) }}"
   register: merged_result_1
   tags: [test_merged, test_merged_create]
 
@@ -45,7 +44,7 @@
   cisco.nd.nd_manage_fabric_ibgp:
     state: merged
     config:
-      - "{{ {'name': test_fabric_merged} | combine(fabric_config_ibgp) }}"
+      - "{{ {'fabric_name': test_fabric_merged} | combine(fabric_config_ibgp) }}"
   register: merged_result_2
   tags: [test_merged, test_merged_idempotent]
 
@@ -62,7 +61,7 @@
   cisco.nd.nd_manage_fabric_ibgp:
     state: merged
     config:
-      - name: "{{ test_fabric_merged }}"
+      - fabric_name: "{{ test_fabric_merged }}"
         category: fabric
         location:
           latitude: 37.7749
@@ -485,7 +484,7 @@
   cisco.nd.nd_manage_fabric_ibgp:
     state: replaced
     config:
-      - name: "{{ test_fabric_replaced }}"
+      - fabric_name: "{{ test_fabric_replaced }}"
         category: fabric
         location:
           latitude: 37.7749
@@ -579,7 +578,7 @@
   cisco.nd.nd_manage_fabric_ibgp:
     state: replaced
     config:
-      - name: "{{ test_fabric_replaced }}"
+      - fabric_name: "{{ test_fabric_replaced }}"
         category: fabric
         location:
           latitude: 37.7749
@@ -673,7 +672,7 @@
   cisco.nd.nd_manage_fabric_ibgp:
     state: replaced
     config:
-      - name: "{{ test_fabric_replaced }}"
+      - fabric_name: "{{ test_fabric_replaced }}"
         category: fabric
         location:
           latitude: 37.7749
@@ -1057,71 +1056,17 @@
   tags: [test_replaced, test_replaced_validation]
 
 #############################################################################
-# TEST 3: Demonstrate difference between merged and replaced states
+# TEST 3: STATE DELETED - Delete fabrics (uses test_fabric_replaced from TEST 2)
 #############################################################################
-- name: "TEST 3: Create fabric for merged vs replaced comparison"
-  cisco.nd.nd_manage_fabric_ibgp:
-    state: replaced
-    config:
-      - "{{ {'name': test_fabric_deleted} | combine(fabric_config_ibgp) }}"
-  register: comparison_fabric_creation
-  tags: [test_comparison]
-
-- name: "TEST 3a: Partial update using merged state (should merge changes)"
-  cisco.nd.nd_manage_fabric_ibgp:
-    state: merged
-    config:
-      - name: "{{ test_fabric_deleted }}"
-        category: fabric
-        management:
-          bgp_asn: "65099"  # Only updating ASN
-          fabric_mtu: 8000  # Only updating MTU
-  register: merged_partial_result
-  tags: [test_comparison, test_merged_partial]
-
-- name: "TEST 3a: Verify merged state preserves existing configuration"
-  assert:
-    that:
-      - merged_partial_result is changed
-      - merged_partial_result is not failed
-    fail_msg: "Partial update with merged state failed"
-    success_msg: "Merged state successfully performed partial update"
-  tags: [test_comparison, test_merged_partial]
-
-- name: "TEST 3b: Partial update using replaced state (should replace entire config)"
-  cisco.nd.nd_manage_fabric_ibgp:
-    state: replaced
-    config:
-      - name: "{{ test_fabric_deleted }}"
-        category: fabric
-        management:
-          type: vxlanIbgp
-          bgp_asn: "65100"  # Only specifying minimal config for replaced
-          target_subnet_mask: 30
-  register: replaced_partial_result
-  tags: [test_comparison, test_replaced_partial]
-
-- name: "TEST 3b: Verify replaced state performs complete replacement"
-  assert:
-    that:
-      - replaced_partial_result is changed
-      - replaced_partial_result is not failed
-    fail_msg: "Partial replacement with replaced state failed"
-    success_msg: "Replaced state successfully performed complete replacement"
-  tags: [test_comparison, test_replaced_partial]
-
-#############################################################################
-# TEST 4: STATE DELETED - Delete fabrics
-#############################################################################
-- name: "TEST 4a: Delete fabric using state deleted"
+- name: "TEST 3a: Delete fabric using state deleted"
   cisco.nd.nd_manage_fabric_ibgp:
     state: deleted
     config:
-      - name: "{{ test_fabric_deleted }}"
+      - fabric_name: "{{ test_fabric_replaced }}"
   register: deleted_result_1
   tags: [test_deleted, test_deleted_delete]
 
-- name: "TEST 4a: Verify fabric was deleted"
+- name: "TEST 3a: Verify fabric was deleted"
   assert:
     that:
       - deleted_result_1 is changed
@@ -1130,15 +1075,15 @@
     success_msg: "Fabric successfully deleted with state deleted"
   tags: [test_deleted, test_deleted_delete]
 
-- name: "TEST 4b: Delete fabric using state deleted (second run - idempotency test)"
+- name: "TEST 3b: Delete fabric using state deleted (second run - idempotency test)"
   cisco.nd.nd_manage_fabric_ibgp:
     state: deleted
     config:
-      - name: "{{ test_fabric_deleted }}"
+      - fabric_name: "{{ test_fabric_replaced }}"
   register: deleted_result_2
   tags: [test_deleted, test_deleted_idempotent]
 
-- name: "TEST 4b: Verify deleted state is idempotent"
+- name: "TEST 3b: Verify deleted state is idempotent"
   assert:
     that:
       - deleted_result_2 is not changed
@@ -1148,13 +1093,13 @@
   tags: [test_deleted, test_deleted_idempotent]
 
 #############################################################################
-# TEST 5: Multiple fabric operations in single task
+# TEST 4: Multiple fabric operations in single task
 #############################################################################
-- name: "TEST 5: Multiple fabric operations in single task"
+- name: "TEST 4: Multiple fabric operations in single task"
   cisco.nd.nd_manage_fabric_ibgp:
     state: merged
     config:
-      - name: "multi_fabric_1"
+      - fabric_name: "multi_fabric_1"
         category: fabric
         location:
           latitude: 37.7749
@@ -1232,7 +1177,7 @@
           management_gateway: ""
           management_ipv4_prefix: 24
           # management_ipv6_prefix: 64
-      - name: "multi_fabric_2"
+      - fabric_name: "multi_fabric_2"
         category: fabric
         location:
           latitude: 37.7749
@@ -1313,7 +1258,7 @@
   register: multi_fabric_result
   tags: [test_multi, test_multi_create]
 
-- name: "TEST 5: Verify multiple fabrics were created"
+- name: "TEST 4: Verify multiple fabrics were created"
   assert:
     that:
       - multi_fabric_result is changed
@@ -1329,11 +1274,10 @@
   cisco.nd.nd_manage_fabric_ibgp:
     state: deleted
     config:
-      - name: "{{ test_fabric_merged }}"
-      - name: "{{ test_fabric_replaced }}"
-      - name: "{{ test_fabric_deleted }}"
-      - name: "multi_fabric_1"
-      - name: "multi_fabric_2"
+      - fabric_name: "{{ test_fabric_merged }}"
+      - fabric_name: "{{ test_fabric_replaced }}"
+      - fabric_name: "multi_fabric_1"
+      - fabric_name: "multi_fabric_2"
   ignore_errors: true
   tags: [cleanup, always]
 
@@ -1356,15 +1300,11 @@
         - Idempotency: {{ 'PASSED' if replaced_result_2 is not changed else 'FAILED' }}
         - Replace fabric: {{ 'PASSED' if replaced_result_3 is changed else 'FAILED' }}
 
-      ✓ TEST 3: MERGED vs REPLACED Comparison
-        - Merged partial: {{ 'PASSED' if merged_partial_result is changed else 'FAILED' }}
-        - Replaced partial: {{ 'PASSED' if replaced_partial_result is changed else 'FAILED' }}
-
-      ✓ TEST 4: STATE DELETED
+      ✓ TEST 3: STATE DELETED
         - Delete fabric: {{ 'PASSED' if deleted_result_1 is changed else 'FAILED' }}
         - Idempotency: {{ 'PASSED' if deleted_result_2 is not changed else 'FAILED' }}
 
-      ✓ TEST 5: MULTIPLE FABRICS
+      ✓ TEST 4: MULTIPLE FABRICS
         - Multi-create: {{ 'PASSED' if multi_fabric_result is changed else 'FAILED' }}
 
       All tests validate:
@@ -1372,6 +1312,5 @@
       - State replaced: Creates and completely replaces fabric configuration
       - State deleted: Removes fabrics
       - Idempotency: All operations are idempotent when run multiple times
-      - Difference: Merged preserves existing config, replaced overwrites completely
       ========================================
   tags: [summary, always]

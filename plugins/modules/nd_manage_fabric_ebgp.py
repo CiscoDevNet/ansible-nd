@@ -28,11 +28,11 @@ options:
     type: list
     elements: dict
     suboptions:
-      name:
+      fabric_name:
         description:
         - The name of the fabric.
         - Only letters, numbers, underscores, and hyphens are allowed.
-        - The O(config.name) must be defined when creating, updating or deleting a fabric.
+        - The O(config.fabric_name) must be defined when creating, updating or deleting a fabric.
         type: str
         required: true
       category:
@@ -1384,7 +1384,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - name: my_ebgp_fabric
+      - fabric_name: my_ebgp_fabric
         category: fabric
         location:
           latitude: 37.7749
@@ -1465,7 +1465,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - name: my_ebgp_fabric_static
+      - fabric_name: my_ebgp_fabric_static
         category: fabric
         management:
           type: vxlanEbgp
@@ -1491,7 +1491,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - name: my_ebgp_fabric
+      - fabric_name: my_ebgp_fabric
         category: fabric
         management:
           bgp_asn_range: "65100-65199"
@@ -1503,7 +1503,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ebgp:
     state: replaced
     config:
-      - name: my_ebgp_fabric
+      - fabric_name: my_ebgp_fabric
         category: fabric
         location:
           latitude: 37.7749
@@ -1556,7 +1556,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ebgp:
     state: replaced
     config:
-      - name: my_ebgp_fabric
+      - fabric_name: my_ebgp_fabric
         category: fabric
         management:
           type: vxlanEbgp
@@ -1570,7 +1570,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ebgp:
     state: overridden
     config:
-      - name: fabric_east
+      - fabric_name: fabric_east
         category: fabric
         location:
           latitude: 40.7128
@@ -1597,7 +1597,7 @@ EXAMPLES = r"""
           l3_vni_range: "50000-59000"
           network_vlan_range: "2300-2999"
           vrf_vlan_range: "2000-2299"
-      - name: fabric_west
+      - fabric_name: fabric_west
         category: fabric
         location:
           latitude: 34.0522
@@ -1630,16 +1630,16 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_ebgp:
     state: deleted
     config:
-      - name: my_ebgp_fabric
+      - fabric_name: my_ebgp_fabric
   register: result
 
 - name: Delete multiple eBGP fabrics in a single task
   cisco.nd.nd_manage_fabric_ebgp:
     state: deleted
     config:
-      - name: fabric_east
-      - name: fabric_west
-      - name: fabric_old
+      - fabric_name: fabric_east
+      - fabric_name: fabric_west
+      - fabric_name: fabric_old
   register: result
 """
 

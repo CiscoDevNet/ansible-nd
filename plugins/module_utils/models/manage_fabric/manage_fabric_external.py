@@ -435,12 +435,12 @@ class FabricExternalConnectivityModel(NDBaseModel):
         str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow"  # Allow extra fields from API responses
     )
 
-    identifiers: ClassVar[Optional[List[str]]] = ["name"]
+    identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
 
     # Basic Fabric Properties
     category: Literal["fabric"] = Field(description="Resource category", default="fabric")
-    name: str = Field(description="Fabric name", min_length=1, max_length=64)
+    fabric_name: str = Field(alias="name", description="Fabric name", min_length=1, max_length=64)
     location: Optional[LocationModel] = Field(description="Geographic location of the fabric", default=None)
 
     # License and Operations
@@ -490,7 +490,7 @@ class FabricExternalConnectivityModel(NDBaseModel):
         alias="externalStreamingSettings", description="External streaming settings", default_factory=ExternalStreamingSettingsModel
     )
 
-    @field_validator("name")
+    @field_validator("fabric_name")
     @classmethod
     def validate_fabric_name(cls, value: str) -> str:
         """
@@ -524,7 +524,7 @@ class FabricExternalConnectivityModel(NDBaseModel):
 
         # Propagate fabric name to management model
         if self.management is not None:
-            self.management.name = self.name
+            self.management.name = self.fabric_name
 
         # Validate telemetry consistency
         if self.telemetry_collection and self.telemetry_settings is None:

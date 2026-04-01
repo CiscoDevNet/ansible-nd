@@ -28,11 +28,11 @@ options:
     type: list
     elements: dict
     suboptions:
-      name:
+      fabric_name:
         description:
         - The name of the fabric.
         - Only letters, numbers, underscores, and hyphens are allowed.
-        - The O(config.name) must be defined when creating, updating or deleting a fabric.
+        - The O(config.fabric_name) must be defined when creating, updating or deleting a fabric.
         type: str
         required: true
       category:
@@ -622,7 +622,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_external:
     state: merged
     config:
-      - name: my_ext_fabric
+      - fabric_name: my_ext_fabric
         category: fabric
         location:
           latitude: 37.7749
@@ -659,7 +659,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_external:
     state: merged
     config:
-      - name: my_ext_fabric
+      - fabric_name: my_ext_fabric
         category: fabric
         management:
           bgp_asn: "65002"
@@ -671,7 +671,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_external:
     state: replaced
     config:
-      - name: my_ext_fabric
+      - fabric_name: my_ext_fabric
         category: fabric
         location:
           latitude: 37.7749
@@ -710,7 +710,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_external:
     state: replaced
     config:
-      - name: my_ext_fabric
+      - fabric_name: my_ext_fabric
         category: fabric
         management:
           type: externalConnectivity
@@ -721,15 +721,15 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_external:
     state: deleted
     config:
-      - name: my_ext_fabric
+      - fabric_name: my_ext_fabric
   register: result
 
 - name: Delete multiple fabrics in a single task
   cisco.nd.nd_manage_fabric_external:
     state: deleted
     config:
-      - name: ext_fabric_east
-      - name: ext_fabric_west
+      - fabric_name: ext_fabric_east
+      - fabric_name: ext_fabric_west
   register: result
 """
 

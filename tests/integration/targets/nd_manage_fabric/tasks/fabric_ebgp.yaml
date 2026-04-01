@@ -16,9 +16,9 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: deleted
     config:
-      - name: "{{ ebgp_test_fabric_merged }}"
-      - name: "{{ ebgp_test_fabric_replaced }}"
-      - name: "{{ ebgp_test_fabric_deleted }}"
+      - fabric_name: "{{ ebgp_test_fabric_merged }}"
+      - fabric_name: "{{ ebgp_test_fabric_replaced }}"
+      - fabric_name: "{{ ebgp_test_fabric_deleted }}"
   tags: always
 
 #############################################################################
@@ -28,7 +28,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - "{{ {'name': ebgp_test_fabric_merged} | combine(fabric_config_ebgp) }}"
+      - "{{ {'fabric_name': ebgp_test_fabric_merged} | combine(fabric_config_ebgp) }}"
   register: ebgp_merged_result_1
   tags: [test_merged, test_merged_create]
 
@@ -45,7 +45,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - "{{ {'name': ebgp_test_fabric_merged} | combine(fabric_config_ebgp) }}"
+      - "{{ {'fabric_name': ebgp_test_fabric_merged} | combine(fabric_config_ebgp) }}"
   register: ebgp_merged_result_2
   tags: [test_merged, test_merged_idempotent]
 
@@ -62,7 +62,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - name: "{{ ebgp_test_fabric_merged }}"
+      - fabric_name: "{{ ebgp_test_fabric_merged }}"
         category: fabric
         location:
           latitude: 37.7749
@@ -259,7 +259,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: replaced
     config:
-      - name: "{{ ebgp_test_fabric_replaced }}"
+      - fabric_name: "{{ ebgp_test_fabric_replaced }}"
         category: fabric
         location:
           latitude: 37.7749
@@ -359,7 +359,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: replaced
     config:
-      - name: "{{ ebgp_test_fabric_replaced }}"
+      - fabric_name: "{{ ebgp_test_fabric_replaced }}"
         category: fabric
         location:
           latitude: 37.7749
@@ -459,7 +459,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: replaced
     config:
-      - name: "{{ ebgp_test_fabric_replaced }}"
+      - fabric_name: "{{ ebgp_test_fabric_replaced }}"
         category: fabric
         location:
           latitude: 37.7749
@@ -888,7 +888,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: replaced
     config:
-      - "{{ {'name': ebgp_test_fabric_deleted} | combine(fabric_config_ebgp) }}"
+      - "{{ {'fabric_name': ebgp_test_fabric_deleted} | combine(fabric_config_ebgp) }}"
   register: ebgp_comparison_fabric_creation
   tags: [test_comparison]
 
@@ -896,7 +896,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - name: "{{ ebgp_test_fabric_deleted }}"
+      - fabric_name: "{{ ebgp_test_fabric_deleted }}"
         category: fabric
         management:
           bgp_asn: "65004"              # Different from default ASN
@@ -919,7 +919,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: replaced
     config:
-      - name: "{{ ebgp_test_fabric_deleted }}"
+      - fabric_name: "{{ ebgp_test_fabric_deleted }}"
         category: fabric
         management:
           type: vxlanEbgp
@@ -946,7 +946,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: deleted
     config:
-      - name: "{{ ebgp_test_fabric_deleted }}"
+      - fabric_name: "{{ ebgp_test_fabric_deleted }}"
   register: ebgp_deleted_result_1
   tags: [test_deleted, test_deleted_delete]
 
@@ -963,7 +963,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: deleted
     config:
-      - name: "{{ ebgp_test_fabric_deleted }}"
+      - fabric_name: "{{ ebgp_test_fabric_deleted }}"
   register: ebgp_deleted_result_2
   tags: [test_deleted, test_deleted_idempotent]
 
@@ -983,7 +983,7 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: merged
     config:
-      - name: "multi_ebgp_fabric_1"
+      - fabric_name: "multi_ebgp_fabric_1"
         category: fabric
         location:
           latitude: 37.7749
@@ -1062,7 +1062,7 @@
           dhcp_end_address: ""
           management_gateway: ""
           management_ipv4_prefix: 24
-      - name: "multi_ebgp_fabric_2"
+      - fabric_name: "multi_ebgp_fabric_2"
         category: fabric
         location:
           latitude: 37.7749
@@ -1160,11 +1160,11 @@
   cisco.nd.nd_manage_fabric_ebgp:
     state: deleted
     config:
-      - name: "{{ ebgp_test_fabric_merged }}"
-      - name: "{{ ebgp_test_fabric_replaced }}"
-      - name: "{{ ebgp_test_fabric_deleted }}"
-      - name: "multi_ebgp_fabric_1"
-      - name: "multi_ebgp_fabric_2"
+      - fabric_name: "{{ ebgp_test_fabric_merged }}"
+      - fabric_name: "{{ ebgp_test_fabric_replaced }}"
+      - fabric_name: "{{ ebgp_test_fabric_deleted }}"
+      - fabric_name: "multi_ebgp_fabric_1"
+      - fabric_name: "multi_ebgp_fabric_2"
   ignore_errors: true
   tags: [cleanup, always]
 

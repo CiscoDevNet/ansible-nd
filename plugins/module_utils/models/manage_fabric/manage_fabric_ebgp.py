@@ -817,12 +817,12 @@ class FabricEbgpModel(NDBaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
-    identifiers: ClassVar[Optional[List[str]]] = ["name"]
+    identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
 
     # Basic Fabric Properties
     category: Literal["fabric"] = Field(description="Resource category", default="fabric")
-    name: str = Field(description="Fabric name", min_length=1, max_length=64)
+    fabric_name: str = Field(alias="name", description="Fabric name", min_length=1, max_length=64)
     location: Optional[LocationModel] = Field(description="Geographic location of the fabric", default=None)
 
     # License and Operations
@@ -844,7 +844,7 @@ class FabricEbgpModel(NDBaseModel):
         alias="externalStreamingSettings", description="External streaming settings", default_factory=ExternalStreamingSettingsModel
     )
 
-    @field_validator("name")
+    @field_validator("fabric_name")
     @classmethod
     def validate_fabric_name(cls, value: str) -> str:
         """
@@ -876,7 +876,7 @@ class FabricEbgpModel(NDBaseModel):
 
         # Propagate fabric name to management model
         if self.management is not None:
-            self.management.name = self.name
+            self.management.name = self.fabric_name
 
         # Propagate BGP ASN to site_id if both are set and site_id is empty
         if self.management is not None and self.management.site_id == "" and self.management.bgp_asn is not None:
