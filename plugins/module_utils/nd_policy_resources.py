@@ -33,12 +33,10 @@ __metaclass__ = type
 import copy
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
-    BasePath,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_config_templates import (
     EpManageConfigTemplateParametersGet,
 )
@@ -59,6 +57,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_base import (
     PolicyCreate,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.gathered_models import (
+    GatheredPolicy,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_crud import (
     PolicyCreateBulk,
     PolicyUpdate,
@@ -72,12 +76,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModuleError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    ValidationError,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import (
-    PlaybookPolicyConfig,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import PlaybookPolicyConfig
+
 
 # =============================================================================
 # Module-level helpers (stateless, used by NDPolicyModule)
@@ -179,17 +180,15 @@ class NDPolicyModule:
 
         if not self.config:
             if self.state != "gathered":
-                self.module.fail_json(
+                raise NDModuleError(
                     msg=f"'config' element is mandatory for state '{self.state}'."
                 )
             # For gathered without config, initialise to empty list so
             # downstream code can iterate safely.
             self.config = []
 
-        # Template parameter cache: {templateName: [param_dict, ...]}
-        # Populated lazily by _fetch_template_params() to avoid
-        # redundant API calls when multiple config entries share the
-        # same template.
+        # Template parameter cache used by _validate_template_inputs().
+        # Keyed by templateName; populated lazily by _fetch_template_params().
         self._template_params_cache: Dict[str, List[Dict]] = {}
 
         # Before/after snapshot lists — populated during _execute_* methods.
@@ -418,11 +417,7 @@ class NDPolicyModule:
             switch_value = entry.get("switch")
             if isinstance(switch_value, list):
                 for switch_entry in switch_value:
-                    val = (
-                        switch_entry.get("serial_number")
-                        or switch_entry.get("ip")
-                        or ""
-                    )
+                    val = switch_entry.get("serial_number") or switch_entry.get("ip") or ""
                     if _needs_resolution(val):
                         needs_lookup.add(val)
             elif isinstance(switch_value, str) and _needs_resolution(switch_value):
@@ -459,14 +454,12 @@ class NDPolicyModule:
 
             if isinstance(switch_value, list):
                 for switch_entry in switch_value:
-                    original = switch_entry.get("serial_number") or switch_entry.get(
-                        "ip"
-                    )
+                    original = switch_entry.get("serial_number") or switch_entry.get("ip")
                     if not _needs_resolution(original):
                         continue
                     resolved = _resolve(original)
                     if resolved is None:
-                        self.module.fail_json(
+                        raise NDModuleError(
                             msg=(
                                 f"Unable to resolve switch identifier '{original}' to a serial number "
                                 f"in fabric '{self.fabric_name}'. Provide a valid switch serial_number, "
@@ -481,7 +474,7 @@ class NDPolicyModule:
                     continue
                 resolved = _resolve(switch_value)
                 if resolved is None:
-                    self.module.fail_json(
+                    raise NDModuleError(
                         msg=(
                             f"Unable to resolve switch identifier '{switch_value}' to a serial number "
                             f"in fabric '{self.fabric_name}'. Provide a valid switch serial_number, "
@@ -537,11 +530,11 @@ class NDPolicyModule:
             None.
 
         Raises:
-            Calls ``module.fail_json`` on validation failure.
+            NDModuleError: If any entry is missing a switch serial number.
         """
         for idx, entry in enumerate(translated_config):
             if not entry.get("switch"):
-                self.module.fail_json(
+                raise NDModuleError(
                     msg=f"config[{idx}]: every policy entry must have a switch serial number after translation."
                 )
 
@@ -555,8 +548,7 @@ class NDPolicyModule:
         Full pipeline executed before state dispatch:
             1. **Pydantic validation** — each ``config[]`` entry is validated
                against ``PlaybookPolicyConfig``.  Also applies defaults
-               (priority=500, description="", etc.) since the nested arg_spec
-               options were removed in favour of Pydantic.
+               (priority=500, description="", etc.)
             2. **Resolve switch identifiers** — IPs/hostnames → serial numbers
                via a fabric inventory API call.
             3. **Translate config** — flatten the two-level (globals + switch
@@ -572,27 +564,20 @@ class NDPolicyModule:
         self.log.info("Validating and preparing config")
 
         # Step 1: Pydantic validation + normalization
-        validation_context = {
-            "state": self.state,
-            "use_desc_as_key": self.use_desc_as_key,
-        }
+        validation_context = {"state": self.state, "use_desc_as_key": self.use_desc_as_key}
         normalized_config = []
         for idx, entry in enumerate(self.config):
             try:
-                validated = PlaybookPolicyConfig.model_validate(
-                    entry, context=validation_context
-                )
-                normalized_config.append(
-                    validated.model_dump(by_alias=False, exclude_none=False)
-                )
+                validated = PlaybookPolicyConfig.model_validate(entry, context=validation_context)
+                normalized_config.append(validated.model_dump(by_alias=False, exclude_none=False))
             except ValidationError as ve:
-                self.module.fail_json(
+                raise NDModuleError(
                     msg=f"Input validation failed for config[{idx}]: {ve}"
-                )
+                ) from ve
             except ValueError as ve:
-                self.module.fail_json(
+                raise NDModuleError(
                     msg=f"Input validation failed for config[{idx}]: {ve}"
-                )
+                ) from ve
         self.config = normalized_config
         self.module.params["config"] = normalized_config
 
@@ -650,7 +635,7 @@ class NDPolicyModule:
         elif self.state == "deleted":
             self._handle_deleted_state()
         else:
-            self.module.fail_json(msg=f"Unsupported state: {self.state}")
+            raise NDModuleError(msg=f"Unsupported state: {self.state}")
 
     # =========================================================================
     # Upfront Validation
@@ -706,11 +691,12 @@ class NDPolicyModule:
             if count > 1
         ]
         if duplicates:
-            self.module.fail_json(
+            raise NDModuleError(
                 msg=(
                     "Duplicate description+switch combinations found in the "
                     "playbook config (use_desc_as_key=true requires each "
-                    "description to be unique per switch): " + "; ".join(duplicates)
+                    "description to be unique per switch): "
+                    + "; ".join(duplicates)
                 )
             )
 
@@ -748,32 +734,28 @@ class NDPolicyModule:
                         + "; ".join(validation_errors)
                     )
                     self.log.error(error_msg)
-                    diff_results.append(
-                        {
-                            "action": "fail",
-                            "want": want,
-                            "have": None,
-                            "diff": None,
-                            "policy_id": None,
-                            "error_msg": error_msg,
-                        }
-                    )
-                    continue
-
-            have_list, error_msg = self._build_have(want)
-
-            if error_msg:
-                self.log.error(f"Build have failed: {error_msg}")
-                diff_results.append(
-                    {
+                    diff_results.append({
                         "action": "fail",
                         "want": want,
                         "have": None,
                         "diff": None,
                         "policy_id": None,
                         "error_msg": error_msg,
-                    }
-                )
+                    })
+                    continue
+
+            have_list, error_msg = self._build_have(want)
+
+            if error_msg:
+                self.log.error(f"Build have failed: {error_msg}")
+                diff_results.append({
+                    "action": "fail",
+                    "want": want,
+                    "have": None,
+                    "diff": None,
+                    "policy_id": None,
+                    "error_msg": error_msg,
+                })
                 continue
 
             # Phase 2: Compute diff
@@ -840,17 +822,15 @@ class NDPolicyModule:
 
             if error_msg:
                 self.log.error(f"Build have failed: {error_msg}")
-                diff_results.append(
-                    {
-                        "action": "fail",
-                        "want": want,
-                        "policies": [],
-                        "policy_ids": [],
-                        "match_count": 0,
-                        "warning": None,
-                        "error_msg": error_msg,
-                    }
-                )
+                diff_results.append({
+                    "action": "fail",
+                    "want": want,
+                    "policies": [],
+                    "policy_ids": [],
+                    "match_count": 0,
+                    "warning": None,
+                    "error_msg": error_msg,
+                })
                 continue
 
             # Phase 2: Compute delete result
@@ -935,9 +915,7 @@ class NDPolicyModule:
             for switch_sn in switches:
                 self.log.debug(f"Gathering policies for switch {switch_sn}")
                 lucene = self._build_lucene_filter(switchId=switch_sn)
-                switch_policies = self._query_policies(
-                    lucene, include_mark_deleted=False
-                )
+                switch_policies = self._query_policies(lucene, include_mark_deleted=False)
                 self.log.info(
                     f"Found {len(switch_policies)} policies on switch {switch_sn}"
                 )
@@ -958,25 +936,49 @@ class NDPolicyModule:
             self.log.debug("EXIT: _handle_gathered_state()")
             return
 
-        # De-duplicate by policyId (multiple config entries might match
-        # the same underlying policy).
-        seen_ids: set = set()
-        unique_policies: List[Dict] = []
+        # De-duplicate by policyId using NDConfigCollection.
+        # GatheredPolicy uses policyId as its single identifier, so
+        # adding a policy with a duplicate policyId is silently skipped.
+        gathered_collection = NDConfigCollection(model_class=GatheredPolicy)
+        skipped = 0
         for pol in policies:
             pid = pol.get("policyId")
-            if pid and pid in seen_ids:
+            if not pid:
+                self.log.warning("Skipping policy without policyId in gathered results")
+                skipped += 1
                 continue
-            if pid:
-                seen_ids.add(pid)
-            unique_policies.append(pol)
+            try:
+                model = GatheredPolicy.from_api_policy(pol)
+            except Exception as exc:
+                self.log.warning(
+                    f"Failed to parse policy {pid} for gathered output: {exc}"
+                )
+                skipped += 1
+                continue
+            # NDConfigCollection.add() raises ValueError on duplicate key;
+            # use get() first to skip duplicates gracefully.
+            if gathered_collection.get(pid) is not None:
+                self.log.debug(f"Gathered: skipping duplicate policy {pid}")
+                skipped += 1
+                continue
+            gathered_collection.add(model)
 
         self.log.info(
-            f"Gathered {len(unique_policies)} unique policies (from {len(policies)} total)"
+            f"Gathered {len(gathered_collection)} unique policies "
+            f"(from {len(policies)} total, {skipped} skipped)"
         )
 
-        # Convert each policy to playbook-ready config
-        for policy in unique_policies:
-            config_entry = self._policy_to_config(policy)
+        # Convert each policy to playbook-ready config, applying
+        # _clean_template_inputs to strip NDFC-injected keys.
+        for model in gathered_collection:
+            config_entry = model.to_gathered_config()
+            # Clean template inputs using the template parameter API
+            template_name = config_entry.get("name", "")
+            raw_inputs = config_entry.get("template_inputs") or {}
+            if template_name and raw_inputs:
+                config_entry["template_inputs"] = self._clean_template_inputs(
+                    template_name, raw_inputs
+                )
             self._gathered.append(config_entry)
 
         self._register_result(
@@ -1046,7 +1048,6 @@ class NDPolicyModule:
         raw_inputs = policy.get("templateInputs") or policy.get("nvPairs") or {}
         if isinstance(raw_inputs, str):
             import json
-
             try:
                 raw_inputs = json.loads(raw_inputs)
             except (json.JSONDecodeError, ValueError):
@@ -1071,79 +1072,56 @@ class NDPolicyModule:
         self.log.debug(f"Converted policy {policy_id} to config: {config_entry}")
         return config_entry
 
+    # NDFC system-injected keys present in templateInputs that are
+    # NOT real template parameters.  Stripped from gathered output so
+    # the result can be fed directly into state=merged.
+    _SYSTEM_INJECTED_KEYS: ClassVar[frozenset] = frozenset({
+        "FABRIC_NAME",
+        "MARK_DELETED",
+        "POLICY_DESC",
+        "POLICY_GROUP_ID",
+        "POLICY_ID",
+        "PRIORITY",
+        "SECENTITY",
+        "SECENTTYPE",
+        "SERIAL_NUMBER",
+        "SOURCE",
+        "SWITCH_DB_ID",
+    })
+
     def _clean_template_inputs(
         self, template_name: str, raw_inputs: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Remove system-injected keys from template inputs.
 
-        Fetches the template's parameter definitions via the
-        configTemplates API and keeps **only** the keys that appear in
-        the template's parameter list.  Any key in ``raw_inputs`` that
-        is not a declared template parameter (e.g. ``FABRIC_NAME``,
-        ``POLICY_ID``, ``SERIAL_NUMBER``) is an NDFC-injected system
-        key and is stripped.
-
-        If the template parameter fetch fails, falls back to a
-        hardcoded set of known NDFC-injected keys and emits a warning.
+        Strips keys listed in ``_SYSTEM_INJECTED_KEYS`` and keeps
+        everything else as a real template variable.
 
         Args:
-            template_name: Template name for fetching parameter definitions.
+            template_name: Template name (for logging context).
             raw_inputs:    Raw ``templateInputs`` dict from the controller.
 
         Returns:
-            Cleaned dict with only actual template parameter keys.
+            Cleaned dict with system-injected keys removed.
         """
         self.log.debug(
             f"ENTER: _clean_template_inputs(template={template_name}, "
             f"keys={list(raw_inputs.keys())})"
         )
 
-        params = self._fetch_template_params(template_name)
+        cleaned = {}
+        stripped_keys = []
+        for k, v in raw_inputs.items():
+            if k in self._SYSTEM_INJECTED_KEYS:
+                stripped_keys.append(k)
+            else:
+                cleaned[k] = v
 
-        if params:
-            # Build set of ALL parameter names declared in the template.
-            # Only keys present in this set are real template inputs;
-            # everything else is NDFC-injected and should be stripped.
-            template_param_names: set = set()
-            for p in params:
-                name = p.get("name")
-                if name:
-                    template_param_names.add(name)
-
+        if stripped_keys:
             self.log.debug(
-                f"Template '{template_name}': {len(template_param_names)} "
-                f"declared params: {sorted(template_param_names)}"
+                f"Stripped {len(stripped_keys)} system-injected keys: "
+                f"{sorted(stripped_keys)}"
             )
-
-            cleaned = {k: v for k, v in raw_inputs.items() if k in template_param_names}
-
-            stripped = set(raw_inputs.keys()) - template_param_names
-            if stripped:
-                self.log.debug(
-                    f"Stripped {len(stripped)} non-template keys: {sorted(stripped)}"
-                )
-        else:
-            # Fallback: strip commonly known NDFC-injected keys
-            _KNOWN_INTERNAL_KEYS = {
-                "FABRIC_NAME",
-                "POLICY_ID",
-                "POLICY_DESC",
-                "PRIORITY",
-                "SERIAL_NUMBER",
-                "SECENTITY",
-                "SECENTTYPE",
-                "SOURCE",
-                "MARK_DELETED",
-                "SWITCH_DB_ID",
-                "POLICY_GROUP_ID",
-            }
-            self.log.warning(
-                f"Could not fetch template params for '{template_name}'. "
-                f"Falling back to hardcoded internal keys: {sorted(_KNOWN_INTERNAL_KEYS)}"
-            )
-            cleaned = {
-                k: v for k, v in raw_inputs.items() if k not in _KNOWN_INTERNAL_KEYS
-            }
 
         self.log.debug(
             f"EXIT: _clean_template_inputs() -> {len(cleaned)} keys "
@@ -1167,14 +1145,51 @@ class NDPolicyModule:
         """
         return name.upper().startswith("POLICY-")
 
-    @staticmethod
-    def _build_lucene_filter(**kwargs: Any) -> str:
+    # Characters that have special meaning in Lucene query syntax.
+    # Values containing any of these must be quoted/escaped to prevent
+    # query parsing errors or unintended wildcard/boolean behaviour.
+    _LUCENE_SPECIAL_CHARS = set(r'+-!(){}[]^"~*?:\/ &|')
+
+    @classmethod
+    def _escape_lucene_value(cls, value: str) -> str:
+        """Escape a value for safe inclusion in a Lucene filter term.
+
+        If the value contains any Lucene special characters or
+        whitespace, it is wrapped in double-quotes with internal
+        backslashes and double-quotes escaped.  Plain alphanumeric
+        values are returned unmodified.
+
+        Args:
+            value: Raw string value.
+
+        Returns:
+            Lucene-safe string, possibly double-quoted.
+        """
+        s = str(value)
+        if not s:
+            return s
+        needs_quoting = any(ch in cls._LUCENE_SPECIAL_CHARS for ch in s)
+        if not needs_quoting:
+            return s
+        # Escape backslashes first, then double-quotes, then wrap.
+        escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+
+    @classmethod
+    def _build_lucene_filter(cls, **kwargs: Any) -> str:
         """Build a Lucene filter string from keyword arguments.
+
+        Values containing Lucene special characters are automatically
+        escaped/quoted so that descriptions like ``"policy: enable"``
+        do not break the query syntax.
 
         Example::
 
             _build_lucene_filter(switchId="FDO123", templateName="feature_enable")
             # Returns: "switchId:FDO123 AND templateName:feature_enable"
+
+            _build_lucene_filter(description="policy: enable (v2)")
+            # Returns: 'description:"policy: enable (v2)"'
 
         Args:
             **kwargs: Key-value pairs to include in the Lucene filter.
@@ -1186,7 +1201,7 @@ class NDPolicyModule:
         parts = []
         for key, value in kwargs.items():
             if value is not None:
-                parts.append(f"{key}:{value}")
+                parts.append(f"{key}:{cls._escape_lucene_value(str(value))}")
         return " AND ".join(parts)
 
     @staticmethod
@@ -1232,13 +1247,15 @@ class NDPolicyModule:
         have_inputs = have.get("templateInputs") or {}
         input_diff = {}
         for key in want_inputs:
-            want_val = str(want_inputs[key])
-            have_val = str(have_inputs.get(key, ""))
+            # Normalize both sides to lowercase strings to handle:
+            #   - Python bool True → "True" vs NDFC string "true"
+            #   - Python int 100 → "100" vs NDFC string "100"
+            # Also strip trailing whitespace/newlines to avoid false
+            # diffs from multiline template inputs (e.g., CONF blocks).
+            want_val = str(want_inputs[key]).strip().lower()
+            have_val = str(have_inputs.get(key, "")).strip().lower()
             if want_val != have_val:
-                input_diff[key] = {
-                    "want": want_inputs[key],
-                    "have": have_inputs.get(key),
-                }
+                input_diff[key] = {"want": want_inputs[key], "have": have_inputs.get(key)}
         if input_diff:
             diff["templateInputs"] = input_diff
 
@@ -1248,7 +1265,9 @@ class NDPolicyModule:
     # API Query Helpers
     # =========================================================================
 
-    def _query_policies_raw(self, lucene_filter: Optional[str] = None) -> List[Dict]:
+    def _query_policies_raw(
+        self, lucene_filter: Optional[str] = None
+    ) -> List[Dict]:
         """Query policies from the controller using GET /policies (unfiltered).
 
         Returns **all** matching policies including ``markDeleted`` and
@@ -1417,9 +1436,7 @@ class NDPolicyModule:
         Returns:
             Dict with camelCase keys matching the API schema.
         """
-        self.log.debug(
-            f"Building want for state={state}, name={config_entry.get('name')}"
-        )
+        self.log.debug(f"Building want for state={state}, name={config_entry.get('name')}")
 
         want = {
             "switchId": config_entry["switch"],
@@ -1433,9 +1450,7 @@ class NDPolicyModule:
             want["templateName"] = name
 
         # Per-entry create_additional_policy flag (carried on want dict)
-        want["create_additional_policy"] = config_entry.get(
-            "create_additional_policy", True
-        )
+        want["create_additional_policy"] = config_entry.get("create_additional_policy", True)
 
         # For merged state, include all payload fields
         if state == "merged":
@@ -1717,9 +1732,7 @@ class NDPolicyModule:
         # Case A: Policy ID given directly
         if "policyId" in want:
             self.log.debug(f"Case A: Direct policy ID lookup: {want['policyId']}")
-            policy = self._query_policy_by_id(
-                want["policyId"], include_mark_deleted=incl_md
-            )
+            policy = self._query_policy_by_id(want["policyId"], include_mark_deleted=incl_md)
             if policy:
                 self.log.info(f"Policy {want['policyId']} found")
                 return [policy], None
@@ -1731,9 +1744,7 @@ class NDPolicyModule:
             self.log.debug(f"Case D: Switch-only lookup for {want['switchId']}")
             lucene = self._build_lucene_filter(switchId=want["switchId"])
             policies = self._query_policies(lucene, include_mark_deleted=incl_md)
-            self.log.info(
-                f"Found {len(policies)} policies on switch {want['switchId']}"
-            )
+            self.log.info(f"Found {len(policies)} policies on switch {want['switchId']}")
             return policies, None
 
         # Case B: use_desc_as_key=false, search by switchId + templateName
@@ -1753,7 +1764,8 @@ class NDPolicyModule:
             if want_desc:
                 pre_filter_count = len(policies)
                 policies = [
-                    p for p in policies if (p.get("description", "") or "") == want_desc
+                    p for p in policies
+                    if (p.get("description", "") or "") == want_desc
                 ]
                 self.log.debug(
                     f"Post-filtered by description: {len(policies)} of {pre_filter_count}"
@@ -1773,10 +1785,7 @@ class NDPolicyModule:
         # Pydantic intentionally skips the check.
         if not want_desc:
             self.log.warning("Case C: description is required but not provided")
-            return (
-                [],
-                "description is required when use_desc_as_key=true and name is a template name",
-            )
+            return [], "description is required when use_desc_as_key=true and name is a template name"
 
         lucene = self._build_lucene_filter(
             switchId=want["switchId"],
@@ -1787,7 +1796,8 @@ class NDPolicyModule:
         # IMPORTANT: Lucene does tokenized matching, not exact match.
         # Post-filter to ensure exact description match.
         exact_matches = [
-            p for p in policies if (p.get("description", "") or "") == want_desc
+            p for p in policies
+            if (p.get("description", "") or "") == want_desc
         ]
         self.log.debug(
             f"Exact description match: {len(exact_matches)} of {len(policies)}"
@@ -1952,7 +1962,7 @@ class NDPolicyModule:
 
             # Case 16: Multiple matches → hard FAIL (ambiguous)
             # Abort the entire task atomically — no partial changes.
-            self.module.fail_json(
+            raise NDModuleError(
                 msg=(
                     f"Multiple policies ({match_count}) found with description "
                     f"'{want.get('description')}' on switch {want.get('switchId')}. "
@@ -2092,12 +2102,9 @@ class NDPolicyModule:
                     success=True,
                     found=True,
                     diff={
-                        "action": "update",
-                        "before": have,
-                        "after": {**have, **want},
-                        "want": want,
-                        "have": have,
-                        "diff": diff_entry["diff"],
+                        "action": "update", "before": have,
+                        "after": {**have, **want}, "want": want,
+                        "have": have, "diff": diff_entry["diff"],
                         "policy_id": diff_entry["policy_id"],
                     },
                 )
@@ -2115,11 +2122,8 @@ class NDPolicyModule:
                     success=True,
                     found=True,
                     diff={
-                        "action": "delete_and_create",
-                        "before": have,
-                        "after": want,
-                        "want": want,
-                        "have": have,
+                        "action": "delete_and_create", "before": have,
+                        "after": want, "want": want, "have": have,
                         "diff": diff_entry["diff"],
                         "delete_policy_id": diff_entry["policy_id"],
                     },
@@ -2238,18 +2242,18 @@ class NDPolicyModule:
                             self._api_delete_policy(pid)
                             direct_deleted.append(pid)
                         except Exception:  # noqa: BLE001
-                            self.log.error(f"Direct DELETE also failed for {pid}")
+                            self.log.error(
+                                f"Direct DELETE also failed for {pid}"
+                            )
                             remove_failed_ids.add(pid)
 
                     # Deploy to affected switches to push config removal
                     if direct_deleted and self.deploy:
-                        affected_switches = list(
-                            {
-                                dac_switch_map[pid]
-                                for pid in direct_deleted
-                                if pid in dac_switch_map
-                            }
-                        )
+                        affected_switches = list({
+                            dac_switch_map[pid]
+                            for pid in direct_deleted
+                            if pid in dac_switch_map
+                        })
                         if affected_switches:
                             self.log.info(
                                 f"Phase 3b: switchActions/deploy for "
@@ -2362,13 +2366,16 @@ class NDPolicyModule:
 
             want_list = [d["want"] for d in batch_entries]
             self.log.info(
-                f"Bulk creating {len(want_list)} policies " f"(batch={batch_label})"
+                f"Bulk creating {len(want_list)} policies "
+                f"(batch={batch_label})"
             )
 
             try:
                 created_ids = self._api_bulk_create_policies(want_list)
             except NDModuleError as bulk_err:
-                self.log.error(f"Bulk {batch_label} failed entirely: {bulk_err.msg}")
+                self.log.error(
+                    f"Bulk {batch_label} failed entirely: {bulk_err.msg}"
+                )
                 for diff_entry in batch_entries:
                     want = diff_entry["want"]
                     action_label = (
@@ -2403,12 +2410,8 @@ class NDPolicyModule:
                 is_replace = diff_entry["action"] == "delete_and_create"
 
                 entry_result = (
-                    created_ids[idx]
-                    if idx < len(created_ids)
-                    else {
-                        "policy_id": None,
-                        "ndfc_error": "No response entry from NDFC",
-                    }
+                    created_ids[idx] if idx < len(created_ids)
+                    else {"policy_id": None, "ndfc_error": "No response entry from NDFC"}
                 )
                 created_id = entry_result["policy_id"]
                 ndfc_error = entry_result["ndfc_error"]
@@ -2427,7 +2430,9 @@ class NDPolicyModule:
                     self._before.append(have)
 
                 if per_policy_error:
-                    action_label = "policy_replace" if is_replace else "policy_create"
+                    action_label = (
+                        "policy_replace" if is_replace else "policy_create"
+                    )
                     self._register_result(
                         action=action_label,
                         operation_type=OperationType.CREATE,
@@ -2458,9 +2463,7 @@ class NDPolicyModule:
                             "action": "delete_and_create",
                             "before": have,
                             "after": {**want, "policyId": created_id},
-                            "want": want,
-                            "have": have,
-                            "diff": field_diff,
+                            "want": want, "have": have, "diff": field_diff,
                             "deleted_policy_id": diff_entry["policy_id"],
                             "created_policy_id": created_id,
                         },
@@ -2477,8 +2480,7 @@ class NDPolicyModule:
                             "action": "create",
                             "before": None,
                             "after": {**want, "policyId": created_id},
-                            "want": want,
-                            "diff": field_diff,
+                            "want": want, "diff": field_diff,
                             "created_policy_id": created_id,
                         },
                     )
@@ -2496,7 +2498,9 @@ class NDPolicyModule:
             try:
                 self._api_update_policy(want, have, policy_id)
             except NDModuleError as update_err:
-                self.log.error(f"Update failed for {policy_id}: {update_err.msg}")
+                self.log.error(
+                    f"Update failed for {policy_id}: {update_err.msg}"
+                )
                 self._register_result(
                     action="policy_update",
                     operation_type=OperationType.UPDATE,
@@ -2507,9 +2511,7 @@ class NDPolicyModule:
                     found=True,
                     diff={
                         "action": "update_failed",
-                        "want": want,
-                        "have": have,
-                        "diff": field_diff,
+                        "want": want, "have": have, "diff": field_diff,
                         "policy_id": policy_id,
                         "error": update_err.msg,
                     },
@@ -2530,18 +2532,13 @@ class NDPolicyModule:
                 found=True,
                 diff={
                     "action": "update",
-                    "before": have,
-                    "after": after_merged,
-                    "want": want,
-                    "have": have,
-                    "diff": field_diff,
+                    "before": have, "after": after_merged,
+                    "want": want, "have": have, "diff": field_diff,
                     "policy_id": policy_id,
                 },
             )
 
-        self.log.info(
-            f"Merged execute complete: {len(policy_ids_to_deploy)} policies to deploy"
-        )
+        self.log.info(f"Merged execute complete: {len(policy_ids_to_deploy)} policies to deploy")
         self.log.debug("EXIT: _execute_merged()")
         return policy_ids_to_deploy
 
@@ -2616,7 +2613,7 @@ class NDPolicyModule:
             # D-12: Multiple matches → hard FAIL (ambiguous)
             # Abort the entire task atomically — do not silently delete
             # multiple policies when descriptions should be unique.
-            self.module.fail_json(
+            raise NDModuleError(
                 msg=(
                     f"Multiple policies ({match_count}) found with description "
                     f"'{want_desc}' on switch {want.get('switchId')}. "
@@ -2711,12 +2708,7 @@ class NDPolicyModule:
                     message="Policy not found — already absent",
                     success=True,
                     found=False,
-                    diff={
-                        "action": action,
-                        "want": want,
-                        "before": None,
-                        "after": None,
-                    },
+                    diff={"action": action, "want": want, "before": None, "after": None},
                 )
                 continue
 
@@ -2746,9 +2738,7 @@ class NDPolicyModule:
                         all_switch_ids.append(sw)
 
                 if self.check_mode:
-                    self.log.info(
-                        f"Check mode: would delete {len(policy_ids)} policy(ies)"
-                    )
+                    self.log.info(f"Check mode: would delete {len(policy_ids)} policy(ies)")
                     diff_payload = {
                         "action": action,
                         "want": want,
@@ -2876,7 +2866,8 @@ class NDPolicyModule:
         else:
             # No structured response — assume all succeeded (pre-existing behavior)
             self.log.warning(
-                "markDelete returned non-dict response — " "treating all as succeeded"
+                "markDelete returned non-dict response — "
+                "treating all as succeeded"
             )
             mark_succeeded = list(unique_policy_ids)
 
@@ -2937,9 +2928,10 @@ class NDPolicyModule:
                     failed_direct.append(pid)
 
             if deleted_direct:
-                tpl_names = list(
-                    {policy_template_map.get(pid, "unknown") for pid in deleted_direct}
-                )
+                tpl_names = list({
+                    policy_template_map.get(pid, "unknown")
+                    for pid in deleted_direct
+                })
                 self._register_result(
                     action="policy_direct_delete",
                     state="deleted",
@@ -2981,13 +2973,11 @@ class NDPolicyModule:
             # to the devices.  Direct DELETE removes the policy record but
             # the device still has the running config until we deploy.
             if deleted_direct and self.deploy:
-                affected_switches = list(
-                    {
-                        policy_switch_map[pid]
-                        for pid in deleted_direct
-                        if pid in policy_switch_map
-                    }
-                )
+                affected_switches = list({
+                    policy_switch_map[pid]
+                    for pid in deleted_direct
+                    if pid in policy_switch_map
+                })
                 if affected_switches:
                     self.log.info(
                         f"Deploying config to {len(affected_switches)} switch(es) "
@@ -3016,7 +3006,9 @@ class NDPolicyModule:
                     if isinstance(deploy_data, dict) and deploy_data:
                         status_str = deploy_data.get("status", "")
                         if status_str:
-                            self.log.info(f"switchActions/deploy status: {status_str}")
+                            self.log.info(
+                                f"switchActions/deploy status: {status_str}"
+                            )
                         else:
                             self.log.warning(
                                 "switchActions/deploy returned non-empty body "
@@ -3070,8 +3062,12 @@ class NDPolicyModule:
         # Step 2 (deploy=true only): pushConfig
         deploy_success = True
         if self.deploy:
-            self.log.info(f"Step 2/3: pushConfig for {len(normal_delete_ids)} policies")
-            deploy_success = self._deploy_policies(normal_delete_ids, state="deleted")
+            self.log.info(
+                f"Step 2/3: pushConfig for {len(normal_delete_ids)} policies"
+            )
+            deploy_success = self._deploy_policies(
+                normal_delete_ids, state="deleted"
+            )
 
         # deploy=false: stop after markDelete
         if not self.deploy:
@@ -3110,7 +3106,9 @@ class NDPolicyModule:
             return
 
         # Step 3: remove — hard-delete policy records from NDFC
-        self.log.info(f"Step 3/3: remove {len(normal_delete_ids)} policies")
+        self.log.info(
+            f"Step 3/3: remove {len(normal_delete_ids)} policies"
+        )
         remove_data = self._api_remove_policies(normal_delete_ids)
 
         # Inspect 207 response for per-policy failures
@@ -3131,7 +3129,8 @@ class NDPolicyModule:
                 for p in rm_fail
             ]
             self.log.error(
-                f"remove failed for {len(rm_fail)} policy(ies): " + "; ".join(fail_msgs)
+                f"remove failed for {len(rm_fail)} policy(ies): "
+                + "; ".join(fail_msgs)
             )
 
         self._register_result(
@@ -3153,7 +3152,9 @@ class NDPolicyModule:
                 "action": "remove",
                 "policy_ids": normal_delete_ids,
                 "remove_success": remove_success,
-                "failed_policies": [p.get("policyId") for p in rm_fail],
+                "failed_policies": [
+                    p.get("policyId") for p in rm_fail
+                ],
             },
         )
 
@@ -3231,10 +3232,7 @@ class NDPolicyModule:
         deploy_success = len(failed_policies) == 0
 
         if failed_policies:
-            failed_msgs = [
-                f"{p.get('policyId', '?')}: {p.get('message', 'unknown error')}"
-                for p in failed_policies
-            ]
+            failed_msgs = [f"{p.get('policyId', '?')}: {p.get('message', 'unknown error')}" for p in failed_policies]
             self.log.error(
                 f"pushConfig failed for {len(failed_policies)} policy(ies): "
                 + "; ".join(failed_msgs)
@@ -3404,9 +3402,7 @@ class NDPolicyModule:
                     results.append({"policy_id": pid, "ndfc_error": None})
             else:
                 self.log.warning(f"Bulk create: no response entry for policy {idx}")
-                results.append(
-                    {"policy_id": None, "ndfc_error": "No response entry from NDFC"}
-                )
+                results.append({"policy_id": None, "ndfc_error": "No response entry from NDFC"})
 
         self.log.info(
             f"Bulk create complete: "
@@ -3563,7 +3559,9 @@ class NDPolicyModule:
             Response DATA dict from NDFC.  Typically contains a ``status``
             field like ``"Configuration deployment completed for [...]"``.
         """
-        self.log.info(f"Deploying config to {len(switch_ids)} switch(es): {switch_ids}")
+        self.log.info(
+            f"Deploying config to {len(switch_ids)} switch(es): {switch_ids}"
+        )
         body = SwitchIds(switch_ids=switch_ids)
 
         ep = EpManageSwitchActionsDeployPost()

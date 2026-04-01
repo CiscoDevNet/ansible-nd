@@ -39,10 +39,12 @@ description:
   unambiguous policy matching. To manage policies with non-unique descriptions, use
   O(use_desc_as_key=false) and reference policies by policy ID.
 - Policies and switches are specified separately in the O(config) list. Global policies
-  apply to all switches listed in the C(switch) entry. Per-switch policy overrides can
-  be specified using the C(policies) suboption inside each switch entry (only when
-  O(use_desc_as_key=false)). Per-switch policies override global policies with the
-  same template name for that switch.
+  (entries without a C(switch) key) apply to every switch listed in the C(switch) entry.
+  Per-switch policy overrides can be specified using the C(policies) suboption inside each
+  switch entry (only when O(use_desc_as_key=false)). A per-switch override whose template
+  name matches a global policy B(replaces) that global for the switch. Per-switch entries
+  with template names that do not match any global are treated as B(additional) policies for
+  that switch.
 - B(Update behavior) — when O(use_desc_as_key=false) and a template name is given,
   existing policies are never updated in-place. A new policy is always created. To update
   a specific policy, provide its policy ID (C(POLICY-xxxxx)) as the O(config[].name).
@@ -65,11 +67,12 @@ options:
       fabric switches are exported. When provided, only matching policies are exported.
     - Policy entries define the template, description, priority, and template inputs.
     - A separate C(switch) entry lists the target switches and optional per-switch policy overrides.
-    - All global policies (entries without C(switch) key) are applied to every switch listed
-      in the C(switch) entry. Per-switch policies (specified under C(switch[].policies))
-      override global policies with the same template name for that particular switch
-      (only when O(use_desc_as_key=false); when O(use_desc_as_key=true) per-switch
-      policies are simply merged with global policies).
+    - All global policies (entries without a C(switch) key) are applied to every switch listed
+      in the C(switch) entry. When O(use_desc_as_key=false), a per-switch policy whose
+      template name matches a global policy B(replaces) that global for the particular switch;
+      per-switch entries with different template names are B(added) alongside the globals.
+      When O(use_desc_as_key=true), per-switch policies are simply merged with global
+      policies (no replacement by name).
     type: list
     elements: dict
     suboptions:
@@ -103,7 +106,9 @@ options:
         - A flag indicating if a policy is to be created even if an identical policy already exists.
         - When set to V(true), a new duplicate policy is created regardless of whether a matching one exists.
         - When set to V(false), duplicate creation is skipped if an identical policy already exists.
-        - Only relevant when O(use_desc_as_key=false) and O(config[].name) is a template name.
+        - Most relevant when O(use_desc_as_key=false) and O(config[].name) is a template name.
+          Also applies when O(config[].name) is a policy ID — if V(true) and no diff exists,
+          the module creates a new copy of the policy (with a new ID) instead of skipping.
         type: bool
         default: true
       template_inputs:
@@ -115,9 +120,14 @@ options:
       switch:
         description:
         - A list of switches and optional per-switch policy overrides.
-        - All switches in this list will be deployed with the global policies defined
-          at the top level of O(config). Per-switch policy overrides can be specified
-          using the C(policies) suboption.
+        - Every switch in this list receives all global policies defined at the top level
+          of O(config). If a switch also has a C(policies) suboption, those per-switch
+          entries interact with the globals as follows (when O(use_desc_as_key=false)).
+        - A per-switch policy whose template name B(matches) a global policy B(replaces)
+          that global for the switch (e.g., to change priority or template inputs).
+        - A per-switch policy whose template name does B(not) match any global is
+          B(added) as an extra policy for the switch alongside the globals.
+        - If a switch has B(no) C(policies) suboption, it receives all globals unchanged.
         type: list
         elements: dict
         suboptions:
@@ -132,10 +142,12 @@ options:
             aliases: [ ip ]
           policies:
             description:
-            - A list of policies specific to this switch that override global policies
-              with the same template name (when O(use_desc_as_key=false)).
+            - A list of per-switch policies. When O(use_desc_as_key=false), any entry
+              whose template name matches a global policy B(replaces) that global for
+              this switch. Entries with template names not found in the globals are
+              B(added) as extra policies for this switch.
             - When O(use_desc_as_key=true), per-switch policies are simply merged with
-              global policies rather than overriding by template name.
+              global policies (no name-based replacement).
             type: list
             elements: dict
             default: []
@@ -184,9 +196,12 @@ options:
     - For C(deleted) with O(deploy=false), only C(markDelete) is performed on the controller.
       Policy records remain marked for deletion (with negative priority) until a subsequent
       run with O(deploy=true) or manual intervention.
-    - B(Exception) — C(switch_freeform) policies are always deleted via a direct C(DELETE)
-      API call regardless of the O(deploy) setting, because the C(markDelete) operation
-      is not supported for this template.
+    - B(Exception) — C(switch_freeform) and other PYTHON content-type policies do not
+      support the C(markDelete) API. The module automatically detects this and falls back
+      to a direct C(DELETE) API call to remove the policy record from the controller.
+      When O(deploy=true), a C(switchActions/deploy) is also performed to push the
+      config removal to the switch. When O(deploy=false), the policy record is removed
+      from the controller but the running config remains on the switch until the next deploy.
     type: bool
     default: true
   ticket_id:
@@ -207,8 +222,12 @@ options:
     - For C(deleted) with O(deploy=false), only C(markDelete) is performed on the controller.
       Policy records remain marked for deletion (with negative priority) until a subsequent
       run with O(deploy=true) or manual intervention.
-    - B(Exception) — C(switch_freeform) policies skip the C(markDelete) flow entirely
-      and are removed via a direct C(DELETE) API call regardless of the O(deploy) setting.
+    - B(Exception) — C(switch_freeform) and other PYTHON content-type policies cannot
+      be markDeleted. The module attempts C(markDelete), detects the failure, and
+      automatically falls back to a direct C(DELETE) API call. When O(deploy=true),
+      a C(switchActions/deploy) is performed afterward to push config removal to
+      the switch. When O(deploy=false), the policy record is removed from the
+      controller but the running config remains on the switch.
     - Use C(gathered) to export existing policies as playbook-compatible config.
       When O(config) is provided, only matching policies are exported.
       When O(config) is omitted, all policies on all fabric switches are exported.
@@ -231,16 +250,64 @@ notes:
 - When O(use_desc_as_key=true), the description uniquely identifies the policy per switch,
   so in-place updates B(are) supported. If the template name changes, the old policy is
   deleted and a new one is created.
-- C(switch_freeform) policies do not support the C(markDelete) API. They are always
-  removed via a direct C(DELETE) API call, regardless of the O(deploy) setting.
+- C(switch_freeform) and other PYTHON content-type policies do not support the
+  C(markDelete) API. The module automatically detects this and falls back to a
+  direct C(DELETE) API call. When O(deploy=true), C(switchActions/deploy) is
+  performed to push config removal to the switch. When O(deploy=false), only the
+  policy record is removed from the controller.
 """
 
 EXAMPLES = r"""
-# NOTE: In the following create task, policies template_101, template_102, and template_103
-#       are deployed on switch2, whereas policies template_104 and template_105 are the only
-#       policies installed on switch1 (per-switch override).
+# EXAMPLE 1 — Per-switch extra policies (no name overlap with globals)
+#
+# NOTE: Three global policies (template_101, template_102, template_103) are defined.
+#       switch1 also has per-switch policies template_104 and template_105. Since those
+#       names do not match any global, they are ADDED alongside the globals.
+#
+#       Result:
+#         switch1: template_101, template_102, template_103, template_104, template_105
+#         switch2: template_101, template_102, template_103
 
-- name: Create different policies with per-switch overrides
+- name: Create policies with per-switch extras
+  cisco.nd.nd_policy:
+    fabric_name: "{{ fabric_name }}"
+    state: merged
+    deploy: true
+    config:
+      - name: template_101  # This must be a valid template name
+        create_additional_policy: false  # Do not create a policy if it already exists
+        priority: 101
+
+      - name: template_102  # This must be a valid template name
+        create_additional_policy: false  # Do not create a policy if it already exists
+        description: "102 - No priority given"
+
+      - name: template_103  # This must be a valid template name
+        create_additional_policy: false  # Do not create a policy if it already exists
+        description: "Both description and priority given"
+        priority: 500
+
+      - switch:
+          - serial_number: "{{ switch1 }}"
+            policies:
+              - name: template_104  # Different name → added alongside globals
+                create_additional_policy: false
+              - name: template_105  # Different name → added alongside globals
+                create_additional_policy: false
+          - serial_number: "{{ switch2 }}"
+
+# EXAMPLE 2 — Per-switch override (same template name replaces the global)
+#
+# NOTE: Three global policies (template_101, template_102, template_103) are defined.
+#       switch1 overrides template_101 with a different priority and adds template_104.
+#       Since template_101 matches a global, the global version is REPLACED for switch1.
+#       template_104 does not match any global, so it is ADDED.
+#
+#       Result:
+#         switch1: template_101 (priority 999), template_102, template_103, template_104
+#         switch2: template_101 (priority 101), template_102, template_103
+
+- name: Create policies with per-switch override
   cisco.nd.nd_policy:
     fabric_name: "{{ fabric_name }}"
     state: merged
@@ -262,9 +329,10 @@ EXAMPLES = r"""
       - switch:
           - serial_number: "{{ switch1 }}"
             policies:
-              - name: template_104
+              - name: template_101  # Same name as global → REPLACES it for switch1
                 create_additional_policy: false
-              - name: template_105
+                priority: 999
+              - name: template_104  # Different name → ADDED alongside globals
                 create_additional_policy: false
           - serial_number: "{{ switch2 }}"
 
@@ -399,10 +467,13 @@ EXAMPLES = r"""
       - switch:
           - serial_number: "{{ switch1 }}"
 
-# NOTE: switch_freeform policies are always directly deleted
-#       regardless of the deploy setting.
+# NOTE: switch_freeform policies use a direct DELETE fallback since
+#       markDelete is not supported for PYTHON content-type templates.
+#       When deploy=true, switchActions/deploy pushes config removal
+#       to the switch. When deploy=false, only the policy record is
+#       removed from the controller.
 
-- name: Delete switch_freeform policies (direct DELETE)
+- name: Delete switch_freeform policies (direct DELETE fallback)
   cisco.nd.nd_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
@@ -443,6 +514,12 @@ EXAMPLES = r"""
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ all_policies.gathered }}"
+
+- name: Use gathered output to delete those exact policies by policy ID
+  cisco.nd.nd_policy:
+    fabric_name: "{{ fabric_name }}"
+    state: deleted
+    config: "{{ all_policies.gathered }}"
 """
 
 RETURN = r"""
@@ -478,7 +555,12 @@ gathered:
   - Each entry contains C(name) (template name), C(policy_id), C(switch),
     C(description), C(priority), C(template_inputs), and C(create_additional_policy).
   - Internal template input keys (e.g., C(FABRIC_NAME), C(POLICY_ID)) are
-    stripped so the output can be used directly as O(config) in a C(merged) task.
+    stripped so the output can be used directly as O(config) in a C(merged)
+    or C(deleted) task. When used with C(merged), the C(policy_id) field is
+    promoted to O(config[].name) so the existing policy is updated in-place.
+    When used with C(deleted), the same promotion deletes the exact policies
+    by ID. To create fresh copies instead of updating, remove the C(policy_id)
+    lines from the gathered output before feeding it back.
   - Only returned when O(state=gathered).
   returned: when state is gathered
   type: list
