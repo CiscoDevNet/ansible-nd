@@ -28,6 +28,131 @@ def _get_virtual_peer_link(pair):
     return None
 
 
+def _get_vpc_pair_details(pair):
+    """Extract vpc_pair_details / vpcPairDetails from a pair dict."""
+    for key in ("vpc_pair_details", "vpcPairDetails"):
+        if key in pair:
+            return pair[key]
+    return None
+
+
+def _coerce_scalar(value):
+    """Normalize scalar value types for stable comparisons across API/model formats."""
+    if isinstance(value, str):
+        text = value.strip()
+        lower = text.lower()
+        if lower in ("true", "false"):
+            return lower == "true"
+        if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
+            try:
+                return int(text)
+            except Exception:
+                return text
+        return text
+    return value
+
+
+def _values_equal(expected, actual):
+    """Compare values with lightweight normalization for bool/int/string drift."""
+    if isinstance(expected, list) and isinstance(actual, list):
+        if len(expected) != len(actual):
+            return False
+        return all(_values_equal(e, a) for e, a in zip(expected, actual))
+    return _coerce_scalar(expected) == _coerce_scalar(actual)
+
+
+def _detail_value_with_alias(details, key):
+    """
+    Fetch detail value supporting snake_case/camelCase alias forms.
+    Returns tuple(value, resolved_key). value is None if not found.
+    """
+    aliases = {
+        "type": ["type"],
+        "domain_id": ["domain_id", "domainId"],
+        "switch_keep_alive_local_ip": ["switch_keep_alive_local_ip", "switchKeepAliveLocalIp"],
+        "peer_switch_keep_alive_local_ip": ["peer_switch_keep_alive_local_ip", "peerSwitchKeepAliveLocalIp"],
+        "keep_alive_vrf": ["keep_alive_vrf", "keepAliveVrf"],
+        "template_name": ["template_name", "templateName"],
+        "template_config": ["template_config", "templateConfig"],
+    }
+    for alias in aliases.get(key, [key]):
+        if alias in details:
+            return details.get(alias), alias
+    return None, None
+
+
+def _compare_vpc_pair_details(expected_details, actual_details):
+    """Compare expected details as a subset of actual details and return mismatches."""
+    mismatches = []
+
+    if not isinstance(expected_details, dict):
+        return mismatches
+
+    if not isinstance(actual_details, dict):
+        mismatches.append(
+            {
+                "field": "vpc_pair_details",
+                "expected": expected_details,
+                "actual": actual_details,
+            }
+        )
+        return mismatches
+
+    for exp_key, exp_value in expected_details.items():
+        act_value, resolved_key = _detail_value_with_alias(actual_details, exp_key)
+        if resolved_key is None:
+            mismatches.append(
+                {
+                    "field": "vpc_pair_details.{0}".format(exp_key),
+                    "expected": exp_value,
+                    "actual": "MISSING",
+                }
+            )
+            continue
+
+        if isinstance(exp_value, dict):
+            if not isinstance(act_value, dict):
+                mismatches.append(
+                    {
+                        "field": "vpc_pair_details.{0}".format(exp_key),
+                        "expected": exp_value,
+                        "actual": act_value,
+                    }
+                )
+                continue
+
+            for nested_key, nested_expected in exp_value.items():
+                if nested_key not in act_value:
+                    mismatches.append(
+                        {
+                            "field": "vpc_pair_details.{0}.{1}".format(exp_key, nested_key),
+                            "expected": nested_expected,
+                            "actual": "MISSING",
+                        }
+                    )
+                    continue
+
+                if not _values_equal(nested_expected, act_value.get(nested_key)):
+                    mismatches.append(
+                        {
+                            "field": "vpc_pair_details.{0}.{1}".format(exp_key, nested_key),
+                            "expected": nested_expected,
+                            "actual": act_value.get(nested_key),
+                        }
+                    )
+        else:
+            if not _values_equal(exp_value, act_value):
+                mismatches.append(
+                    {
+                        "field": "vpc_pair_details.{0}".format(exp_key),
+                        "expected": exp_value,
+                        "actual": act_value,
+                    }
+                )
+
+    return mismatches
+
+
 class ActionModule(ActionBase):
     """Ansible action plugin that validates nd_vpc_pair gathered output against expected test data.
 
@@ -70,6 +195,7 @@ class ActionModule(ActionBase):
         expected_data = self._task.args.get("expected_data")
         changed = self._task.args.get("changed")
         mode = self._task.args.get("mode", "full").lower()
+        validate_vpc_pair_details = bool(self._task.args.get("validate_vpc_pair_details", False))
 
         if mode not in self.VALID_MODES:
             results["failed"] = True
@@ -188,6 +314,26 @@ class ActionModule(ActionBase):
                                 "actual": bool(gathered_vpl),
                             }
                         )
+
+                if validate_vpc_pair_details:
+                    expected_details = _get_vpc_pair_details(expected)
+                    gathered_details = _get_vpc_pair_details(gathered_pair)
+                    if expected_details is not None:
+                        details_mismatches = _compare_vpc_pair_details(
+                            expected_details, gathered_details
+                        )
+                        for item in details_mismatches:
+                            field_mismatches.append(
+                                {
+                                    "pair": "{0}-{1}".format(
+                                        expected.get("peer1_switch_id") or expected.get("switchId", "?"),
+                                        expected.get("peer2_switch_id") or expected.get("peerSwitchId", "?"),
+                                    ),
+                                    "field": item.get("field"),
+                                    "expected": item.get("expected"),
+                                    "actual": item.get("actual"),
+                                }
+                            )
 
         # ------------------------------------------------------------------
         # Compose result

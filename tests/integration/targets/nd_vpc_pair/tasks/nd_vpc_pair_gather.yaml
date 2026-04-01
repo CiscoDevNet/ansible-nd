@@ -34,6 +34,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config: "{{ nd_vpc_pair_gather_setup_conf }}"
   register: result
   tags: gather
@@ -42,12 +43,14 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
   tags: gather
 
 - name: GATHER - TC1 - GATHER - Get vPC pair state in ND
   cisco.nd.nd_manage_vpc_pair:
     state: gathered
     fabric_name: "{{ test_fabric }}"
+    deploy: false
   register: verify_result
   tags: gather
 
@@ -69,6 +72,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
+    deploy: false
   register: result
   tags: gather
 
@@ -84,6 +88,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -97,40 +102,34 @@
       - '(result.gathered.vpc_pairs | length) == 1'
   tags: gather
 
-# TC4 - Gather with one peer specified (not supported in nd_manage_vpc_pair)
-- name: GATHER - TC4 - GATHER - Gather vPC pair with one peer specified
+# TC4/TC5 - Partial peer filters are not supported (peer1-only or peer2-only)
+- name: GATHER - TC4/TC5 - GATHER - Gather with partial peer filters
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    config:
-      - peer1_switch_id: "{{ test_switch1 }}"
-  register: result
+    deploy: false
+    config: "{{ [item.partial_filter] }}"
+  loop:
+    - test_name: "peer1 only"
+      partial_filter:
+        peer1_switch_id: "{{ test_switch1 }}"
+    - test_name: "peer2 only"
+      partial_filter:
+        peer2_switch_id: "{{ test_switch2 }}"
+  loop_control:
+    label: "{{ item.test_name }}"
+  register: partial_filter_results
   ignore_errors: true
   tags: gather
 
-- name: GATHER - TC4 - ASSERT - Verify partial peer gather is rejected
+- name: GATHER - TC4/TC5 - ASSERT - Verify partial peer gathers are rejected
   ansible.builtin.assert:
     that:
-      - result.failed == true
-      - result.msg is defined
-  tags: gather
-
-# TC5 - Gather with second peer specified (not supported in nd_manage_vpc_pair)
-- name: GATHER - TC5 - GATHER - Gather vPC pair with second peer specified
-  cisco.nd.nd_manage_vpc_pair:
-    fabric_name: "{{ test_fabric }}"
-    state: gathered
-    config:
-      - peer2_switch_id: "{{ test_switch2 }}"
-  register: result
-  ignore_errors: true
-  tags: gather
-
-- name: GATHER - TC5 - ASSERT - Verify partial peer gather is rejected
-  ansible.builtin.assert:
-    that:
-      - result.failed == true
-      - result.msg is defined
+      - item.failed == true
+      - item.msg is defined
+  loop: "{{ partial_filter_results.results }}"
+  loop_control:
+    label: "{{ item.item.test_name }}"
   tags: gather
 
 # TC6 - Gather with non-existent peer
@@ -138,6 +137,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
+    deploy: false
     config:
       - peer1_switch_id: "INVALID_SERIAL"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -156,6 +156,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
+    deploy: false
     query_timeout: 20
   register: result
   tags: gather
@@ -184,22 +185,22 @@
       - result.msg is search("Deploy parameter cannot be used")
   tags: gather
 
-# TC9 - gathered + dry_run validation (must fail)
-- name: GATHER - TC9 - GATHER - Gather with dry_run enabled (invalid)
+# TC9 - gathered + native check_mode validation
+- name: GATHER - TC9 - GATHER - Gather with native check_mode enabled
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    dry_run: true
+    deploy: false
+  check_mode: true
   register: result
-  ignore_errors: true
   tags: gather
 
-- name: GATHER - TC9 - ASSERT - Verify gathered+dry_run validation
+- name: GATHER - TC9 - ASSERT - Verify gathered+check_mode behavior
   ansible.builtin.assert:
     that:
-      - result.failed == true
-      - result.msg is search("Unsupported parameters")
-      - result.msg is search("dry_run")
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
   tags: gather
 
 # TC10 - Validate /vpcPairs list API alignment with module gathered output
@@ -214,6 +215,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
+    deploy: false
   register: gathered_result
   tags: gather
 
@@ -358,6 +360,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -381,6 +384,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"

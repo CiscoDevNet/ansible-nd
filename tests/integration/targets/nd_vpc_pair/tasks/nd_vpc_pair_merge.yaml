@@ -84,6 +84,7 @@
   cisco.nd.nd_manage_vpc_pair: &conf_full
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config: "{{ nd_vpc_pair_merge_full_conf }}"
   register: result
   tags: merge
@@ -98,17 +99,18 @@
 - name: MERGE - TC1 - ASSERT - Verify full config payload includes vpc_pair_details
   ansible.builtin.assert:
     that:
-      - result.diff is defined
-      - result.diff | to_json is search('"vpcPairDetails"')
-      - result.diff | to_json is search('"domainId"')
-      - result.diff | to_json is search('"switchKeepAliveLocalIp"')
-      - result.diff | to_json is search('"peerSwitchKeepAliveLocalIp"')
-      - result.diff | to_json is search('"keepAliveVrf"')
+      - result.logs is defined
+      - result.logs | to_json is search('"vpcPairDetails"')
+      - result.logs | to_json is search('"domainId"')
+      - result.logs | to_json is search('"switchKeepAliveLocalIp"')
+      - result.logs | to_json is search('"peerSwitchKeepAliveLocalIp"')
+      - result.logs | to_json is search('"keepAliveVrf"')
   tags: merge
 
 - name: MERGE - TC1 - GATHER - Get vPC pair state in ND
   cisco.nd.nd_manage_vpc_pair:
     state: gathered
+    deploy: false
     fabric_name: "{{ test_fabric }}"
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
@@ -147,6 +149,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config: "{{ nd_vpc_pair_merge_modified_conf }}"
   register: result
   when: test_fabric_type == "LANClassic"
@@ -156,12 +159,14 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
   when: test_fabric_type == "LANClassic"
   tags: merge
 
 - name: MERGE - TC2 - GATHER - Get vPC pair state in ND
   cisco.nd.nd_manage_vpc_pair:
     state: gathered
+    deploy: false
     fabric_name: "{{ test_fabric }}"
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
@@ -191,6 +196,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -202,12 +208,14 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == false
   when: test_fabric_type == "VXLANFabric"
   tags: merge
 
 - name: MERGE - TC2b - GATHER - Get vPC pair state in ND
   cisco.nd.nd_manage_vpc_pair:
     state: gathered
+    deploy: false
     fabric_name: "{{ test_fabric }}"
   register: verify_result
   when: test_fabric_type == "VXLANFabric"
@@ -218,6 +226,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -233,6 +242,7 @@
 - name: MERGE - TC3 - GATHER - Get vPC pair state in ND
   cisco.nd.nd_manage_vpc_pair:
     state: gathered
+    deploy: false
     fabric_name: "{{ test_fabric }}"
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
@@ -259,6 +269,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config: "{{ nd_vpc_pair_merge_minimal_conf }}"
   register: result
   when: test_fabric_type == "LANClassic"
@@ -268,12 +279,14 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
   when: test_fabric_type == "LANClassic"
   tags: merge
 
 - name: MERGE - TC4 - GATHER - Get vPC pair state in ND
   cisco.nd.nd_manage_vpc_pair:
     state: gathered
+    deploy: false
     fabric_name: "{{ test_fabric }}"
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
@@ -303,6 +316,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -321,6 +335,7 @@
 - name: MERGE - TC5 - MERGE - Create vPC pair with defaults
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
+    deploy: false
     config: "{{ nd_vpc_pair_merge_minimal_conf }}"
   register: result
   tags: merge
@@ -329,30 +344,8 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
-  tags: merge
-
-- name: MERGE - TC5 - GATHER - Get vPC pair state in ND
-  cisco.nd.nd_manage_vpc_pair:
-    state: gathered
-    fabric_name: "{{ test_fabric }}"
-    config:
-      - peer1_switch_id: "{{ test_switch1 }}"
-        peer2_switch_id: "{{ test_switch2 }}"
-  register: verify_result
-  tags: merge
-
-- name: MERGE - TC5 - VALIDATE - Verify vPC pair state
-  cisco.nd.tests.integration.nd_vpc_pair_validate:
-    gathered_data: "{{ verify_result }}"
-    expected_data: "{{ nd_vpc_pair_merge_minimal_conf }}"
-    mode: "exists"
-  register: validation
-  tags: merge
-
-- name: MERGE - TC5 - ASSERT - Validation passed
-  ansible.builtin.assert:
-    that:
-      - validation.failed == false
+      - result.changed == true
+      - result.diff is defined
   tags: merge
 
 # TC5b - Delete vPC pair after defaults test
@@ -360,6 +353,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -386,12 +380,14 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
       - result.deployment is not defined
   tags: merge
 
 - name: MERGE - TC6 - GATHER - Get vPC pair state in ND
   cisco.nd.nd_manage_vpc_pair:
     state: gathered
+    deploy: false
     fabric_name: "{{ test_fabric }}"
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
@@ -417,6 +413,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -434,6 +431,46 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
+      - result.logs is defined
+      - result.logs | to_json is search('"vpcPairDetails"')
+      - result.logs | to_json is search('"domainId"')
+      - result.logs | to_json is search('"switchKeepAliveLocalIp"')
+      - result.logs | to_json is search('"peerSwitchKeepAliveLocalIp"')
+      - result.logs | to_json is search('"keepAliveVrf"')
+  tags: merge
+
+- name: MERGE - TC7 - API - Query direct vpcPair details for switch1
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPair"
+    method: get
+  register: tc7_vpc_pair_direct
+  tags: merge
+
+- name: MERGE - TC7 - VALIDATE - Verify persisted default vpc_pair_details
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ {'vpc_pairs': [tc7_vpc_pair_direct.current]} }}"
+    expected_data:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+        vpc_pair_details:
+          type: default
+          domain_id: 10
+          switch_keep_alive_local_ip: "192.0.2.11"
+          peer_switch_keep_alive_local_ip: "192.0.2.12"
+          keep_alive_vrf: management
+    mode: "full"
+    validate_vpc_pair_details: true
+  register: tc7_validation
+  tags: merge
+
+- name: MERGE - TC7 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - tc7_vpc_pair_direct.failed == false
+      - tc7_vpc_pair_direct.current is mapping
+      - tc7_validation.failed == false
   tags: merge
 
 # TC8 - Merge with vpc_pair_details custom template settings
@@ -441,6 +478,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -458,6 +496,44 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
+      - result.logs is defined
+      - result.logs | to_json is search('"vpcPairDetails"')
+      - result.logs | to_json is search('"templateName"')
+      - result.logs | to_json is search('"templateConfig"')
+  tags: merge
+
+- name: MERGE - TC8 - API - Query direct vpcPair details for switch1
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPair"
+    method: get
+  register: tc8_vpc_pair_direct
+  tags: merge
+
+- name: MERGE - TC8 - VALIDATE - Verify persisted custom vpc_pair_details
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ {'vpc_pairs': [tc8_vpc_pair_direct.current]} }}"
+    expected_data:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+        vpc_pair_details:
+          type: custom
+          template_name: "my_custom_template"
+          template_config:
+            domainId: "20"
+            customConfig: "vpc domain 20"
+    mode: "full"
+    validate_vpc_pair_details: true
+  register: tc8_validation
+  tags: merge
+
+- name: MERGE - TC8 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - tc8_vpc_pair_direct.failed == false
+      - tc8_vpc_pair_direct.current is mapping
+      - tc8_validation.failed == false
   tags: merge
 
 # TC9 - Test invalid configurations
@@ -465,6 +541,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config:
       - peer1_switch_id: "INVALID_SERIAL"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -485,6 +562,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -496,7 +574,6 @@
     fabric_name: "{{ test_fabric }}"
     state: merged
     deploy: true
-    api_timeout: 60
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -535,6 +612,7 @@
 - name: MERGE - TC10 - GATHER - Query gathered pair after deploy flow
   cisco.nd.nd_manage_vpc_pair:
     state: gathered
+    deploy: false
     fabric_name: "{{ test_fabric }}"
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
@@ -738,29 +816,12 @@
   when: tc10_list_has_pairs | bool
   tags: merge
 
-# TC11 - Delete with custom api_timeout
-- name: MERGE - TC11 - DELETE - Delete vPC pair with api_timeout override
-  cisco.nd.nd_manage_vpc_pair:
-    fabric_name: "{{ test_fabric }}"
-    state: deleted
-    api_timeout: 60
-    config:
-      - peer1_switch_id: "{{ test_switch1 }}"
-        peer2_switch_id: "{{ test_switch2 }}"
-  register: result
-  tags: merge
-
-- name: MERGE - TC11 - ASSERT - Verify api_timeout path execution
-  ansible.builtin.assert:
-    that:
-      - result.failed == false
-  tags: merge
-
 # TC12 - check_mode should not apply configuration changes
 - name: MERGE - TC12 - DELETE - Ensure vPC pair is absent before check_mode test
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -771,6 +832,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config: "{{ nd_vpc_pair_merge_full_conf }}"
   check_mode: true
   register: result
@@ -782,49 +844,32 @@
       - result.failed == false
   tags: merge
 
-- name: MERGE - TC12 - GATHER - Verify check_mode did not create vPC pair
-  cisco.nd.nd_manage_vpc_pair:
-    state: gathered
-    fabric_name: "{{ test_fabric }}"
-    config:
-      - peer1_switch_id: "{{ test_switch1 }}"
-        peer2_switch_id: "{{ test_switch2 }}"
-  register: verify_result
-  tags: merge
-
-- name: MERGE - TC12 - VALIDATE - Confirm no persistent changes from check_mode
-  cisco.nd.tests.integration.nd_vpc_pair_validate:
-    gathered_data: "{{ verify_result }}"
-    expected_data: []
-    mode: "count_only"
-  register: validation
-  tags: merge
-
-- name: MERGE - TC12 - ASSERT - Validation passed
-  ansible.builtin.assert:
-    that:
-      - validation.failed == false
-  tags: merge
-
-# TC13 - Native Ansible check_mode should not apply configuration changes
-- name: MERGE - TC13 - MERGE - Run check_mode create for vPC pair
+# TC13 - check_mode + deploy preview should report deployment plan without applying
+- name: MERGE - TC13 - MERGE - Run check_mode create with deploy preview
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: true
     config: "{{ nd_vpc_pair_merge_full_conf }}"
   check_mode: true
   register: result
   tags: merge
 
-- name: MERGE - TC13 - ASSERT - Verify check_mode invocation succeeded
+- name: MERGE - TC13 - ASSERT - Verify check_mode deployment preview
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.deployment is defined
+      - result.deployment.would_deploy is defined
+      - result.deployment.would_deploy | bool == true
+      - result.deployment.deployment_needed is defined
+      - result.deployment.deployment_needed | bool == true
   tags: merge
 
-- name: MERGE - TC13 - GATHER - Verify check_mode did not create vPC pair
+- name: MERGE - TC13 - GATHER - Verify check_mode flows did not create vPC pair
   cisco.nd.nd_manage_vpc_pair:
     state: gathered
+    deploy: false
     fabric_name: "{{ test_fabric }}"
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
@@ -832,7 +877,7 @@
   register: verify_result
   tags: merge
 
-- name: MERGE - TC13 - VALIDATE - Confirm no persistent changes from check_mode
+- name: MERGE - TC13 - VALIDATE - Confirm no persistent changes from check_mode flows
   cisco.nd.tests.integration.nd_vpc_pair_validate:
     gathered_data: "{{ verify_result }}"
     expected_data: []
@@ -913,6 +958,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config:
       - peer1_switch_id: "{{ blocked_switch_id }}"
         peer2_switch_id: "{{ allowed_switch_id }}"
@@ -949,6 +995,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"

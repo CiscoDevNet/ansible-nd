@@ -205,7 +205,6 @@ class VpcPairBase(NDVpcPairBaseModel):
     OpenAPI: vpcPairBase
 
     Note: The nd_vpc_pair module uses a separate VpcPairModel class (not this one) because:
-    - Module needs use_virtual_peer_link=True as default (this uses False per API spec)
     - Module uses NDBaseModel base class for framework integration
     - Module needs strict bool types, this uses FlexibleBool for API flexibility
     See plugins/modules/nd_vpc_pair.py VpcPairModel for the module-specific implementation.

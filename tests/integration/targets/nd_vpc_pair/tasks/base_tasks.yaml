@@ -30,6 +30,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
+    deploy: false
     query_timeout: 60
   register: fabric_query
   ignore_errors: true
@@ -47,6 +48,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"

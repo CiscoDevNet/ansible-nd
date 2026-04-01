@@ -39,7 +39,7 @@ options:
         - Deploy configuration changes after applying them.
         - Saves fabric configuration and triggers deployment.
         type: bool
-        default: false
+        default: true
     force:
         description:
         - Force deletion without pre-deletion validation checks.
@@ -98,12 +98,13 @@ options:
                 description:
                 - Enable virtual peer link for the vPC pair.
                 type: bool
-                default: true
+                default: false
 notes:
     - This module uses NDStateMachine framework for state management
     - RestSend provides protocol-based HTTP abstraction with automatic retry logic
     - Results are aggregated using the Results class for consistent output format
     - Check mode is fully supported via both framework and RestSend
+    - No separate C(dry_run) parameter is supported; use native Ansible C(check_mode)
 """
 
 EXAMPLES = """

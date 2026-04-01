@@ -34,6 +34,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config: "{{ nd_vpc_pair_delete_setup_conf }}"
   register: result
   tags: delete
@@ -49,6 +50,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -69,11 +71,12 @@
       - validation.failed == false
   tags: delete
 
-# TC2 - Delete vPC pair with specific config
-- name: DELETE - TC2 - DELETE - Delete vPC pair with specific peer config
+# TC2 - Delete vPC pair with specific config (without deploy)
+- name: DELETE - TC2 - DELETE - Delete vPC pair with specific peer config (no deploy)
   cisco.nd.nd_manage_vpc_pair: &delete_specific
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -85,12 +88,14 @@
     that:
       - result.changed == true
       - result.failed == false
+      - result.deployment is not defined
   tags: delete
 
 - name: DELETE - TC2 - GATHER - Get vPC pair state in ND
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -111,7 +116,68 @@
       - validation.failed == false
   tags: delete
 
-# TC3 - Idempotence test for deletion
+# TC2b - Delete vPC pair with deploy=true path
+- name: DELETE - TC2b - MERGE - Recreate vPC pair for deploy-delete path
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    deploy: false
+    config: "{{ nd_vpc_pair_delete_setup_conf }}"
+  register: result
+  tags: delete
+
+- name: DELETE - TC2b - ASSERT - Verify setup creation for deploy-delete
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: delete
+
+- name: DELETE - TC2b - DELETE - Delete vPC pair with deploy enabled
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    deploy: true
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: result
+  tags: delete
+
+- name: DELETE - TC2b - ASSERT - Verify deploy delete execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+  tags: delete
+
+- name: DELETE - TC2b - GATHER - Verify deploy delete result in ND
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: verify_result
+  tags: delete
+
+- name: DELETE - TC2b - VALIDATE - Confirm pair deleted with deploy
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ verify_result }}"
+    expected_data: []
+    mode: "count_only"
+  register: validation
+  tags: delete
+
+- name: DELETE - TC2b - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - validation.failed == false
+  tags: delete
+
+# TC3 - Idempotence test for deletion (no deploy)
 - name: DELETE - TC3 - conf - Idempotence
   cisco.nd.nd_manage_vpc_pair: *delete_specific
   register: result
@@ -129,6 +195,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: merged
+    deploy: false
     config: "{{ nd_vpc_pair_delete_setup_conf }}"
   register: result
   tags: delete
@@ -143,6 +210,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     force: true
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
@@ -155,12 +223,14 @@
     that:
       - result.failed == false
       - result.changed == true
+      - result.deployment is not defined
   tags: delete
 
 - name: DELETE - TC4 - GATHER - Verify force deletion result in ND
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -189,6 +259,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"

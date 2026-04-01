@@ -49,6 +49,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: replaced
+    deploy: false
     config: "{{ nd_vpc_pair_replace_initial_conf }}"
   register: result
   tags: replace
@@ -57,12 +58,14 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
   tags: replace
 
 - name: REPLACE - TC1 - GATHER - Get vPC pair state in ND
   cisco.nd.nd_manage_vpc_pair:
     state: gathered
     fabric_name: "{{ test_fabric }}"
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -87,6 +90,7 @@
   cisco.nd.nd_manage_vpc_pair: &conf_replaced
     fabric_name: "{{ test_fabric }}"
     state: replaced
+    deploy: false
     config: "{{ nd_vpc_pair_replace_replaced_conf }}"
   register: result
   tags: replace
@@ -95,6 +99,7 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
   when: test_fabric_type == "LANClassic"
   tags: replace
 
@@ -102,6 +107,7 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == false
   when: test_fabric_type == "VXLANFabric"
   tags: replace
 
@@ -109,6 +115,7 @@
   cisco.nd.nd_manage_vpc_pair:
     state: gathered
     fabric_name: "{{ test_fabric }}"
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -144,6 +151,60 @@
       - result.failed == false
   tags: replace
 
+# TC4 - Replace with deploy enabled
+- name: REPLACE - TC4 - DELETE - Ensure vPC pair absent before deploy test
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  ignore_errors: true
+  tags: replace
+
+- name: REPLACE - TC4 - REPLACE - Create vPC pair with deploy true
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    deploy: true
+    config: "{{ nd_vpc_pair_replace_initial_conf }}"
+  register: result
+  tags: replace
+
+- name: REPLACE - TC4 - ASSERT - Verify deploy path execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+  tags: replace
+
+- name: REPLACE - TC4 - GATHER - Verify pair exists after deploy flow
+  cisco.nd.nd_manage_vpc_pair:
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: verify_result
+  tags: replace
+
+- name: REPLACE - TC4 - VALIDATE - Verify deployed replace config
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ verify_result }}"
+    expected_data: "{{ nd_vpc_pair_replace_initial_conf }}"
+    mode: "exists"
+  register: validation
+  tags: replace
+
+- name: REPLACE - TC4 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - validation.failed == false
+  tags: replace
+
 ##############################################
 ##                 CLEAN-UP                 ##
 ##############################################
@@ -152,6 +213,7 @@
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: deleted
+    deploy: false
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"

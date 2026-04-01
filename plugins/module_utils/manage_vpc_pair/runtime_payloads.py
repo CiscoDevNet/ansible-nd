@@ -56,7 +56,7 @@ def _build_vpc_pair_payload(vpc_pair_model) -> Dict[str, Any]:
     if isinstance(vpc_pair_model, dict):
         switch_id = vpc_pair_model.get(VpcFieldNames.SWITCH_ID)
         peer_switch_id = vpc_pair_model.get(VpcFieldNames.PEER_SWITCH_ID)
-        use_virtual_peer_link = vpc_pair_model.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, True)
+        use_virtual_peer_link = vpc_pair_model.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False)
     else:
         switch_id = vpc_pair_model.switch_id
         peer_switch_id = vpc_pair_model.peer_switch_id
