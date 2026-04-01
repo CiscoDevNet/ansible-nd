@@ -37,6 +37,11 @@ from .policy_actions import (  # noqa: F401
     PolicyIds,
 )
 
+# --- Gathered (read) models ---
+from .gathered_models import (  # noqa: F401
+    GatheredPolicy,
+)
+
 # --- Config (playbook input) models ---
 from .config_models import (  # noqa: F401
     PlaybookPolicyConfig,
@@ -55,6 +60,8 @@ __all__ = [
     "PolicyUpdate",
     # Action models
     "PolicyIds",
+    # Gathered (read) models
+    "GatheredPolicy",
     # Config (playbook input) models
     "PlaybookPolicyConfig",
     "PlaybookSwitchEntry",

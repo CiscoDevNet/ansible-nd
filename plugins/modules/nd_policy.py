@@ -12,7 +12,11 @@ __metaclass__ = type
 __copyright__ = "Copyright (c) 2026 Cisco and/or its affiliates."
 __author__ = "L Nikhil Sri Krishna"
 
-ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
+ANSIBLE_METADATA = {
+    "metadata_version": "1.1",
+    "status": ["preview"],
+    "supported_by": "community",
+}
 
 DOCUMENTATION = r"""
 ---
@@ -483,7 +487,7 @@ gathered:
     - name: switch_freeform
       policy_id: POLICY-28240
       switch:
-        - serial_number: FDO29080NBU
+        - serial_number: FDO25031SY4
       description: my freeform policy
       priority: 500
       template_inputs:
@@ -522,14 +526,18 @@ import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
-from ansible_collections.cisco.nd.plugins.module_utils.nd_policy_resources import NDPolicyModule
+from ansible_collections.cisco.nd.plugins.module_utils.nd_policy_resources import (
+    NDPolicyModule,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule,
     NDModuleError,
     nd_argument_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import PlaybookPolicyConfig
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import (
+    PlaybookPolicyConfig,
+)
 
 
 # =============================================================================
@@ -612,6 +620,7 @@ def main():
 
     except Exception as error:
         import traceback
+
         tb_str = traceback.format_exc()
 
         log.error(f"Unexpected error during module execution: {str(error)}")

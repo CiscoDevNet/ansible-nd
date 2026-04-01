@@ -38,8 +38,9 @@ from typing_extensions import Self
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
+)
 
 # ============================================================================
 # Per-switch policy override (switch[].policies[] entry)
@@ -258,7 +259,9 @@ class PlaybookPolicyConfig(NDNestedModel):
             deploy=dict(type="bool", default=True),
             ticket_id=dict(type="str"),
             cluster_name=dict(type="str"),
-            state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),
+            state=dict(
+                type="str", default="merged", choices=["merged", "deleted", "gathered"]
+            ),
         )
 
 
