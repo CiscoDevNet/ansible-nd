@@ -8,14 +8,14 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 __copyright__ = "Copyright (c) 2026 Cisco and/or its affiliates."
-__author__ = "Jeet Ram"
+__author__ = "Jeet Ram (@jeeram) <jeeram@cisco.com>"
 
 DOCUMENTATION = """
 ---
 module: nd_manage_resource_manager
 short_description: Manage resources in Cisco Nexus Dashboard (ND).
 version_added: "1.0.0"
-author: Jeet Ram (@jeetram)
+author: Jeet Ram (@jeeram) <jeeram@cisco.com>
 description:
   - Create, delete, and gather resources in Cisco Nexus Dashboard using smart endpoints and pydantic models.
   - Supports all resource pool types (ID, IP, SUBNET) and scope types (fabric, device, device_interface, device_pair, link).
