@@ -9,11 +9,17 @@
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
   when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
 
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
 #############################################################################
 # CLEANUP - Ensure clean state before tests
 #############################################################################
 - name: Clean up any existing test fabrics before starting tests
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: deleted
     config:
       - fabric_name: "{{ ebgp_test_fabric_merged }}"
@@ -26,6 +32,7 @@
 #############################################################################
 - name: "TEST 1a: Create eBGP fabric using state merged (first run)"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: merged
     config:
       - "{{ {'fabric_name': ebgp_test_fabric_merged} | combine(fabric_config_ebgp) }}"
@@ -43,6 +50,7 @@
 
 - name: "TEST 1b: Create eBGP fabric using state merged (second run - idempotency test)"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: merged
     config:
       - "{{ {'fabric_name': ebgp_test_fabric_merged} | combine(fabric_config_ebgp) }}"
@@ -60,6 +68,7 @@
 
 - name: "TEST 1c: Update eBGP fabric using state merged (modify existing)"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: merged
     config:
       - fabric_name: "{{ ebgp_test_fabric_merged }}"
@@ -257,6 +266,7 @@
 #############################################################################
 - name: "TEST 2a: Create eBGP fabric using state replaced (first run)"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ ebgp_test_fabric_replaced }}"
@@ -357,6 +367,7 @@
 
 - name: "TEST 2b: Create eBGP fabric using state replaced (second run - idempotency test)"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ ebgp_test_fabric_replaced }}"
@@ -457,6 +468,7 @@
 
 - name: "TEST 2c: Update eBGP fabric using state replaced (complete replacement with minimal config)"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ ebgp_test_fabric_replaced }}"
@@ -886,6 +898,7 @@
 #############################################################################
 - name: "TEST 3: Create eBGP fabric for merged vs replaced comparison"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: replaced
     config:
       - "{{ {'fabric_name': ebgp_test_fabric_deleted} | combine(fabric_config_ebgp) }}"
@@ -894,6 +907,7 @@
 
 - name: "TEST 3a: Partial update using merged state (should merge changes)"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: merged
     config:
       - fabric_name: "{{ ebgp_test_fabric_deleted }}"
@@ -917,6 +931,7 @@
 
 - name: "TEST 3b: Partial update using replaced state (should replace entire config)"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ ebgp_test_fabric_deleted }}"
@@ -944,6 +959,7 @@
 #############################################################################
 - name: "TEST 4a: Delete eBGP fabric using state deleted"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: deleted
     config:
       - fabric_name: "{{ ebgp_test_fabric_deleted }}"
@@ -961,6 +977,7 @@
 
 - name: "TEST 4b: Delete eBGP fabric using state deleted (second run - idempotency test)"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: deleted
     config:
       - fabric_name: "{{ ebgp_test_fabric_deleted }}"
@@ -981,6 +998,7 @@
 #############################################################################
 - name: "TEST 5: Multiple eBGP fabric operations in single task"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: merged
     config:
       - fabric_name: "multi_ebgp_fabric_1"
@@ -1158,6 +1176,7 @@
 #############################################################################
 - name: "CLEANUP: Delete all test eBGP fabrics"
   cisco.nd.nd_manage_fabric_ebgp:
+    <<: *nd_info
     state: deleted
     config:
       - fabric_name: "{{ ebgp_test_fabric_merged }}"

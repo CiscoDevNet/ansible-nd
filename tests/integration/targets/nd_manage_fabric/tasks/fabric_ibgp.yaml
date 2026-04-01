@@ -9,11 +9,17 @@
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
   when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
 
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
 #############################################################################
 # CLEANUP - Ensure clean state before tests
 #############################################################################
 - name: Clean up any existing test fabrics before starting tests
   cisco.nd.nd_manage_fabric_ibgp:
+    <<: *nd_info
     state: deleted
     config:
       - fabric_name: "{{ test_fabric_merged }}"
@@ -25,6 +31,7 @@
 #############################################################################
 - name: "TEST 1a: Create fabric using state merged (first run)"
   cisco.nd.nd_manage_fabric_ibgp:
+    <<: *nd_info
     state: merged
     config:
       - "{{ {'fabric_name': test_fabric_merged} | combine(fabric_config_ibgp) }}"
@@ -42,6 +49,7 @@
 
 - name: "TEST 1b: Create fabric using state merged (second run - idempotency test)"
   cisco.nd.nd_manage_fabric_ibgp:
+    <<: *nd_info
     state: merged
     config:
       - "{{ {'fabric_name': test_fabric_merged} | combine(fabric_config_ibgp) }}"
@@ -59,6 +67,7 @@
 
 - name: "TEST 1c: Update fabric using state merged (modify existing)"
   cisco.nd.nd_manage_fabric_ibgp:
+    <<: *nd_info
     state: merged
     config:
       - fabric_name: "{{ test_fabric_merged }}"
@@ -482,6 +491,7 @@
 #############################################################################
 - name: "TEST 2a: Create fabric using state replaced (first run)"
   cisco.nd.nd_manage_fabric_ibgp:
+    <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ test_fabric_replaced }}"
@@ -576,6 +586,7 @@
 
 - name: "TEST 2b: Create fabric using state replaced (second run - idempotency test)"
   cisco.nd.nd_manage_fabric_ibgp:
+    <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ test_fabric_replaced }}"
@@ -670,6 +681,7 @@
 
 - name: "TEST 2c: Update fabric using state replaced (complete replacement)"
   cisco.nd.nd_manage_fabric_ibgp:
+    <<: *nd_info
     state: replaced
     config:
       - fabric_name: "{{ test_fabric_replaced }}"
@@ -1060,6 +1072,7 @@
 #############################################################################
 - name: "TEST 3a: Delete fabric using state deleted"
   cisco.nd.nd_manage_fabric_ibgp:
+    <<: *nd_info
     state: deleted
     config:
       - fabric_name: "{{ test_fabric_replaced }}"
@@ -1077,6 +1090,7 @@
 
 - name: "TEST 3b: Delete fabric using state deleted (second run - idempotency test)"
   cisco.nd.nd_manage_fabric_ibgp:
+    <<: *nd_info
     state: deleted
     config:
       - fabric_name: "{{ test_fabric_replaced }}"
@@ -1097,6 +1111,7 @@
 #############################################################################
 - name: "TEST 4: Multiple fabric operations in single task"
   cisco.nd.nd_manage_fabric_ibgp:
+    <<: *nd_info
     state: merged
     config:
       - fabric_name: "multi_fabric_1"
@@ -1272,6 +1287,7 @@
 #############################################################################
 - name: "CLEANUP: Delete all test fabrics"
   cisco.nd.nd_manage_fabric_ibgp:
+    <<: *nd_info
     state: deleted
     config:
       - fabric_name: "{{ test_fabric_merged }}"
