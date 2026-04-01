@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Cisco Systems
+# Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -147,7 +147,7 @@ class PlaybookPolicyConfig(NDNestedModel):
        declare which switches receive the global policies.
 
     Context-aware validation (pass via ``model_validate(..., context={})``:
-        - ``state``: The module state (merged, deleted, query).
+        - ``state``: The module state (merged, deleted, gathered).
         - ``use_desc_as_key``: Whether descriptions are used as unique keys.
 
     OpenAPI constraints applied:
@@ -258,7 +258,7 @@ class PlaybookPolicyConfig(NDNestedModel):
             deploy=dict(type="bool", default=True),
             ticket_id=dict(type="str"),
             cluster_name=dict(type="str"),
-            state=dict(type="str", default="merged", choices=["merged", "deleted", "query", "gathered"]),
+            state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),
         )
 
 

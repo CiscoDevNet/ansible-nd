@@ -8,7 +8,7 @@ ND Policy Resource Module.
 
 Provides all business logic for switch policy management on NDFC 4.x:
     - Policy CRUD (create, read, update, delete)
-    - Idempotency diff calculation for merged, query, deleted states
+    - Idempotency diff calculation for merged, deleted states
     - Deploy (pushConfig) orchestration
     - Conditional delete flow:
       deploy=true  → markDelete → pushConfig → remove
@@ -123,7 +123,7 @@ class NDPolicyModule:
 
     Provides policy-specific operations on top of NDModule:
         - Query and match existing policies (Lucene + post-filtering)
-        - Idempotent diff calculation across 16 merged / 13 query / 16 deleted cases
+        - Idempotent diff calculation across 16 merged / 16 deleted cases
         - Create, update, delete_and_create actions
         - Bulk deploy via pushConfig
         - Conditional delete flow:
@@ -602,7 +602,6 @@ class NDPolicyModule:
         Validates, normalizes, and prepares the config, then dispatches
         to the appropriate handler:
             - **merged**  - create / update / skip policies
-            - **query**   - read-only lookup
             - **deleted** - deploy=true: markDelete → pushConfig → remove
                           - deploy=false: markDelete only
 
@@ -630,8 +629,6 @@ class NDPolicyModule:
 
         if self.state == "merged":
             self._handle_merged_state()
-        elif self.state == "query":
-            self._handle_query_state()
         elif self.state == "deleted":
             self._handle_deleted_state()
         else:
@@ -804,48 +801,6 @@ class NDPolicyModule:
 
         self.log.debug("EXIT: _handle_merged_state()")
 
-    def _handle_query_state(self) -> None:
-        """Handle state=query: read-only lookup of policies.
-
-        Returns:
-            None.
-        """
-        self.log.debug("ENTER: _handle_query_state()")
-        self.log.info("Handling query state")
-        self.log.debug(f"Config entries: {len(self.config)}")
-
-        # Phase 1: Build want and have for each config entry
-        diff_results = []
-        for config_entry in self.config:
-            want = self._build_want(config_entry, state="query")
-            have_list, error_msg = self._build_have(want)
-
-            if error_msg:
-                self.log.error(f"Build have failed: {error_msg}")
-                diff_results.append({
-                    "action": "fail",
-                    "want": want,
-                    "policies": [],
-                    "match_count": 0,
-                    "warning": None,
-                    "error_msg": error_msg,
-                })
-                continue
-
-            self.log.debug(
-                f"Found {len(have_list)} existing policies for "
-                f"{want.get('templateName', want.get('policyId', 'switch-only'))}"
-            )
-
-            # Phase 2: Compute query result
-            diff_entry = self._get_diff_query_single(want, have_list)
-            diff_results.append(diff_entry)
-
-        # Phase 3: Register results
-        self.log.info(f"Computed {len(diff_results)} query results")
-        self._execute_query(diff_results)
-        self.log.debug("EXIT: _handle_query_state()")
-
     def _handle_deleted_state(self) -> None:
         """Handle state=deleted: remove policies from NDFC.
 
@@ -897,7 +852,7 @@ class NDPolicyModule:
 
         Two modes:
             - **With config** — ``self.config`` is non-empty. For each config
-              entry, look up matching policies (same logic as query) and
+              entry, look up matching policies and
               convert each match into a playbook-compatible config dict.
             - **Without config** — ``self.config`` is empty. Fetch *all*
               policies on the fabric and convert them.
@@ -917,7 +872,7 @@ class NDPolicyModule:
             # --- With config: query matching policies per entry ---
             self.log.info(f"Gathered with config: {len(self.config)} entries")
             for config_entry in self.config:
-                want = self._build_want(config_entry, state="query")
+                want = self._build_want(config_entry, state="gathered")
                 have_list, error_msg = self._build_have(want)
 
                 if error_msg:
@@ -1265,7 +1220,7 @@ class NDPolicyModule:
 
         Returns **all** matching policies including ``markDeleted`` and
         internal (``source != ""``) entries.  Callers that need the raw
-        list (cleanup routines, query-state display) should use this
+        list (cleanup routines, gathered-state export) should use this
         directly.  For idempotency checks use ``_query_policies()``
         which filters out stale records.
 
@@ -1307,8 +1262,8 @@ class NDPolicyModule:
         - **markDeleted** — when ``include_mark_deleted=False`` (default),
           policies pending deletion are excluded so they don't interfere
           with idempotency checks.  When ``True``, they are kept and
-          annotated with ``_markDeleted_stale: True`` so callers (e.g.
-          query state) can surface the status to the user.
+          annotated with ``_markDeleted_stale: True`` so callers can
+          surface the status to the user.
         - **source != ""** — internal NDFC sub-policies are always
           excluded; they are artefacts that cause false duplicate
           matches.
@@ -1357,8 +1312,8 @@ class NDPolicyModule:
 
         By default, policies marked for deletion (``markDeleted=True``)
         are treated as non-existent because they are pending removal
-        and cannot be updated.  When ``include_mark_deleted=True`` (used
-        by query state), they are returned with an annotation so the
+        and cannot be updated.  When ``include_mark_deleted=True``,
+        they are returned with an annotation so the
         caller can surface the status.
 
         Args:
@@ -1419,12 +1374,12 @@ class NDPolicyModule:
         """Translate a single user config entry to the API-compatible want dict.
 
         For merged state, ``name`` is required and all fields are included.
-        For query/deleted state, ``name`` is optional — when omitted, only
+        For gathered/deleted state, ``name`` is optional — when omitted, only
         ``switchId`` is set, which means "return all policies on this switch".
 
         Args:
             config_entry: Single dict from the user's config list.
-            state: Module state ("merged", "query", or "deleted").
+            state: Module state ("merged", "gathered", or "deleted").
 
         Returns:
             Dict with camelCase keys matching the API schema.
@@ -1453,7 +1408,7 @@ class NDPolicyModule:
             want["priority"] = config_entry.get("priority", 500)
             want["templateInputs"] = config_entry.get("template_inputs") or {}
         else:
-            # For query/deleted state, only include description if provided
+            # For gathered/deleted state, only include description if provided
             description = config_entry.get("description", "")
             if description:
                 want["description"] = description
@@ -1719,10 +1674,8 @@ class NDPolicyModule:
         """
         self.log.debug("ENTER: _build_have()")
 
-        # For query state, include markDeleted policies (annotated) so the
-        # user sees the full picture.  For merged/deleted, exclude them to
-        # avoid false idempotency matches.
-        incl_md = self.state == "query"
+        # Exclude markDeleted policies to avoid false idempotency matches.
+        incl_md = False
 
         # Case A: Policy ID given directly
         if "policyId" in want:
@@ -1776,7 +1729,7 @@ class NDPolicyModule:
             f"description='{want_desc}'"
         )
         # For merged/deleted states, Pydantic enforces that description
-        # is non-empty.  This guard covers query/gathered states where
+        # is non-empty.  This guard covers gathered state where
         # Pydantic intentionally skips the check.
         if not want_desc:
             self.log.warning("Case C: description is required but not provided")
@@ -1797,23 +1750,6 @@ class NDPolicyModule:
         self.log.debug(
             f"Exact description match: {len(exact_matches)} of {len(policies)}"
         )
-
-        # For query state with use_desc_as_key=true, also filter by templateName
-        # so the user can narrow results to a specific template.
-        # For merged/deleted states, do NOT filter by templateName — the diff
-        # logic handles template mismatches (e.g. Case 15: delete_and_create).
-        if self.state == "query":
-            template_name = want.get("templateName")
-            if template_name:
-                pre_count = len(exact_matches)
-                exact_matches = [
-                    p for p in exact_matches
-                    if p.get("templateName") == template_name
-                ]
-                self.log.debug(
-                    f"Post-filtered by templateName={template_name}: "
-                    f"{len(exact_matches)} of {pre_count}"
-                )
 
         self.log.info(f"Case C matched {len(exact_matches)} policies")
         self.log.debug("EXIT: _build_have()")
@@ -2553,163 +2489,6 @@ class NDPolicyModule:
         self.log.info(f"Merged execute complete: {len(policy_ids_to_deploy)} policies to deploy")
         self.log.debug("EXIT: _execute_merged()")
         return policy_ids_to_deploy
-
-    # =========================================================================
-    # Diff: Query State (13 cases)
-    # =========================================================================
-
-    def _get_diff_query_single(self, want: Dict, have_list: List[Dict]) -> Dict:
-        """Compute the query result for a single config entry.
-
-        Args:
-            want: Desired query filter dict.
-            have_list: Matching policies from the controller.
-
-        Returns:
-            Dict with keys: action, want, policies, match_count, warning, error_msg.
-        """
-        result = {
-            "action": None,
-            "want": want,
-            "policies": have_list,
-            "match_count": len(have_list),
-            "warning": None,
-            "error_msg": None,
-        }
-
-        match_count = len(have_list)
-
-        # Q-1, Q-2: Policy ID given
-        if "policyId" in want:
-            result["action"] = "found" if match_count >= 1 else "not_found"
-            return result
-
-        # Switch-only: No name given → return everything found on this switch
-        if "templateName" not in want:
-            result["action"] = "found" if match_count >= 1 else "not_found"
-            return result
-
-        # Q-3 to Q-9: Template name given, use_desc_as_key=false
-        if not self.use_desc_as_key:
-            result["action"] = "found" if match_count > 0 else "not_found"
-            return result
-
-        # Q-10 to Q-13: Template name given, use_desc_as_key=true
-        if self.use_desc_as_key:
-            # Note: description-empty is already caught by _build_have Case C
-            # which returns error_msg before this method runs.
-            want_desc = want.get("description", "")
-
-            if match_count == 0:
-                result["action"] = "not_found"
-                return result
-
-            if match_count == 1:
-                result["action"] = "found"
-                return result
-
-            # Q-13: Multiple matches — return all with a warning.
-            # Query is read-only so there's no risk of ambiguous mutation.
-            # The warning alerts the user that descriptions aren't unique.
-            result["action"] = "found"
-            result["warning"] = (
-                f"Multiple policies ({match_count}) found with description "
-                f"'{want_desc}' on switch {want.get('switchId')}. "
-                "Descriptions should be unique per switch when "
-                "use_desc_as_key=true."
-            )
-            return result
-
-        # Should not reach here
-        result["action"] = "not_found"
-        return result
-
-    # =========================================================================
-    # Execute: Query State
-    # =========================================================================
-
-    def _execute_query(self, diff_results: List[Dict]) -> None:
-        """Register results for all query config entries.
-
-        Query state never makes changes — ``changed`` is always ``false``.
-
-        Args:
-            diff_results: List of diff result dicts from ``_get_diff_query_single``.
-
-        Returns:
-            None.
-        """
-        self.log.debug("ENTER: _execute_query()")
-        self.log.debug(f"Processing {len(diff_results)} query entries")
-
-        for diff_entry in diff_results:
-            action = diff_entry["action"]
-            want = diff_entry["want"]
-            policies = diff_entry["policies"]
-            match_count = diff_entry["match_count"]
-            warning = diff_entry["warning"]
-            error_msg = diff_entry["error_msg"]
-
-            self.log.debug(
-                f"Query action={action} for "
-                f"{want.get('templateName', want.get('policyId', 'switch-only'))}, "
-                f"match_count={match_count}"
-            )
-
-            if action == "fail":
-                self.log.warning(f"Query failed: {error_msg}")
-                self._proposed.append(want)
-                self._register_result(
-                    action="policy_query",
-                    state="query",
-                    operation_type=OperationType.QUERY,
-                    return_code=-1,
-                    message=error_msg,
-                    success=False,
-                    found=False,
-                    diff={"action": action, "want": want, "error": error_msg},
-                )
-                continue
-
-            if action == "not_found":
-                self._proposed.append(want)
-                self._register_result(
-                    action="policy_query",
-                    state="query",
-                    operation_type=OperationType.QUERY,
-                    return_code=200,
-                    message="Not found",
-                    success=True,
-                    found=False,
-                    diff={"action": action, "want": want, "policies": [], "match_count": 0},
-                )
-                continue
-
-            if action == "found":
-                self._proposed.append(want)
-                self._after.extend(policies)  # query: "after" = what exists now
-                diff_payload = {
-                    "action": action,
-                    "want": want,
-                    "policies": policies,
-                    "match_count": match_count,
-                }
-                if warning:
-                    diff_payload["warning"] = warning
-                self._register_result(
-                    action="policy_query",
-                    state="query",
-                    operation_type=OperationType.QUERY,
-                    return_code=200,
-                    message="OK",
-                    data=policies,
-                    success=True,
-                    found=True,
-                    diff=diff_payload,
-                )
-                continue
-
-        self.log.debug("EXIT: _execute_query()")
 
     # =========================================================================
     # Diff: Deleted State (16 cases)

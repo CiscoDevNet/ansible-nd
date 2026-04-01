@@ -20,10 +20,9 @@ module: nd_policy
 version_added: "1.0.0"
 short_description: Manages policies on Nexus Dashboard Fabric Controller (NDFC).
 description:
-- Supports creating, updating, deleting, querying, gathering, and deploying policies based on templates.
+- Supports creating, updating, deleting, gathering, and deploying policies based on templates.
 - Supports C(merged) state for idempotent policy management.
 - Supports C(deleted) state for removing policies from NDFC and optionally from switches.
-- Supports C(query) state for retrieving existing policy information.
 - Supports C(gathered) state for exporting existing policies as playbook-compatible config.
   The gathered output can be copy-pasted directly into a playbook for use with C(merged) state.
 - When O(use_desc_as_key=true), policies are identified by their description instead of policy ID.
@@ -57,7 +56,7 @@ options:
   config:
     description:
     - A list of dictionaries containing policy and switch information.
-    - Required for C(merged), C(deleted), and C(query) states.
+    - Required for C(merged) and C(deleted) states.
     - Optional for C(gathered) state. When omitted with C(gathered), all policies on all
       fabric switches are exported. When provided, only matching policies are exported.
     - Policy entries define the template, description, priority, and template inputs.
@@ -78,8 +77,8 @@ options:
         - B(Policy ID) — a unique ID identifying a policy (e.g., C(POLICY-121110)).
           Policy ID B(must) be used for modifying existing policies when O(use_desc_as_key=false),
           since template names cannot uniquely identify a policy.
-        - For C(query) and C(deleted) states, this is optional. When omitted, all policies
-          on the specified switch are returned/deleted.
+        - For C(deleted) state, this is optional. When omitted, all policies
+          on the specified switch are deleted.
         type: str
       description:
         description:
@@ -206,14 +205,13 @@ options:
       run with O(deploy=true) or manual intervention.
     - B(Exception) — C(switch_freeform) policies skip the C(markDelete) flow entirely
       and are removed via a direct C(DELETE) API call regardless of the O(deploy) setting.
-    - Use C(query) to retrieve existing policies without making changes.
     - Use C(gathered) to export existing policies as playbook-compatible config.
       When O(config) is provided, only matching policies are exported.
       When O(config) is omitted, all policies on all fabric switches are exported.
       The output under the C(gathered) return key can be used directly as O(config)
       in a subsequent C(merged) task.
     type: str
-    choices: [ merged, deleted, query, gathered ]
+    choices: [ merged, deleted, gathered ]
     default: merged
 extends_documentation_fragment:
 - cisco.nd.modules
@@ -420,37 +418,6 @@ EXAMPLES = r"""
       - switch:
           - serial_number: "{{ switch1 }}"
 
-# QUERY
-
-- name: Query all policies from specified switches
-  cisco.nd.nd_policy:
-    fabric_name: "{{ fabric_name }}"
-    state: query
-    config:
-      - switch:
-          - serial_number: "{{ switch1 }}"
-          - serial_number: "{{ switch2 }}"
-
-- name: Query policies matching template names
-  cisco.nd.nd_policy:
-    fabric_name: "{{ fabric_name }}"
-    state: query
-    config:
-      - name: template_101
-      - name: template_102
-      - switch:
-          - serial_number: "{{ switch1 }}"
-
-- name: Query policies using policy-ids
-  cisco.nd.nd_policy:
-    fabric_name: "{{ fabric_name }}"
-    state: query
-    config:
-      - name: POLICY-101101
-      - name: POLICY-102102
-      - switch:
-          - serial_number: "{{ switch1 }}"
-
 - name: Gather all policies on all fabric switches (no config needed)
   cisco.nd.nd_policy:
     fabric_name: "{{ fabric_name }}"
@@ -490,7 +457,6 @@ before:
   - List of policy snapshots B(before) the module made any changes.
   - For C(merged) state, contains the existing policy state prior to create/update.
   - For C(deleted) state, contains the policies that were deleted.
-  - For C(query) state, this is an empty list.
   returned: always
   type: list
   elements: dict
@@ -499,7 +465,6 @@ after:
   - List of policy snapshots B(after) the module completed.
   - For C(merged) state, contains the new/updated policy state.
   - For C(deleted) state, this is an empty list (policies were removed).
-  - For C(query) state, contains the queried policies.
   returned: always
   type: list
   elements: dict
