@@ -157,14 +157,10 @@ class FabricUtils:
         Raises:
             SwitchOperationError: If all attempts fail.
         """
-        last_error: Exception = SwitchOperationError(
-            f"Config save produced no attempts for fabric {self.fabric}"
-        )
+        last_error: Exception = SwitchOperationError(f"Config save produced no attempts for fabric {self.fabric}")
         for attempt in range(1, max_retries + 1):
             try:
-                response = self._request_endpoint(
-                    self.ep_config_save, action="Config save"
-                )
+                response = self._request_endpoint(self.ep_config_save, action="Config save")
                 self.log.info(
                     "Config save succeeded on attempt %s/%s for fabric %s",
                     attempt,
@@ -189,10 +185,7 @@ class FabricUtils:
                         max_retries,
                     )
                     time.sleep(retry_delay)
-        raise SwitchOperationError(
-            f"Config save failed after {max_retries} attempt(s) "
-            f"for fabric {self.fabric}: {last_error}"
-        )
+        raise SwitchOperationError(f"Config save failed after {max_retries} attempt(s) " f"for fabric {self.fabric}: {last_error}")
 
     def deploy_config(self) -> Dict[str, Any]:
         """Deploy pending configuration to all switches in the fabric.
@@ -206,9 +199,7 @@ class FabricUtils:
         Raises:
             SwitchOperationError: If the deploy request fails.
         """
-        return self._request_endpoint(
-            self.ep_config_deploy, action="Config deploy"
-        )
+        return self._request_endpoint(self.ep_config_deploy, action="Config deploy")
 
     def get_fabric_info(self) -> Dict[str, Any]:
         """Retrieve fabric information.
@@ -219,17 +210,13 @@ class FabricUtils:
         Raises:
             SwitchOperationError: If the request fails.
         """
-        return self._request_endpoint(
-            self.ep_fabric_get, action="Get fabric info"
-        )
+        return self._request_endpoint(self.ep_fabric_get, action="Get fabric info")
 
     # -----------------------------------------------------------------
     # Internal helpers
     # -----------------------------------------------------------------
 
-    def _request_endpoint(
-        self, endpoint, action: str = "Request"
-    ) -> Dict[str, Any]:
+    def _request_endpoint(self, endpoint, action: str = "Request") -> Dict[str, Any]:
         """Execute a request against a pre-configured endpoint.
 
         Args:
@@ -249,6 +236,4 @@ class FabricUtils:
             return response
         except Exception as e:
             self.log.error("%s failed for fabric %s: %s", action, self.fabric, e)
-            raise SwitchOperationError(
-                f"{action} failed for fabric {self.fabric}: {e}"
-            ) from e
+            raise SwitchOperationError(f"{action} failed for fabric {self.fabric}: {e}") from e
