@@ -80,8 +80,8 @@ class NDStateMachine:
                 # For merged state, only compare fields explicitly provided by
                 # the user so that Pydantic default values do not trigger false
                 # diffs or overwrite existing configuration.
-                only_set = self.state == "merged"
-                diff_status = self.existing.get_diff_config(proposed_item, only_set_fields=only_set)
+                exclude_unset = self.state == "merged"
+                diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset)
 
                 # No changes needed
                 if diff_status == "no_diff":
