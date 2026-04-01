@@ -15,7 +15,7 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_policy_actions import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policy_actions import (
     EpManagePolicyActionsMarkDeletePost,
     EpManagePolicyActionsPushConfigPost,
     EpManagePolicyActionsRemovePost,
@@ -330,7 +330,7 @@ def test_manage_policy_actions_00230():
 
     ## Test
 
-    - path includes only clusterName (no ticketId per manage.json spec)
+    - path includes only clusterName (no ticketId per ND API specification)
 
     ## Classes and Methods
 

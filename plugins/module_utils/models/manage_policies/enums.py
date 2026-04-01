@@ -6,7 +6,7 @@
 
 """Enumerations for Policy Operations.
 
-Extracted from OpenAPI schema (manage.json) for Nexus Dashboard Manage APIs v1.1.332.
+Extracted from the ND API specification for Nexus Dashboard Manage APIs.
 """
 
 from __future__ import absolute_import, division, print_function

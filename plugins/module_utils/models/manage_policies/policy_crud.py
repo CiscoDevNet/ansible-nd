@@ -11,7 +11,7 @@ This module provides ``PolicyCreateBulk`` (bulk create wrapper) and
 ``PolicyUpdate`` (update a single policy).  Both depend on the base
 ``PolicyCreate`` model defined in ``policy_base``.
 
-## Schema origin (manage.json)
+## Schema origin
 
 - ``PolicyCreateBulk`` ← wraps a list of ``createPolicy``
 - ``PolicyUpdate``     ← ``policyPut`` (identical to ``createPolicy``)
@@ -113,7 +113,7 @@ class PolicyUpdate(PolicyCreate):
 
     ## Description
 
-    Based on ``policyPut`` schema from manage.json which extends ``createPolicy``.
+    Based on ``policyPut`` schema from the ND API specification which extends ``createPolicy``.
     Inherits all fields from ``PolicyCreate``.
 
     ## API Endpoint
@@ -144,4 +144,4 @@ class PolicyUpdate(PolicyCreate):
     """
 
     # All fields inherited from PolicyCreate
-    # policyPut schema is identical to createPolicy per manage.json
+    # policyPut schema is identical to createPolicy per the ND API specification

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Cisco Systems
+# Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -14,9 +14,9 @@ policy action endpoints:
 - POST /api/v1/manage/fabrics/{fabricName}/policyActions/pushConfig
 - POST /api/v1/manage/fabrics/{fabricName}/policyActions/remove
 
-## Schema origin (manage.json)
+## Schema origin
 
-- ``PolicyIds`` ← ``policyActions`` schema
+- ``PolicyIds`` ← ``policyActions`` request body schema per ND API specification
 """
 
 from __future__ import absolute_import, annotations, division, print_function
@@ -24,6 +24,8 @@ from __future__ import absolute_import, annotations, division, print_function
 # pylint: disable=invalid-name
 __metaclass__ = type
 # pylint: enable=invalid-name
+
+__author__ = "L Nikhil Sri Krishna"
 
 from typing import Any, ClassVar, Dict, List
 
@@ -43,7 +45,7 @@ class SwitchIds(NDNestedModel):
     Used for ``POST /fabrics/{fabricName}/switchActions/deploy``.
     Contains a list of switch serial numbers to deploy config to.
 
-    ## Request Body Schema (from manage.json)
+    ## Request Body Schema
 
     ```json
     {
@@ -100,7 +102,7 @@ class PolicyIds(NDNestedModel):
     - POST /api/v1/manage/fabrics/{fabricName}/policyActions/pushConfig
     - POST /api/v1/manage/fabrics/{fabricName}/policyActions/remove
 
-    ## Request Body Schema (from manage.json)
+    ## Request Body Schema
 
     ```json
     {

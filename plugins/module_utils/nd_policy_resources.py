@@ -6,7 +6,7 @@
 """
 ND Policy Resource Module.
 
-Provides all business logic for switch policy management on NDFC 4.x:
+Provides all business logic for switch policy management on ND:
     - Policy CRUD (create, read, update, delete)
     - Idempotency diff calculation for merged, deleted states
     - Deploy (pushConfig) orchestration
@@ -40,18 +40,18 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_config_templates import (
     EpManageConfigTemplateParametersGet,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_policies import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policies import (
     EpManagePoliciesDelete,
     EpManagePoliciesGet,
     EpManagePoliciesPost,
     EpManagePoliciesPut,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_policy_actions import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policy_actions import (
     EpManagePolicyActionsMarkDeletePost,
     EpManagePolicyActionsPushConfigPost,
     EpManagePolicyActionsRemovePost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switch_actions import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
     EpManageSwitchActionsDeployPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_base import (
@@ -805,7 +805,7 @@ class NDPolicyModule:
         self.log.debug("EXIT: _handle_merged_state()")
 
     def _handle_deleted_state(self) -> None:
-        """Handle state=deleted: remove policies from NDFC.
+        """Handle state=deleted: remove policies from ND.
 
         Returns:
             None.
@@ -969,7 +969,7 @@ class NDPolicyModule:
         )
 
         # Convert each policy to playbook-ready config, applying
-        # _clean_template_inputs to strip NDFC-injected keys.
+        # _clean_template_inputs to strip ND-injected keys.
         for model in gathered_collection:
             config_entry = model.to_gathered_config()
             # Clean template inputs using the template parameter API
@@ -1032,7 +1032,7 @@ class NDPolicyModule:
         ``SERIAL_NUMBER``) are stripped via ``_clean_template_inputs()``.
 
         Args:
-            policy: Raw policy dict from the NDFC API.
+            policy: Raw policy dict from the ND API.
 
         Returns:
             Dict with keys: name, policy_id, switch, description, priority,
@@ -1072,7 +1072,7 @@ class NDPolicyModule:
         self.log.debug(f"Converted policy {policy_id} to config: {config_entry}")
         return config_entry
 
-    # NDFC system-injected keys present in templateInputs that are
+    # ND system-injected keys present in templateInputs that are
     # NOT real template parameters.  Stripped from gathered output so
     # the result can be fed directly into state=merged.
     _SYSTEM_INJECTED_KEYS: ClassVar[frozenset] = frozenset({
@@ -1248,8 +1248,8 @@ class NDPolicyModule:
         input_diff = {}
         for key in want_inputs:
             # Normalize both sides to lowercase strings to handle:
-            #   - Python bool True → "True" vs NDFC string "true"
-            #   - Python int 100 → "100" vs NDFC string "100"
+            #   - Python bool True → "True" vs ND string "true"
+            #   - Python int 100 → "100" vs ND string "100"
             # Also strip trailing whitespace/newlines to avoid false
             # diffs from multiline template inputs (e.g., CONF blocks).
             want_val = str(want_inputs[key]).strip().lower()
@@ -1316,7 +1316,7 @@ class NDPolicyModule:
           with idempotency checks.  When ``True``, they are kept and
           annotated with ``_markDeleted_stale: True`` so callers can
           surface the status to the user.
-        - **source != ""** — internal NDFC sub-policies are always
+        - **source != ""** — internal ND sub-policies are always
           excluded; they are artefacts that cause false duplicate
           matches.
 
@@ -1335,7 +1335,7 @@ class NDPolicyModule:
         result: List[Dict] = []
         excluded = 0
         for p in raw:
-            # Always exclude internal NDFC sub-policies (source != "")
+            # Always exclude internal ND sub-policies (source != "")
             if p.get("source", "") != "":
                 excluded += 1
                 continue
@@ -1481,7 +1481,7 @@ class NDPolicyModule:
         template incur only one API call.
 
         Args:
-            template_name: The NDFC template name (e.g., ``switch_freeform``).
+            template_name: The ND template name (e.g., ``switch_freeform``).
 
         Returns:
             List of parameter dicts, each with at minimum ``name``,
@@ -1968,7 +1968,7 @@ class NDPolicyModule:
                     f"'{want.get('description')}' on switch {want.get('switchId')}. "
                     "Cannot determine which policy to update when "
                     "use_desc_as_key=true. Remove the duplicate policies from "
-                    "NDFC or use a policy ID directly."
+                    "the controller or use a policy ID directly."
                 )
             )
 
@@ -2322,7 +2322,7 @@ class NDPolicyModule:
         # individually — a single policy failure does not affect others
         # in the same batch.
         #
-        # NOTE: The orphan risk for DAC entries is inherent — NDFC has
+        # NOTE: The orphan risk for DAC entries is inherent — ND has
         # no atomic "replace policy" API.  Re-running the playbook
         # will re-create the policy (it will be seen as
         # "not found" → create).
@@ -2411,10 +2411,10 @@ class NDPolicyModule:
 
                 entry_result = (
                     created_ids[idx] if idx < len(created_ids)
-                    else {"policy_id": None, "ndfc_error": "No response entry from NDFC"}
+                    else {"policy_id": None, "nd_error": "No response entry from ND"}
                 )
                 created_id = entry_result["policy_id"]
-                ndfc_error = entry_result["ndfc_error"]
+                nd_error = entry_result["nd_error"]
                 per_policy_error = None
 
                 # created_id is None when per-policy response had status!=success
@@ -2422,7 +2422,7 @@ class NDPolicyModule:
                     per_policy_error = (
                         f"Policy creation failed for "
                         f"{want.get('templateName')} on "
-                        f"{want.get('switchId')}: {ndfc_error}"
+                        f"{want.get('switchId')}: {nd_error}"
                     )
 
                 self._proposed.append(want)
@@ -2619,7 +2619,7 @@ class NDPolicyModule:
                     f"'{want_desc}' on switch {want.get('switchId')}. "
                     "Descriptions must be unique per switch when "
                     "use_desc_as_key=true. Remove the duplicate policies from "
-                    "NDFC or use a policy ID directly."
+                    "the controller or use a policy ID directly."
                 )
             )
 
@@ -2810,8 +2810,8 @@ class NDPolicyModule:
         # direct DELETE /policies/{policyId}.
         #
         # This is more robust than maintaining a hardcoded set of template
-        # names, since the content type is an NDFC-internal property that
-        # varies across templates and NDFC versions.
+        # names, since the content type is an ND-internal property that
+        # varies across templates and ND versions.
         # ---------------------------------------------------------------------
 
         # Step 1: Attempt markDelete for all policies
@@ -2855,7 +2855,7 @@ class NDPolicyModule:
             # Policies not in the failed set are considered successful
             mark_succeeded = [pid for pid in unique_policy_ids if pid not in failed_ids]
 
-            # Warn if NDFC returned empty policies list (ambiguous)
+            # Warn if ND returned empty policies list (ambiguous)
             if not policies_response and unique_policy_ids:
                 self.log.warning(
                     "markDelete returned empty 'policies' list for "
@@ -2969,7 +2969,7 @@ class NDPolicyModule:
                     },
                 )
 
-            # Deploy to affected switches so NDFC pushes the config removal
+            # Deploy to affected switches so ND pushes the config removal
             # to the devices.  Direct DELETE removes the policy record but
             # the device still has the running config until we deploy.
             if deleted_direct and self.deploy:
@@ -2992,7 +2992,7 @@ class NDPolicyModule:
                     # Per the OpenAPI spec it returns a single object:
                     #   {"status": "Configuration deployment completed for [...]"}
                     #
-                    # In practice NDFC may return an empty body {} with 207.
+                    # In practice ND may return an empty body {} with 207.
                     # This endpoint does NOT use the per-item
                     # policyBaseGeneralResponse schema, so we cannot use
                     # _inspect_207_policies() here.
@@ -3001,7 +3001,7 @@ class NDPolicyModule:
                     #   - Present and contains "completed" → success
                     #   - Present but other text → log warning, treat as success
                     #   - Missing (empty body {}) → ambiguous, log warning,
-                    #     treat as success (NDFC often returns {} on success)
+                    #     treat as success (ND often returns {} on success)
                     deploy_ok = True
                     if isinstance(deploy_data, dict) and deploy_data:
                         status_str = deploy_data.get("status", "")
@@ -3017,7 +3017,7 @@ class NDPolicyModule:
                     else:
                         self.log.warning(
                             "switchActions/deploy returned empty body — "
-                            "treating as success (NDFC commonly returns {} "
+                            "treating as success (ND commonly returns {} "
                             "for this endpoint)"
                         )
 
@@ -3105,7 +3105,7 @@ class NDPolicyModule:
             self.log.debug("EXIT: _execute_deleted()")
             return
 
-        # Step 3: remove — hard-delete policy records from NDFC
+        # Step 3: remove — hard-delete policy records from ND
         self.log.info(
             f"Step 3/3: remove {len(normal_delete_ids)} policies"
         )
@@ -3115,7 +3115,7 @@ class NDPolicyModule:
         rm_ok, rm_fail = self._inspect_207_policies(remove_data)
         remove_success = len(rm_fail) == 0
 
-        # Warn if NDFC returned no per-policy detail at all
+        # Warn if ND returned no per-policy detail at all
         if not rm_ok and not rm_fail and normal_delete_ids:
             self.log.warning(
                 f"remove returned no per-policy results for "
@@ -3214,14 +3214,14 @@ class NDPolicyModule:
         ep.fabric_name = self.fabric_name
         if self.cluster_name:
             ep.endpoint_params.cluster_name = self.cluster_name
-        # NOTE: pushConfig does NOT accept ticketId per manage.json spec
+        # NOTE: pushConfig does NOT accept ticketId per ND API specification
 
         data = self.nd.request(ep.path, ep.verb, push_body.to_request_dict())
 
         # Inspect 207 body for per-policy failures
         succeeded_policies, failed_policies = self._inspect_207_policies(data)
 
-        # Warn if NDFC returned no per-policy detail at all
+        # Warn if ND returned no per-policy detail at all
         if not succeeded_policies and not failed_policies and policy_ids:
             self.log.warning(
                 f"pushConfig returned no per-policy results for "
@@ -3264,7 +3264,7 @@ class NDPolicyModule:
     ) -> Tuple[List[Dict], List[Dict]]:
         """Inspect a 207 Multi-Status response for per-item success/failure.
 
-        NDFC returns HTTP 207 for most bulk policy actions (create,
+        ND returns HTTP 207 for most bulk policy actions (create,
         markDelete, pushConfig, remove).  The response body contains
         a list of per-item results under a top-level key (``policies``),
         each with a required ``status`` field (``"success"`` or
@@ -3291,11 +3291,11 @@ class NDPolicyModule:
 
         If the response body is empty (``{}``) or does not contain
         the expected key, both returned lists will be empty.  The
-        caller should treat this as an ambiguous result (NDFC did
+        caller should treat this as an ambiguous result (ND did
         not report per-item status) and decide accordingly.
 
         Args:
-            data: Response DATA dict from NDFC (or None/non-dict).
+            data: Response DATA dict from ND (or None/non-dict).
             key: Top-level key holding the items list.
                  ``"policies"`` for policy action endpoints.
 
@@ -3338,7 +3338,7 @@ class NDPolicyModule:
 
                 {
                     "policy_id": str or None,   # created ID, None on failure
-                    "ndfc_error": str or None,  # NDFC error message on failure
+                    "nd_error": str or None,  # ND error message on failure
                 }
 
         Raises:
@@ -3388,21 +3388,21 @@ class NDPolicyModule:
                 entry = created_policies[idx]
                 entry_status = str(entry.get("status", "")).lower()
                 if entry_status != "success":
-                    ndfc_msg = entry.get("message", "Policy creation failed")
+                    nd_msg = entry.get("message", "Policy creation failed")
                     self.log.error(
                         f"Bulk create: policy {idx} failed "
                         f"(status={entry.get('status')!r}) — "
                         f"template={want.get('templateName')}, "
-                        f"switch={want.get('switchId')}: {ndfc_msg}"
+                        f"switch={want.get('switchId')}: {nd_msg}"
                     )
-                    results.append({"policy_id": None, "ndfc_error": ndfc_msg})
+                    results.append({"policy_id": None, "nd_error": nd_msg})
                 else:
                     pid = entry.get("policyId")
                     self.log.info(f"Bulk create: policy {idx} created — {pid}")
-                    results.append({"policy_id": pid, "ndfc_error": None})
+                    results.append({"policy_id": pid, "nd_error": None})
             else:
                 self.log.warning(f"Bulk create: no response entry for policy {idx}")
-                results.append({"policy_id": None, "ndfc_error": "No response entry from NDFC"})
+                results.append({"policy_id": None, "nd_error": "No response entry from ND"})
 
         self.log.info(
             f"Bulk create complete: "
@@ -3458,7 +3458,7 @@ class NDPolicyModule:
     def _api_mark_delete(self, policy_ids: List[str]) -> Dict:
         """Mark policies for deletion via POST /policyActions/markDelete.
 
-        NDFC returns HTTP 207 Multi-Status with per-policy results.
+        ND returns HTTP 207 Multi-Status with per-policy results.
         Policies with content type PYTHON (e.g. ``switch_freeform``,
         ``Ext_VRF_Lite_SVI``) will fail with::
 
@@ -3472,7 +3472,7 @@ class NDPolicyModule:
             policy_ids: List of policy IDs to mark-delete.
 
         Returns:
-            Response DATA dict from NDFC.  Typically contains a
+            Response DATA dict from ND.  Typically contains a
             ``policies`` list with per-policy ``status`` and
             ``message`` fields.
         """
@@ -3492,15 +3492,15 @@ class NDPolicyModule:
     def _api_remove_policies(self, policy_ids: List[str]) -> Dict:
         """Hard-delete policies via POST /policyActions/remove.
 
-        NDFC returns HTTP 207 Multi-Status with per-policy results.
+        ND returns HTTP 207 Multi-Status with per-policy results.
         The caller should inspect the returned dict for per-policy
         ``status: "failed"`` entries.
 
         Args:
-            policy_ids: List of policy IDs to remove from NDFC.
+            policy_ids: List of policy IDs to remove from ND.
 
         Returns:
-            Response DATA dict from NDFC.  Typically contains a
+            Response DATA dict from ND.  Typically contains a
             ``policies`` list with per-policy ``status`` and
             ``message`` fields.
         """
@@ -3556,7 +3556,7 @@ class NDPolicyModule:
             switch_ids: List of switch serial numbers to deploy to.
 
         Returns:
-            Response DATA dict from NDFC.  Typically contains a ``status``
+            Response DATA dict from ND.  Typically contains a ``status``
             field like ``"Configuration deployment completed for [...]"``.
         """
         self.log.info(

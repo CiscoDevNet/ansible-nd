@@ -52,7 +52,7 @@ class ConfigTemplateEndpointParams(EndpointQueryParams):
 
     ## Description
 
-    Per manage.json, the GET /configTemplates/{templateName}/parameters
+    Per the ND API specification, the GET /configTemplates/{templateName}/parameters
     endpoint accepts ``clusterName`` as a query parameter.
 
     ## Parameters

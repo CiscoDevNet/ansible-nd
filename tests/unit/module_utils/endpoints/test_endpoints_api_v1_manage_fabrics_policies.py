@@ -15,7 +15,7 @@ __metaclass__ = type
 # pylint: enable=invalid-name
 
 import pytest
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_policies import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policies import (
     EpManagePoliciesDelete,
     EpManagePoliciesGet,
     EpManagePoliciesPost,

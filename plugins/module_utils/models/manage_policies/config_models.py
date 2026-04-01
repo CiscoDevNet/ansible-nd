@@ -7,10 +7,10 @@
 """Pydantic models for validating Ansible playbook input (user-facing config).
 
 These models validate user input **before** any API calls or config translation.
-They enforce constraints from the OpenAPI spec (manage.json ``createBasePolicy``
+They enforce constraints from the ND API specification (``createBasePolicy``
 schema) at the playbook boundary so errors are caught early with clear messages.
 
-Schema constraints (source: manage.json createBasePolicy):
+Schema constraints (source: ND API specification, createBasePolicy):
     - priority: integer, min=1, max=2000, default=500
     - description: string, maxLength=255
     - templateName: string, maxLength=255

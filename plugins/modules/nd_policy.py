@@ -22,11 +22,11 @@ DOCUMENTATION = r"""
 ---
 module: nd_policy
 version_added: "1.0.0"
-short_description: Manages policies on Nexus Dashboard Fabric Controller (NDFC).
+short_description: Manages policies on Nexus Dashboard.
 description:
 - Supports creating, updating, deleting, gathering, and deploying policies based on templates.
 - Supports C(merged) state for idempotent policy management.
-- Supports C(deleted) state for removing policies from NDFC and optionally from switches.
+- Supports C(deleted) state for removing policies from ND and optionally from switches.
 - Supports C(gathered) state for exporting existing policies as playbook-compatible config.
   The gathered output can be copy-pasted directly into a playbook for use with C(merged) state.
 - When O(use_desc_as_key=true), policies are identified by their description instead of policy ID.
@@ -35,7 +35,7 @@ description:
   aborts B(before) making any changes to the controller.
 - When O(use_desc_as_key=true), every O(config[].description) B(must) be non-empty and
   unique per switch within the playbook. The module also fails if duplicate descriptions
-  are found on the NDFC controller itself (created outside of this playbook). This ensures
+  are found on the ND controller itself (created outside of this playbook). This ensures
   unambiguous policy matching. To manage policies with non-unique descriptions, use
   O(use_desc_as_key=false) and reference policies by policy ID.
 - Policies and switches are specified separately in the O(config) list. Global policies
@@ -92,7 +92,7 @@ options:
         - Description of the policy.
         - When O(use_desc_as_key=true), this is used as the unique identifier for the policy
           and B(must) be non-empty and unique per switch. The module fails atomically if
-          duplicate descriptions are detected in the playbook or on the NDFC controller.
+          duplicate descriptions are detected in the playbook or on the ND controller.
         type: str
         default: ""
       priority:
@@ -183,7 +183,7 @@ options:
     - When set to V(false), the template name (or policy ID if name starts with C(POLICY-)) is used.
     - When V(true), every O(config[].description) must be non-empty (for C(merged) and C(deleted) states)
       and unique per switch within the playbook. The module will B(fail immediately) if duplicate
-      C(description + switch) combinations are found in the playbook config or on the NDFC controller.
+      C(description + switch) combinations are found in the playbook config or on the ND controller.
     - This atomic-fail behavior ensures no partial changes are made when descriptions are ambiguous.
     type: bool
     default: false
@@ -207,7 +207,7 @@ options:
   ticket_id:
     description:
     - Change Control Ticket ID to associate with mutation operations.
-    - Required when Change Control is enabled on the NDFC controller.
+    - Required when Change Control is enabled on the ND controller.
     type: str
   cluster_name:
     description:
@@ -240,8 +240,8 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 seealso:
-- name: Cisco NDFC Policy Management
-  description: Understanding switch policy management on NDFC 4.x.
+- name: Cisco ND Policy Management
+  description: Understanding switch policy management on ND.
 notes:
 - When O(use_desc_as_key=false) and O(config[].name) is a template name (not a policy ID),
   existing policies are B(never) updated in-place. The module always creates a new policy.

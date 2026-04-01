@@ -7,7 +7,7 @@
 """Read-model for ``state=gathered`` output.
 
 ``GatheredPolicy`` is a lightweight model that represents a policy as
-returned by the NDFC API, keyed by ``policyId``.  It is used exclusively
+returned by the ND API, keyed by ``policyId``.  It is used exclusively
 by ``_handle_gathered_state()`` for:
 
     - Deserialising raw API response dicts via ``from_response()``
@@ -44,11 +44,11 @@ log = logging.getLogger("nd.GatheredPolicy")
 
 
 class GatheredPolicy(NDBaseModel):
-    """Read-model for a policy returned by the NDFC API.
+    """Read-model for a policy returned by the ND API.
 
     Keyed by ``policy_id`` for ``NDConfigCollection`` dedup.
 
-    Fields mirror the NDFC policy response keys (camelCase aliases)
+    Fields mirror the ND policy response keys (camelCase aliases)
     that are needed for gathered output.  Extra API response keys
     (``generatedConfig``, ``markDeleted``, ``createTimestamp``, etc.)
     are silently dropped by ``model_config.extra = "ignore"`` inherited
@@ -122,7 +122,7 @@ class GatheredPolicy(NDBaseModel):
 
     @classmethod
     def from_api_policy(cls, policy: Dict[str, Any]) -> "GatheredPolicy":
-        """Create a GatheredPolicy from a raw NDFC API policy dict.
+        """Create a GatheredPolicy from a raw ND API policy dict.
 
         Handles the ``templateInputs`` field which may be a JSON-encoded
         string in the API response.  Parses it into a dict before model
@@ -132,7 +132,7 @@ class GatheredPolicy(NDBaseModel):
         instead of ``templateInputs``.
 
         Args:
-            policy: Raw policy dict from the NDFC API.
+            policy: Raw policy dict from the ND API.
 
         Returns:
             A validated ``GatheredPolicy`` instance.

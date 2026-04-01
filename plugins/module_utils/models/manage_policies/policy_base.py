@@ -13,7 +13,7 @@ and import from here.
 
 The ``PolicyEntityType`` enum is in ``enums.py``.
 
-## Schema origin (manage.json)
+## Schema origin
 
 - ``PolicyCreate``     ← ``createPolicy`` (extends ``createBasePolicy``)
 """
@@ -47,7 +47,7 @@ class PolicyCreate(NDBaseModel):
 
     ## Description
 
-    Based on ``createPolicy`` schema from manage.json which extends
+    Based on ``createPolicy`` schema from the ND API specification which extends
     ``createBasePolicy``.
 
     ## API Endpoint

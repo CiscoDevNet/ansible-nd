@@ -57,7 +57,7 @@ class PolicyActionMutationEndpointParams(EndpointQueryParams):
 
     ## Description
 
-    Per manage.json, the following policy action endpoints accept
+    Per the ND API specification, the following policy action endpoints accept
     ``clusterName`` and ``ticketId``:
 
     - POST /policyActions/markDelete
@@ -93,7 +93,7 @@ class PolicyPushConfigEndpointParams(EndpointQueryParams):
 
     ## Description
 
-    Per manage.json, ``POST /policyActions/pushConfig`` accepts only
+    Per the ND API specification, ``POST /policyActions/pushConfig`` accepts only
     ``clusterName`` (no ``ticketId``).
 
     ## Parameters
@@ -230,7 +230,7 @@ class EpManagePolicyActionsPushConfigPost(_EpManagePolicyActionsBase):
 
     ## Note
 
-    pushConfig does NOT accept ``ticketId`` per manage.json spec.
+    pushConfig does NOT accept ``ticketId`` per the ND API specification.
 
     ## Request Body Example
 

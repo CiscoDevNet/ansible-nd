@@ -63,7 +63,7 @@ class PoliciesGetEndpointParams(EndpointQueryParams):
 
     ## Description
 
-    Per manage.json, the GET /policies endpoint accepts only ``clusterName``
+    Per the ND API specification, the GET /policies endpoint accepts only ``clusterName``
     as a named query parameter.  Lucene filtering (filter, max, offset, sort)
     is handled separately via ``LuceneQueryParams``.
 
@@ -89,7 +89,7 @@ class PolicyMutationEndpointParams(EndpointQueryParams):
 
     ## Description
 
-    Per manage.json, the following mutation endpoints accept
+    Per the ND API specification, the following mutation endpoints accept
     ``clusterName`` and ``ticketId``:
 
     - POST   /policies

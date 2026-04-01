@@ -55,7 +55,7 @@ class SwitchDeployEndpointParams(EndpointQueryParams):
 
     ## Description
 
-    Per manage.json, ``POST /fabrics/{fabricName}/switchActions/deploy``
+    Per the ND API specification, ``POST /fabrics/{fabricName}/switchActions/deploy``
     accepts ``forceShowRun`` and ``clusterName`` as optional query params.
 
     ## Parameters
