@@ -342,7 +342,7 @@ jobs:
 
   integration:
     name: Integration Tests
-    if: false # No unit tests yet
+    if: false # No integration tests for now
     needs:
       # - units
       - ansible-test
