@@ -1,8 +1,14 @@
 name: CI
 on:
+  # Triggers the workflow on push or pull request events but only for the develop branch
   push:
-    branches: [master]
+    branches:
+      - develop
+      - main
   pull_request:
+    branches:
+      - develop
+      - main
   schedule:
     # * is a special character in YAML so you have to quote this string
     - cron: '0 6 * * *'
