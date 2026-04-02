@@ -49,6 +49,23 @@ POOL_SCOPE_MAP: Dict[str, List[str]] = {
 
 
 # =============================================================================
+# SCOPE_TYPE_TO_API / API_SCOPE_TYPE_TO_PLAYBOOK
+# Maps between playbook scope_type values (underscore) and ND API scopeType
+# values (camelCase).
+# =============================================================================
+
+SCOPE_TYPE_TO_API: Dict[str, str] = {
+    "fabric": "fabric",
+    "device": "device",
+    "device_interface": "deviceInterface",
+    "device_pair": "devicePair",
+    "link": "link",
+}
+
+API_SCOPE_TYPE_TO_PLAYBOOK: Dict[str, str] = {v: k for k, v in SCOPE_TYPE_TO_API.items()}
+
+
+# =============================================================================
 # ENUMS - Ansible/DCNM-style values
 # =============================================================================
 

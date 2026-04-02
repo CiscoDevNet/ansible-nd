@@ -45,43 +45,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricResourcesActionsRemovePost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
-
-
-# Map from playbook scope_type values to ND API scopeType values
-_SCOPE_TYPE_TO_API = {
-    "fabric": "fabric",
-    "device": "device",
-    "device_interface": "deviceInterface",
-    "device_pair": "devicePair",
-    "link": "link",
-}
-
-# Map from ND API scopeType values back to playbook scope_type values
-_API_SCOPE_TYPE_TO_PLAYBOOK = {v: k for k, v in _SCOPE_TYPE_TO_API.items()}
-
-# Valid pool_name -> scope_type combinations (from nd_manage_resource_manager)
-_POOLNAME_TO_SCOPE_TYPE = {
-    "L3_VNI": ["fabric"],
-    "L2_VNI": ["fabric"],
-    "BGP_ASN_ID": ["fabric"],
-    "VPC_DOMAIN_ID": ["fabric"],
-    "VPC_ID": ["device_pair"],
-    "VPC_PEER_LINK_VLAN": ["device_pair"],
-    "FEX_ID": ["device"],
-    "LOOPBACK_ID": ["device"],
-    "PORT_CHANNEL_ID": ["device"],
-    "TUNNEL_ID_IOS_XE": ["device"],
-    "OBJECT_TRACKING_NUMBER_POOL": ["device"],
-    "INSTANCE_ID": ["device"],
-    "PORT_CHANNEL_ID_IOS_XE": ["device"],
-    "ROUTE_MAP_SEQUENCE_NUMBER_POOL": ["device"],
-    "SERVICE_NETWORK_VLAN": ["device"],
-    "TOP_DOWN_VRF_VLAN": ["device"],
-    "TOP_DOWN_NETWORK_VLAN": ["device"],
-    "TOP_DOWN_L3_DOT1Q": ["device_interface"],
-    "IP_POOL": ["fabric", "device_interface"],
-    "SUBNET": ["link"],
-}
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_manager.constants import (
+    API_SCOPE_TYPE_TO_PLAYBOOK as _API_SCOPE_TYPE_TO_PLAYBOOK,
+    POOL_SCOPE_MAP as _POOLNAME_TO_SCOPE_TYPE,
+    SCOPE_TYPE_TO_API as _SCOPE_TYPE_TO_API,
+)
 
 
 # =========================================================================
@@ -714,6 +682,9 @@ class NDResourceManagerModule:
         self.existing: List[ResourceManagerResponse] = list(self._all_resources)
         self.previous: List[ResourceManagerResponse] = list(self._all_resources)
         self.proposed: List[ResourceManagerConfigModel] = []
+
+        # NDOutput for building consistent Ansible output across all states
+        self.output: NDOutput = NDOutput(output_level=nd.params.get("output_level", "normal"))
 
         self.log.info(
             f"NDResourceManagerModule initialized: fabric={self.fabric}, "
@@ -2011,6 +1982,12 @@ class NDResourceManagerModule:
             self.proposed = ResourceManagerDiffEngine.validate_configs(
                 self.config, self.state, self.nd, self.log
             )
+            self.output.assign(
+                proposed_configs=[
+                    cfg.model_dump(by_alias=True, exclude_none=True)
+                    for cfg in self.proposed
+                ]
+            )
 
         if self.state == "merged":
             self.log.info("manage_state: Dispatching to manage_merged()")
@@ -2030,23 +2007,28 @@ class NDResourceManagerModule:
     def exit_module(self):
         """Build the final module result and call ``exit_json`` to return it to Ansible.
 
-        For ``gathered`` state, emits only ``changed=False`` and the ``gathered`` list.
+        For ``gathered`` state, passes the gathered list through ``NDOutput.format``
+        so the output always includes the ``output_level`` key.
         For all other states, computes the ``changed`` flag from whether any resources
         were merged or deleted, re-queries the ND API to capture post-operation state
-        (unless in check mode), and passes ``diff``, ``response``, ``previous``, and
-        ``current`` snapshots to ``NDOutput.format`` before calling
+        (unless in check mode), assigns ``previous``/``current`` snapshots via
+        ``self.output.assign``, and calls ``self.output.format`` before
         ``self.nd.module.exit_json``.
         """
-        # gathered state: return only the gathered list, no diff/response/before/after
+        # gathered state: return gathered list via NDOutput so output_level is always present
         if self.state == "gathered":
             self.log.info(
                 f"exit_module: gathered state, returning "
                 f"{len(self.changed_dict[0]['gathered'])} resource(s)"
             )
-            self.nd.module.exit_json(
+            self.output.assign(
+                current=self.translate_gathered_results(self.existing)
+            )
+            result = self.output.format(
                 changed=False,
                 gathered=self.changed_dict[0]["gathered"],
             )
+            self.nd.module.exit_json(**result)
             return
 
         changed = (
@@ -2067,12 +2049,6 @@ class NDResourceManagerModule:
             f"changed={changed}, check_mode={self.nd.module.check_mode}"
         )
 
-        output_level = self.nd.module.params.get("output_level", "normal")
-        nd_output = NDOutput(output_level=output_level)
-
-        # format() accepts **kwargs that are merged into the output dict.
-        # We inject ND-compatible 'diff' and 'response' keys here so that
-        # integration tests written for nd_manage_resource_manager still pass.
         # Re-query to capture post-operation state for current snapshot
         if not self.nd.module.check_mode and changed:
             self._resources_fetched = False
@@ -2080,11 +2056,13 @@ class NDResourceManagerModule:
             self._get_all_resources()
             self.existing = list(self._all_resources)
 
-        result = nd_output.format(
+        self.output.assign(
+            previous=self.translate_gathered_results(self.previous),
+            current=self.translate_gathered_results(self.existing),
+        )
+        result = self.output.format(
             changed=changed,
             diff=self.changed_dict,
             response=self.api_responses,
-            previous=self.translate_gathered_results(self.previous),
-            current=self.translate_gathered_results(self.existing),
         )
         self.nd.module.exit_json(**result)
