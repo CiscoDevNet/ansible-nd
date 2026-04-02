@@ -21,7 +21,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Run black against code
         uses: psf/black@stable
@@ -76,10 +76,10 @@ jobs:
             python_version: "3.10"
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python_version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python_version }}
 
@@ -92,7 +92,7 @@ jobs:
       - name: Store migrated collection artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: collection-${{ matrix.ansible_version }}
+          name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs
 
   ansible-galaxy-importer:
@@ -144,17 +144,17 @@ jobs:
             python_version: "3.10"
     steps:
       - name: Set up Python ${{ matrix.python_version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python_version }}
 
-      - name: Install ansible-base (${{ matrix.ansible_version }})
+      - name: Install ansible-core (${{ matrix.ansible_version }})
         run: pip install https://github.com/ansible/ansible/archive/${{ matrix.ansible_version }}.tar.gz --disable-pip-version-check
 
       - name: Download migrated collection artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
-          name: collection-${{ matrix.ansible_version }}
+          name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs
 
       - name: Install the collection tarball
@@ -245,7 +245,7 @@ jobs:
             python_version: "3.10"
     steps:
       - name: Set up Python ${{ matrix.python_version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python_version }}
 
@@ -256,9 +256,9 @@ jobs:
         run: pip install coverage==4.5.4
 
       - name: Download migrated collection artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
-          name: collection-${{ matrix.ansible_version }}
+          name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs
 
       - name: Install the collection tarball
@@ -325,7 +325,7 @@ jobs:
             python_version: "3.10"
     steps:
       - name: Set up Python ${{ matrix.python_version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python_version }}
 
@@ -336,7 +336,7 @@ jobs:
         run: pip install coverage==4.5.4
 
       - name: Download migrated collection artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: collection-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs
@@ -370,7 +370,7 @@ jobs:
   #     MUTEX_URL: https://8v7s765ibh.execute-api.us-west-1.amazonaws.com
   #   steps:
   #     - name: Set up Python ${{ env.python_version }}
-  #       uses: actions/setup-python@v5
+  #       uses: actions/setup-python@v6
   #       with:
   #         python-version: ${{ env.python_version }}
 
@@ -381,7 +381,7 @@ jobs:
   #       run: pip install coverage==4.5.4
 
   #     - name: Download migrated collection artifacts
-  #       uses: actions/download-artifact@v4
+  #       uses: actions/download-artifact@v5
   #       with:
   #         name: collection-${{ matrix.ansible }}
   #         path: .cache/collection-tarballs
