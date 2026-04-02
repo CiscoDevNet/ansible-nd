@@ -17,9 +17,9 @@ short_description: Manage resources in Cisco Nexus Dashboard (ND).
 version_added: "1.0.0"
 author: Jeet Ram (@jeeram) <jeeram@cisco.com>
 description:
-  - Create, delete, and gather resources in Cisco Nexus Dashboard using smart endpoints and pydantic models.
+  - Create, delete, override, and gather resources in Cisco Nexus Dashboard using smart endpoints and pydantic models.
   - Supports all resource pool types (ID, IP, SUBNET) and scope types (fabric, device, device_interface, device_pair, link).
-  - Provides idempotent merged and deleted states.
+  - Provides idempotent merged, overridden, and deleted states.
 options:
   fabric:
     description:
@@ -29,10 +29,19 @@ options:
   state:
     description:
       - The required state of the configuration after module completion.
+      - C(merged) creates resources that do not exist and updates those whose value has changed.
+        Resources not present in C(config) are left untouched.
+      - C(overridden) reconciles the fabric exactly to C(config). Resources present in the fabric
+        but absent from C(config) are deleted. Resources missing from the fabric are created.
+        Resources whose value differs are deleted then recreated with the new value.
+      - C(deleted) removes resources that are listed in C(config) from the fabric.
+      - C(gathered) reads the current fabric resources and returns them in C(gathered) key
+        in config format. No changes are made.
     type: str
     required: false
     choices:
       - merged
+      - overridden
       - deleted
       - gathered
     default: merged
@@ -128,6 +137,13 @@ EXAMPLES = """
 #       they will be updated if possible.
 #     - Resources that are not specified in the playbook will be untouched.
 #
+# Overridden:
+#   Reconciles the fabric exactly to the resources defined in the playbook.
+#     - Resources present in the fabric but absent from the playbook config are deleted.
+#     - Resources absent from the fabric are created.
+#     - Resources whose value differs from the playbook are deleted then recreated.
+#     - Resources that match exactly are left untouched (idempotent).
+#
 # Deleted:
 #   Resources defined in the playbook will be deleted.
 #
@@ -138,7 +154,7 @@ EXAMPLES = """
 # ==================
 - name: Create Resources
   cisco.nd.nd_manage_resource_manager:
-    state: merged                               # choose form [merged, deleted, gathered]
+    state: merged                               # choose form [merged, overridden, deleted, gathered]
     fabric: test_fabric
     config:
       - entity_name: "l3_vni_fabric"            # A unique name to identify the resource
@@ -178,12 +194,37 @@ EXAMPLES = """
           - 192.168.10.150
         resource: "fe:80:05::05/64"
 
+# OVERRIDING RESOURCES
+# ====================
+# Override reconciles the fabric exactly to the desired config.
+# Resources not in the config are deleted; missing resources are created;
+# resources with a changed value are deleted then recreated.
+
+- name: Override Resources - reconcile fabric to desired config
+  cisco.nd.nd_manage_resource_manager:
+    state: overridden                           # choose form [merged, overridden, deleted, gathered]
+    fabric: test_fabric
+    config:
+      - entity_name: "l3_vni_fabric"            # Only resources listed here will exist after override
+        pool_type: "ID"
+        pool_name: "L3_VNI"
+        scope_type: "fabric"
+        resource: "101"
+
+      - entity_name: "loopback_dev"
+        pool_type: "ID"
+        pool_name: "LOOPBACK_ID"
+        scope_type: "device"
+        switch:
+          - 192.168.10.150
+        resource: "200"
+
 # DELETING RESOURCES
 # ==================
 
 - name: Delete Resources
   cisco.nd.nd_manage_resource_manager:
-    state: deleted                              # choose form [merged, deleted, gathered]
+    state: deleted                              # choose form [merged, overridden, deleted, gathered]
     fabric: test_fabric
     config:
       - entity_name: "l3_vni_fabric"            # A unique name to identify the resource
@@ -223,12 +264,12 @@ EXAMPLES = """
 
 - name: Gather all Resources - no filters
   cisco.nd.nd_manage_resource_manager:
-    state: gathered                            # choose form [merged, deleted, gathered]
+    state: gathered                            # choose form [merged, overridden, deleted, gathered]
     fabric: test_fabric
 
 - name: Gather Resources - filter by entity name
   cisco.nd.nd_manage_resource_manager:
-    state: gathered                             # choose form [merged, deleted, gathered]
+    state: gathered                             # choose form [merged, overridden, deleted, gathered]
     fabric: test_fabric
     config:
       - entity_name: "l3_vni_fabric"            # A unique name to identify the resource
@@ -239,7 +280,7 @@ EXAMPLES = """
 
 - name: Gather Resources - filter by switch
   cisco.nd.nd_manage_resource_manager:
-    state: gathered                             # choose form [merged, deleted, gathered]
+    state: gathered                             # choose form [merged, overridden, deleted, gathered]
     fabric: test_fabric
     config:
       - switch:                                 # provide the switch information to which the given resource is attached
@@ -247,7 +288,7 @@ EXAMPLES = """
 
 - name: Gather Resources - filter by fabric and pool name
   cisco.nd.nd_manage_resource_manager:
-    state: gathered                             # choose form [merged, deleted, gathered]
+    state: gathered                             # choose form [merged, overridden, deleted, gathered]
     fabric: test_fabric
     config:
       - pool_name: "L3_VNI"                     # Based on the 'poolType', select appropriate name
@@ -256,7 +297,7 @@ EXAMPLES = """
 
 - name: Gather Resources - filter by switch and pool name
   cisco.nd.nd_manage_resource_manager:
-    state: gathered                             # choose form [merged, deleted, gathered]
+    state: gathered                             # choose form [merged, overridden, deleted, gathered]
     fabric: "{{ ansible_it_fabric }}"
     config:
       - pool_name: "L3_VNI"                     # Based on the 'poolType', select appropriate name
@@ -271,7 +312,7 @@ EXAMPLES = """
 
 - name: Gather Resources - mixed query
   cisco.nd.nd_manage_resource_manager:
-    state: gathered                             # choose form [merged, deleted, gathered]
+    state: gathered                             # choose form [merged, overridden, deleted, gathered]
     fabric: test_fabric
     config:
       - entity_name: "l2_vni_fabric"            # A unique name to identify the resource
@@ -489,9 +530,10 @@ def main():
         log_config = Log()
         log_config.config = "/Users/jeeram/ansible/collections/ansible_collections/cisco/nd/plugins/module_utils/logging_config.json"
         log_config.commit()
+        log = logging.getLogger("nd.nd_manage_resource_manager")
     except (ValueError, Exception) as log_init_exc:
         pass  # logging will fall back to root logger; detailed reason captured below
-    log = logging.getLogger("nd.nd_manage_resource_manager")
+
     log.debug(
         f"main: logging initialised (logger='{log.name}', "
         f"effective_level={logging.getLevelName(log.getEffectiveLevel())})"

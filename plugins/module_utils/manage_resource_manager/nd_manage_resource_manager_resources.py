@@ -808,7 +808,7 @@ class NDResourceManagerModule:
         )
 
         if not self.config:
-            if self.state in ("merged", "deleted"):
+            if self.state in ("merged", "deleted", "overridden"):
                 self.log.error(
                     f"'config' is mandatory for state '{self.state}' but was not provided"
                 )
@@ -1702,14 +1702,307 @@ class NDResourceManagerModule:
     # Entry point
     # ------------------------------------------------------------------
 
+    def manage_overridden(self):
+        """Reconcile the fabric to exactly match the desired config.
+
+        Implements a two-phase Delete → Create workflow:
+
+        **Phase 1 — Delete**: resources present in the fabric but absent from the
+        desired config (orphans) are deleted.  Resources present in both but with a
+        differing value (``to_update``) are also deleted so they can be recreated with
+        the new value in Phase 2.
+
+        **Phase 2 — Create**: resources absent from the fabric (``to_add``) plus
+        resources whose old value was just deleted (``to_update``) are created in a
+        single batch POST.
+
+        Resources whose value already matches the desired config (``idempotent``) are
+        left untouched.
+
+        In check mode, the method logs and records what *would* change without issuing
+        any API calls.
+
+        Raises:
+            NDModuleError: Propagated from ``self.nd.request`` on API failure.
+        """
+        self.log.debug("ENTER: manage_overridden()")
+        self.log.info(
+            f"manage_overridden: Processing {len(self.proposed)} proposed config item(s) "
+            f"against {len(self.existing)} existing resource(s) for fabric={self.fabric}"
+        )
+
+        # Compute the full diff in one pass
+        changes = ResourceManagerDiffEngine.compute_changes(
+            self.proposed, self.existing, self.log
+        )
+
+        # Propagate partial-match diagnostics
+        self.changed_dict[0]["debugs"].extend(changes["debugs"])
+        self.log.debug(
+            f"manage_overridden: compute_changes result — "
+            f"to_add={len(changes['to_add'])}, "
+            f"to_update={len(changes['to_update'])}, "
+            f"to_delete={len(changes['to_delete'])}, "
+            f"idempotent={len(changes['idempotent'])}, "
+            f"debugs={len(changes['debugs'])}"
+        )
+
+        has_work = bool(
+            changes["to_add"] or changes["to_update"] or changes["to_delete"]
+        )
+        if not has_work:
+            self.log.info(
+                "manage_overridden: nothing to do — "
+                "all existing resources match desired config (fully idempotent)"
+            )
+            self.log.debug("EXIT: manage_overridden()")
+            return
+
+        # ------------------------------------------------------------------
+        # Check mode — log what would change and return without API calls
+        # ------------------------------------------------------------------
+        if self.nd.module.check_mode:
+            self.log.info(
+                f"manage_overridden: check mode — "
+                f"would_delete={len(changes['to_delete']) + len(changes['to_update'])}, "
+                f"would_create={len(changes['to_add']) + len(changes['to_update'])}"
+            )
+
+            if changes["to_delete"]:
+                self.log.info(
+                    "manage_overridden: check mode — orphan resources that would be deleted:"
+                )
+                for res in changes["to_delete"]:
+                    rid = self._get_resource_id(res)
+                    entity = self._get_entity_name(res)
+                    pool = self._get_pool_name(res)
+                    self.log.info(
+                        f"  [check-mode delete] entity='{entity}', pool='{pool}', id='{rid}'"
+                    )
+                    self.changed_dict[0]["deleted"].append(str(rid) if rid else entity)
+            else:
+                self.log.info("manage_overridden: check mode — no orphan resources to delete")
+
+            if changes["to_update"]:
+                self.log.info(
+                    "manage_overridden: check mode — resources with changed values "
+                    "(would delete-old then create-new):"
+                )
+                for cfg, sw, existing_res in changes["to_update"]:
+                    rid = self._get_resource_id(existing_res)
+                    self.log.info(
+                        f"  [check-mode update] entity='{cfg.entity_name}', "
+                        f"pool='{cfg.pool_name}', switch={sw}, id='{rid}'"
+                    )
+                    self.changed_dict[0]["deleted"].append(str(rid) if rid else cfg.entity_name)
+                    self.changed_dict[0]["merged"].append(cfg.entity_name)
+            else:
+                self.log.info("manage_overridden: check mode — no value-changed resources")
+
+            if changes["to_add"]:
+                self.log.info(
+                    "manage_overridden: check mode — new resources that would be created:"
+                )
+                for cfg, sw, _existing in changes["to_add"]:
+                    self.log.info(
+                        f"  [check-mode add] entity='{cfg.entity_name}', "
+                        f"pool='{cfg.pool_name}', switch={sw}"
+                    )
+                    self.changed_dict[0]["merged"].append(cfg.entity_name)
+            else:
+                self.log.info("manage_overridden: check mode — no new resources to create")
+
+            self.log.debug("EXIT: manage_overridden() [check mode]")
+            return
+
+        # ------------------------------------------------------------------
+        # Phase 1: Delete — orphans + old values for resources being updated
+        # ------------------------------------------------------------------
+        delete_ids: List[str] = []
+
+        self.log.info(
+            f"manage_overridden: Phase 1 — collecting resource IDs to delete: "
+            f"{len(changes['to_delete'])} orphan(s), "
+            f"{len(changes['to_update'])} to-update (old value) resource(s)"
+        )
+
+        # Orphans: exist in fabric, not in desired config
+        if changes["to_delete"]:
+            self.log.info(
+                f"manage_overridden: Phase 1 — processing {len(changes['to_delete'])} orphan resource(s)"
+            )
+            for res_idx, res in enumerate(changes["to_delete"]):
+                rid = self._get_resource_id(res)
+                entity = self._get_entity_name(res)
+                pool = self._get_pool_name(res)
+                scope_type = self._get_scope_type(res)
+                switch_ip = self._get_switch_ip(res)
+                self.log.info(
+                    f"  [Phase1-orphan idx={res_idx}] entity='{entity}', pool='{pool}', "
+                    f"scope_type='{scope_type}', switch='{switch_ip}', id='{rid}'"
+                )
+                if rid is not None and rid not in delete_ids:
+                    self.log.debug(
+                        f"  [Phase1-orphan idx={res_idx}] queuing id='{rid}' for deletion"
+                    )
+                    delete_ids.append(rid)
+                    self.changed_dict[0]["deleted"].append(str(rid))
+                elif rid is not None:
+                    self.log.debug(
+                        f"  [Phase1-orphan idx={res_idx}] id='{rid}' already queued — skipping duplicate"
+                    )
+                else:
+                    self.log.warning(
+                        f"  [Phase1-orphan idx={res_idx}] entity='{entity}' has no resource ID — skipping"
+                    )
+        else:
+            self.log.info("manage_overridden: Phase 1 — no orphan resources to delete")
+
+        # Value-changed resources: delete old value before recreating with new value
+        if changes["to_update"]:
+            self.log.info(
+                f"manage_overridden: Phase 1 — processing "
+                f"{len(changes['to_update'])} value-changed resource(s) for old-value deletion"
+            )
+            for upd_idx, (cfg, sw, existing_res) in enumerate(changes["to_update"]):
+                rid = self._get_resource_id(existing_res)
+                old_val = self._get_resource_value(existing_res)
+                self.log.info(
+                    f"  [Phase1-update idx={upd_idx}] entity='{cfg.entity_name}', "
+                    f"pool='{cfg.pool_name}', switch={sw}, old_value='{old_val}', "
+                    f"new_value='{cfg.resource}', id='{rid}'"
+                )
+                if rid is not None and rid not in delete_ids:
+                    self.log.debug(
+                        f"  [Phase1-update idx={upd_idx}] queuing old id='{rid}' for deletion"
+                    )
+                    delete_ids.append(rid)
+                    self.changed_dict[0]["deleted"].append(str(rid))
+                elif rid is not None:
+                    self.log.debug(
+                        f"  [Phase1-update idx={upd_idx}] id='{rid}' already queued — skipping duplicate"
+                    )
+                else:
+                    self.log.warning(
+                        f"  [Phase1-update idx={upd_idx}] entity='{cfg.entity_name}' "
+                        f"has no resource ID — cannot delete old value"
+                    )
+        else:
+            self.log.info(
+                "manage_overridden: Phase 1 — no value-changed resources to delete"
+            )
+
+        if delete_ids:
+            self.log.info(
+                f"manage_overridden: Phase 1 — executing bulk delete for "
+                f"{len(delete_ids)} resource ID(s): {delete_ids}"
+            )
+            ep = EpManageFabricResourcesActionsRemovePost(fabric_name=self.fabric)
+            remove_req = RemoveResourcesByIdsRequest(resource_ids=delete_ids)
+            resp_data = self.nd.request(ep.path, ep.verb, data=remove_req.to_payload())
+            remove_response = RemoveResourcesByIdsResponse.from_response(resp_data)
+            self.log.info(
+                f"manage_overridden: Phase 1 — bulk delete complete, "
+                f"API returned {len(remove_response.resources)} item(s)"
+            )
+            for resp_item in remove_response.resources:
+                self.api_responses.append(
+                    {"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)}
+                )
+        else:
+            self.log.info(
+                "manage_overridden: Phase 1 — delete_ids list is empty, "
+                "skipping bulk delete API call"
+            )
+
+        # ------------------------------------------------------------------
+        # Phase 2: Create — new resources + reissued resources with new values
+        # ------------------------------------------------------------------
+        pending_items: List[Tuple] = changes["to_add"] + changes["to_update"]
+
+        self.log.info(
+            f"manage_overridden: Phase 2 — preparing to create "
+            f"{len(pending_items)} resource(s): "
+            f"{len(changes['to_add'])} new, {len(changes['to_update'])} value-changed"
+        )
+
+        if not pending_items:
+            self.log.info(
+                "manage_overridden: Phase 2 — no resources to create (nothing to add or update)"
+            )
+            self.log.debug("EXIT: manage_overridden()")
+            return
+
+        # Build create payloads
+        pending_payloads: List[Tuple] = []
+        for item_idx, (cfg, sw, _existing) in enumerate(pending_items):
+            payload = self._build_create_payload(cfg, switch_ip=sw)
+            pending_payloads.append((cfg, payload))
+            self.log.debug(
+                f"  [Phase2-create idx={item_idx}] entity='{cfg.entity_name}', "
+                f"pool='{cfg.pool_name}', scope_type='{cfg.scope_type}', switch={sw}, "
+                f"resource='{cfg.resource}'"
+            )
+            self.changed_dict[0]["merged"].append(payload)
+
+        self.log.info(
+            f"manage_overridden: Phase 2 — sending batch create POST with "
+            f"{len(pending_payloads)} payload(s) for fabric={self.fabric}"
+        )
+        payloads_only = [p for _, p in pending_payloads]
+        batch = ResourceManagerBatchRequest.model_validate({"resources": payloads_only})
+        ep = EpManageFabricResourcesPost(fabric_name=self.fabric)
+        resp_data = self.nd.request(ep.path, ep.verb, data=batch.to_payload())
+
+        batch_response = ResourcesManagerBatchResponse.from_response(resp_data)
+        self.log.info(
+            f"manage_overridden: Phase 2 — batch create returned "
+            f"{len(batch_response.resources)} item(s)"
+        )
+
+        # Build cfg lookup for post-create field validation
+        cfg_by_entity: Dict[str, ResourceManagerConfigModel] = {
+            ResourceManagerDiffEngine._normalize_entity_key(cfg.entity_name): cfg
+            for cfg, _ in pending_payloads
+        }
+
+        for resp_idx, resp_item in enumerate(batch_response.resources):
+            self.log.debug(
+                f"  [Phase2-validate idx={resp_idx}] validating response for "
+                f"entity='{resp_item.entity_name}'"
+            )
+            self.api_responses.append(
+                {"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)}
+            )
+            if resp_item.entity_name is not None:
+                norm_key = ResourceManagerDiffEngine._normalize_entity_key(resp_item.entity_name)
+                matched_cfg = cfg_by_entity.get(norm_key)
+                if matched_cfg is not None:
+                    self.log.debug(
+                        f"  [Phase2-validate idx={resp_idx}] matched cfg for entity='{resp_item.entity_name}' — validating fields"
+                    )
+                    ResourceManagerDiffEngine.validate_resource_api_fields(
+                        self.nd, matched_cfg, resp_item, self.log, "Resource"
+                    )
+                else:
+                    self.log.debug(
+                        f"  [Phase2-validate idx={resp_idx}] no cfg match for entity='{resp_item.entity_name}' — skipping field validation"
+                    )
+
+        self.log.info(
+            f"manage_overridden: Phase 2 — batch create successful, "
+            f"{len(pending_payloads)} resource(s) created for fabric={self.fabric}"
+        )
+        self.log.debug("EXIT: manage_overridden()")
+
     def manage_state(self):
         """Validate input and dispatch to the appropriate state handler.
 
         Runs ``_validate_input`` on the raw config, then converts the config list to
         typed ``ResourceManagerConfigModel`` objects via
         ``ResourceManagerDiffEngine.validate_configs`` (skipped for ``gathered`` state).
-        Dispatches to ``manage_merged``, ``manage_deleted``, or ``manage_gathered``
-        depending on ``self.state``.
+        Dispatches to ``manage_merged``, ``manage_deleted``, ``manage_overridden``, or
+        ``manage_gathered`` depending on ``self.state``.
         """
         self.log.info(f"manage_state: Dispatching to state handler: state={self.state}")
         self._validate_input()
@@ -1722,6 +2015,9 @@ class NDResourceManagerModule:
         if self.state == "merged":
             self.log.info("manage_state: Dispatching to manage_merged()")
             self.manage_merged()
+        elif self.state == "overridden":
+            self.log.info("manage_state: Dispatching to manage_overridden()")
+            self.manage_overridden()
         elif self.state == "deleted":
             self.log.info("manage_state: Dispatching to manage_deleted()")
             self.manage_deleted()
