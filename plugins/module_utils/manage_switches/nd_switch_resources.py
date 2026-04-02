@@ -281,9 +281,11 @@ class SwitchDiffEngine:
 
         Idempotency rules by operation type:
 
-        * **normal** — compare ``seed_ip``, ``serial_number`` (via discovery),
-          ``hostname``, ``model``, ``software_version``, and ``role`` against
-          the existing inventory.
+        * **normal** — compare ``role`` against the existing inventory entry
+          found by ``seed_ip``.  Role is the only user-specifiable field for
+          normal switches; hostname, model, and software version are not
+          user-supplied and are not compared.  No discovery is performed for
+          switches already in the fabric.
         * **poap / preprovision** — compare ``seed_ip``, ``serial_number``
           (from ``poap.serial_number`` / ``preprovision.serial_number``), and
           ``role`` against the existing inventory.  If all three match the
@@ -316,17 +318,6 @@ class SwitchDiffEngine:
 
         existing_by_ip: Dict[str, SwitchDataModel] = {sw.fabric_management_ip: sw for sw in existing if sw.fabric_management_ip}
         existing_by_id: Dict[str, SwitchDataModel] = {sw.switch_id: sw for sw in existing if sw.switch_id}
-
-        # Fields compared for normal switches
-        compare_fields = {
-            "switch_id",
-            "serial_number",
-            "fabric_management_ip",
-            "hostname",
-            "model",
-            "software_version",
-            "switch_role",
-        }
 
         # Output buckets
         to_add: List[SwitchConfigModel] = []
@@ -412,31 +403,50 @@ class SwitchDiffEngine:
             # ------------------------------------------------------------------
             if op == "preprovision":
                 poap_ips.add(cfg.seed_ip)
-                serial = cfg.preprovision.serial_number if cfg.preprovision else None
+                pp = cfg.preprovision
+                serial = pp.serial_number if pp else None
 
                 if not existing_sw:
                     log.info("Preprovision %s: not in fabric — queue for preprovision", cfg.seed_ip)
                     to_preprovision.append(cfg)
                     continue
 
-                serial_match = serial and serial in (existing_sw.serial_number, existing_sw.switch_id)
+                serial_match = bool(serial and serial in (existing_sw.serial_number, existing_sw.switch_id))
                 role_match = cfg.role is None or cfg.role == existing_sw.switch_role
-                if serial_match and role_match:
+                model_match = pp is None or pp.model is None or pp.model == existing_sw.model
+                version_match = pp is None or pp.version is None or pp.version == existing_sw.software_version
+                hostname_match = pp is None or pp.hostname is None or pp.hostname == existing_sw.hostname
+
+                if serial_match and role_match and model_match and version_match and hostname_match:
                     log.info(
-                        "Preprovision %s serial=%s role=%s — idempotent, skipping",
+                        "Preprovision %s serial=%s role=%s model=%s version=%s hostname=%s — idempotent, skipping",
                         cfg.seed_ip,
                         serial,
                         cfg.role,
+                        pp.model if pp else None,
+                        pp.version if pp else None,
+                        pp.hostname if pp else None,
                     )
                     idempotent.append(cfg)
                     continue
 
+                diffs = []
+                if not serial_match:
+                    diffs.append(f"serial(config={serial}, fabric={existing_sw.serial_number})")
+                if not role_match:
+                    diffs.append(f"role(config={cfg.role}, fabric={existing_sw.switch_role})")
+                if not model_match:
+                    diffs.append(f"model(config={pp.model if pp else None}, fabric={existing_sw.model})")
+                if not version_match:
+                    diffs.append(f"version(config={pp.version if pp else None}, fabric={existing_sw.software_version})")
+                if not hostname_match:
+                    diffs.append(f"hostname(config={pp.hostname if pp else None}, fabric={existing_sw.hostname})")
+
                 status = existing_sw.additional_data.discovery_status if existing_sw.additional_data else None
                 log.info(
-                    "Preprovision %s differs (serial_match=%s, role_match=%s, status=%s) — deleting existing",
+                    "Preprovision %s differs [%s] (status=%s) — deleting existing",
                     cfg.seed_ip,
-                    serial_match,
-                    role_match,
+                    ", ".join(diffs),
                     getattr(status, "value", status) if status else "unknown",
                 )
                 to_delete_existing.append(existing_sw)
@@ -451,15 +461,6 @@ class SwitchDiffEngine:
             # ------------------------------------------------------------------
             # Normal switch
             # ------------------------------------------------------------------
-            # Note: serial/id comparison happens after discovery via build_proposed;
-            # here we rely on the SwitchDataModel that build_proposed will produce
-            # being present in existing.  Since this function receives SwitchConfigModel
-            # objects (not yet resolved to SwitchDataModel), normal-switch idempotency
-            # is done after discover() + build_proposed() by comparing the resulting
-            # SwitchDataModel against existing using compare_fields.
-            #
-            # The code below handles the case where the switch is *already* in the
-            # fabric (no discovery needed) and can be evaluated immediately.
             if op == "normal":
                 if not existing_sw:
                     log.info("Normal %s: not in fabric — queue for discovery + add", cfg.seed_ip)
@@ -471,19 +472,13 @@ class SwitchDiffEngine:
                     migration_mode.append(cfg)
                     continue
 
-                # Build a lightweight comparison dict from config vs existing
-                # for fields we can evaluate without discovery data.
+                # Role is the only user-specifiable field for a normal switch.
+                # hostname, model, and software_version are device-reported and
+                # not part of desired config — no discovery needed.
                 role_match = cfg.role is None or cfg.role == existing_sw.switch_role
-                # IP always matches (looked up by IP), so only role matters
-                # for an already-in-fabric switch; other fields (model, version,
-                # hostname) are only verifiable after discovery.
                 if role_match:
-                    log.info("Normal %s: in fabric, role matches — checking field diff after build_proposed", cfg.seed_ip)
-                    # Defer final diff to after build_proposed; treat as to_add
-                    # so the caller runs discovery and build_proposed, then sees
-                    # the switch in to_update/idempotent from a second pass.
-                    # For now simply indicate "needs evaluation" by placing in to_add.
-                    to_add.append(cfg)
+                    log.info("Normal %s: in fabric, role matches — idempotent", cfg.seed_ip)
+                    idempotent.append(cfg)
                 else:
                     log.info(
                         "Normal %s: role mismatch (config=%s, existing=%s) — marking to_update",
@@ -1417,38 +1412,9 @@ class POAPHandler:
             results.register_api_call()
             return
 
-        # Idempotency: skip entries whose target serial is already in the fabric.
-        # Build lookup structures for idempotency checks.
-        # Bootstrap: idempotent when both IP address AND serial number match.
-        # PreProvision: idempotent when IP address alone matches.
-        existing_by_ip = {sw.fabric_management_ip: sw for sw in existing if sw.fabric_management_ip}
-
-        active_bootstrap = []
-        for switch_cfg, poap_cfg in bootstrap_entries:
-            existing_sw = existing_by_ip.get(switch_cfg.seed_ip)
-            if existing_sw and poap_cfg.serial_number in (
-                existing_sw.serial_number,
-                existing_sw.switch_id,
-            ):
-                log.info(
-                    "Bootstrap: IP '%s' with serial '%s' already in fabric — idempotent, skipping",
-                    switch_cfg.seed_ip,
-                    poap_cfg.serial_number,
-                )
-            else:
-                active_bootstrap.append((switch_cfg, poap_cfg))
-        bootstrap_entries = active_bootstrap
-
-        active_preprov = []
-        for switch_cfg, preprov_cfg in preprov_entries:
-            if switch_cfg.seed_ip in existing_by_ip:
-                log.info(
-                    "PreProvision: IP '%s' already in fabric — idempotent, skipping",
-                    switch_cfg.seed_ip,
-                )
-            else:
-                active_preprov.append((switch_cfg, preprov_cfg))
-        preprov_entries = active_preprov
+        # Idempotency is handled entirely by compute_changes before entries
+        # reach this handler.  Everything in bootstrap_entries / preprov_entries
+        # has already been classified as needing action — no re-checking here.
 
         # Handle swap entries (change serial number on pre-provisioned switches)
         if swap_entries:
@@ -2615,6 +2581,40 @@ class NDSwitchResourceModule:
     # State Handlers (orchestration only — delegate to services)
     # =====================================================================
 
+    def _check_idempotent_sync(
+        self,
+        plan: "SwitchPlan",
+        existing_by_ip: Dict[str, "SwitchDataModel"],
+    ) -> bool:
+        """Return True if any non-preprovision idempotent switch is out of config-sync.
+
+        Pre-provisioned switches are placeholder entries that are never
+        in-sync by design and are excluded from this check.  Only relevant
+        when deploy is enabled; returns False immediately otherwise.
+
+        Args:
+            plan: Action plan from :meth:`SwitchDiffEngine.compute_changes`.
+            existing_by_ip: Existing switches keyed by fabric management IP.
+
+        Returns:
+            True if finalize should run for idempotent switches, False otherwise.
+        """
+        if not self.ctx.deploy_config:
+            return False
+        for cfg in plan.idempotent:
+            if cfg.operation_type == "preprovision":
+                continue
+            sw = existing_by_ip.get(cfg.seed_ip)
+            status = sw.additional_data.config_sync_status if sw and sw.additional_data else None
+            if status != ConfigSyncStatus.IN_SYNC:
+                self.log.info(
+                    "Switch %s is idempotent but configSyncStatus='%s' — will finalize",
+                    cfg.seed_ip,
+                    getattr(status, "value", status) if status else "unknown",
+                )
+                return True
+        return False
+
     def _handle_merged_state(
         self,
         plan: "SwitchPlan",
@@ -2642,7 +2642,22 @@ class NDSwitchResourceModule:
         if plan.to_update:
             ips = [cfg.seed_ip for cfg in plan.to_update]
             self.nd.module.fail_json(
-                msg=(f"Switches require updates not supported in merged state. " f"Use 'overridden' state for in-place updates. " f"Affected switches: {ips}")
+                msg=(f"Switches require role updates not supported in merged state. "
+                     f"Use 'overridden' state for in-place updates. "
+                     f"Affected switches: {ips}")
+            )
+
+        # Fail if any POAP/preprovision switches already in fabric differ on
+        # one or more of: serial, role, model, version, hostname —
+        # delete+re-provision is destructive and only permitted in overridden state.
+        if plan.to_delete_existing:
+            ips = [sw.fabric_management_ip for sw in plan.to_delete_existing]
+            self.nd.module.fail_json(
+                msg=(f"POAP/preprovision switches already in fabric have a "
+                     f"field mismatch (serial, role, model, version, or hostname) "
+                     f"and require delete + re-provision. "
+                     f"Use 'overridden' state to apply this change. "
+                     f"Affected switches: {ips}")
             )
 
         # Check whether any idempotent switch (normal or POAP) is out of
@@ -2650,21 +2665,7 @@ class NDSwitchResourceModule:
         # Pre-provisioned switches are placeholder entries that are never
         # in-sync by design, so they are excluded from this check. Only relevant when deploy is enabled.
         existing_by_ip = {sw.fabric_management_ip: sw for sw in self.existing}
-        idempotent_save_req = False
-        if self.ctx.deploy_config:
-            for cfg in plan.idempotent:
-                if cfg.operation_type == "preprovision":
-                    continue
-                sw = existing_by_ip.get(cfg.seed_ip)
-                status = sw.additional_data.config_sync_status if sw and sw.additional_data else None
-                if status != ConfigSyncStatus.IN_SYNC:
-                    self.log.info(
-                        "Switch %s is idempotent but configSyncStatus='%s' — will finalize",
-                        cfg.seed_ip,
-                        getattr(status, "value", status) if status else "unknown",
-                    )
-                    idempotent_save_req = True
-                    break
+        idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
 
         has_work = bool(
             plan.to_add
@@ -2797,6 +2798,9 @@ class NDSwitchResourceModule:
         self.log.debug("ENTER: _handle_overridden_state()")
         self.log.info("Handling overridden state")
 
+        existing_by_ip = {sw.fabric_management_ip: sw for sw in self.existing}
+        idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
+
         has_work = bool(
             plan.to_add
             or plan.to_update
@@ -2806,6 +2810,7 @@ class NDSwitchResourceModule:
             or plan.normal_readd
             or plan.to_preprovision
             or plan.to_swap
+            or idempotent_save_req
         )
         if not has_work and not self.proposed:
             self.log.info("overridden: nothing to do")
@@ -2814,7 +2819,7 @@ class NDSwitchResourceModule:
         # Check mode
         if self.nd.module.check_mode:
             self.log.info(
-                "Check mode: delete_orphans=%s, update=%s, add=%s, migrate=%s, bootstrap=%s, readd=%s, preprov=%s, swap=%s",
+                "Check mode: delete_orphans=%s, update=%s, add=%s, migrate=%s, bootstrap=%s, readd=%s, preprov=%s, swap=%s, save_deploy=%s",
                 len(plan.to_delete),
                 len(plan.to_update),
                 len(plan.to_add),
@@ -2823,6 +2828,7 @@ class NDSwitchResourceModule:
                 len(plan.normal_readd),
                 len(plan.to_preprovision),
                 len(plan.to_swap),
+                idempotent_save_req,
             )
             self.results.action = "override"
             self.results.state = self.state
@@ -2838,11 +2844,10 @@ class NDSwitchResourceModule:
                 "normal_readd": len(plan.normal_readd),
                 "preprovision": len(plan.to_preprovision),
                 "swap": len(plan.to_swap),
+                "save_deploy_required": idempotent_save_req,
             }
             self.results.register_api_call()
             return
-
-        existing_by_ip = {sw.fabric_management_ip: sw for sw in self.existing}
 
         # --- Phase 1: Combined delete -------------------------------------------
         # Merge three sources of deletions into one bulk_delete call:
@@ -2935,6 +2940,9 @@ class NDSwitchResourceModule:
                 all_preserve_config=all_preserve_config,
                 update_roles=have_migration,
             )
+        elif idempotent_save_req:
+            self.log.info("No adds/migrations but config-sync required — running finalize")
+            self.fabric_ops.finalize()
 
         # --- Phase 4: POAP workflows (bootstrap / preprovision / swap) ----------
         # plan.to_delete_existing was deleted in Phase 1.
