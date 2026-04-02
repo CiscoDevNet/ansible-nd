@@ -9,11 +9,15 @@ on:
     branches:
       - develop
       - main
-  schedule:
-    # * is a special character in YAML so you have to quote this string
-    - cron: '0 6 * * *'
+  # schedule:
+  #   # * is a special character in YAML so you have to quote this string
+  #   - cron: '0 6 * * *'
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
 # env:
 #   python_version: '3.11'
+
 jobs:
   pep8-black:
     name: Pep8 Compliance - Black
