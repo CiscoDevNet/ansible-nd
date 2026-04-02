@@ -368,9 +368,9 @@ class VpcPairPlaybookConfigModel(BaseModel):
             "(default: 5 seconds)"
         ),
     )
-    refresh_after_apply: bool = Field(
-        default=True,
-        description="Refresh final after-state with a post-apply query",
+    suppress_verification: bool = Field(
+        default=False,
+        description="Skip post-apply verification query after write operations",
     )
     config: Optional[List[VpcPairPlaybookItemModel]] = Field(
         default=None,
@@ -414,11 +414,11 @@ class VpcPairPlaybookConfigModel(BaseModel):
                     "operations. Defaults to 5 seconds."
                 ),
             ),
-            refresh_after_apply=dict(
+            suppress_verification=dict(
                 type="bool",
-                default=True,
+                default=False,
                 description=(
-                    "Refresh final after-state by querying controller "
+                    "Skip final after-state verification query "
                     "after write operations"
                 ),
             ),

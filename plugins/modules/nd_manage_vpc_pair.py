@@ -60,12 +60,12 @@ options:
         - Defaults to 5 seconds.
         type: int
         default: 5
-    refresh_after_apply:
+    suppress_verification:
         description:
-        - Query controller again after write operations to populate final C(after) state.
-        - Disable for faster execution when eventual consistency is acceptable.
+        - Skip post-write controller verification query for final C(after) state.
+        - Enable only when you accept fire-and-forget behavior.
         type: bool
-        default: true
+        default: false
     config:
         description:
         - List of vPC pair configuration dictionaries.
@@ -170,7 +170,7 @@ after:
     description:
     - vPC pair state after changes.
     - By default this is refreshed from controller after write operations and may include read-only properties.
-    - Refresh can be skipped with C(refresh_after_apply=false).
+    - Refresh verification runs with C(suppress_verification=false) (default).
     type: list
     returned: always
     sample: [{"switchId": "FDO123", "peerSwitchId": "FDO456", "useVirtualPeerLink": true}]

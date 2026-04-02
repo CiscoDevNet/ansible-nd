@@ -128,19 +128,19 @@ class VpcPairStateMachine(NDStateMachine):
         Optionally refresh the final "after" state from controller query.
 
         Enabled by default for write states to better reflect live controller
-        state. Can be disabled via refresh_after_apply=false.
+        state when suppress_verification=false.
 
         Skipped when:
         - State is gathered (read-only)
         - Running in check mode
-        - refresh_after_apply is False
+        - suppress_verification is True
         """
         state = self.module.params.get("state")
         if state not in ("merged", "replaced", "overridden", "deleted"):
             return
         if self.module.check_mode:
             return
-        if not self.module.params.get("refresh_after_apply", True):
+        if self.module.params.get("suppress_verification", False):
             return
         if self.logs and not any(
             log.get("status") in ("created", "updated", "deleted")
