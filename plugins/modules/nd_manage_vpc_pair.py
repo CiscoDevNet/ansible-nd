@@ -56,28 +56,15 @@ options:
         default: 30
     query_timeout:
         description:
-        - API request timeout in seconds for query and recommendation operations.
-        - Lower timeout for non-critical queries to avoid port exhaustion.
+        - Optional API request timeout in seconds for query and recommendation operations.
+        - When omitted, C(api_timeout) is used.
         type: int
-        default: 10
     refresh_after_apply:
         description:
         - Query controller again after write operations to populate final C(after) state.
         - Disable for faster execution when eventual consistency is acceptable.
         type: bool
         default: true
-    refresh_after_timeout:
-        description:
-        - Optional timeout in seconds for the post-apply refresh query.
-        - When omitted, C(query_timeout) is used.
-        type: int
-    suppress_verification:
-        description:
-        - Skip post-apply controller query for final C(after) state verification.
-        - Equivalent to setting C(refresh_after_apply=false).
-        - Improves performance by avoiding end-of-task query.
-        type: bool
-        default: false
     config:
         description:
         - List of vPC pair configuration dictionaries.
@@ -163,16 +150,6 @@ EXAMPLES = """
         peer2_switch_id: "FDO23040Q86"
   check_mode: true
 
-# Performance mode: skip final after-state verification query
-- name: Create vPC pair without post-apply verification query
-  cisco.nd.nd_manage_vpc_pair:
-    fabric_name: myFabric
-    state: merged
-    suppress_verification: true
-    config:
-      - peer1_switch_id: "FDO23040Q85"
-        peer2_switch_id: "FDO23040Q86"
-
 """
 
 RETURN = """
@@ -192,7 +169,7 @@ after:
     description:
     - vPC pair state after changes.
     - By default this is refreshed from controller after write operations and may include read-only properties.
-    - Refresh can be skipped with C(refresh_after_apply=false) or C(suppress_verification=true).
+    - Refresh can be skipped with C(refresh_after_apply=false).
     type: list
     returned: always
     sample: [{"switchId": "FDO123", "peerSwitchId": "FDO456", "useVirtualPeerLink": true}]
@@ -394,22 +371,9 @@ def main():
     # State-specific parameter validations
     state = module_config.state
     deploy = module_config.deploy
-    suppress_verification = module_config.suppress_verification
 
     if state == "gathered" and deploy:
         module.fail_json(msg="Deploy parameter cannot be used with 'gathered' state")
-
-    if suppress_verification:
-        if module.params.get("refresh_after_apply", True):
-            module.warn(
-                "suppress_verification=true overrides refresh_after_apply=true. "
-                "Final after-state refresh query will be skipped."
-            )
-        if module.params.get("refresh_after_timeout") is not None:
-            module.warn(
-                "refresh_after_timeout is ignored when suppress_verification=true."
-            )
-        module.params["refresh_after_apply"] = False
 
     # Validate force parameter usage:
     # - state=deleted only

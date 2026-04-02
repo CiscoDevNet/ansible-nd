@@ -5,11 +5,15 @@
 from __future__ import absolute_import, division, print_function
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import (
     VpcPairResourceError,
 )
+
+
+DEFAULT_VPC_API_TIMEOUT = 30
+DEFAULT_VPC_QUERY_TIMEOUT = 10
 
 def _collection_to_list_flex(collection) -> List[Dict[str, Any]]:
     """
@@ -108,3 +112,65 @@ def _is_update_needed(want: Dict[str, Any], have: Dict[str, Any]) -> bool:
     normalized_want = _canonicalize_for_compare(want)
     normalized_have = _canonicalize_for_compare(have)
     return normalized_want != normalized_have
+
+
+def _normalize_timeout(
+    value: Optional[Any], fallback: int
+) -> int:
+    """
+    Normalize timeout values from module params with sane fallback.
+
+    Args:
+        value: Raw timeout input from module params
+        fallback: Timeout to use when value is missing/invalid
+
+    Returns:
+        Positive integer timeout value.
+    """
+    try:
+        parsed = int(value)
+        if parsed > 0:
+            return parsed
+    except (TypeError, ValueError):
+        pass
+    return fallback
+
+
+def get_api_timeout(module) -> int:
+    """
+    Return normalized write-operation timeout.
+
+    Args:
+        module: AnsibleModule with params
+
+    Returns:
+        Integer timeout for create/update/delete calls.
+    """
+    return _normalize_timeout(
+        module.params.get("api_timeout"),
+        DEFAULT_VPC_API_TIMEOUT,
+    )
+
+
+def get_query_timeout(module) -> int:
+    """
+    Return normalized read-operation timeout.
+
+    Simplified policy:
+    - If query_timeout is provided, use it.
+    - Otherwise inherit api_timeout.
+
+    Args:
+        module: AnsibleModule with params
+
+    Returns:
+        Integer timeout for query/recommendation/verification calls.
+    """
+    api_timeout = get_api_timeout(module)
+    query_timeout = module.params.get("query_timeout")
+    if query_timeout is None:
+        return api_timeout
+    return _normalize_timeout(
+        query_timeout,
+        fallback=api_timeout or DEFAULT_VPC_QUERY_TIMEOUT,
+    )

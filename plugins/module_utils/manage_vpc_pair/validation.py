@@ -12,6 +12,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
     VpcFieldNames,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
+    get_api_timeout,
+    get_query_timeout,
     _raise_vpc_error,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import (
@@ -40,7 +42,7 @@ def _get_pairing_support_details(
         fabric_name: Fabric name
         switch_id: Switch serial number
         component_type: Support check type (default: checkPairing)
-        timeout: Optional timeout override (uses module query_timeout if not specified)
+        timeout: Optional timeout override (uses module query timeout policy if not specified)
 
     Returns:
         Dict with support details, or None if response is not a dict.
@@ -61,7 +63,7 @@ def _get_pairing_support_details(
     )
 
     if timeout is None:
-        timeout = nd_v2.module.params.get("query_timeout", 10)
+        timeout = get_query_timeout(nd_v2.module)
 
     rest_send = nd_v2._get_rest_send()
     rest_send.save_settings()
@@ -148,7 +150,7 @@ def _get_consistency_details(
         nd_v2: NDModuleV2 instance for RestSend
         fabric_name: Fabric name
         switch_id: Switch serial number
-        timeout: Optional timeout override (uses module query_timeout if not specified)
+        timeout: Optional timeout override (uses module query timeout policy if not specified)
 
     Returns:
         Dict with consistency details, or None if response is not a dict.
@@ -165,7 +167,7 @@ def _get_consistency_details(
     path = VpcPairEndpoints.switch_vpc_consistency(fabric_name, switch_id)
 
     if timeout is None:
-        timeout = nd_v2.module.params.get("query_timeout", 10)
+        timeout = get_query_timeout(nd_v2.module)
 
     rest_send = nd_v2._get_rest_send()
     rest_send.save_settings()
@@ -193,7 +195,7 @@ def _is_switch_in_vpc_pair(
         nd_v2: NDModuleV2 instance for RestSend
         fabric_name: Fabric name
         switch_id: Switch serial number
-        timeout: Optional timeout override (uses module query_timeout if not specified)
+        timeout: Optional timeout override (uses module query timeout policy if not specified)
 
     Returns:
         True: overview query succeeded (switch is part of a vPC pair)
@@ -208,7 +210,7 @@ def _is_switch_in_vpc_pair(
     )
 
     if timeout is None:
-        timeout = nd_v2.module.params.get("query_timeout", 10)
+        timeout = get_query_timeout(nd_v2.module)
 
     rest_send = nd_v2._get_rest_send()
     rest_send.save_settings()
@@ -246,8 +248,8 @@ def _validate_fabric_switches(nd_v2, fabric_name: str) -> Dict[str, Dict]:
     if not fabric_name or not isinstance(fabric_name, str):
         raise ValueError(f"Invalid fabric_name: {fabric_name}")
 
-    # Use api_timeout from module params
-    timeout = nd_v2.module.params.get("api_timeout", 30)
+    # Use normalized write timeout for fabric switch inventory read.
+    timeout = get_api_timeout(nd_v2.module)
 
     rest_send = nd_v2._get_rest_send()
     rest_send.save_settings()
@@ -486,10 +488,10 @@ def _validate_vpc_pair_deletion(nd_v2, fabric_name: str, switch_id: str, vpc_pai
         # Query overview endpoint with full component data
         overview_path = VpcPairEndpoints.switch_vpc_overview(fabric_name, switch_id, component_type="full")
 
-        # Bound overview validation call by query_timeout for deterministic behavior.
+        # Bound overview validation call by normalized query timeout.
         rest_send = nd_v2._get_rest_send()
         rest_send.save_settings()
-        rest_send.timeout = nd_v2.module.params.get("query_timeout", 10)
+        rest_send.timeout = get_query_timeout(nd_v2.module)
         try:
             response = nd_v2.request(overview_path, HttpVerbEnum.GET)
         finally:

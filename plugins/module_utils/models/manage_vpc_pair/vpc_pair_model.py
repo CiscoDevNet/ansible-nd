@@ -361,21 +361,16 @@ class VpcPairPlaybookConfigModel(BaseModel):
         default=30,
         description="API request timeout in seconds for write operations",
     )
-    query_timeout: int = Field(
-        default=10,
-        description="API request timeout in seconds for query/recommendation operations",
+    query_timeout: Optional[int] = Field(
+        default=None,
+        description=(
+            "Optional API request timeout in seconds for query/recommendation operations "
+            "(defaults to api_timeout)"
+        ),
     )
     refresh_after_apply: bool = Field(
         default=True,
         description="Refresh final after-state with a post-apply query",
-    )
-    refresh_after_timeout: Optional[int] = Field(
-        default=None,
-        description="Optional timeout for post-apply refresh query",
-    )
-    suppress_verification: bool = Field(
-        default=False,
-        description="Skip final after-state refresh query",
     )
     config: Optional[List[VpcPairPlaybookItemModel]] = Field(
         default=None,
@@ -412,10 +407,10 @@ class VpcPairPlaybookConfigModel(BaseModel):
             ),
             query_timeout=dict(
                 type="int",
-                default=10,
+                required=False,
                 description=(
-                    "API request timeout in seconds for query/recommendation "
-                    "operations"
+                    "Optional API request timeout in seconds for query/recommendation "
+                    "operations. Defaults to api_timeout when omitted."
                 ),
             ),
             refresh_after_apply=dict(
@@ -424,22 +419,6 @@ class VpcPairPlaybookConfigModel(BaseModel):
                 description=(
                     "Refresh final after-state by querying controller "
                     "after write operations"
-                ),
-            ),
-            refresh_after_timeout=dict(
-                type="int",
-                required=False,
-                description=(
-                    "Optional timeout in seconds for post-apply after-state "
-                    "refresh query"
-                ),
-            ),
-            suppress_verification=dict(
-                type="bool",
-                default=False,
-                description=(
-                    "Skip post-apply controller query for after-state "
-                    "verification (alias for refresh_after_apply=false)."
                 ),
             ),
             config=dict(

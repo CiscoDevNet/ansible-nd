@@ -124,21 +124,17 @@ class VpcPairStateMachine(NDStateMachine):
         Optionally refresh the final "after" state from controller query.
 
         Enabled by default for write states to better reflect live controller
-        state. Can be disabled for performance-sensitive runs via
-        suppress_verification or refresh_after_apply params.
+        state. Can be disabled via refresh_after_apply=false.
 
         Skipped when:
         - State is gathered (read-only)
         - Running in check mode
-        - suppress_verification is True
         - refresh_after_apply is False
         """
         state = self.module.params.get("state")
         if state not in ("merged", "replaced", "overridden", "deleted"):
             return
         if self.module.check_mode:
-            return
-        if self.module.params.get("suppress_verification", False):
             return
         if not self.module.params.get("refresh_after_apply", True):
             return
@@ -150,13 +146,7 @@ class VpcPairStateMachine(NDStateMachine):
             # stale/synthetic before-state fallbacks.
             return
 
-        refresh_timeout = self.module.params.get("refresh_after_timeout")
-        had_original_timeout = "query_timeout" in self.module.params
-        original_timeout = self.module.params.get("query_timeout")
-
         try:
-            if refresh_timeout is not None:
-                self.module.params["query_timeout"] = refresh_timeout
             response_data = self.model_orchestrator.query_all()
             self.existing = NDConfigCollection.from_api_response(
                 response_data=response_data,
@@ -166,12 +156,6 @@ class VpcPairStateMachine(NDStateMachine):
             self.module.warn(
                 f"Failed to refresh final after-state from controller query: {exc}"
             )
-        finally:
-            if refresh_timeout is not None:
-                if had_original_timeout:
-                    self.module.params["query_timeout"] = original_timeout
-                else:
-                    self.module.params.pop("query_timeout", None)
 
     @staticmethod
     def _identifier_to_key(identifier: Any) -> str:

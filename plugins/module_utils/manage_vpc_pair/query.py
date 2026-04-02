@@ -17,6 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.validatio
     _validate_fabric_switches,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
+    get_query_timeout,
     _raise_vpc_error,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import (
@@ -62,7 +63,7 @@ def _get_recommendation_details(nd_v2, fabric_name: str, switch_id: str, timeout
 
         # Use query timeout from module params or override
         if timeout is None:
-            timeout = nd_v2.module.params.get("query_timeout", 10)
+            timeout = get_query_timeout(nd_v2.module)
 
         rest_send = nd_v2._get_rest_send()
         rest_send.save_settings()
@@ -179,7 +180,7 @@ def _enrich_pairs_from_direct_vpc(
     nd_v2,
     fabric_name: str,
     pairs: List[Dict[str, Any]],
-    timeout: int = 5,
+    timeout: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
     Enrich pair fields from per-switch /vpcPair endpoint when available.
@@ -200,6 +201,9 @@ def _enrich_pairs_from_direct_vpc(
     """
     if not pairs:
         return []
+
+    if timeout is None:
+        timeout = get_query_timeout(nd_v2.module)
 
     enriched_pairs: List[Dict[str, Any]] = []
     for pair in pairs:
@@ -271,7 +275,12 @@ def _filter_stale_vpc_pairs(
             pruned_pairs.append(pair)
             continue
 
-        membership = _is_switch_in_vpc_pair(nd_v2, fabric_name, switch_id, timeout=5)
+        membership = _is_switch_in_vpc_pair(
+            nd_v2,
+            fabric_name,
+            switch_id,
+            timeout=get_query_timeout(module),
+        )
         if membership is False:
             module.warn(
                 f"Excluding stale vPC pair entry for switch {switch_id} "
@@ -575,7 +584,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
             list_path = VpcPairEndpoints.vpc_pairs_list(fabric_name)
             rest_send = nd_v2._get_rest_send()
             rest_send.save_settings()
-            rest_send.timeout = nrm.module.params.get("query_timeout", 10)
+            rest_send.timeout = get_query_timeout(nrm.module)
             try:
                 vpc_pairs_response = nd_v2.request(list_path, HttpVerbEnum.GET)
             finally:
@@ -626,7 +635,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                         nd_v2=nd_v2,
                         fabric_name=fabric_name,
                         pairs=have,
-                        timeout=5,
+                        timeout=get_query_timeout(nrm.module),
                     )
                     have = _filter_stale_vpc_pairs(
                         nd_v2=nd_v2,
@@ -762,7 +771,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                     vpc_pair_path = VpcPairEndpoints.switch_vpc_pair(fabric_name, switch_id)
                     rest_send = nd_v2._get_rest_send()
                     rest_send.save_settings()
-                    rest_send.timeout = 5
+                    rest_send.timeout = get_query_timeout(nrm.module)
                     try:
                         direct_vpc = nd_v2.request(vpc_pair_path, HttpVerbEnum.GET)
                     finally:
@@ -780,7 +789,10 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                     # Direct /vpcPair can be stale for a short period after delete.
                     # Cross-check overview to avoid reporting stale active pairs.
                     membership = _is_switch_in_vpc_pair(
-                        nd_v2, fabric_name, switch_id, timeout=5
+                        nd_v2,
+                        fabric_name,
+                        switch_id,
+                        timeout=get_query_timeout(nrm.module),
                     )
                     if membership is False:
                         pending_delete.append({
@@ -832,7 +844,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                     vpc_pair_path = VpcPairEndpoints.switch_vpc_pair(fabric_name, switch_id)
                     rest_send = nd_v2._get_rest_send()
                     rest_send.save_settings()
-                    rest_send.timeout = 5
+                    rest_send.timeout = get_query_timeout(nrm.module)
                     try:
                         direct_vpc = nd_v2.request(vpc_pair_path, HttpVerbEnum.GET)
                     finally:
@@ -849,7 +861,10 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                         use_vpl = _get_api_field_value(direct_vpc, "useVirtualPeerLink", False)
                         vpc_pair_details = direct_vpc.get(VpcFieldNames.VPC_PAIR_DETAILS)
                         membership = _is_switch_in_vpc_pair(
-                            nd_v2, fabric_name, switch_id, timeout=5
+                            nd_v2,
+                            fabric_name,
+                            switch_id,
+                            timeout=get_query_timeout(nrm.module),
                         )
                         if membership is False:
                             pending_delete.append({
