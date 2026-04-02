@@ -25,7 +25,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Check out code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Run black against code
         uses: psf/black@stable
@@ -75,7 +75,7 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Python ${{ matrix.python_version }}
         uses: actions/setup-python@v6
@@ -89,7 +89,7 @@ jobs:
         run: ansible-galaxy collection build --output-path "${GITHUB_WORKSPACE}/.cache/collection-tarballs"
 
       - name: Store migrated collection artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs
@@ -146,7 +146,7 @@ jobs:
         run: pip install https://github.com/ansible/ansible/archive/${{ matrix.ansible_version }}.tar.gz --disable-pip-version-check
 
       - name: Download migrated collection artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs
@@ -186,7 +186,7 @@ jobs:
           exit(err)
 
       - name: Store galaxy_importer check log file
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: galaxy-importer-log-${{ matrix.python_version }}-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs/importer_result.json
@@ -245,7 +245,7 @@ jobs:
         run: pip install coverage==4.5.4
 
       - name: Download migrated collection artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs
@@ -320,7 +320,7 @@ jobs:
         run: pip install coverage==4.5.4
 
       - name: Download migrated collection artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs
@@ -365,7 +365,7 @@ jobs:
   #       run: pip install coverage==4.5.4
 
   #     - name: Download migrated collection artifacts
-  #       uses: actions/download-artifact@v5
+  #       uses: actions/download-artifact@v8
   #       with:
   #         name: collection-${{ matrix.ansible }}
   #         path: .cache/collection-tarballs
