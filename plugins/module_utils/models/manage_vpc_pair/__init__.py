@@ -5,8 +5,14 @@
 
 from __future__ import absolute_import, division, print_function
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.model import (  # noqa: F401
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.vpc_pair_model import (
     VpcPairPlaybookConfigModel,
     VpcPairPlaybookItemModel,
     VpcPairModel,
 )
+
+__all__ = [
+    "VpcPairModel",
+    "VpcPairPlaybookItemModel",
+    "VpcPairPlaybookConfigModel",
+]

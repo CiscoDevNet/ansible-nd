@@ -339,10 +339,13 @@ try:
     import ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection as _nd_config_collection
     import ansible_collections.cisco.nd.plugins.module_utils.utils as _nd_utils
 except Exception:  # pragma: no cover - compatibility for stripped framework trees
-    _nd_config_collection = None  # noqa: F841
-    _nd_utils = None  # noqa: F841
+    _nd_config_collection = None
+    _nd_utils = None
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.model import (
+# Keep explicit references so static analysis doesn't treat optional imports as unused.
+_PACKAGER_IMPORTS = (_nd_config_collection, _nd_utils)
+
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.vpc_pair_model import (
     VpcPairPlaybookConfigModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.deploy import (

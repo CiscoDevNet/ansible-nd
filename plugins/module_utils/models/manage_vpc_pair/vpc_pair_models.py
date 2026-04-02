@@ -27,11 +27,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
     model_validator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.base import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.vpc_pair_base import (
     FlexibleBool,
     FlexibleInt,
     FlexibleListStr,
     SwitchPairKeyMixin,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.vpc_pair_common import (
+    validate_distinct_switches,
+    validate_non_empty_switch_id,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import (
     NDBaseModel,
@@ -250,9 +254,7 @@ class VpcPairBase(SwitchPairKeyMixin, NDBaseModel):
         Raises:
             ValueError: If switch ID is empty or whitespace
         """
-        if not v or not v.strip():
-            raise ValueError("Switch ID cannot be empty or whitespace")
-        return v.strip()
+        return validate_non_empty_switch_id(v)
 
     @model_validator(mode="after")
     def validate_different_switches(self) -> Self:
@@ -265,10 +267,9 @@ class VpcPairBase(SwitchPairKeyMixin, NDBaseModel):
         Raises:
             ValueError: If switch_id equals peer_switch_id
         """
-        if self.switch_id == self.peer_switch_id:
-            raise ValueError(
-                f"switch_id and peer_switch_id must be different: {self.switch_id}"
-            )
+        validate_distinct_switches(
+            self.switch_id, self.peer_switch_id, "switch_id", "peer_switch_id"
+        )
         return self
 
     def to_payload(self) -> Dict[str, Any]:
@@ -327,9 +328,7 @@ class VpcPairingRequest(SwitchPairKeyMixin, NDBaseModel):
         Raises:
             ValueError: If switch ID is empty or whitespace
         """
-        if not v or not v.strip():
-            raise ValueError("Switch ID cannot be empty or whitespace")
-        return v.strip()
+        return validate_non_empty_switch_id(v)
 
     @model_validator(mode="after")
     def validate_different_switches(self) -> Self:
@@ -342,10 +341,9 @@ class VpcPairingRequest(SwitchPairKeyMixin, NDBaseModel):
         Raises:
             ValueError: If switch_id equals peer_switch_id
         """
-        if self.switch_id == self.peer_switch_id:
-            raise ValueError(
-                f"switch_id and peer_switch_id must be different: {self.switch_id}"
-            )
+        validate_distinct_switches(
+            self.switch_id, self.peer_switch_id, "switch_id", "peer_switch_id"
+        )
         return self
 
     def to_payload(self) -> Dict[str, Any]:

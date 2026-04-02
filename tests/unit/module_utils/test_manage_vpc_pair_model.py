@@ -16,7 +16,7 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import VpcFieldNames
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.model import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.vpc_pair_model import (
     VpcPairModel,
     VpcPairPlaybookConfigModel,
     VpcPairPlaybookItemModel,

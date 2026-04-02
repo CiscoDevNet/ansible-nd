@@ -7,7 +7,7 @@ from __future__ import absolute_import, division, print_function
 from typing import Any, Optional
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.model import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.vpc_pair_model import (
     VpcPairModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.actions import (
