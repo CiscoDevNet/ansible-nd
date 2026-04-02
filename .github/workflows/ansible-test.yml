@@ -35,7 +35,7 @@ jobs:
   build:
     name: Build Collection
     runs-on: ubuntu-latest
-    strategy:
+    strategy: &ansible_strategy
       fail-fast: false
       # https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html#ansible-core-support-matrix
       # https://access.redhat.com/support/policy/updates/ansible-automation-platform#coreversion
@@ -100,41 +100,7 @@ jobs:
       - pep8-black
       - build
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Ansible 2.19: supports Python 3.11 - 3.13
-          - ansible_version: "stable-2.19"
-            python_version: "3.13"
-          - ansible_version: "stable-2.19"
-            python_version: "3.12"
-          - ansible_version: "stable-2.19"
-            python_version: "3.11"
-
-          # Ansible 2.18: supports Python 3.11 - 3.13
-          - ansible_version: "stable-2.18"
-            python_version: "3.13"
-          - ansible_version: "stable-2.18"
-            python_version: "3.12"
-          - ansible_version: "stable-2.18"
-            python_version: "3.11"
-
-          # Ansible 2.17: supports Python 3.7 - 3.12
-          - ansible_version: "stable-2.17"
-            python_version: "3.12"
-          - ansible_version: "stable-2.17"
-            python_version: "3.11"
-          - ansible_version: "stable-2.17"
-            python_version: "3.10"
-
-          # Ansible 2.16: supports Python 3.10 - 3.12
-          - ansible_version: "stable-2.16"
-            python_version: "3.12"
-          - ansible_version: "stable-2.16"
-            python_version: "3.11"
-          - ansible_version: "stable-2.16"
-            python_version: "3.10"
+    strategy: *ansible_strategy
 
     steps:
       - name: Set up Python ${{ matrix.python_version }}
@@ -196,41 +162,7 @@ jobs:
     needs:
       - ansible-galaxy-importer
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Ansible 2.19: supports Python 3.11 - 3.13
-          - ansible_version: "stable-2.19"
-            python_version: "3.13"
-          - ansible_version: "stable-2.19"
-            python_version: "3.12"
-          - ansible_version: "stable-2.19"
-            python_version: "3.11"
-
-          # Ansible 2.18: supports Python 3.11 - 3.13
-          - ansible_version: "stable-2.18"
-            python_version: "3.13"
-          - ansible_version: "stable-2.18"
-            python_version: "3.12"
-          - ansible_version: "stable-2.18"
-            python_version: "3.11"
-
-          # Ansible 2.17: supports Python 3.7 - 3.12
-          - ansible_version: "stable-2.17"
-            python_version: "3.12"
-          - ansible_version: "stable-2.17"
-            python_version: "3.11"
-          - ansible_version: "stable-2.17"
-            python_version: "3.10"
-
-          # Ansible 2.16: supports Python 3.10 - 3.12
-          - ansible_version: "stable-2.16"
-            python_version: "3.12"
-          - ansible_version: "stable-2.16"
-            python_version: "3.11"
-          - ansible_version: "stable-2.16"
-            python_version: "3.10"
+    strategy: *ansible_strategy
 
     steps:
       - name: Set up Python ${{ matrix.python_version }}
@@ -271,41 +203,7 @@ jobs:
     needs:
       - ansible-galaxy-importer
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Ansible 2.19: supports Python 3.11 - 3.13
-          - ansible_version: "stable-2.19"
-            python_version: "3.13"
-          - ansible_version: "stable-2.19"
-            python_version: "3.12"
-          - ansible_version: "stable-2.19"
-            python_version: "3.11"
-
-          # Ansible 2.18: supports Python 3.11 - 3.13
-          - ansible_version: "stable-2.18"
-            python_version: "3.13"
-          - ansible_version: "stable-2.18"
-            python_version: "3.12"
-          - ansible_version: "stable-2.18"
-            python_version: "3.11"
-
-          # Ansible 2.17: supports Python 3.7 - 3.12
-          - ansible_version: "stable-2.17"
-            python_version: "3.12"
-          - ansible_version: "stable-2.17"
-            python_version: "3.11"
-          - ansible_version: "stable-2.17"
-            python_version: "3.10"
-
-          # Ansible 2.16: supports Python 3.10 - 3.12
-          - ansible_version: "stable-2.16"
-            python_version: "3.12"
-          - ansible_version: "stable-2.16"
-            python_version: "3.11"
-          - ansible_version: "stable-2.16"
-            python_version: "3.10"
+    strategy: *ansible_strategy
 
     steps:
       - name: Set up Python ${{ matrix.python_version }}
@@ -347,41 +245,8 @@ jobs:
       # - units
       - ansible-test
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Ansible 2.19: supports Python 3.11 - 3.13
-          - ansible_version: "stable-2.19"
-            python_version: "3.13"
-          - ansible_version: "stable-2.19"
-            python_version: "3.12"
-          - ansible_version: "stable-2.19"
-            python_version: "3.11"
+    strategy: *ansible_strategy
 
-          # Ansible 2.18: supports Python 3.11 - 3.13
-          - ansible_version: "stable-2.18"
-            python_version: "3.13"
-          - ansible_version: "stable-2.18"
-            python_version: "3.12"
-          - ansible_version: "stable-2.18"
-            python_version: "3.11"
-
-          # Ansible 2.17: supports Python 3.7 - 3.12
-          - ansible_version: "stable-2.17"
-            python_version: "3.12"
-          - ansible_version: "stable-2.17"
-            python_version: "3.11"
-          - ansible_version: "stable-2.17"
-            python_version: "3.10"
-
-          # Ansible 2.16: supports Python 3.10 - 3.12
-          - ansible_version: "stable-2.16"
-            python_version: "3.12"
-          - ansible_version: "stable-2.16"
-            python_version: "3.11"
-          - ansible_version: "stable-2.16"
-            python_version: "3.10"
     env:
       MUTEX_URL: https://8v7s765ibh.execute-api.us-west-1.amazonaws.com
     steps:
