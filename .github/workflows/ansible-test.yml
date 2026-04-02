@@ -266,7 +266,7 @@ jobs:
         working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
 
   units:
-    name: Units in ubuntu-latest
+    name: Unit Tests
     if: false # No unit tests yet
     needs:
       - ansible-galaxy-importer
@@ -336,7 +336,7 @@ jobs:
         run: ansible-test coverage xml -v --requirements --group-by command --group-by version
         working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
 
-      - name: Push coverate report to codecov.io
+      - name: Push coverage report to codecov.io
         run: bash <(curl -s https://codecov.io/bash) -s 'tests/output/reports/' -F unit
         working-directory: /home/runner/.ansible/collections/ansible_collections/cisco/nd
 
