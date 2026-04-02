@@ -19,23 +19,25 @@ in the ND Manage API.
   (POST /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces)
 - `EpManageInterfacesPut` - Update a specific interface
   (PUT /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
-- `EpManageInterfacesDelete` - Delete a specific interface
-  (DELETE /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
+- `EpManageInterfacesDeploy` - Deploy interface configurations
+  (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/deploy)
+- `EpManageInterfacesRemove` - Bulk delete interfaces
+  (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/remove)
 """
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     FabricNameMixin,
-    SwitchSerialNumberMixin,
     InterfaceNameMixin,
+    SwitchSerialNumberMixin,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
@@ -116,9 +118,7 @@ class EpManageInterfacesGet(_EpManageInterfacesBase):
     - Via inherited `path` property if `fabric_name`, `switch_sn`, or `interface_name` is not set.
     """
 
-    class_name: Literal["EpManageInterfacesGet"] = Field(
-        default="EpManageInterfacesGet", frozen=True, description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpManageInterfacesGet"] = Field(default="EpManageInterfacesGet", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -192,9 +192,7 @@ class EpManageInterfacesPost(_EpManageInterfacesBase):
 
     _require_interface_name: ClassVar[bool] = False
 
-    class_name: Literal["EpManageInterfacesPost"] = Field(
-        default="EpManageInterfacesPost", frozen=True, description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpManageInterfacesPost"] = Field(default="EpManageInterfacesPost", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -226,9 +224,7 @@ class EpManageInterfacesPut(_EpManageInterfacesBase):
     - Via inherited `path` property if `fabric_name`, `switch_sn`, or `interface_name` is not set.
     """
 
-    class_name: Literal["EpManageInterfacesPut"] = Field(
-        default="EpManageInterfacesPut", frozen=True, description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpManageInterfacesPut"] = Field(default="EpManageInterfacesPut", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -242,40 +238,6 @@ class EpManageInterfacesPut(_EpManageInterfacesBase):
         None
         """
         return HttpVerbEnum.PUT
-
-
-class EpManageInterfacesDelete(_EpManageInterfacesBase):
-    """
-    # Summary
-
-    Delete a specific interface.
-
-    - Path: `/api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name}`
-    - Verb: DELETE
-
-    ## Raises
-
-    ### ValueError
-
-    - Via inherited `path` property if `fabric_name`, `switch_sn`, or `interface_name` is not set.
-    """
-
-    class_name: Literal["EpManageInterfacesDelete"] = Field(
-        default="EpManageInterfacesDelete", frozen=True, description="Class name for backward compatibility"
-    )
-
-    @property
-    def verb(self) -> HttpVerbEnum:
-        """
-        # Summary
-
-        Return `HttpVerbEnum.DELETE`.
-
-        ## Raises
-
-        None
-        """
-        return HttpVerbEnum.DELETE
 
 
 class EpManageInterfacesDeploy(FabricNameMixin, NDEndpointBaseModel):
@@ -315,6 +277,58 @@ class EpManageInterfacesDeploy(FabricNameMixin, NDEndpointBaseModel):
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         return BasePath.path("fabrics", self.fabric_name, "interfaceActions", "deploy")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.POST`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.POST
+
+
+class EpManageInterfacesRemove(FabricNameMixin, NDEndpointBaseModel):
+    """
+    # Summary
+
+    Bulk delete interfaces across one or more switches.
+
+    - Path: `/api/v1/manage/fabrics/{fabric_name}/interfaceActions/remove`
+    - Verb: POST
+    - Body: `{"interfaces": [{"interfaceName": "...", "switchId": "..."}]}`
+
+    ## Raises
+
+    ### ValueError
+
+    - Via `path` property if `fabric_name` is not set.
+    """
+
+    class_name: Literal["EpManageInterfacesRemove"] = Field(
+        default="EpManageInterfacesRemove", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the bulk remove endpoint path.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `fabric_name` is not set before accessing `path`.
+        """
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", self.fabric_name, "interfaceActions", "remove")
 
     @property
     def verb(self) -> HttpVerbEnum:
