@@ -2642,9 +2642,11 @@ class NDSwitchResourceModule:
         if plan.to_update:
             ips = [cfg.seed_ip for cfg in plan.to_update]
             self.nd.module.fail_json(
-                msg=(f"Switches require role updates not supported in merged state. "
-                     f"Use 'overridden' state for in-place updates. "
-                     f"Affected switches: {ips}")
+                msg=(
+                    f"Switches require role updates not supported in merged state. "
+                    f"Use 'overridden' state for in-place updates. "
+                    f"Affected switches: {ips}"
+                )
             )
 
         # Fail if any POAP/preprovision switches already in fabric differ on
@@ -2653,11 +2655,13 @@ class NDSwitchResourceModule:
         if plan.to_delete_existing:
             ips = [sw.fabric_management_ip for sw in plan.to_delete_existing]
             self.nd.module.fail_json(
-                msg=(f"POAP/preprovision switches already in fabric have a "
-                     f"field mismatch (serial, role, model, version, or hostname) "
-                     f"and require delete + re-provision. "
-                     f"Use 'overridden' state to apply this change. "
-                     f"Affected switches: {ips}")
+                msg=(
+                    f"POAP/preprovision switches already in fabric have a "
+                    f"field mismatch (serial, role, model, version, or hostname) "
+                    f"and require delete + re-provision. "
+                    f"Use 'overridden' state to apply this change. "
+                    f"Affected switches: {ips}"
+                )
             )
 
         # Check whether any idempotent switch (normal or POAP) is out of
