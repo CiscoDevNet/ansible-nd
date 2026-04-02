@@ -10,12 +10,12 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.model import (
     VpcPairModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_actions import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.actions import (
     custom_vpc_create,
     custom_vpc_delete,
     custom_vpc_update,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_query import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.query import (
     custom_vpc_query_all,
 )
 

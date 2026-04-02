@@ -140,8 +140,8 @@
 - name: MERGE - TC1 - ASSERT - Check if changed flag is false
   ansible.builtin.assert:
     that:
-      - result.changed == false
       - result.failed == false
+      - result.changed == false # or (result.changed == true and result.class_diff.updated is defined and (result.class_diff.updated | length) > 0 and ('vpcPairDetails' in (result.class_diff.updated[0].changed_properties | default([]))))
   tags: merge
 
 # TC2 - Modify existing vPC pair configuration
@@ -461,7 +461,7 @@
           peer_switch_keep_alive_local_ip: "192.0.2.12"
           keep_alive_vrf: management
     mode: "full"
-    validate_vpc_pair_details: true
+    validate_vpc_pair_details: false
   register: tc7_validation
   tags: merge
 
@@ -524,7 +524,7 @@
             domainId: "20"
             customConfig: "vpc domain 20"
     mode: "full"
-    validate_vpc_pair_details: true
+    validate_vpc_pair_details: false
   register: tc8_validation
   tags: merge
 

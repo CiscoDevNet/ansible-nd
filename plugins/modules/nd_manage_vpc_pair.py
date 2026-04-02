@@ -329,7 +329,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.resources import (
     VpcPairResourceService,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_exceptions import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import (
     VpcPairResourceError,
 )
 
@@ -345,11 +345,11 @@ except Exception:  # pragma: no cover - compatibility for stripped framework tre
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.model import (
     VpcPairPlaybookConfigModel,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_deploy import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.deploy import (
     _needs_deployment,
     custom_vpc_deploy,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_runner import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runner import (
     run_vpc_module,
 )
 

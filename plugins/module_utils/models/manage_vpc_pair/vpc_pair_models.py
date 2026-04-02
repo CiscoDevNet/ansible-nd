@@ -31,10 +31,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.ba
     FlexibleBool,
     FlexibleInt,
     FlexibleListStr,
-    NDVpcPairBaseModel,
+    SwitchPairKeyMixin,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.nested import (
-    NDVpcPairNestedModel,
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import (
+    NDBaseModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
 )
 
 # Import enums from centralized location
@@ -57,28 +60,28 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
 # ============================================================================
 
 
-class SwitchInfo(NDVpcPairNestedModel):
+class SwitchInfo(NDNestedModel):
     """Generic switch information for both peers."""
 
     switch: str = Field(alias="switch", description="Switch value")
     peer_switch: str = Field(alias="peerSwitch", description="Peer switch value")
 
 
-class SwitchIntInfo(NDVpcPairNestedModel):
+class SwitchIntInfo(NDNestedModel):
     """Generic switch integer information for both peers."""
 
     switch: FlexibleInt = Field(alias="switch", description="Switch value")
     peer_switch: FlexibleInt = Field(alias="peerSwitch", description="Peer switch value")
 
 
-class SwitchBoolInfo(NDVpcPairNestedModel):
+class SwitchBoolInfo(NDNestedModel):
     """Generic switch boolean information for both peers."""
 
     switch: FlexibleBool = Field(alias="switch", description="Switch value")
     peer_switch: FlexibleBool = Field(alias="peerSwitch", description="Peer switch value")
 
 
-class SyncCounts(NDVpcPairNestedModel):
+class SyncCounts(NDNestedModel):
     """Sync status counts."""
 
     in_sync: FlexibleInt = Field(default=0, alias="inSync", description="In-sync items")
@@ -87,7 +90,7 @@ class SyncCounts(NDVpcPairNestedModel):
     in_progress: FlexibleInt = Field(default=0, alias="inProgress", description="In-progress items")
 
 
-class AnomaliesCount(NDVpcPairNestedModel):
+class AnomaliesCount(NDNestedModel):
     """Anomaly counts by severity."""
 
     critical: FlexibleInt = Field(default=0, alias="critical", description="Critical anomalies")
@@ -96,28 +99,28 @@ class AnomaliesCount(NDVpcPairNestedModel):
     warning: FlexibleInt = Field(default=0, alias="warning", description="Warning anomalies")
 
 
-class HealthMetrics(NDVpcPairNestedModel):
+class HealthMetrics(NDNestedModel):
     """Health metrics for both switches."""
 
     switch: str = Field(alias="switch", description="Switch health status")
     peer_switch: str = Field(alias="peerSwitch", description="Peer switch health status")
 
 
-class ResourceMetrics(NDVpcPairNestedModel):
+class ResourceMetrics(NDNestedModel):
     """Resource utilization metrics."""
 
     switch: FlexibleInt = Field(alias="switch", description="Switch metric value")
     peer_switch: FlexibleInt = Field(alias="peerSwitch", description="Peer switch metric value")
 
 
-class InterfaceStatusCounts(NDVpcPairNestedModel):
+class InterfaceStatusCounts(NDNestedModel):
     """Interface status counts."""
 
     up: FlexibleInt = Field(alias="up", description="Interfaces in up state")
     down: FlexibleInt = Field(alias="down", description="Interfaces in down state")
 
 
-class LogicalInterfaceCounts(NDVpcPairNestedModel):
+class LogicalInterfaceCounts(NDNestedModel):
     """Logical interface type counts."""
 
     port_channel: FlexibleInt = Field(alias="portChannel", description="Port channel interfaces")
@@ -127,7 +130,7 @@ class LogicalInterfaceCounts(NDVpcPairNestedModel):
     nve: FlexibleInt = Field(alias="nve", description="NVE interfaces")
 
 
-class ResponseCounts(NDVpcPairNestedModel):
+class ResponseCounts(NDNestedModel):
     """Response metadata counts."""
 
     total: FlexibleInt = Field(alias="total", description="Total count")
@@ -139,7 +142,7 @@ class ResponseCounts(NDVpcPairNestedModel):
 # ============================================================================
 
 
-class VpcPairDetailsDefault(NDVpcPairNestedModel):
+class VpcPairDetailsDefault(NDNestedModel):
     """
     Default template VPC pair configuration.
 
@@ -180,7 +183,7 @@ class VpcPairDetailsDefault(NDVpcPairNestedModel):
     fabric_name: Optional[str] = Field(default=None, alias="fabricName", description="Fabric name")
 
 
-class VpcPairDetailsCustom(NDVpcPairNestedModel):
+class VpcPairDetailsCustom(NDNestedModel):
     """
     Custom template VPC pair configuration.
 
@@ -197,7 +200,7 @@ class VpcPairDetailsCustom(NDVpcPairNestedModel):
 # ============================================================================
 
 
-class VpcPairBase(NDVpcPairBaseModel):
+class VpcPairBase(SwitchPairKeyMixin, NDBaseModel):
     """
     Base schema for VPC pairing with common properties.
 
@@ -278,7 +281,7 @@ class VpcPairBase(NDVpcPairBaseModel):
         return cls.model_validate(response)
 
 
-class VpcPairingRequest(NDVpcPairBaseModel):
+class VpcPairingRequest(SwitchPairKeyMixin, NDBaseModel):
     """
     Request schema for pairing VPC switches.
 
@@ -355,7 +358,7 @@ class VpcPairingRequest(NDVpcPairBaseModel):
         return cls.model_validate(response)
 
 
-class VpcUnpairingRequest(NDVpcPairBaseModel):
+class VpcUnpairingRequest(NDBaseModel):
     """
     Request schema for unpairing VPC switches.
 
@@ -388,7 +391,7 @@ class VpcUnpairingRequest(NDVpcPairBaseModel):
 # ============================================================================
 
 
-class VpcPairsInfoBase(NDVpcPairNestedModel):
+class VpcPairsInfoBase(NDNestedModel):
     """
     VPC pair information base.
 
@@ -409,7 +412,7 @@ class VpcPairsInfoBase(NDVpcPairNestedModel):
     platform_type: SwitchInfo = Field(alias="platformType", description="Platform type")
 
 
-class VpcPairHealthBase(NDVpcPairNestedModel):
+class VpcPairHealthBase(NDNestedModel):
     """
     VPC pair health information.
 
@@ -424,7 +427,7 @@ class VpcPairHealthBase(NDVpcPairNestedModel):
     temperature: ResourceMetrics = Field(alias="temperature", description="Temperature in Celsius")
 
 
-class VpcPairsVxlanBase(NDVpcPairNestedModel):
+class VpcPairsVxlanBase(NDNestedModel):
     """
     VPC pairs VXLAN details.
 
@@ -448,7 +451,7 @@ class VpcPairsVxlanBase(NDVpcPairNestedModel):
     multisite_loopback_primary_ip: Optional[SwitchInfo] = Field(default=None, alias="multisiteLoopbackPrimaryIp", description="Multisite loopback primary IP")
 
 
-class VpcPairsOverlayBase(NDVpcPairNestedModel):
+class VpcPairsOverlayBase(NDNestedModel):
     """
     VPC pairs overlay base.
 
@@ -459,7 +462,7 @@ class VpcPairsOverlayBase(NDVpcPairNestedModel):
     vrf_count: SyncCounts = Field(alias="vrfCount", description="VRF count")
 
 
-class VpcPairsInventoryBase(NDVpcPairNestedModel):
+class VpcPairsInventoryBase(NDNestedModel):
     """
     VPC pair inventory base.
 
@@ -474,7 +477,7 @@ class VpcPairsInventoryBase(NDVpcPairNestedModel):
     logical_interfaces: LogicalInterfaceCounts = Field(alias="logicalInterfaces", description="Logical interfaces")
 
 
-class VpcPairsModuleBase(NDVpcPairNestedModel):
+class VpcPairsModuleBase(NDNestedModel):
     """
     VPC pair module base.
 
@@ -487,7 +490,7 @@ class VpcPairsModuleBase(NDVpcPairNestedModel):
     fex_details: Dict[str, str] = Field(default_factory=dict, alias="fexDetails", description="Fex details name-value pair(s)")
 
 
-class VpcPairAnomaliesBase(NDVpcPairNestedModel):
+class VpcPairAnomaliesBase(NDNestedModel):
     """
     VPC pair anomalies information.
 
@@ -504,7 +507,7 @@ class VpcPairAnomaliesBase(NDVpcPairNestedModel):
 # ============================================================================
 
 
-class CommonVpcConsistencyParams(NDVpcPairNestedModel):
+class CommonVpcConsistencyParams(NDNestedModel):
     """
     Common consistency parameters for VPC domain.
 
@@ -532,7 +535,7 @@ class CommonVpcConsistencyParams(NDVpcPairNestedModel):
     # NOTE: OpenAPI has many more fields - add them as required
 
 
-class VpcPairConsistency(NDVpcPairNestedModel):
+class VpcPairConsistency(NDNestedModel):
     """
     VPC pair consistency check results.
 
@@ -555,7 +558,7 @@ class VpcPairConsistency(NDVpcPairNestedModel):
 # ============================================================================
 
 
-class VpcPairRecommendation(NDVpcPairNestedModel):
+class VpcPairRecommendation(NDNestedModel):
     """
     Recommendation information for a switch.
 
@@ -580,7 +583,7 @@ class VpcPairRecommendation(NDVpcPairNestedModel):
 # ============================================================================
 
 
-class VpcPairBaseSwitchDetails(NDVpcPairNestedModel):
+class VpcPairBaseSwitchDetails(NDNestedModel):
     """
     Base fields for VPC pair records.
 
@@ -618,7 +621,7 @@ class VpcPairDiscovered(VpcPairBaseSwitchDetails):
     description: str = Field(alias="description", description="Description of any discrepancies or issues")
 
 
-class Metadata(NDVpcPairNestedModel):
+class Metadata(NDNestedModel):
     """
     Metadata for pagination and links.
 
@@ -629,7 +632,7 @@ class Metadata(NDVpcPairNestedModel):
     links: Optional[Dict[str, str]] = Field(default=None, alias="links", description="Pagination links (next, previous)")
 
 
-class VpcPairsResponse(NDVpcPairNestedModel):
+class VpcPairsResponse(NDNestedModel):
     """
     Response schema for listing VPC pairs.
 
@@ -645,56 +648,56 @@ class VpcPairsResponse(NDVpcPairNestedModel):
 # ============================================================================
 
 
-class VpcPairsInfo(NDVpcPairNestedModel):
+class VpcPairsInfo(NDNestedModel):
     """VPC pairs information wrapper."""
 
     component_type: ComponentTypeOverviewEnum = Field(default=ComponentTypeOverviewEnum.PAIRS_INFO, alias="componentType", description="Type of the component")
     info: VpcPairsInfoBase = Field(alias="info", description="VPC pair info")
 
 
-class VpcPairHealth(NDVpcPairNestedModel):
+class VpcPairHealth(NDNestedModel):
     """VPC pair health wrapper."""
 
     component_type: ComponentTypeOverviewEnum = Field(default=ComponentTypeOverviewEnum.HEALTH, alias="componentType", description="Type of the component")
     health: VpcPairHealthBase = Field(alias="health", description="Health details")
 
 
-class VpcPairsModule(NDVpcPairNestedModel):
+class VpcPairsModule(NDNestedModel):
     """VPC pairs module wrapper."""
 
     component_type: ComponentTypeOverviewEnum = Field(default=ComponentTypeOverviewEnum.MODULE, alias="componentType", description="Type of the component")
     module: VpcPairsModuleBase = Field(alias="module", description="Module details")
 
 
-class VpcPairAnomalies(NDVpcPairNestedModel):
+class VpcPairAnomalies(NDNestedModel):
     """VPC pair anomalies wrapper."""
 
     component_type: ComponentTypeOverviewEnum = Field(default=ComponentTypeOverviewEnum.ANOMALIES, alias="componentType", description="Type of the component")
     anomalies: VpcPairAnomaliesBase = Field(alias="anomalies", description="Anomalies details")
 
 
-class VpcPairsVxlan(NDVpcPairNestedModel):
+class VpcPairsVxlan(NDNestedModel):
     """VPC pairs VXLAN wrapper."""
 
     component_type: ComponentTypeOverviewEnum = Field(default=ComponentTypeOverviewEnum.VXLAN, alias="componentType", description="Type of the component")
     vxlan: VpcPairsVxlanBase = Field(alias="vxlan", description="VXLAN details")
 
 
-class VpcPairsOverlay(NDVpcPairNestedModel):
+class VpcPairsOverlay(NDNestedModel):
     """VPC overlay details wrapper."""
 
     component_type: ComponentTypeOverviewEnum = Field(default=ComponentTypeOverviewEnum.OVERLAY, alias="componentType", description="Type of the component")
     overlay: VpcPairsOverlayBase = Field(alias="overlay", description="Overlay details")
 
 
-class VpcPairsInventory(NDVpcPairNestedModel):
+class VpcPairsInventory(NDNestedModel):
     """VPC pairs inventory details wrapper."""
 
     component_type: ComponentTypeOverviewEnum = Field(default=ComponentTypeOverviewEnum.INVENTORY, alias="componentType", description="Type of the component")
     inventory: VpcPairsInventoryBase = Field(alias="inventory", description="Inventory details")
 
 
-class FullOverview(NDVpcPairNestedModel):
+class FullOverview(NDNestedModel):
     """Full VPC overview response."""
 
     component_type: ComponentTypeOverviewEnum = Field(default=ComponentTypeOverviewEnum.FULL, alias="componentType", description="Type of the component")
@@ -724,8 +727,8 @@ class NdVpcPairSchema:
     """
 
     # Base classes
-    VpcPairBaseModel = NDVpcPairBaseModel
-    VpcPairNestedModel = NDVpcPairNestedModel
+    VpcPairBaseModel = NDBaseModel
+    VpcPairNestedModel = NDNestedModel
 
     # Enumerations (these are class variable type hints, not assignments)
     # VpcRole = VpcRoleEnum  # Commented out - not needed

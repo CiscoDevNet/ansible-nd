@@ -17,7 +17,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection impo
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vpc_pair import (
     VpcPairOrchestrator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_manage_vpc_pair_exceptions import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import (
     VpcPairResourceError,
 )
 
