@@ -83,8 +83,8 @@ jobs:
         with:
           python-version: ${{ matrix.python_version }}
 
-      - name: Install ansible-base (${{ matrix.ansible }})
-        run: pip install https://github.com/ansible/ansible/archive/${{ matrix.ansible }}.tar.gz --disable-pip-version-check
+      - name: Install ansible-base (${{ matrix.ansible_version }})
+        run: pip install https://github.com/ansible/ansible/archive/${{ matrix.ansible_version }}.tar.gz --disable-pip-version-check
 
       - name: Build a collection tarball
         run: ansible-galaxy collection build --output-path "${GITHUB_WORKSPACE}/.cache/collection-tarballs"
@@ -92,7 +92,7 @@ jobs:
       - name: Store migrated collection artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: collection-${{ matrix.ansible }}
+          name: collection-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs
 
   ansible-galaxy-importer:
