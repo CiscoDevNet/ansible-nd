@@ -119,23 +119,12 @@ options:
   deploy:
     description:
     - Whether to deploy interface changes after mutations are complete.
-    - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module execution.
+    - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module execution
+      via the C(interfaceActions/deploy) API. Only the interfaces modified by this task are deployed.
     - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
     - Setting O(deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
     type: bool
     default: true
-  deploy_type:
-    description:
-    - Controls the scope of the deploy operation when O(deploy=true).
-    - V(interface) deploys only the interfaces modified by this task via the C(interfaceActions/deploy) API.
-      This is the safe default that ensures only interface configurations are pushed to the switch.
-    - V(switch) deploys all pending switch configuration (not just interfaces) via the C(switchActions/deploy) API.
-      This is faster but will also deploy any other staged configuration on the switch (policies, routing, ACLs, etc.).
-      Use this option only when you understand the implications or have verified there is no other pending configuration.
-    - Ignored when O(deploy=false).
-    type: str
-    default: interface
-    choices: [ interface, switch ]
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -229,19 +218,6 @@ EXAMPLES = r"""
     deploy: false
     state: merged
 
-- name: Create and deploy using switch-level deploy (faster, broader scope)
-  cisco.nd.nd_interface_loopback:
-    fabric_name: my_fabric
-    switch_ip: 192.168.1.1
-    config:
-      - interface_name: loopback0
-        config_data:
-          network_os:
-            policy:
-              ip: 10.1.1.1
-    deploy: true
-    deploy_type: switch
-    state: merged
 """
 
 RETURN = r"""
@@ -273,7 +249,6 @@ def main():
     argument_spec.update(LoopbackInterfaceModel.get_argument_spec())
     argument_spec.update(
         deploy=dict(type="bool", default=True),
-        deploy_type=dict(type="str", default="interface", choices=["interface", "switch"]),
     )
 
     module = AnsibleModule(
@@ -291,13 +266,13 @@ def main():
             model_orchestrator=LoopbackInterfaceOrchestrator,
         )
         nd_state_machine.model_orchestrator.deploy = module.params["deploy"]
-        nd_state_machine.model_orchestrator.deploy_type = module.params["deploy_type"]
 
         # Manage state
         nd_state_machine.manage_state()
 
-        # Deploy all queued interface changes in a single bulk API call
+        # Execute all queued bulk operations
         if not module.check_mode:
+            nd_state_machine.model_orchestrator.remove_pending()
             nd_state_machine.model_orchestrator.deploy_pending()
 
         module.exit_json(**nd_state_machine.output.format())

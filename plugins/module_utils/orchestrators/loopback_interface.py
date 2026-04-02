@@ -20,14 +20,13 @@ from typing import ClassVar, Optional, Type
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
-    EpManageInterfacesDelete,
     EpManageInterfacesDeploy,
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
     EpManageInterfacesPost,
     EpManageInterfacesPut,
+    EpManageInterfacesRemove,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchActionsDeploy
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
@@ -44,8 +43,9 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
     Overrides the base orchestrator to handle the ND interfaces API, which requires `fabric_name` and `switch_sn`
     on every endpoint, injects `switchId` into payloads, and defers deploy calls for bulk execution.
 
-    Mutation methods (`create`, `update`, `delete`) queue deploys instead of executing them immediately. Call
-    `deploy_pending` after all mutations are complete to deploy all changes in a single API call.
+    Mutation methods (`create`, `update`) queue deploys instead of executing them immediately. Call `deploy_pending`
+    after all mutations are complete to deploy all changes in a single API call. `delete` queues interfaces for bulk
+    removal via `remove_pending`.
 
     Uses `FabricContext` for pre-flight validation and switch resolution.
 
@@ -57,7 +57,7 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
     - Via `validate` if no switch matches the given IP in the fabric.
     - Via `create` if the create API request fails.
     - Via `update` if the update API request fails.
-    - Via `delete` if the delete API request fails.
+    - Via `remove_pending` if the bulk remove API request fails.
     - Via `deploy_pending` if the bulk deploy API request fails.
     - Via `query_one` if the query API request fails.
     - Via `query_all` if the query API request fails.
@@ -67,15 +67,15 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
 
     create_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPut
-    delete_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesDelete
+    delete_endpoint: Type[NDEndpointBaseModel] = NDEndpointBaseModel  # unused; delete() uses bulk remove
     query_one_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesGet
     query_all_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesListGet
 
     deploy: bool = True
-    deploy_type: str = "interface"
 
     _fabric_context: Optional[FabricContext] = None
     _pending_deploys: list[str] = []
+    _pending_removes: list[str] = []
 
     @property
     def fabric_name(self) -> str:
@@ -167,15 +167,27 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         if interface_name not in self._pending_deploys:
             self._pending_deploys.append(interface_name)
 
+    def _queue_remove(self, interface_name: str) -> None:
+        """
+        # Summary
+
+        Queue an interface name for deferred bulk removal. Call `remove_pending` after all mutations are complete to remove in bulk.
+
+        ## Raises
+
+        None
+        """
+        if interface_name not in self._pending_removes:
+            self._pending_removes.append(interface_name)
+
     def deploy_pending(self) -> ResponseType | None:
         """
         # Summary
 
-        Deploy all queued interface configurations in a single API call. Clears the pending queue after deployment.
+        Deploy all queued interface configurations in a single API call via `interfaceActions/deploy`. Clears the pending
+        queue after deployment.
 
-        When `deploy` is `False`, returns `None` without making any API call. When `deploy_type` is `"switch"`, deploys all
-        pending switch configuration (not just interfaces) via `switchActions/deploy`. When `deploy_type` is `"interface"`,
-        deploys only the queued interfaces via `interfaceActions/deploy`.
+        When `deploy` is `False`, returns `None` without making any API call.
 
         ## Raises
 
@@ -186,10 +198,7 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         if not self.deploy or not self._pending_deploys:
             return None
         try:
-            if self.deploy_type == "switch":
-                result = self._deploy_switch()
-            else:
-                result = self._deploy_interfaces()
+            result = self._deploy_interfaces()
             self._pending_deploys = []
             return result
         except Exception as e:
@@ -212,22 +221,44 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         payload = {"interfaces": [{"interfaceName": name, "switchId": self.switch_id} for name in self._pending_deploys]}
         return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
 
-    def _deploy_switch(self) -> ResponseType:
+    def remove_pending(self) -> ResponseType | None:
         """
         # Summary
 
-        Deploy all pending switch configuration via `switchActions/deploy`. Faster than per-interface deploy but deploys all
-        staged configuration on the switch, not just interfaces.
+        Remove all queued interfaces in a single API call via `interfaceActions/remove`. Clears the pending queue after removal.
+
+        Returns `None` without making any API call if the queue is empty.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the remove API request fails.
+        """
+        if not self._pending_removes:
+            return None
+        try:
+            result = self._remove_interfaces()
+            self._pending_removes = []
+            return result
+        except Exception as e:
+            raise RuntimeError(f"Bulk remove failed for interfaces {self._pending_removes}: {e}") from e
+
+    def _remove_interfaces(self) -> ResponseType:
+        """
+        # Summary
+
+        Remove queued interfaces via `interfaceActions/remove`. Sends the explicit list of `{interfaceName, switchId}` pairs.
 
         ## Raises
 
         ### Exception
 
-        - If the deploy API request fails (propagated to caller).
+        - If the remove API request fails (propagated to caller).
         """
-        api_endpoint = EpManageSwitchActionsDeploy()
+        api_endpoint = EpManageInterfacesRemove()
         api_endpoint.fabric_name = self.fabric_name
-        payload = {"switchIds": [self.switch_id]}
+        payload = {"interfaces": [{"interfaceName": name, "switchId": self.switch_id} for name in self._pending_removes]}
         return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
 
     def create(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
@@ -277,26 +308,21 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def delete(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
+    def delete(self, model_instance: LoopbackInterfaceModel, **kwargs) -> None:
         """
         # Summary
 
-        Delete a loopback interface. Queues a deploy for later bulk execution via `deploy_pending`.
+        Queue a loopback interface for deferred bulk removal via `remove_pending` and bulk deploy via `deploy_pending`.
+        The remove deletes the interface from ND's config; the deploy pushes that removal to the switch.
+
+        No API calls are made until `remove_pending` and `deploy_pending` are called after all mutations are complete.
 
         ## Raises
 
-        ### RuntimeError
-
-        - If the delete API request fails.
+        None
         """
-        try:
-            api_endpoint = self._configure_endpoint(self.delete_endpoint())
-            api_endpoint.set_identifiers(model_instance.interface_name)
-            result = self.sender.request(path=api_endpoint.path, method=api_endpoint.verb)
-            self._queue_deploy(model_instance.interface_name)
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
+        self._queue_remove(model_instance.interface_name)
+        self._queue_deploy(model_instance.interface_name)
 
     def query_one(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
