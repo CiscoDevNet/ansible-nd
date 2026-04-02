@@ -26,6 +26,6 @@ tags:
 dependencies:
   "ansible.netcommon": ">=2.6.1"
 repository: https://github.com/CiscoDevNet/ansible-nd
-#documentation: https://docs.ansible.com/ansible/latest/scenario_guides/guide_nd.html
+# documentation: https://docs.ansible.com/ansible/latest/scenario_guides/guide_nd.html
 homepage: https://cisco.com/go/nexusdashboard
 issues: https://github.com/CiscoDevNet/ansible-nd/issues
