@@ -39,4 +39,4 @@ jobs:
     with:
       ansible-core-version: '2.18.0'
       python-versions: '["3.11", "3.12", "3.13"]'
-      collection-root: 'ansible_collections/cisco/nd'
+      collection-root: '.'
