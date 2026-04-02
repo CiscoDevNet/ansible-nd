@@ -357,7 +357,6 @@ gathered:
   elements: dict
 """
 
-import copy
 import logging
 
 from ansible.module_utils.basic import AnsibleModule
@@ -370,142 +369,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_ma
     ResourceManagerConfigModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources import NDResourceManagerModule
-
-
-def _resolve_switch_ids(nd, fabric_name, config):
-    """Build a switchIp -> switchId map from ND and return a translated deep copy of config.
-
-    Each item's ``switch`` list is translated from management IP strings to
-    switchId values.  If an IP is not found in the map it is passed through
-    unchanged so the caller can decide how to handle unresolved entries.
-
-    Args:
-        nd: Initialised NDModule instance.
-        fabric_name: Fabric name used to query the switch inventory.
-        config: Raw config list (not mutated — a deep copy is returned).
-
-    Returns:
-        A deep copy of ``config`` with switch IPs replaced by switchId values.
-    """
-    log = logging.getLogger(__name__)
-
-    log.debug(f"_resolve_switch_ids: starting for fabric='{fabric_name}', config_items={len(config or [])}")
-
-    # Build switchIp -> switchId map
-    ip_to_switch_id = {}
-    raw_switches = _query_fabric_switches(nd, fabric_name)
-    log.debug(f"_resolve_switch_ids: retrieved {raw_switches} raw switch(es) from ND")
-    for sw_idx, sw in enumerate(raw_switches):
-        switch_id = sw.get("switchId") or sw.get("serialNumber")
-        switch_ip = sw.get("fabricManagementIp") or sw.get("ip")
-        log.debug(
-            f"_resolve_switch_ids: switch record [{sw_idx}] — "
-            f"switchId='{switch_id}', fabricManagementIp/ip='{switch_ip}', "
-            f"raw_keys={list(sw.keys())}"
-        )
-        if switch_id and switch_ip:
-            ip_to_switch_id[str(switch_ip).strip()] = switch_id
-            log.debug(
-                f"_resolve_switch_ids: [{sw_idx}] mapped switchIp='{switch_ip}' "
-                f"-> switchId='{switch_id}' (map_size_now={len(ip_to_switch_id)})"
-            )
-        else:
-            log.debug(
-                f"_resolve_switch_ids: [{sw_idx}] skipping — missing id or ip: "
-                f"switch_id='{switch_id}', switch_ip='{switch_ip}'"
-            )
-    log.debug(f"Switch IP-to-ID map built: {len(ip_to_switch_id)} entry/entries")
-
-    # Translate switch IPs to switch IDs in a copy of the config
-    config_copy = copy.deepcopy(config or [])
-    log.debug(f"_resolve_switch_ids: translating switch lists for {len(config_copy)} config item(s)")
-    for cfg_idx, item in enumerate(config_copy):
-        raw_switch_list = item.get("switch") or []
-        entity_name = item.get("entity_name")
-        scope_type = item.get("scope_type")
-        log.debug(
-            f"_resolve_switch_ids: config item [{cfg_idx}] — "
-            f"entity_name='{entity_name}', scope_type='{scope_type}', "
-            f"raw_switch_list={raw_switch_list} (count={len(raw_switch_list)})"
-        )
-        if raw_switch_list:
-            resolved = []
-            for sw_ip in raw_switch_list:
-                sw_key = str(sw_ip).strip()
-                sw_id = ip_to_switch_id.get(sw_key, sw_key)
-                if sw_id != sw_key:
-                    log.debug(
-                        f"_resolve_switch_ids: [{cfg_idx}] entity='{entity_name}' "
-                        f"switch '{sw_ip}' -> resolved switchId='{sw_id}'"
-                    )
-                else:
-                    log.debug(
-                        f"_resolve_switch_ids: [{cfg_idx}] entity='{entity_name}' "
-                        f"switch '{sw_ip}' not found in map — passing through unchanged"
-                    )
-                resolved.append(sw_id)
-            item["switch"] = resolved
-            log.debug(
-                f"_resolve_switch_ids: [{cfg_idx}] entity='{entity_name}' "
-                f"final switch list: {raw_switch_list} -> {item['switch']}"
-            )
-        else:
-            log.debug(
-                f"_resolve_switch_ids: [{cfg_idx}] entity='{entity_name}' — "
-                f"no switch list present (scope_type='{scope_type}'), skipping translation"
-            )
-
-    log.debug(f"_resolve_switch_ids: completed, returning {len(config_copy)} translated config item(s)")
-    return config_copy
-
-
-def _query_fabric_switches(nd, fabric_name):
-    """Query all switches for a fabric and return raw switch records.
-
-    Uses RestSend save_settings/restore_settings to temporarily force
-    check_mode=False so that this read-only GET always hits the controller,
-    even when the module is running in Ansible check mode.
-    """
-    log = logging.getLogger(__name__)
-    path = f"{BasePath.path('fabrics', fabric_name, 'switches')}?max=10000"
-    log.debug(f"_query_fabric_switches: querying path='{path}' for fabric='{fabric_name}'")
-
-    # Temporarily disable check_mode for this read-only lookup so the
-    # controller is queried even when Ansible runs with --check.
-    rest_send = nd._get_rest_send()
-    rest_send.save_settings()
-    rest_send.check_mode = False
-    log.debug("_query_fabric_switches: check_mode disabled for read-only GET")
-    try:
-        response = nd.request(path)
-        log.debug(f"_query_fabric_switches: received response type={type(response).__name__}")
-    finally:
-        rest_send.restore_settings()
-        log.debug("_query_fabric_switches: rest_send settings restored")
-
-    if isinstance(response, list):
-        log.debug(
-            f"_query_fabric_switches: API returned a list of {len(response)} switch(es) "
-            f"for fabric='{fabric_name}' — returning list directly"
-        )
-        return response
-    if isinstance(response, dict):
-        switches_list = response.get("switches", [])
-        dict_keys = list(response.keys())
-        log.debug(
-            f"_query_fabric_switches: API returned dict with keys={dict_keys} — "
-            f"extracted 'switches' list with {len(switches_list)} item(s) "
-            f"for fabric='{fabric_name}'"
-        )
-        return switches_list
-    log.warning(
-        f"_query_fabric_switches: unexpected response type '{type(response).__name__}' "
-        f"(expected list or dict) for fabric='{fabric_name}' — returning empty list"
-    )
-    return []
 
 
 def main():
@@ -563,17 +428,8 @@ def main():
             f"username='{module.params.get('username')}'"
         )
 
-        log.debug(
-            f"main: starting switch-ID resolution for fabric='{fabric}', "
-            f"raw_config_count={len(module.params.get('config') or [])}"
-        )
-        config_copy = _resolve_switch_ids(nd, fabric, module.params["config"])
-        log.debug(
-            f"main: switch-ID resolution complete — "
-            f"resolved_config_count={len(config_copy or [])}"
-        )
-
-        # Create NDResourceManagerModule
+        # Create NDResourceManagerModule — switch IP→ID resolution and config translation
+        # happen automatically inside __init__ via _get_all_switches / _resolve_switch_ids_in_config
         rm_module = NDResourceManagerModule(
             nd=nd,
             results=results,
@@ -581,9 +437,8 @@ def main():
         )
         log.debug(
             f"main: NDResourceManagerModule created — fabric='{fabric}', "
-            f"state='{state}', config_count={len(config_copy or [])}"
+            f"state='{state}', config_count={len(rm_module.config or [])}"
         )
-        rm_module.config = config_copy
 
         # Manage state for merged, overridden, deleted
         log.debug(f"main: dispatching manage_state() for state='{state}'")

@@ -8,6 +8,7 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
+import copy
 import ipaddress
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -43,6 +44,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricResourcesGet,
     EpManageFabricResourcesPost,
     EpManageFabricResourcesActionsRemovePost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
+    EpManageFabricSwitchesGet,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_manager.switchs_response_model import (
+    GetAllSwitchesResponse,
+    SwitchRecord,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_manager.constants import (
@@ -671,12 +679,22 @@ class NDResourceManagerModule:
         self.changed_dict = [{"merged": [], "deleted": [], "gathered": [], "debugs": []}]
         self.api_responses = []
 
-        # Cached GET results
+        # Cached GET results — resources
         self._all_resources = []
         self._resources_fetched = False
 
+        # Cached GET results — switches
+        self._all_switches: List[SwitchRecord] = []
+        self._switches_fetched = False
+        self._switch_ip_to_id: Dict[str, str] = {}
+
         # Get All resources for the given fabric and cache them for matching during merged/deleted operations
         self._get_all_resources()
+
+        # Get all switches and build IP→switchId map; translate config switch lists
+        self._get_all_switches()
+        self._build_switch_ip_to_id_map()
+        self.config = self._resolve_switch_ids_in_config(self.config)
 
         # Resource collections — existing/previous snapshot at init, proposed populated in manage_state
         self.existing: List[ResourceManagerResponse] = list(self._all_resources)
@@ -925,6 +943,163 @@ class NDResourceManagerModule:
         self.log.info(
             f"Fetched {len(self._all_resources)} resource(s) for fabric={self.fabric}"
         )
+
+    def _get_all_switches(self):
+        """Fetch all switches for the fabric from the ND Manage API and cache them.
+
+        Issues a single GET request to the fabric switches endpoint using
+        ``EpManageFabricSwitchesGet``.  The response is parsed into a
+        ``GetAllSwitchesResponse`` model and the individual ``SwitchRecord`` items are
+        stored in ``self._all_switches``.  Subsequent calls return immediately without
+        hitting the API again (``self._switches_fetched`` flag).
+
+        A 404 response is treated as an empty fabric (no switches found) rather than an
+        error.  Any other ``NDModuleError`` is re-raised to the caller.
+        """
+        if self._switches_fetched:
+            self.log.debug(
+                f"_get_all_switches: Switches already cached for fabric={self.fabric}: "
+                f"{len(self._all_switches)} switch(es)"
+            )
+            return
+
+        self.log.info(f"_get_all_switches: Fetching all switches for fabric={self.fabric}")
+
+        ep = EpManageFabricSwitchesGet(fabric_name=self.fabric)
+        self.log.debug(
+            f"_get_all_switches: querying path='{ep.path}' for fabric='{self.fabric}'"
+        )
+
+        try:
+            data = self.nd.request(ep.path, ep.verb)
+        except NDModuleError as exc:
+            if exc.status == 404:
+                self.log.info(
+                    f"_get_all_switches: No switches found (404) for fabric={self.fabric}, "
+                    f"treating as empty"
+                )
+                self._switches_fetched = True
+                return
+            raise
+
+        self.log.debug(
+            f"_get_all_switches: received response type={type(data).__name__}"
+        )
+
+        parsed = GetAllSwitchesResponse.from_response(data)
+        self._all_switches = parsed.switches
+
+        self._switches_fetched = True
+        total = parsed.meta.counts.total if (parsed.meta and parsed.meta.counts) else len(self._all_switches)
+        self.log.info(
+            f"_get_all_switches: Fetched {len(self._all_switches)} switch(es) for fabric={self.fabric} "
+            f"(API total={total})"
+        )
+
+    def _build_switch_ip_to_id_map(self):
+        """Build the ``fabricManagementIp → switchId`` lookup map from cached switch records.
+
+        Iterates ``self._all_switches`` (populated by ``_get_all_switches``) and populates
+        ``self._switch_ip_to_id``.  Records that are missing either ``fabric_management_ip``
+        or ``switch_id`` are skipped with a debug log entry.
+        """
+        self.log.debug(
+            f"_build_switch_ip_to_id_map: building map from "
+            f"{len(self._all_switches)} cached switch record(s)"
+        )
+
+        for idx, sw in enumerate(self._all_switches):
+            switch_id = sw.switch_id
+            switch_ip = sw.fabric_management_ip
+            self.log.debug(
+                f"_build_switch_ip_to_id_map: [{idx}] switchId='{switch_id}', "
+                f"fabricManagementIp='{switch_ip}'"
+            )
+            if switch_id and switch_ip:
+                self._switch_ip_to_id[str(switch_ip).strip()] = switch_id
+                self.log.debug(
+                    f"_build_switch_ip_to_id_map: [{idx}] mapped ip='{switch_ip}' "
+                    f"-> switchId='{switch_id}' (map_size={len(self._switch_ip_to_id)})"
+                )
+            else:
+                self.log.debug(
+                    f"_build_switch_ip_to_id_map: [{idx}] skipping — "
+                    f"missing switch_id='{switch_id}' or fabric_management_ip='{switch_ip}'"
+                )
+
+        self.log.info(
+            f"_build_switch_ip_to_id_map: map complete — "
+            f"{len(self._switch_ip_to_id)} entry/entries"
+        )
+
+    def _resolve_switch_ids_in_config(self, config):
+        """Translate management IPs in config ``switch`` lists to switchId values.
+
+        Returns a deep copy of ``config`` with each entry's ``switch`` list translated
+        from management IP strings (e.g. ``'192.168.10.150'``) to the corresponding
+        ``switchId`` values (e.g. ``'9H1Q6YOL08G'``) using ``self._switch_ip_to_id``.
+
+        IPs that are not found in the map are passed through unchanged so the caller can
+        decide how to handle unresolved entries (the ND API will reject them with an
+        appropriate error).
+
+        Args:
+            config: Raw config list from ``nd.params["config"]``. Not mutated.
+
+        Returns:
+            A deep copy of ``config`` with switch IPs replaced by switchId values.
+        """
+        self.log.debug(
+            f"_resolve_switch_ids_in_config: translating {len(config or [])} "
+            f"config item(s) using map of {len(self._switch_ip_to_id)} entry/entries"
+        )
+
+        config_copy = copy.deepcopy(config or [])
+
+        for idx, item in enumerate(config_copy):
+            raw_switch_list = item.get("switch") or []
+            entity_name = item.get("entity_name")
+            scope_type = item.get("scope_type")
+
+            self.log.debug(
+                f"_resolve_switch_ids_in_config: [{idx}] entity='{entity_name}', "
+                f"scope_type='{scope_type}', raw_switch_list={raw_switch_list}"
+            )
+
+            if not raw_switch_list:
+                self.log.debug(
+                    f"_resolve_switch_ids_in_config: [{idx}] entity='{entity_name}' — "
+                    f"no switch list present, skipping translation"
+                )
+                continue
+
+            resolved = []
+            for sw_ip in raw_switch_list:
+                sw_key = str(sw_ip).strip()
+                sw_id = self._switch_ip_to_id.get(sw_key, sw_key)
+                if sw_id != sw_key:
+                    self.log.debug(
+                        f"_resolve_switch_ids_in_config: [{idx}] entity='{entity_name}' "
+                        f"switch '{sw_ip}' -> resolved switchId='{sw_id}'"
+                    )
+                else:
+                    self.log.debug(
+                        f"_resolve_switch_ids_in_config: [{idx}] entity='{entity_name}' "
+                        f"switch '{sw_ip}' not found in map — passing through unchanged"
+                    )
+                resolved.append(sw_id)
+
+            item["switch"] = resolved
+            self.log.debug(
+                f"_resolve_switch_ids_in_config: [{idx}] entity='{entity_name}' "
+                f"final switch list: {raw_switch_list} -> {resolved}"
+            )
+
+        self.log.debug(
+            f"_resolve_switch_ids_in_config: completed, "
+            f"returning {len(config_copy)} translated config item(s)"
+        )
+        return config_copy
 
     # ------------------------------------------------------------------
     # Resource attribute accessors (handle both ResourceManagerResponse and raw dict)
