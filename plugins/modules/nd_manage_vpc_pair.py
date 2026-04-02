@@ -48,17 +48,18 @@ options:
         - Only applies to deleted state.
         type: bool
         default: false
-    api_timeout:
+    vpc_put_timeout:
         description:
-        - API request timeout in seconds for primary operations (create, update, delete).
+        - vPC pair PUT request timeout in seconds for primary operations (create, update, delete).
         - Increase for large fabrics or slow networks.
         type: int
         default: 30
     query_timeout:
         description:
-        - Optional API request timeout in seconds for query and recommendation operations.
-        - When omitted, C(api_timeout) is used.
+        - API request timeout in seconds for query and recommendation operations.
+        - Defaults to 5 seconds.
         type: int
+        default: 5
     refresh_after_apply:
         description:
         - Query controller again after write operations to populate final C(after) state.

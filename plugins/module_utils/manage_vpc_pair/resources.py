@@ -5,6 +5,7 @@
 from __future__ import absolute_import, division, print_function
 
 import json
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 from ansible.module_utils.basic import AnsibleModule
@@ -33,6 +34,9 @@ Note:
 RunStateHandler = Callable[[Any], Dict[str, Any]]
 DeployHandler = Callable[[Any, str, Dict[str, Any]], Dict[str, Any]]
 NeedsDeployHandler = Callable[[Dict[str, Any], Any], bool]
+
+POST_APPLY_REFRESH_RETRIES = 3
+POST_APPLY_REFRESH_RETRY_DELAY_SECONDS = 1
 
 
 class VpcPairStateMachine(NDStateMachine):
@@ -146,16 +150,35 @@ class VpcPairStateMachine(NDStateMachine):
             # stale/synthetic before-state fallbacks.
             return
 
-        try:
-            response_data = self.model_orchestrator.query_all()
-            self.existing = NDConfigCollection.from_api_response(
-                response_data=response_data,
-                model_class=self.model_class,
-            )
-        except Exception as exc:
-            self.module.warn(
-                f"Failed to refresh final after-state from controller query: {exc}"
-            )
+        refresh_errors: List[str] = []
+        for attempt in range(1, POST_APPLY_REFRESH_RETRIES + 1):
+            try:
+                response_data = self.model_orchestrator.query_all()
+                self.existing = NDConfigCollection.from_api_response(
+                    response_data=response_data,
+                    model_class=self.model_class,
+                )
+                return
+            except Exception as exc:
+                refresh_errors.append(str(exc))
+                if attempt < POST_APPLY_REFRESH_RETRIES:
+                    self.module.warn(
+                        "Post-apply refresh attempt "
+                        f"{attempt}/{POST_APPLY_REFRESH_RETRIES} failed: {exc}. "
+                        "Retrying..."
+                    )
+                    time.sleep(POST_APPLY_REFRESH_RETRY_DELAY_SECONDS)
+                    continue
+
+                raise VpcPairResourceError(
+                    msg=(
+                        "Failed to refresh final after-state from controller query "
+                        "after write operation."
+                    ),
+                    attempts=POST_APPLY_REFRESH_RETRIES,
+                    retry_delay_seconds=POST_APPLY_REFRESH_RETRY_DELAY_SECONDS,
+                    refresh_errors=refresh_errors,
+                )
 
     @staticmethod
     def _identifier_to_key(identifier: Any) -> str:

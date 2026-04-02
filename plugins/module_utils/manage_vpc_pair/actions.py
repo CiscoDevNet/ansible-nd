@@ -13,7 +13,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
     VpcFieldNames,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
-    get_api_timeout,
+    get_vpc_put_timeout,
     _is_update_needed,
     _raise_vpc_error,
 )
@@ -165,7 +165,7 @@ def custom_vpc_create(nrm) -> Optional[Dict[str, Any]]:
         # Use PUT (not POST!) for create via RestSend
         rest_send = nd_v2._get_rest_send()
         rest_send.save_settings()
-        rest_send.timeout = get_api_timeout(nrm.module)
+        rest_send.timeout = get_vpc_put_timeout(nrm.module)
         try:
             response = nd_v2.request(path, HttpVerbEnum.PUT, payload)
         finally:
@@ -297,7 +297,7 @@ def custom_vpc_update(nrm) -> Optional[Dict[str, Any]]:
         # Use PUT for update via RestSend
         rest_send = nd_v2._get_rest_send()
         rest_send.save_settings()
-        rest_send.timeout = get_api_timeout(nrm.module)
+        rest_send.timeout = get_vpc_put_timeout(nrm.module)
         try:
             response = nd_v2.request(path, HttpVerbEnum.PUT, payload)
         finally:
@@ -432,7 +432,7 @@ def custom_vpc_delete(nrm) -> bool:
         # Use PUT (not DELETE!) for unpair via RestSend
         rest_send = nd_v2._get_rest_send()
         rest_send.save_settings()
-        rest_send.timeout = get_api_timeout(nrm.module)
+        rest_send.timeout = get_vpc_put_timeout(nrm.module)
         try:
             nd_v2.request(path, HttpVerbEnum.PUT, payload)
         finally:

@@ -12,7 +12,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
     VpcFieldNames,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
-    get_api_timeout,
+    get_vpc_put_timeout,
     get_query_timeout,
     _raise_vpc_error,
 )
@@ -249,7 +249,7 @@ def _validate_fabric_switches(nd_v2, fabric_name: str) -> Dict[str, Dict]:
         raise ValueError(f"Invalid fabric_name: {fabric_name}")
 
     # Use normalized write timeout for fabric switch inventory read.
-    timeout = get_api_timeout(nd_v2.module)
+    timeout = get_vpc_put_timeout(nd_v2.module)
 
     rest_send = nd_v2._get_rest_send()
     rest_send.save_settings()

@@ -357,15 +357,15 @@ class VpcPairPlaybookConfigModel(BaseModel):
         default=False,
         description="Force deletion without pre-deletion safety checks",
     )
-    api_timeout: int = Field(
+    vpc_put_timeout: int = Field(
         default=30,
-        description="API request timeout in seconds for write operations",
+        description="vPC pair PUT request timeout in seconds for write operations",
     )
-    query_timeout: Optional[int] = Field(
-        default=None,
+    query_timeout: int = Field(
+        default=5,
         description=(
-            "Optional API request timeout in seconds for query/recommendation operations "
-            "(defaults to api_timeout)"
+            "API request timeout in seconds for query/recommendation operations "
+            "(default: 5 seconds)"
         ),
     )
     refresh_after_apply: bool = Field(
@@ -398,19 +398,20 @@ class VpcPairPlaybookConfigModel(BaseModel):
                     "(bypasses safety checks)"
                 ),
             ),
-            api_timeout=dict(
+            vpc_put_timeout=dict(
                 type="int",
                 default=30,
                 description=(
-                    "API request timeout in seconds for primary operations"
+                    "vPC pair PUT request timeout in seconds for primary operations"
                 ),
             ),
             query_timeout=dict(
                 type="int",
                 required=False,
+                default=5,
                 description=(
-                    "Optional API request timeout in seconds for query/recommendation "
-                    "operations. Defaults to api_timeout when omitted."
+                    "API request timeout in seconds for query/recommendation "
+                    "operations. Defaults to 5 seconds."
                 ),
             ),
             refresh_after_apply=dict(
