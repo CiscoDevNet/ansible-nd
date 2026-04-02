@@ -32,6 +32,7 @@ def _needs_deployment(result: Dict, nrm) -> bool:
     1. There are items in the diff (configuration changes)
     2. There are pending create VPC pairs
     3. There are pending delete VPC pairs
+    4. There are active pairs currently not in-sync (not yet deployed)
     
     Args:
         result: Module result dictionary with diff info
@@ -52,8 +53,10 @@ def _needs_deployment(result: Dict, nrm) -> bool:
     pending_create = nrm.module.params.get("_pending_create", [])
     pending_delete = nrm.module.params.get("_pending_delete", [])
     has_pending = bool(pending_create or pending_delete)
+    not_in_sync_pairs = nrm.module.params.get("_not_in_sync_pairs", [])
+    has_not_in_sync = bool(not_in_sync_pairs)
     
-    needs_deploy = has_changes or has_diff_changes or has_pending
+    needs_deploy = has_changes or has_diff_changes or has_pending or has_not_in_sync
     
     return needs_deploy
 
@@ -110,7 +113,7 @@ def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
     # Smart deployment decision (from Common.needs_deployment)
     if not _needs_deployment(result, nrm):
         return {
-            "msg": "No configuration changes or pending operations detected, skipping deployment",
+            "msg": "No configuration changes, pending operations, or out-of-sync pairs detected, skipping deployment",
             "fabric": fabric_name,
             "deployment_needed": False,
             "changed": False
@@ -122,6 +125,7 @@ def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
         after = result.get("after", [])
         pending_create = nrm.module.params.get("_pending_create", [])
         pending_delete = nrm.module.params.get("_pending_delete", [])
+        not_in_sync_pairs = nrm.module.params.get("_not_in_sync_pairs", [])
         
         deployment_info = {
             "msg": "CHECK MODE: Would save and deploy fabric configuration",
@@ -133,6 +137,7 @@ def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
                 "diff_has_changes": before != after,
                 "pending_create_operations": len(pending_create),
                 "pending_delete_operations": len(pending_delete),
+                "not_in_sync_pairs": len(not_in_sync_pairs),
                 "actual_changes": result.get("changed", False)
             },
             "planned_actions": [

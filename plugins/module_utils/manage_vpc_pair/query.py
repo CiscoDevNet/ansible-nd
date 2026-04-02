@@ -37,6 +37,107 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
 )
 
 
+def _as_int_or_zero(value: Any) -> int:
+    """
+    Safely parse integer-like values used in overview status counters.
+
+    Args:
+        value: Any scalar value from API response.
+
+    Returns:
+        Parsed integer, or 0 when parsing fails.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _is_pair_in_sync_from_overview(
+    nd_v2,
+    fabric_name: str,
+    switch_id: str,
+    timeout: Optional[int] = None,
+) -> Optional[bool]:
+    """
+    Determine vPC pair sync state using vpcPairOverview (componentType=full).
+
+    This is used for deployment gating:
+    - False => pair exists but has pending/out-of-sync signals (deploy recommended)
+    - True => pair appears fully in-sync
+    - None => unknown/unavailable; caller should not force deploy from this signal
+
+    Args:
+        nd_v2: NDModuleV2 instance.
+        fabric_name: Fabric name.
+        switch_id: Switch serial number.
+        timeout: Optional timeout override.
+
+    Returns:
+        Optional bool as described above.
+    """
+    if not fabric_name or not switch_id:
+        return None
+
+    if timeout is None:
+        timeout = get_verify_timeout(nd_v2.module)
+
+    path = VpcPairEndpoints.switch_vpc_overview(
+        fabric_name=fabric_name,
+        switch_id=switch_id,
+        component_type="full",
+    )
+
+    rest_send = nd_v2._get_rest_send()
+    rest_send.save_settings()
+    rest_send.timeout = timeout
+    try:
+        response = nd_v2.request(path, HttpVerbEnum.GET)
+    except NDModuleError as error:
+        error_msg = (error.msg or "").lower()
+        if error.status in (400, 404) and "not a part of vpc pair" in error_msg:
+            return None
+        return None
+    except Exception:
+        return None
+    finally:
+        rest_send.restore_settings()
+
+    if not isinstance(response, dict):
+        return None
+
+    def _has_non_sync(counts: Dict[str, Any]) -> bool:
+        if not isinstance(counts, dict):
+            return False
+        return any(
+            _as_int_or_zero(counts.get(key)) > 0
+            for key in ("pending", "outOfSync", "inProgress")
+        )
+
+    # Inventory sync status is the strongest direct signal.
+    inventory = response.get(VpcFieldNames.INVENTORY)
+    if isinstance(inventory, dict):
+        sync_status = inventory.get("syncStatus")
+        if isinstance(sync_status, dict):
+            if _has_non_sync(sync_status):
+                return False
+            # If syncStatus exists and no non-sync counters are present,
+            # consider it in-sync.
+            return True
+
+    # Overlay counters can still indicate pending/out-of-sync conditions.
+    overlay = response.get(VpcFieldNames.OVERLAY)
+    if isinstance(overlay, dict):
+        network_count = overlay.get(VpcFieldNames.NETWORK_COUNT)
+        vrf_count = overlay.get(VpcFieldNames.VRF_COUNT)
+        if _has_non_sync(network_count) or _has_non_sync(vrf_count):
+            return False
+        if isinstance(network_count, dict) or isinstance(vrf_count, dict):
+            return True
+
+    return None
+
+
 def _is_external_fabric(nd_v2, fabric_name: str, module) -> bool:
     """
     Best-effort external-fabric detection from fabric details endpoint.
@@ -649,6 +750,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
         nrm.module.params["_have"] = lightweight_have
         nrm.module.params["_pending_create"] = []
         nrm.module.params["_pending_delete"] = []
+        nrm.module.params["_not_in_sync_pairs"] = []
         return lightweight_have
 
     try:
@@ -800,6 +902,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
             nrm.module.params["_have"] = []
             nrm.module.params["_pending_create"] = []
             nrm.module.params["_pending_delete"] = []
+            nrm.module.params["_not_in_sync_pairs"] = []
             return []
 
         # Keep only switch IDs for validation and serialize safely in module params.
@@ -1051,6 +1154,33 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
             pair_by_key.pop(key, None)
 
         existing_pairs = list(pair_by_key.values())
+
+        not_in_sync_pairs = []
+        if nrm.module.params.get("deploy", False):
+            # Step 5: Build in-sync deployment signal from overview endpoint.
+            # This supports the deploy=true no-diff case:
+            # pair exists, but is still not deployed/in-sync on controller.
+            for pair in existing_pairs:
+                switch_id = pair.get(VpcFieldNames.SWITCH_ID)
+                peer_switch_id = pair.get(VpcFieldNames.PEER_SWITCH_ID)
+                if not switch_id or not peer_switch_id:
+                    continue
+
+                sync_state = _is_pair_in_sync_from_overview(
+                    nd_v2=nd_v2,
+                    fabric_name=fabric_name,
+                    switch_id=switch_id,
+                    timeout=get_verify_timeout(nrm.module),
+                )
+                if sync_state is False:
+                    not_in_sync_pairs.append(
+                        {
+                            VpcFieldNames.SWITCH_ID: switch_id,
+                            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
+                        }
+                    )
+
+        nrm.module.params["_not_in_sync_pairs"] = not_in_sync_pairs
         return existing_pairs
 
     except NDModuleError as error:
