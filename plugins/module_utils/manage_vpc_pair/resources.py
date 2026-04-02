@@ -21,6 +21,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vpc_
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import (
     VpcPairResourceError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
+    get_verify_iterations,
+)
 
 """
 State-machine resource service for nd_manage_vpc_pair.
@@ -35,7 +38,6 @@ RunStateHandler = Callable[[Any], Dict[str, Any]]
 DeployHandler = Callable[[Any, str, Dict[str, Any]], Dict[str, Any]]
 NeedsDeployHandler = Callable[[Dict[str, Any], Any], bool]
 
-POST_APPLY_REFRESH_RETRIES = 3
 POST_APPLY_REFRESH_RETRY_DELAY_SECONDS = 1
 
 
@@ -133,14 +135,18 @@ class VpcPairStateMachine(NDStateMachine):
         Skipped when:
         - State is gathered (read-only)
         - Running in check mode
-        - suppress_verification is True
+        - suppress_verification is True and verify_option is not provided
         """
         state = self.module.params.get("state")
         if state not in ("merged", "replaced", "overridden", "deleted"):
             return
         if self.module.check_mode:
             return
-        if self.module.params.get("suppress_verification", False):
+        suppress_verification = self.module.params.get("suppress_verification", False)
+        verify_option = self.module.params.get("verify_option")
+        if suppress_verification and not isinstance(verify_option, dict):
+            return
+        if suppress_verification and isinstance(verify_option, dict) and not verify_option:
             return
         if self.logs and not any(
             log.get("status") in ("created", "updated", "deleted")
@@ -150,8 +156,12 @@ class VpcPairStateMachine(NDStateMachine):
             # stale/synthetic before-state fallbacks.
             return
 
+        changed_pairs = self._count_changed_pairs()
+        verify_attempts = get_verify_iterations(
+            self.module, changed_pairs=changed_pairs
+        )
         refresh_errors: List[str] = []
-        for attempt in range(1, POST_APPLY_REFRESH_RETRIES + 1):
+        for attempt in range(1, verify_attempts + 1):
             try:
                 response_data = self.model_orchestrator.query_all()
                 self.existing = NDConfigCollection.from_api_response(
@@ -161,10 +171,10 @@ class VpcPairStateMachine(NDStateMachine):
                 return
             except Exception as exc:
                 refresh_errors.append(str(exc))
-                if attempt < POST_APPLY_REFRESH_RETRIES:
+                if attempt < verify_attempts:
                     self.module.warn(
                         "Post-apply refresh attempt "
-                        f"{attempt}/{POST_APPLY_REFRESH_RETRIES} failed: {exc}. "
+                        f"{attempt}/{verify_attempts} failed: {exc}. "
                         "Retrying..."
                     )
                     time.sleep(POST_APPLY_REFRESH_RETRY_DELAY_SECONDS)
@@ -175,7 +185,7 @@ class VpcPairStateMachine(NDStateMachine):
                         "Failed to refresh final after-state from controller query "
                         "after write operation."
                     ),
-                    attempts=POST_APPLY_REFRESH_RETRIES,
+                    attempts=verify_attempts,
                     retry_delay_seconds=POST_APPLY_REFRESH_RETRY_DELAY_SECONDS,
                     refresh_errors=refresh_errors,
                 )
@@ -221,6 +231,20 @@ class VpcPairStateMachine(NDStateMachine):
             changed = list(sent_payload.keys())
 
         return sorted(set(changed))
+
+    def _count_changed_pairs(self) -> int:
+        """
+        Count unique pair identifiers changed in this run.
+
+        Changed means log status is one of: created, updated, deleted.
+        """
+        changed_keys = set()
+        for log_entry in self.logs:
+            if log_entry.get("status") not in ("created", "updated", "deleted"):
+                continue
+            key = self._identifier_to_key(log_entry.get("identifier"))
+            changed_keys.add(key)
+        return len(changed_keys)
 
     def _build_class_diff(self) -> Dict[str, List[Any]]:
         """

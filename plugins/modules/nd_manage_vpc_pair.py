@@ -27,7 +27,7 @@ options:
         default: merged
         description:
         - The state of the vPC pair configuration after module completion.
-        - C(gathered) is the query/read-only mode for this module.
+        - gathered is the query/read-only mode for this module.
         type: str
     fabric_name:
         description:
@@ -48,22 +48,23 @@ options:
         - Only applies to deleted state.
         type: bool
         default: false
-    vpc_put_timeout:
+    verify_option:
         description:
-        - vPC pair PUT request timeout in seconds for primary operations (create, update, delete).
-        - Increase for large fabrics or slow networks.
-        type: int
-        default: 30
-    query_timeout:
-        description:
-        - API request timeout in seconds for query and recommendation operations.
-        - Defaults to 5 seconds.
-        type: int
-        default: 5
+        - Verification options used only when suppress_verification=true.
+        - timeout is per-query timeout in seconds.
+        - iteration is the number of verification attempts.
+        type: dict
+        suboptions:
+            timeout:
+                type: int
+                default: 5
+            iteration:
+                type: int
+                default: 3
     suppress_verification:
         description:
-        - Skip post-write controller verification query for final C(after) state.
-        - Enable only when you accept fire-and-forget behavior.
+        - Suppress automatic post-write controller verification query for final after state.
+        - When set to true, verification runs only if verify_option is provided.
         type: bool
         default: false
     config:
@@ -92,7 +93,7 @@ notes:
     - RestSend provides protocol-based HTTP abstraction with automatic retry logic
     - Results are aggregated using the Results class for consistent output format
     - Check mode is fully supported via both framework and RestSend
-    - No separate C(dry_run) parameter is supported; use native Ansible C(check_mode)
+    - No separate dry_run parameter is supported; use native Ansible check_mode
 """
 
 EXAMPLES = """
@@ -170,7 +171,7 @@ after:
     description:
     - vPC pair state after changes.
     - By default this is refreshed from controller after write operations and may include read-only properties.
-    - Refresh verification runs with C(suppress_verification=false) (default).
+    - Refresh verification runs with suppress_verification=false (default).
     type: list
     returned: always
     sample: [{"switchId": "FDO123", "peerSwitchId": "FDO456", "useVirtualPeerLink": true}]
@@ -182,15 +183,11 @@ gathered:
         vpc_pairs:
             description: List of configured VPC pairs
             type: list
-        pending_create_vpc_pairs:
-            description: VPC pairs ready to be created (switches are paired but VPC not configured)
-            type: list
         pending_delete_vpc_pairs:
             description: VPC pairs in transitional delete state
             type: list
     sample:
         vpc_pairs: [{"switchId": "FDO123", "peerSwitchId": "FDO456"}]
-        pending_create_vpc_pairs: []
         pending_delete_vpc_pairs: []
 response:
     description: List of all API responses

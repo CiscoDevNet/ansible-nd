@@ -357,25 +357,56 @@ class VpcPairPlaybookConfigModel(BaseModel):
         default=False,
         description="Force deletion without pre-deletion safety checks",
     )
-    vpc_put_timeout: int = Field(
-        default=30,
-        description="vPC pair PUT request timeout in seconds for write operations",
-    )
-    query_timeout: int = Field(
-        default=5,
+    verify_option: Optional[Dict[str, int]] = Field(
+        default=None,
         description=(
-            "API request timeout in seconds for query/recommendation operations "
-            "(default: 5 seconds)"
+            "Verification controls used only when suppress_verification=true. "
+            "Supported keys: timeout (seconds), iteration (attempt count)."
         ),
     )
     suppress_verification: bool = Field(
         default=False,
-        description="Skip post-apply verification query after write operations",
+        description=(
+            "Suppress automatic post-apply verification after write operations. "
+            "When true, verification runs only if verify_option is provided."
+        ),
     )
     config: Optional[List[VpcPairPlaybookItemModel]] = Field(
         default=None,
         description="List of vPC pair configurations",
     )
+
+    @field_validator("verify_option")
+    @classmethod
+    def validate_verify_option(
+        cls, value: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, int]]:
+        """
+        Validate verify_option schema and normalize values.
+
+        Allowed keys:
+        - timeout: positive integer seconds (default 5)
+        - iteration: positive integer attempts (default 3)
+        """
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValueError("verify_option must be a dictionary")
+
+        def _as_positive_int(raw, default, field_name):
+            if raw is None:
+                return default
+            try:
+                parsed = int(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f"verify_option.{field_name} must be an integer")
+            if parsed <= 0:
+                raise ValueError(f"verify_option.{field_name} must be greater than 0")
+            return parsed
+
+        timeout = _as_positive_int(value.get("timeout"), 5, "timeout")
+        iteration = _as_positive_int(value.get("iteration"), 3, "iteration")
+        return {"timeout": timeout, "iteration": iteration}
 
     @classmethod
     def get_argument_spec(cls) -> Dict[str, Any]:
@@ -398,28 +429,25 @@ class VpcPairPlaybookConfigModel(BaseModel):
                     "(bypasses safety checks)"
                 ),
             ),
-            vpc_put_timeout=dict(
-                type="int",
-                default=30,
-                description=(
-                    "vPC pair PUT request timeout in seconds for primary operations"
-                ),
-            ),
-            query_timeout=dict(
-                type="int",
+            verify_option=dict(
+                type="dict",
                 required=False,
-                default=5,
+                options=dict(
+                    timeout=dict(type="int", default=5),
+                    iteration=dict(type="int", default=3),
+                ),
                 description=(
-                    "API request timeout in seconds for query/recommendation "
-                    "operations. Defaults to 5 seconds."
+                    "Verification options used only when suppress_verification=true. "
+                    "Keys: timeout (seconds), iteration (attempt count)."
                 ),
             ),
             suppress_verification=dict(
                 type="bool",
                 default=False,
                 description=(
-                    "Skip final after-state verification query "
-                    "after write operations"
+                    "Suppress automatic final after-state verification query "
+                    "after write operations. When true, verification runs "
+                    "only if verify_option is provided."
                 ),
             ),
             config=dict(

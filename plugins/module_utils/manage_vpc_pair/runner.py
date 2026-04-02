@@ -33,7 +33,6 @@ def run_vpc_module(nrm) -> Dict[str, Any]:
         nrm.result["changed"] = False
 
         current_pairs = nrm.result.get("current", []) or []
-        pending_state_known = nrm.module.params.get("_pending_state_known", True)
         pending_delete = nrm.module.params.get("_pending_delete", []) or []
 
         # Exclude pairs in pending-delete from active gathered set.
@@ -57,15 +56,8 @@ def run_vpc_module(nrm) -> Dict[str, Any]:
         nrm.result["current"] = filtered_current
         nrm.result["gathered"] = {
             "vpc_pairs": filtered_current,
-            "pending_create_vpc_pairs": nrm.module.params.get("_pending_create", []),
             "pending_delete_vpc_pairs": pending_delete,
-            "pending_state_known": pending_state_known,
         }
-        if not pending_state_known:
-            nrm.result["gathered"]["pending_state_note"] = (
-                "Pending create/delete lists are unavailable in lightweight gather mode "
-                "and are provided as empty placeholders."
-            )
         return nrm.result
 
     if state in ("deleted", "overridden") and not config:

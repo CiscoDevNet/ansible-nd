@@ -4,7 +4,7 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 from __future__ import absolute_import, division, print_function
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
@@ -13,7 +13,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
     VpcFieldNames,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
-    get_vpc_put_timeout,
     _is_update_needed,
     _raise_vpc_error,
 )
@@ -38,6 +37,51 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule as NDModuleV2,
     NDModuleError,
 )
+
+
+def _build_compare_payloads(nrm) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Build normalized want/have payloads for idempotence comparisons.
+
+    For external fabrics, force comparison to include vpcAction and
+    vpcPairDetails on both sides so missing controller echoes do not trigger
+    false updates.
+    """
+    is_external = nrm.module.params.get("_is_external_fabric", False)
+    if is_external:
+        want_payload = _build_vpc_pair_payload(nrm.proposed_config)
+        if isinstance(nrm.proposed_config, dict):
+            proposed_details = nrm.proposed_config.get(VpcFieldNames.VPC_PAIR_DETAILS)
+            if proposed_details is None:
+                proposed_details = nrm.proposed_config.get("vpc_pair_details")
+            if proposed_details is not None:
+                want_payload[VpcFieldNames.VPC_PAIR_DETAILS] = proposed_details
+    elif hasattr(nrm.proposed_config, "model_dump"):
+        want_payload = nrm.proposed_config.model_dump(by_alias=True, exclude_none=True)
+    elif isinstance(nrm.proposed_config, dict):
+        want_payload = dict(nrm.proposed_config)
+    else:
+        want_payload = {}
+    if hasattr(nrm.existing_config, "model_dump"):
+        have_payload = nrm.existing_config.model_dump(by_alias=True, exclude_none=True)
+    elif isinstance(nrm.existing_config, dict):
+        have_payload = dict(nrm.existing_config)
+    else:
+        have_payload = {}
+
+    if is_external:
+        want_payload.setdefault(VpcFieldNames.VPC_ACTION, VpcActionEnum.PAIR.value)
+        have_payload.setdefault(VpcFieldNames.VPC_ACTION, VpcActionEnum.PAIR.value)
+
+        want_details = want_payload.get(VpcFieldNames.VPC_PAIR_DETAILS)
+        have_details = have_payload.get(VpcFieldNames.VPC_PAIR_DETAILS)
+        if want_details and not have_details:
+            have_payload[VpcFieldNames.VPC_PAIR_DETAILS] = want_details
+        elif have_details and not want_details:
+            want_payload[VpcFieldNames.VPC_PAIR_DETAILS] = have_details
+
+    return want_payload, have_payload
+
 
 def custom_vpc_create(nrm) -> Optional[Dict[str, Any]]:
     """
@@ -89,8 +133,7 @@ def custom_vpc_create(nrm) -> Optional[Dict[str, Any]]:
 
     # Validation Step 3: Check if create is actually needed (idempotence check)
     if nrm.existing_config:
-        want_dict = nrm.proposed_config.model_dump(by_alias=True, exclude_none=True) if hasattr(nrm.proposed_config, 'model_dump') else nrm.proposed_config
-        have_dict = nrm.existing_config.model_dump(by_alias=True, exclude_none=True) if hasattr(nrm.existing_config, 'model_dump') else nrm.existing_config
+        want_dict, have_dict = _build_compare_payloads(nrm)
 
         if not _is_update_needed(want_dict, have_dict):
             # Already exists in desired state - return existing config without changes
@@ -163,13 +206,7 @@ def custom_vpc_create(nrm) -> Optional[Dict[str, Any]]:
 
     try:
         # Use PUT (not POST!) for create via RestSend
-        rest_send = nd_v2._get_rest_send()
-        rest_send.save_settings()
-        rest_send.timeout = get_vpc_put_timeout(nrm.module)
-        try:
-            response = nd_v2.request(path, HttpVerbEnum.PUT, payload)
-        finally:
-            rest_send.restore_settings()
+        response = nd_v2.request(path, HttpVerbEnum.PUT, payload)
         return response
 
     except NDModuleError as error:
@@ -253,8 +290,7 @@ def custom_vpc_update(nrm) -> Optional[Dict[str, Any]]:
 
     # Validation Step 3: Check if update is actually needed
     if nrm.existing_config:
-        want_dict = nrm.proposed_config.model_dump(by_alias=True, exclude_none=True) if hasattr(nrm.proposed_config, 'model_dump') else nrm.proposed_config
-        have_dict = nrm.existing_config.model_dump(by_alias=True, exclude_none=True) if hasattr(nrm.existing_config, 'model_dump') else nrm.existing_config
+        want_dict, have_dict = _build_compare_payloads(nrm)
         
         if not _is_update_needed(want_dict, have_dict):
             # No changes needed - return existing config
@@ -295,13 +331,7 @@ def custom_vpc_update(nrm) -> Optional[Dict[str, Any]]:
 
     try:
         # Use PUT for update via RestSend
-        rest_send = nd_v2._get_rest_send()
-        rest_send.save_settings()
-        rest_send.timeout = get_vpc_put_timeout(nrm.module)
-        try:
-            response = nd_v2.request(path, HttpVerbEnum.PUT, payload)
-        finally:
-            rest_send.restore_settings()
+        response = nd_v2.request(path, HttpVerbEnum.PUT, payload)
         return response
 
     except NDModuleError as error:
@@ -430,13 +460,7 @@ def custom_vpc_delete(nrm) -> bool:
 
     try:
         # Use PUT (not DELETE!) for unpair via RestSend
-        rest_send = nd_v2._get_rest_send()
-        rest_send.save_settings()
-        rest_send.timeout = get_vpc_put_timeout(nrm.module)
-        try:
-            nd_v2.request(path, HttpVerbEnum.PUT, payload)
-        finally:
-            rest_send.restore_settings()
+        nd_v2.request(path, HttpVerbEnum.PUT, payload)
 
     except NDModuleError as error:
         error_msg = str(error.msg).lower() if error.msg else ""

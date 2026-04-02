@@ -31,7 +31,10 @@
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
-    query_timeout: 60
+    suppress_verification: true
+    verify_option:
+      timeout: 60
+      iteration: 3
   register: fabric_query
   ignore_errors: true
 

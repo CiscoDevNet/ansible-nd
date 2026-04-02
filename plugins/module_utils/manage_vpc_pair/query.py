@@ -7,9 +7,11 @@ from __future__ import absolute_import, division, print_function
 
 import ipaddress
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
+    VpcActionEnum,
     VpcFieldNames,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.validation import (
@@ -17,7 +19,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.validatio
     _validate_fabric_switches,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
-    get_query_timeout,
+    get_verify_timeout,
     _raise_vpc_error,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import (
@@ -33,6 +35,66 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule as NDModuleV2,
     NDModuleError,
 )
+
+
+def _is_external_fabric(nd_v2, fabric_name: str, module) -> bool:
+    """
+    Best-effort external-fabric detection from fabric details endpoint.
+
+    Falls back to fabric name hint when details lookup is unavailable.
+
+    Args:
+        nd_v2: NDModuleV2 instance for RestSend
+        fabric_name: Fabric name
+        module: AnsibleModule for warnings
+
+    Returns:
+        True when fabric appears to be external, else False.
+    """
+    fallback = "external" in str(fabric_name).lower()
+    details_path = f"/api/v1/manage/fabrics/{quote(fabric_name, safe='')}"
+
+    rest_send = nd_v2._get_rest_send()
+    rest_send.save_settings()
+    rest_send.timeout = get_verify_timeout(module)
+    try:
+        details = nd_v2.request(details_path, HttpVerbEnum.GET)
+    except Exception as exc:
+        module.warn(
+            f"Unable to determine fabric type for '{fabric_name}': "
+            f"{str(exc).splitlines()[0]}. Using fallback detection."
+        )
+        return fallback
+    finally:
+        rest_send.restore_settings()
+
+    if not isinstance(details, dict):
+        return fallback
+
+    candidates: List[str] = []
+    for key in ("fabricType", "fabricTechnology", "type", "category"):
+        value = details.get(key)
+        if isinstance(value, str):
+            candidates.append(value.lower())
+
+    management = details.get("management")
+    if isinstance(management, dict):
+        mgmt_type = management.get("type")
+        if isinstance(mgmt_type, str):
+            candidates.append(mgmt_type.lower())
+
+    properties = details.get("properties")
+    if isinstance(properties, dict):
+        for key in ("fabricType", "fabricTechnology", "type"):
+            value = properties.get(key)
+            if isinstance(value, str):
+                candidates.append(value.lower())
+
+    if not candidates:
+        return fallback
+
+    return any("external" in token for token in candidates)
+
 
 def _get_recommendation_details(nd_v2, fabric_name: str, switch_id: str, timeout: Optional[int] = None) -> Optional[Dict]:
     """
@@ -63,7 +125,7 @@ def _get_recommendation_details(nd_v2, fabric_name: str, switch_id: str, timeout
 
         # Use query timeout from module params or override
         if timeout is None:
-            timeout = get_query_timeout(nd_v2.module)
+            timeout = get_verify_timeout(nd_v2.module)
 
         rest_send = nd_v2._get_rest_send()
         rest_send.save_settings()
@@ -163,15 +225,20 @@ def _extract_vpc_pairs_from_list_response(vpc_pairs_response: Any) -> List[Dict[
         if not switch_id or not peer_switch_id:
             continue
 
-        extracted_pairs.append(
-            {
-                VpcFieldNames.SWITCH_ID: switch_id,
-                VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
-                VpcFieldNames.USE_VIRTUAL_PEER_LINK: item.get(
-                    VpcFieldNames.USE_VIRTUAL_PEER_LINK, False
-                ),
-            }
-        )
+        extracted_pair = {
+            VpcFieldNames.SWITCH_ID: switch_id,
+            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
+            VpcFieldNames.USE_VIRTUAL_PEER_LINK: item.get(
+                VpcFieldNames.USE_VIRTUAL_PEER_LINK, False
+            ),
+            VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
+        }
+        if VpcFieldNames.VPC_PAIR_DETAILS in item:
+            extracted_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(
+                VpcFieldNames.VPC_PAIR_DETAILS
+            )
+
+        extracted_pairs.append(extracted_pair)
 
     return extracted_pairs
 
@@ -203,7 +270,7 @@ def _enrich_pairs_from_direct_vpc(
         return []
 
     if timeout is None:
-        timeout = get_query_timeout(nd_v2.module)
+        timeout = get_verify_timeout(nd_v2.module)
 
     enriched_pairs: List[Dict[str, Any]] = []
     for pair in pairs:
@@ -237,6 +304,12 @@ def _enrich_pairs_from_direct_vpc(
             )
             if use_virtual_peer_link is not None:
                 enriched[VpcFieldNames.USE_VIRTUAL_PEER_LINK] = use_virtual_peer_link
+
+            enriched[VpcFieldNames.VPC_ACTION] = VpcActionEnum.PAIR.value
+            if VpcFieldNames.VPC_PAIR_DETAILS in direct_vpc:
+                enriched[VpcFieldNames.VPC_PAIR_DETAILS] = direct_vpc.get(
+                    VpcFieldNames.VPC_PAIR_DETAILS
+                )
 
         enriched_pairs.append(enriched)
 
@@ -279,7 +352,7 @@ def _filter_stale_vpc_pairs(
             nd_v2,
             fabric_name,
             switch_id,
-            timeout=get_query_timeout(module),
+            timeout=get_verify_timeout(module),
         )
         if membership is False:
             module.warn(
@@ -545,9 +618,13 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
         raise ValueError(f"fabric_name must be a non-empty string. Got: {fabric_name!r}")
 
     state = nrm.module.params.get("state", "merged")
-    nrm.module.params["_pending_state_known"] = True
     # Initialize RestSend via NDModuleV2
     nd_v2 = NDModuleV2(nrm.module)
+    nrm.module.params["_is_external_fabric"] = _is_external_fabric(
+        nd_v2=nd_v2,
+        fabric_name=fabric_name,
+        module=nrm.module,
+    )
     preloaded_fabric_switches = normalize_vpc_playbook_switch_identifiers(
         module=nrm.module,
         nd_v2=nd_v2,
@@ -562,7 +639,6 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
 
     def _set_lightweight_context(
         lightweight_have: List[Dict[str, Any]],
-        pending_state_known: bool = True,
     ) -> List[Dict[str, Any]]:
         nrm.module.params["_fabric_switches"] = []
         nrm.module.params["_fabric_switches_count"] = 0
@@ -573,7 +649,6 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
         nrm.module.params["_have"] = lightweight_have
         nrm.module.params["_pending_create"] = []
         nrm.module.params["_pending_delete"] = []
-        nrm.module.params["_pending_state_known"] = pending_state_known
         return lightweight_have
 
     try:
@@ -584,7 +659,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
             list_path = VpcPairEndpoints.vpc_pairs_list(fabric_name)
             rest_send = nd_v2._get_rest_send()
             rest_send.save_settings()
-            rest_send.timeout = get_query_timeout(nrm.module)
+            rest_send.timeout = get_verify_timeout(nrm.module)
             try:
                 vpc_pairs_response = nd_v2.request(list_path, HttpVerbEnum.GET)
             finally:
@@ -614,13 +689,17 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                         if use_vpl_val is None:
                             use_vpl_val = item.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False)
 
-                        fallback_have.append(
-                            {
-                                VpcFieldNames.SWITCH_ID: switch_id_val,
-                                VpcFieldNames.PEER_SWITCH_ID: peer_switch_id_val,
-                                VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl_val,
-                            }
-                        )
+                        fallback_pair = {
+                            VpcFieldNames.SWITCH_ID: switch_id_val,
+                            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id_val,
+                            VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl_val,
+                            VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
+                        }
+                        if VpcFieldNames.VPC_PAIR_DETAILS in item:
+                            fallback_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(
+                                VpcFieldNames.VPC_PAIR_DETAILS
+                            )
+                        fallback_have.append(fallback_pair)
 
                     if fallback_have:
                         nrm.module.warn(
@@ -635,7 +714,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                         nd_v2=nd_v2,
                         fabric_name=fabric_name,
                         pairs=have,
-                        timeout=get_query_timeout(nrm.module),
+                        timeout=get_verify_timeout(nrm.module),
                     )
                     have = _filter_stale_vpc_pairs(
                         nd_v2=nd_v2,
@@ -644,10 +723,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                         module=nrm.module,
                     )
                     if have:
-                        return _set_lightweight_context(
-                            lightweight_have=have,
-                            pending_state_known=False,
-                        )
+                        return _set_lightweight_context(lightweight_have=have)
                     nrm.module.warn(
                         "vPC list query returned no active pairs for gathered workflow. "
                         "Falling back to switch-level discovery."
@@ -681,13 +757,17 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                     if use_vpl_val is None:
                         use_vpl_val = item.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False)
 
-                    fallback_have.append(
-                        {
-                            VpcFieldNames.SWITCH_ID: switch_id_val,
-                            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id_val,
-                            VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl_val,
-                        }
-                    )
+                    fallback_pair = {
+                        VpcFieldNames.SWITCH_ID: switch_id_val,
+                        VpcFieldNames.PEER_SWITCH_ID: peer_switch_id_val,
+                        VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl_val,
+                        VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
+                    }
+                    if VpcFieldNames.VPC_PAIR_DETAILS in item:
+                        fallback_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(
+                            VpcFieldNames.VPC_PAIR_DETAILS
+                        )
+                    fallback_have.append(fallback_pair)
 
                 if fallback_have:
                     nrm.module.warn(
@@ -771,7 +851,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                     vpc_pair_path = VpcPairEndpoints.switch_vpc_pair(fabric_name, switch_id)
                     rest_send = nd_v2._get_rest_send()
                     rest_send.save_settings()
-                    rest_send.timeout = get_query_timeout(nrm.module)
+                    rest_send.timeout = get_verify_timeout(nrm.module)
                     try:
                         direct_vpc = nd_v2.request(vpc_pair_path, HttpVerbEnum.GET)
                     finally:
@@ -792,7 +872,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                         nd_v2,
                         fabric_name,
                         switch_id,
-                        timeout=get_query_timeout(nrm.module),
+                        timeout=get_verify_timeout(nrm.module),
                     )
                     if membership is False:
                         pending_delete.append({
@@ -805,12 +885,38 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                             VpcFieldNames.SWITCH_ID: switch_id,
                             VpcFieldNames.PEER_SWITCH_ID: resolved_peer_switch_id,
                             VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl,
+                            VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
                         }
                         if vpc_pair_details is not None:
                             current_pair[VpcFieldNames.VPC_PAIR_DETAILS] = vpc_pair_details
                         have.append(current_pair)
                 else:
-                    # Direct query failed - fall back to recommendation.
+                    # Direct query failed. Check overview membership first to classify
+                    # transitional create-vs-delete states before recommendation fallback.
+                    membership = _is_switch_in_vpc_pair(
+                        nd_v2,
+                        fabric_name,
+                        switch_id,
+                        timeout=get_verify_timeout(nrm.module),
+                    )
+                    if membership is True:
+                        pending_create.append({
+                            VpcFieldNames.SWITCH_ID: switch_id,
+                            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
+                            VpcFieldNames.USE_VIRTUAL_PEER_LINK: _get_api_field_value(
+                                vpc_data, "useVirtualPeerLink", False
+                            ),
+                        })
+                        continue
+                    if membership is False:
+                        pending_delete.append({
+                            VpcFieldNames.SWITCH_ID: switch_id,
+                            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
+                            VpcFieldNames.USE_VIRTUAL_PEER_LINK: False,
+                        })
+                        continue
+
+                    # Membership unknown - fall back to recommendation.
                     try:
                         recommendation = _get_recommendation_details(nd_v2, fabric_name, switch_id)
                     except Exception as rec_error:
@@ -830,9 +936,11 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                             VpcFieldNames.SWITCH_ID: switch_id,
                             VpcFieldNames.PEER_SWITCH_ID: resolved_peer_switch_id,
                             VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl,
+                            VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
                         })
                     else:
-                        # VPC configured but query failed - mark as pending delete.
+                        # Unknown membership and no recommendation; conservatively
+                        # classify as pending-delete-like transitional state.
                         pending_delete.append({
                             VpcFieldNames.SWITCH_ID: switch_id,
                             VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
@@ -844,7 +952,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                     vpc_pair_path = VpcPairEndpoints.switch_vpc_pair(fabric_name, switch_id)
                     rest_send = nd_v2._get_rest_send()
                     rest_send.save_settings()
-                    rest_send.timeout = get_query_timeout(nrm.module)
+                    rest_send.timeout = get_verify_timeout(nrm.module)
                     try:
                         direct_vpc = nd_v2.request(vpc_pair_path, HttpVerbEnum.GET)
                     finally:
@@ -864,7 +972,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                             nd_v2,
                             fabric_name,
                             switch_id,
-                            timeout=get_query_timeout(nrm.module),
+                            timeout=get_verify_timeout(nrm.module),
                         )
                         if membership is False:
                             pending_delete.append({
@@ -877,33 +985,40 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
                                 VpcFieldNames.SWITCH_ID: switch_id,
                                 VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
                                 VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl,
+                                VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
                             }
                             if vpc_pair_details is not None:
                                 current_pair[VpcFieldNames.VPC_PAIR_DETAILS] = vpc_pair_details
                             have.append(current_pair)
                 else:
-                    # No direct pair; check recommendation for pending create candidates.
-                    try:
-                        recommendation = _get_recommendation_details(nd_v2, fabric_name, switch_id)
-                    except Exception as rec_error:
-                        error_msg = str(rec_error).splitlines()[0]
-                        nrm.module.warn(
-                            f"Recommendation query failed for switch {switch_id}: {error_msg}. "
-                            f"No recommendation details available."
-                        )
-                        recommendation = None
-
-                    if recommendation:
-                        peer_switch_id = _get_api_field_value(recommendation, "serialNumber")
+                    # No direct pair. Do not use recommendation for pending-create
+                    # classification. Use overview membership only.
+                    membership = _is_switch_in_vpc_pair(
+                        nd_v2,
+                        fabric_name,
+                        switch_id,
+                        timeout=get_verify_timeout(nrm.module),
+                    )
+                    if membership is True:
+                        # Peer may be unknown without direct pair payload. Keep this
+                        # entry only when config can provide peer context.
+                        peer_switch_id = None
+                        for cfg in config:
+                            cfg_sw = cfg.get(VpcFieldNames.SWITCH_ID) or cfg.get("switch_id")
+                            cfg_peer = cfg.get(VpcFieldNames.PEER_SWITCH_ID) or cfg.get("peer_switch_id")
+                            if cfg_sw == switch_id:
+                                peer_switch_id = cfg_peer
+                                break
+                            if cfg_peer == switch_id:
+                                peer_switch_id = cfg_sw
+                                break
                         if peer_switch_id:
                             processed_switches.add(switch_id)
                             processed_switches.add(peer_switch_id)
-
-                            use_vpl = _get_api_field_value(recommendation, "useVirtualPeerLink", False)
                             pending_create.append({
                                 VpcFieldNames.SWITCH_ID: switch_id,
                                 VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
-                                VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl,
+                                VpcFieldNames.USE_VIRTUAL_PEER_LINK: False,
                             })
 
         # Step 4: Store all states for use in create/update/delete.
@@ -916,7 +1031,7 @@ def custom_vpc_query_all(nrm) -> List[Dict]:
         # - Exclude pending-delete pairs from active set to avoid stale
         #   idempotence false-negatives right after unpair operations.
         #
-        # Pending-create candidates are recommendations, not configured pairs.
+        # Pending-create candidates are transitional and not confirmed active pairs.
         # Treating them as existing causes false no-change outcomes for create.
         pair_by_key = {}
         for pair in have:

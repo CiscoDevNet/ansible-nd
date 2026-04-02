@@ -12,8 +12,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
     VpcFieldNames,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
-    get_vpc_put_timeout,
-    get_query_timeout,
+    get_verify_timeout,
     _raise_vpc_error,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import (
@@ -63,7 +62,7 @@ def _get_pairing_support_details(
     )
 
     if timeout is None:
-        timeout = get_query_timeout(nd_v2.module)
+        timeout = get_verify_timeout(nd_v2.module)
 
     rest_send = nd_v2._get_rest_send()
     rest_send.save_settings()
@@ -167,7 +166,7 @@ def _get_consistency_details(
     path = VpcPairEndpoints.switch_vpc_consistency(fabric_name, switch_id)
 
     if timeout is None:
-        timeout = get_query_timeout(nd_v2.module)
+        timeout = get_verify_timeout(nd_v2.module)
 
     rest_send = nd_v2._get_rest_send()
     rest_send.save_settings()
@@ -210,7 +209,7 @@ def _is_switch_in_vpc_pair(
     )
 
     if timeout is None:
-        timeout = get_query_timeout(nd_v2.module)
+        timeout = get_verify_timeout(nd_v2.module)
 
     rest_send = nd_v2._get_rest_send()
     rest_send.save_settings()
@@ -248,17 +247,8 @@ def _validate_fabric_switches(nd_v2, fabric_name: str) -> Dict[str, Dict]:
     if not fabric_name or not isinstance(fabric_name, str):
         raise ValueError(f"Invalid fabric_name: {fabric_name}")
 
-    # Use normalized write timeout for fabric switch inventory read.
-    timeout = get_vpc_put_timeout(nd_v2.module)
-
-    rest_send = nd_v2._get_rest_send()
-    rest_send.save_settings()
-    rest_send.timeout = timeout
-    try:
-        switches_path = VpcPairEndpoints.fabric_switches(fabric_name)
-        switches_response = nd_v2.request(switches_path, HttpVerbEnum.GET)
-    finally:
-        rest_send.restore_settings()
+    switches_path = VpcPairEndpoints.fabric_switches(fabric_name)
+    switches_response = nd_v2.request(switches_path, HttpVerbEnum.GET)
 
     if not switches_response:
         return {}
@@ -491,7 +481,7 @@ def _validate_vpc_pair_deletion(nd_v2, fabric_name: str, switch_id: str, vpc_pai
         # Bound overview validation call by normalized query timeout.
         rest_send = nd_v2._get_rest_send()
         rest_send.save_settings()
-        rest_send.timeout = get_query_timeout(nd_v2.module)
+        rest_send.timeout = get_verify_timeout(nd_v2.module)
         try:
             response = nd_v2.request(overview_path, HttpVerbEnum.GET)
         finally:

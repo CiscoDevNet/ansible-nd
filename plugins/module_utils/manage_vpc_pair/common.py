@@ -12,8 +12,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
 )
 
 
-DEFAULT_VPC_PUT_TIMEOUT = 30
-DEFAULT_VPC_QUERY_TIMEOUT = 5
+DEFAULT_VERIFY_TIMEOUT = 5
+DEFAULT_VERIFY_ITERATION = 3
 
 def _collection_to_list_flex(collection) -> List[Dict[str, Any]]:
     """
@@ -136,29 +136,59 @@ def _normalize_timeout(
     return fallback
 
 
-def get_vpc_put_timeout(module) -> int:
+def _normalize_iteration(value: Optional[Any], fallback: int) -> int:
     """
-    Return normalized write-operation timeout.
+    Normalize retry iteration count from module params with sane fallback.
 
     Args:
-        module: AnsibleModule with params
+        value: Raw iteration input from module params
+        fallback: Iteration count to use when value is missing/invalid
 
     Returns:
-        Integer timeout for create/update/delete calls.
+        Positive integer iteration count.
     """
-    return _normalize_timeout(
-        module.params.get("vpc_put_timeout"),
-        DEFAULT_VPC_PUT_TIMEOUT,
-    )
+    try:
+        parsed = int(value)
+        if parsed > 0:
+            return parsed
+    except (TypeError, ValueError):
+        pass
+    return fallback
 
 
-def get_query_timeout(module) -> int:
+def get_verify_option(module) -> Dict[str, int]:
+    """
+    Return normalized verify_option dictionary.
+
+    verify_option schema:
+    - timeout: per-query timeout in seconds
+    - iteration: number of verification attempts
+
+    Invalid or missing values fall back to defaults.
+    """
+    raw_options = module.params.get("verify_option") or {}
+    if not isinstance(raw_options, dict):
+        raw_options = {}
+
+    return {
+        "timeout": _normalize_timeout(
+            raw_options.get("timeout"), DEFAULT_VERIFY_TIMEOUT
+        ),
+        "iteration": _normalize_iteration(
+            raw_options.get("iteration"), DEFAULT_VERIFY_ITERATION
+        ),
+    }
+
+
+def get_verify_timeout(module) -> int:
     """
     Return normalized read-operation timeout.
 
-    Simplified policy:
-    - If query_timeout is provided, use it.
-    - Otherwise inherit vpc_put_timeout.
+    Policy:
+    - When suppress_verification is false (default), query timeout is fixed
+      to DEFAULT_VERIFY_TIMEOUT for automatic verification/read paths.
+    - When suppress_verification is true, timeout can be tuned via
+      verify_option.timeout.
 
     Args:
         module: AnsibleModule with params
@@ -166,11 +196,35 @@ def get_query_timeout(module) -> int:
     Returns:
         Integer timeout for query/recommendation/verification calls.
     """
-    vpc_put_timeout = get_vpc_put_timeout(module)
-    query_timeout = module.params.get("query_timeout")
-    if query_timeout is None:
-        return vpc_put_timeout
-    return _normalize_timeout(
-        query_timeout,
-        fallback=vpc_put_timeout or DEFAULT_VPC_QUERY_TIMEOUT,
-    )
+    if not module.params.get("suppress_verification", False):
+        return DEFAULT_VERIFY_TIMEOUT
+    return get_verify_option(module).get("timeout", DEFAULT_VERIFY_TIMEOUT)
+
+
+def get_verify_iterations(module, changed_pairs: Optional[int] = None) -> int:
+    """
+    Return normalized verification attempt count.
+
+    Policy:
+    - If suppress_verification is true and verify_option.iteration is provided,
+      use that explicit value.
+    - Otherwise, for automatic verification, use changed_pairs + 1 when
+      changed_pairs is available.
+    - Fall back to DEFAULT_VERIFY_ITERATION when changed_pairs is unavailable.
+
+    Args:
+        module: AnsibleModule with params
+        changed_pairs: Number of create/update/delete items in this run
+
+    Returns:
+        Positive integer verification attempt count.
+    """
+    if module.params.get("suppress_verification", False):
+        verify_option = module.params.get("verify_option")
+        if isinstance(verify_option, dict) and "iteration" in verify_option:
+            return get_verify_option(module).get("iteration", DEFAULT_VERIFY_ITERATION)
+
+    if isinstance(changed_pairs, int) and changed_pairs > 0:
+        return changed_pairs + 1
+
+    return DEFAULT_VERIFY_ITERATION
