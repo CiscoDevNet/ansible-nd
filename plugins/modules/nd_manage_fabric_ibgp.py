@@ -1183,17 +1183,17 @@ options:
             - Additional CLIs required during device bootup/login (e.g. AAA/Radius).
             type: str
             default: ""
-          un_numbered_bootstrap_loopback_id:
+          unnumbered_bootstrap_loopback_id:
             description:
             - Bootstrap Seed Switch Loopback Interface ID.
             type: int
             default: 253
-          un_numbered_dhcp_start_address:
+          unnumbered_dhcp_start_address:
             description:
             - Switch Loopback DHCP Scope Start Address. Must be a subset of IGP/BGP Loopback Prefix Pool.
             type: str
             default: ""
-          un_numbered_dhcp_end_address:
+          unnumbered_dhcp_end_address:
             description:
             - Switch Loopback DHCP Scope End Address. Must be a subset of IGP/BGP Loopback Prefix Pool.
             type: str

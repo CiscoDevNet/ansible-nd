@@ -328,15 +328,15 @@ class VxlanIbgpManagementModel(NDNestedModel):
     extra_config_nxos_bootstrap: str = Field(
         alias="extraConfigNxosBootstrap", description="Additional CLIs required during device bootup/login e.g. AAA/Radius", default=""
     )
-    un_numbered_bootstrap_loopback_id: int = Field(
+    unnumbered_bootstrap_loopback_id: int = Field(
         alias="unNumberedBootstrapLoopbackId", description="Bootstrap Seed Switch Loopback Interface ID", default=253
     )
-    un_numbered_dhcp_start_address: str = Field(
+    unnumbered_dhcp_start_address: str = Field(
         alias="unNumberedDhcpStartAddress",
         description="Switch Loopback DHCP Scope Start Address.  Must be a subset of IGP/BGP Loopback Prefix Pool",
         default="",
     )
-    un_numbered_dhcp_end_address: str = Field(
+    unnumbered_dhcp_end_address: str = Field(
         alias="unNumberedDhcpEndAddress", description="Switch Loopback DHCP Scope End Address. Must be a subset of IGP/BGP Loopback Prefix Pool", default=""
     )
     inband_management: bool = Field(alias="inbandManagement", description="Manage switches with only Inband connectivity", default=False)
