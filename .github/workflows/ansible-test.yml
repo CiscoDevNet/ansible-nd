@@ -194,7 +194,7 @@ jobs:
       - name: Store galaxy_importer check log file
         uses: actions/upload-artifact@v4
         with:
-          name: galaxy-importer-log
+          name: galaxy-importer-log-${{ matrix.python_version }}-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs/importer_result.json
 
   ansible-test:
