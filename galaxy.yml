@@ -5,27 +5,38 @@ name: nd
 version: 1.5.0
 readme: README.md
 authors:
+  - "Akini Ross (@akinross)"
+  - "Akshayanat Chengam Saravanan (@akdrg)"
+  - "Allen Robel (@allenrobel)"
+  - "Anvitha Jain (@anvitha-jain)"
+  - "Gaspard Micol (@gmicol)"
   - "Lionel Hercot (@lhercot)"
-  - "Cindy Zhao (@cizhao)"
-  - "Alejandro de Alda (@adealdag)"
+  - "Matt Tarkington (@mtarking)"
+  - "Mike Wiebe (@mikewiebe)"
+  - "Sabari Jaganathan (@sajagana)"
+  - "Samita Bhattacharjee (@samiib)"
+  - "Shreyas Srish (@shrsr)"
+  - "Sivakami Sivaraman (@sivakasi-cisco)"
 description: An Ansible collection for managing Cisco Nexus Dashboard
 license_file: "LICENSE"
 tags:
-  - cisco
-  - nd
   - aci
-  - dcnm
-  - orchestrator
-  - multisite
-  - insights
-  - nexus
+  - cisco
   - cloud
-  - collection
+  - datacenter
+  - dc
+  - dcnm
+  - insights
+  - multisite
+  - nexus
+  - nd
+  - ndfc
   - networking
+  - nxos
   - sdn
 dependencies:
   "ansible.netcommon": ">=2.6.1"
 repository: https://github.com/CiscoDevNet/ansible-nd
-#documentation: https://docs.ansible.com/ansible/latest/scenario_guides/guide_nd.html
+documentation: https://galaxy.ansible.com/ui/repo/published/cisco/nd/docs/
 homepage: https://cisco.com/go/nexusdashboard
 issues: https://github.com/CiscoDevNet/ansible-nd/issues
