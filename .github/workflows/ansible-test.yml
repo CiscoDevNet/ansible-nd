@@ -69,11 +69,6 @@ jobs:
           - ansible_version: "stable-2.16"
             python_version: "3.10"
 
-          # Ansible 2.15: supports Python 3.9 - 3.11
-          - ansible_version: "stable-2.15"
-            python_version: "3.11"
-          - ansible_version: "stable-2.15"
-            python_version: "3.10"
     steps:
       - name: Check out code
         uses: actions/checkout@v5
@@ -137,11 +132,6 @@ jobs:
           - ansible_version: "stable-2.16"
             python_version: "3.10"
 
-          # Ansible 2.15: supports Python 3.9 - 3.11
-          - ansible_version: "stable-2.15"
-            python_version: "3.11"
-          - ansible_version: "stable-2.15"
-            python_version: "3.10"
     steps:
       - name: Set up Python ${{ matrix.python_version }}
         uses: actions/setup-python@v6
@@ -238,11 +228,6 @@ jobs:
           - ansible_version: "stable-2.16"
             python_version: "3.10"
 
-          # Ansible 2.15: supports Python 3.9 - 3.11
-          - ansible_version: "stable-2.15"
-            python_version: "3.11"
-          - ansible_version: "stable-2.15"
-            python_version: "3.10"
     steps:
       - name: Set up Python ${{ matrix.python_version }}
         uses: actions/setup-python@v6
@@ -318,11 +303,6 @@ jobs:
           - ansible_version: "stable-2.16"
             python_version: "3.10"
 
-          # Ansible 2.15: supports Python 3.9 - 3.11
-          - ansible_version: "stable-2.15"
-            python_version: "3.11"
-          - ansible_version: "stable-2.15"
-            python_version: "3.10"
     steps:
       - name: Set up Python ${{ matrix.python_version }}
         uses: actions/setup-python@v6
@@ -338,7 +318,7 @@ jobs:
       - name: Download migrated collection artifacts
         uses: actions/download-artifact@v5
         with:
-          name: collection-${{ matrix.ansible_version }}
+          name: collection-${{ matrix.python_version }}-${{ matrix.ansible_version }}
           path: .cache/collection-tarballs
 
       - name: Install the collection tarball
