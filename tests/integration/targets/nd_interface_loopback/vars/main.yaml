@@ -1,0 +1,65 @@
+---
+# Variables for nd_interface_loopback integration tests.
+#
+# Override fabric_name and switch_ip in your inventory or extra-vars
+# to match a real ND 4.2 testbed.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
+test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
+
+# Loopback interface configs used across tests.
+# Loopback IDs 100-109 are reserved for these integration tests.
+loopback_100:
+  interface_name: loopback100
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        ip: "10.100.100.1"
+        description: "Ansible integration test loopback100"
+        vrf: default
+        route_map_tag: 12345
+        policy_type: loopback
+
+loopback_101:
+  interface_name: loopback101
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        ip: "10.100.101.1"
+        description: "Ansible integration test loopback101"
+        policy_type: loopback
+
+loopback_102:
+  interface_name: loopback102
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        ip: "10.100.102.1"
+        description: "Ansible integration test loopback102"
+        policy_type: loopback
+
+# Updated versions for merge/replace tests
+loopback_100_updated:
+  interface_name: loopback100
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        ip: "10.100.100.2"
+        description: "Updated loopback100 description"
+        vrf: default
+        route_map_tag: 54321
+        policy_type: loopback
+
+loopback_101_updated:
+  interface_name: loopback101
+  config_data:
+    network_os:
+      policy:
+        admin_state: false
+        ip: "10.100.101.2"
+        description: "Updated loopback101 description"
+        policy_type: loopback
