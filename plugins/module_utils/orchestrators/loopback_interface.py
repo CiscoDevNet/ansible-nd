@@ -29,7 +29,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
+    LOOPBACK_POLICY_TYPE_MAPPING,
+    LoopbackInterfaceModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
@@ -347,7 +350,10 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         """
         # Summary
 
-        Validate the fabric context and query all interfaces on the switch, filtering for loopback type only.
+        Validate the fabric context and query all interfaces on the switch, filtering for user-managed loopback interfaces only.
+
+        System-provisioned loopbacks (e.g. Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) are excluded because they are managed by ND
+        during initial switch role configuration and cannot be deleted or modified by this module.
 
         Runs `validate` on first call to ensure the fabric exists, is modifiable, and the target switch is reachable
         before returning any data.
@@ -361,6 +367,7 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         - If no switch matches the given `switch_ip` in the fabric.
         - If the query API request fails.
         """
+        managed_policy_types = set(LOOPBACK_POLICY_TYPE_MAPPING.data.values())
         try:
             self.validate_prerequisites()
             api_endpoint = self._configure_endpoint(self.query_all_endpoint())
@@ -368,6 +375,7 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
             if not result:
                 return []
             interfaces = result.get("interfaces", []) or []
-            return [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
+            loopbacks = [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
+            return [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_policy_types]
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
