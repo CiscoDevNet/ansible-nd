@@ -1,0 +1,119 @@
+---
+# Deleted state tests for nd_interface_loopback
+# Copyright: (c) 2026, Cisco Systems, Inc.
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point loopback101 and loopback102 exist from overridden tests.
+
+# --- DELETED: SINGLE INTERFACE ---
+
+- name: "DELETED: Delete loopback101 (check mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    switch_ip: "{{ test_switch_ip }}"
+    config:
+      - interface_name: loopback101
+    state: deleted
+  check_mode: true
+  register: cm_deleted_101
+
+- name: "DELETED: Delete loopback101 (normal mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    switch_ip: "{{ test_switch_ip }}"
+    config:
+      - interface_name: loopback101
+    state: deleted
+  register: nm_deleted_101
+
+- name: "DELETED: Verify loopback101 was deleted"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_101 is changed
+      - nm_deleted_101 is changed
+      - nm_deleted_101.after | selectattr('interface_name', 'equalto', 'loopback101') | list | length == 0
+
+# --- DELETED: IDEMPOTENCY ---
+
+- name: "DELETED IDEMPOTENT: Delete loopback101 again"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    switch_ip: "{{ test_switch_ip }}"
+    config:
+      - interface_name: loopback101
+    state: deleted
+  register: nm_deleted_101_idem
+
+- name: "DELETED IDEMPOTENT: Verify no change when already absent"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_101_idem is not changed
+
+# --- DELETED: MULTIPLE INTERFACES ---
+
+# First recreate loopback100 and loopback101 so we can test multi-delete
+- name: "SETUP: Recreate loopback100 and loopback101 for multi-delete test"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    switch_ip: "{{ test_switch_ip }}"
+    config:
+      - "{{ loopback_100 }}"
+      - "{{ loopback_101 }}"
+    state: merged
+
+- name: "DELETED MULTI: Delete loopback100, loopback101, and loopback102 (check mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    switch_ip: "{{ test_switch_ip }}"
+    config:
+      - interface_name: loopback100
+      - interface_name: loopback101
+      - interface_name: loopback102
+    state: deleted
+  check_mode: true
+  register: cm_deleted_multi
+
+- name: "DELETED MULTI: Delete loopback100, loopback101, and loopback102 (normal mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    switch_ip: "{{ test_switch_ip }}"
+    config:
+      - interface_name: loopback100
+      - interface_name: loopback101
+      - interface_name: loopback102
+    state: deleted
+  register: nm_deleted_multi
+
+- name: "DELETED MULTI: Verify all test loopbacks were deleted"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_multi is changed
+      - nm_deleted_multi is changed
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'loopback100') | list | length == 0
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'loopback101') | list | length == 0
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'loopback102') | list | length == 0
+
+# --- DELETED: NON-EXISTENT INTERFACE ---
+
+- name: "DELETED NON-EXISTENT: Delete interface that does not exist"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    switch_ip: "{{ test_switch_ip }}"
+    config:
+      - interface_name: loopback199
+    state: deleted
+  register: nm_deleted_nonexistent
+
+- name: "DELETED NON-EXISTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_nonexistent is not changed
