@@ -208,10 +208,7 @@ class FabricContext:
         - If the fabric is in a read-only state.
         """
         if not self.fabric_exists():
-            raise RuntimeError(
-                f"Fabric '{self._fabric_name}' not found. "
-                f"Verify the fabric name and ensure you are targeting the correct ND node."
-            )
+            raise RuntimeError(f"Fabric '{self._fabric_name}' not found. " f"Verify the fabric name and ensure you are targeting the correct ND node.")
         if not self.fabric_is_local():
             raise RuntimeError(
                 f"Fabric '{self._fabric_name}' is not local to this Nexus Dashboard node. "
@@ -220,6 +217,5 @@ class FabricContext:
             )
         if self.fabric_is_read_only():
             raise RuntimeError(
-                f"Fabric '{self._fabric_name}' is in a read-only state and cannot be modified. "
-                f"Check that deployment-freeze mode is not enabled."
+                f"Fabric '{self._fabric_name}' is in a read-only state and cannot be modified. " f"Check that deployment-freeze mode is not enabled."
             )
