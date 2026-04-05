@@ -2418,6 +2418,8 @@ class NDSwitchResourceModule:
             )
             self.before: NDConfigCollection = self.existing.copy()
             self.sent: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
+            self.sent_adds: List[SwitchConfigModel] = []
+            self.proposed_cfgs: List[SwitchConfigModel] = []
         except Exception as e:
             msg = f"Failed to query fabric '{self.fabric}' inventory " f"during initialization: {e}"
             log.error(msg)
@@ -2439,6 +2441,40 @@ class NDSwitchResourceModule:
         self.rma_handler = RMAHandler(self.ctx, self.fabric_ops, self.wait_utils)
 
         log.info("Initialized NDSwitchResourceModule for fabric: %s", self.fabric)
+
+    def _inventory_to_config_list(self, collection: "NDConfigCollection") -> List[Dict[str, Any]]:
+        """Convert an inventory collection (SwitchDataModel) to gathered-format config dicts.
+
+        Produces the same shape as gathered state output: seed_ip, role, auth_proto,
+        preserve_config, username/password placeholders.  Built directly from
+        SwitchDataModel fields to avoid re-running Pydantic validators.
+        """
+        result = []
+        for sw in collection:
+            if not sw.fabric_management_ip:
+                continue
+            role = sw.switch_role
+            result.append({
+                "seed_ip": sw.fabric_management_ip,
+                "role": getattr(role, "value", str(role)) if role else "leaf",
+                "auth_proto": "MD5",
+                "preserve_config": False,
+                "username": "<username>",
+                "password": "<password>",
+            })
+        return result
+
+    def _proposed_to_config_list(self, configs: List["SwitchConfigModel"]) -> List[Dict[str, Any]]:
+        """Serialize proposed configs for output, stripping internal fields and masking passwords."""
+        result = []
+        for cfg in configs:
+            try:
+                entry = cfg.to_config(exclude={"platform_type": True, "operation_type": True})
+                entry["password"] = "<password>"
+                result.append(entry)
+            except Exception as exc:
+                self.log.warning("Could not convert config %s for output: %s", cfg.seed_ip, exc)
+        return result
 
     def exit_json(self) -> None:
         """Finalize collected results and exit the Ansible module.
@@ -2473,8 +2509,40 @@ class NDSwitchResourceModule:
                     response_data=self._query_all_switches(),
                     model_class=SwitchDataModel,
                 )
-            self.output.assign(after=self.existing, diff=self.sent)
-            final.update(self.output.format())
+            # Build diff: deletes (from self.sent) + adds (from self.sent_adds)
+            diff_list: List[Dict[str, Any]] = []
+            for sw in self.sent:
+                if not sw.fabric_management_ip:
+                    continue
+                role = sw.switch_role
+                entry = {
+                    "seed_ip": sw.fabric_management_ip,
+                    "role": getattr(role, "value", str(role)) if role else "leaf",
+                    "auth_proto": "MD5",
+                    "preserve_config": False,
+                    "username": "<username>",
+                    "password": "<password>",
+                    "_action": "deleted",
+                }
+                diff_list.append(entry)
+            for cfg in self.sent_adds:
+                try:
+                    entry = cfg.to_config(exclude={"platform_type": True, "operation_type": True})
+                    entry["password"] = "<password>"
+                    entry["_action"] = "added"
+                    diff_list.append(entry)
+                except Exception as exc:
+                    self.log.warning("Could not convert added config for diff: %s", exc)
+            output_level = self.module.params.get("output_level", "normal")
+            fmt_kwargs: Dict[str, Any] = {
+                "before": self._inventory_to_config_list(self.before),
+                "after": self._inventory_to_config_list(self.existing),
+                "diff": diff_list,
+            }
+            if output_level in ("info", "debug"):
+                fmt_kwargs["proposed"] = self._proposed_to_config_list(self.proposed_cfgs)
+            self.output.assign(before=self.before, after=self.existing)
+            final.update(self.output.format(**fmt_kwargs))
 
         if True in self.results.failed:
             self.nd.module.fail_json(**final)
@@ -2539,6 +2607,7 @@ class NDSwitchResourceModule:
         for cfg in proposed_config:
             output_proposed.add(cfg)
         self.output.assign(proposed=output_proposed)
+        self.proposed_cfgs = list(proposed_config)
 
         # Classify all configs in one pass — idempotency included
         plan = SwitchDiffEngine.compute_changes(proposed_config, list(self.existing), self.log)
@@ -2746,6 +2815,7 @@ class NDSwitchResourceModule:
                     if sn:
                         switch_actions.append((sn, cfg))
                         self._log_operation("add", cfg.seed_ip)
+                        self.sent_adds.append(cfg)
 
         # Migration-mode switches — no add needed, but role + finalize applies
         for cfg in plan.migration_mode:
@@ -2753,6 +2823,7 @@ class NDSwitchResourceModule:
             if sw and sw.switch_id:
                 switch_actions.append((sw.switch_id, cfg))
                 self._log_operation("migrate", cfg.seed_ip)
+                self.sent_adds.append(cfg)
 
         if switch_actions:
             all_preserve_config = all(cfg.preserve_config for _sn, cfg in switch_actions)
@@ -2774,8 +2845,10 @@ class NDSwitchResourceModule:
         # Only route the pure POAP-workflow configs to the handler.
         poap_workflow_configs = plan.to_bootstrap + plan.to_preprovision + plan.to_swap
         if poap_workflow_configs:
+            self.sent_adds.extend(poap_workflow_configs)
             self.poap_handler.handle(poap_workflow_configs, list(self.existing))
         if plan.to_rma:
+            self.sent_adds.extend(plan.to_rma)
             self.rma_handler.handle(plan.to_rma, list(self.existing))
 
         self.log.debug("EXIT: _handle_merged_state()")
@@ -2928,12 +3001,14 @@ class NDSwitchResourceModule:
                     if sn:
                         switch_actions.append((sn, cfg))
                         self._log_operation("add", cfg.seed_ip)
+                        self.sent_adds.append(cfg)
 
         for cfg in plan.migration_mode:
             sw = existing_by_ip.get(cfg.seed_ip)
             if sw and sw.switch_id:
                 switch_actions.append((sw.switch_id, cfg))
                 self._log_operation("migrate", cfg.seed_ip)
+                self.sent_adds.append(cfg)
 
         if switch_actions:
             all_preserve_config = all(cfg.preserve_config for _sn, cfg in switch_actions)
@@ -2953,6 +3028,7 @@ class NDSwitchResourceModule:
         # Route pure POAP-workflow configs to the handler.
         poap_workflow_configs = plan.to_bootstrap + plan.to_preprovision + plan.to_swap
         if poap_workflow_configs:
+            self.sent_adds.extend(poap_workflow_configs)
             self.poap_handler.handle(poap_workflow_configs, list(self.existing))
 
         self.log.debug("EXIT: _handle_overridden_state()")

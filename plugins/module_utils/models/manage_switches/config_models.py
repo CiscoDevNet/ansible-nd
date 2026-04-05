@@ -434,8 +434,9 @@ class SwitchConfigModel(NDBaseModel):
         """
         state = (info.context or {}).get("state") if info else None
 
-        # POAP/Pre-provision/Swap allowed with merged or overridden
-        if (self.poap or self.preprovision) and state not in (None, "merged", "overridden"):
+        # POAP/Pre-provision/Swap allowed with merged, overridden, or deleted
+        # (deleted ignores the sub-config and only uses seed_ip + role)
+        if (self.poap or self.preprovision) and state not in (None, "merged", "overridden", "deleted"):
             raise ValueError(f"POAP/Pre-provision operations require 'merged' or 'overridden' state, " f"got '{state}' (switch: {self.seed_ip})")
 
         # RMA only allowed with merged
