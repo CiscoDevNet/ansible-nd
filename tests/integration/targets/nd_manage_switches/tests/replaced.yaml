@@ -1,0 +1,136 @@
+---
+- name: Import ND Manage Switches Base Tasks
+  ansible.builtin.import_tasks: ../../tasks/base_tasks.yaml
+  tags: replaced
+
+# ----------------------------------------------
+# Run Test Cases
+# ----------------------------------------------
+
+# TC - 1
+- name: Replaced TC1 - Prepare Switches in Fabric - GreenField Deployment
+  cisco.nd.nd_manage_switches: &conf
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_base_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  register: merged_result
+  tags: replaced
+
+- name: Replaced TC1 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: replaced
+
+- name: Replaced TC1 - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_base_conf }}"
+    changed: " {{ merged_result.changed }}"
+  register: result
+  tags: replaced
+
+# TC - 2
+- name: Replaced TC2 - Verify Idempotence
+  cisco.nd.nd_manage_switches: *conf
+  register: result
+  tags: replaced
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+      - 'result.msg == "No switches to merge — fabric already matches desired config"'
+  tags: replaced
+
+# TC - 3
+- name: Replaced TC3 - Prepare Config
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw2 }}"
+        role: leaf
+        preserve_config: false
+  delegate_to: localhost
+  tags: replaced
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: replaced
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: replaced
+
+- name: Replaced TC3 - New Role for the Existing Switch
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: replaced
+    config: "{{ nd_switches_replaced_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  register: replaced_result
+  tags: replaced
+
+- name: Replaced TC3 - Prepare Test Data
+  ansible.builtin.set_fact:
+    nd_switches_replaced_conf: >-
+      {{ (nd_switches_base_conf | rejectattr('seed_ip', 'equalto', test_data.sw2) | list)
+         + [nd_switches_base_conf | selectattr('seed_ip', 'equalto', test_data.sw2) | first | combine({'role': 'leaf'})] }}
+  delegate_to: localhost
+  tags: replaced
+
+- name: Replaced TC3 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: replaced
+
+- name: Replaced TC3 - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_replaced_conf }}"
+    changed: "{{ replaced_result.changed }}"
+  register: result
+  tags: replaced
+
+# TC - 4
+- name: Replaced TC4 - Prepare Config
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw2 }}"
+        preserve_config: false
+  delegate_to: localhost
+  tags: replaced
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: replaced
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: replaced
+
+- name: Replaced TC4 - Unspecified Role for the Existing Switch (Default, Leaf)
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: replaced
+    config: "{{ nd_switches_replaced_conf }}"
+    deploy: "{{ test_data.deploy }}"
+  register: replaced_result
+  tags: replaced
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'replaced_result.changed == false'
+      - 'result.msg == "No switches to replace — fabric already matches desired config"'
+  tags: replaced
+
+# ----------------------------------------------
+# Cleanup Fabric Switches
+# ----------------------------------------------
+
+- name: Replaced - Cleanup Fabric Switches
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+  register: result
+  tags: replaced

@@ -2427,6 +2427,7 @@ class NDSwitchResourceModule:
 
         # Operation tracking
         self.nd_logs: List[Dict[str, Any]] = []
+        self.msg: str = ""
         self.output: NDOutput = NDOutput(output_level=self.module.params.get("output_level", "normal"))
         self.output.assign(before=self.before, after=self.existing)
 
@@ -2469,7 +2470,9 @@ class NDSwitchResourceModule:
         result = []
         for cfg in configs:
             try:
-                entry = cfg.to_config(exclude={"platform_type": True, "operation_type": True})
+                entry = cfg.to_config()
+                entry.pop("platform_type", None)
+                entry.pop("operation_type", None)
                 entry["password"] = "<password>"
                 result.append(entry)
             except Exception as exc:
@@ -2527,7 +2530,9 @@ class NDSwitchResourceModule:
                 diff_list.append(entry)
             for cfg in self.sent_adds:
                 try:
-                    entry = cfg.to_config(exclude={"platform_type": True, "operation_type": True})
+                    entry = cfg.to_config()
+                    entry.pop("platform_type", None)
+                    entry.pop("operation_type", None)
                     entry["password"] = "<password>"
                     entry["_action"] = "added"
                     diff_list.append(entry)
@@ -2544,6 +2549,8 @@ class NDSwitchResourceModule:
             self.output.assign(before=self.before, after=self.existing)
             final.update(self.output.format(**fmt_kwargs))
 
+        if self.msg:
+            final["msg"] = self.msg
         if True in self.results.failed:
             self.nd.module.fail_json(**final)
         self.nd.module.exit_json(**final)
@@ -2582,9 +2589,9 @@ class NDSwitchResourceModule:
             proposed_config = SwitchDiffEngine.validate_configs(self.config, self.state, self.nd, self.log) if self.config else None
             return self._handle_deleted_state(proposed_config)
 
-        # merged — config required
-        if self.state == "merged" and not self.config:
-            self.nd.module.fail_json(msg="'config' is required for 'merged' state.")
+        # merged / replaced — config required
+        if self.state in ("merged", "replaced") and not self.config:
+            self.nd.module.fail_json(msg=f"'config' is required for '{self.state}' state.")
 
         # overridden with no/empty config — delete everything
         if self.state == "overridden" and not self.config:
@@ -2599,8 +2606,6 @@ class NDSwitchResourceModule:
         poap_configs = [c for c in proposed_config if c.operation_type in ("poap", "preprovision", "swap")]
         if rma_configs and self.state != "merged":
             self.nd.module.fail_json(msg="RMA configs are only supported with state=merged")
-        if poap_configs and self.state not in ("merged", "overridden"):
-            self.nd.module.fail_json(msg="POAP and pre-provision configs require state=merged or state=overridden")
 
         # Capture all proposed configs for NDOutput
         output_proposed: NDConfigCollection = NDConfigCollection(model_class=SwitchConfigModel)
@@ -2641,6 +2646,8 @@ class NDSwitchResourceModule:
         # --- Dispatch -----------------------------------------------------------
         if self.state == "merged":
             self._handle_merged_state(plan, discovered_data)
+        elif self.state == "replaced":
+            self._handle_replaced_state(plan, discovered_data)
         elif self.state == "overridden":
             self._handle_overridden_state(plan, discovered_data)
         else:
@@ -2752,6 +2759,7 @@ class NDSwitchResourceModule:
         )
         if not has_work:
             self.log.info("merged: nothing to do — all switches idempotent")
+            self.msg = "No switches to merge — fabric already matches desired config"
             return
 
         # Check mode
@@ -2889,8 +2897,9 @@ class NDSwitchResourceModule:
             or plan.to_swap
             or idempotent_save_req
         )
-        if not has_work and not self.proposed:
+        if not has_work:
             self.log.info("overridden: nothing to do")
+            self.msg = "No switches to override — fabric already matches desired config"
             return
 
         # Check mode
@@ -3033,6 +3042,179 @@ class NDSwitchResourceModule:
 
         self.log.debug("EXIT: _handle_overridden_state()")
 
+    def _handle_replaced_state(
+        self,
+        plan: "SwitchPlan",
+        discovered_data: Dict[str, Any],
+    ) -> None:
+        """Handle replaced-state reconciliation for the fabric.
+
+        Reconciles only the switches listed in the desired config.  Field
+        differences trigger delete and re-add, and POAP/preprovision mismatches
+        are also re-provisioned.
+
+        Args:
+            plan: Unified action plan from :meth:`SwitchDiffEngine.compute_changes`.
+            discovered_data: Discovery data keyed by seed IP.
+
+        Returns:
+            None.
+        """
+        self.log.debug("ENTER: _handle_replaced_state()")
+        self.log.info("Handling replaced state")
+
+        existing_by_ip = {sw.fabric_management_ip: sw for sw in self.existing}
+        idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
+
+        has_work = bool(
+            plan.to_add
+            or plan.to_update
+            or plan.to_delete_existing
+            or plan.migration_mode
+            or plan.to_bootstrap
+            or plan.normal_readd
+            or plan.to_preprovision
+            or plan.to_swap
+            or idempotent_save_req
+        )
+        if not has_work:
+            self.log.info("replaced: nothing to do")
+            self.msg = "No switches to replace — fabric already matches desired config"
+            return
+
+        # Check mode
+        if self.nd.module.check_mode:
+            self.log.info(
+                "Check mode: poap_mismatch_delete=%s, update=%s, add=%s, migrate=%s, bootstrap=%s, readd=%s, preprov=%s, swap=%s, save_deploy=%s",
+                len(plan.to_delete_existing),
+                len(plan.to_update),
+                len(plan.to_add),
+                len(plan.migration_mode),
+                len(plan.to_bootstrap),
+                len(plan.normal_readd),
+                len(plan.to_preprovision),
+                len(plan.to_swap),
+                idempotent_save_req,
+            )
+            self.results.action = "replace"
+            self.results.state = self.state
+            self.results.operation_type = OperationType.CREATE
+            self.results.response_current = {"MESSAGE": "check mode — skipped", "RETURN_CODE": 200}
+            self.results.result_current = {"success": True, "changed": False}
+            self.results.diff_current = {
+                "to_delete": len(plan.to_delete_existing),
+                "to_update": len(plan.to_update),
+                "to_add": len(plan.to_add),
+                "migration_mode": len(plan.migration_mode),
+                "bootstrap": len(plan.to_bootstrap),
+                "normal_readd": len(plan.normal_readd),
+                "preprovision": len(plan.to_preprovision),
+                "swap": len(plan.to_swap),
+                "save_deploy_required": idempotent_save_req,
+            }
+            self.results.register_api_call()
+            return
+
+        # --- Phase 1: Combined delete -------------------------------------------
+        # Two sources of deletions (orphans intentionally excluded):
+        #   a) POAP/preprovision mismatches (to_delete_existing from compute_changes)
+        #   b) Normal switches that need field updates (to_update)
+        switches_to_delete: List[SwitchDataModel] = []
+
+        for sw in plan.to_delete_existing:
+            self.log.info("Deleting POAP/preprovision mismatch %s before re-add", sw.fabric_management_ip)
+            switches_to_delete.append(sw)
+            self._log_operation("delete", sw.fabric_management_ip)
+
+        update_ips: set = set()
+        for cfg in plan.to_update:
+            sw = existing_by_ip.get(cfg.seed_ip)
+            if sw:
+                self.log.info("Deleting normal switch %s for field update re-add", cfg.seed_ip)
+                switches_to_delete.append(sw)
+                update_ips.add(cfg.seed_ip)
+                self._log_operation("delete_for_update", cfg.seed_ip)
+
+        if switches_to_delete:
+            try:
+                self.fabric_ops.bulk_delete(switches_to_delete)
+            except SwitchOperationError as e:
+                msg = f"Failed to delete switches during replaced state: {e}"
+                self.log.error(msg)
+                self.nd.module.fail_json(msg=msg)
+            for sw in switches_to_delete:
+                self.sent.add(sw)
+
+        # --- Phase 2: Re-discover updated normal switches -----------------------
+        re_discover_configs = [cfg for cfg in plan.to_update if cfg.seed_ip in update_ips]
+        if re_discover_configs:
+            self.log.info(
+                "Re-discovering %s updated switch(es) after deletion",
+                len(re_discover_configs),
+            )
+            fresh = self.discovery.discover(re_discover_configs)
+            discovered_data = {**discovered_data, **fresh}
+
+        # --- Phase 3: Combined add (normal to_add + to_update + normal_readd) ---
+        add_configs = plan.to_add + plan.to_update + plan.normal_readd
+        switch_actions: List[Tuple[str, SwitchConfigModel]] = []
+        have_migration = bool(plan.migration_mode)
+
+        if add_configs and discovered_data:
+            credential_groups = group_switches_by_credentials(add_configs, self.log)
+            for group_key, group_switches in credential_groups.items():
+                username, _pw_hash, auth_proto, platform_type, preserve_config = group_key
+                password = group_switches[0].password
+                pairs = [(cfg, discovered_data[cfg.seed_ip]) for cfg in group_switches if cfg.seed_ip in discovered_data]
+                if not pairs:
+                    self.log.warning(
+                        "No discovery data for group %s — skipping",
+                        [cfg.seed_ip for cfg in group_switches],
+                    )
+                    continue
+                self.fabric_ops.bulk_add(
+                    switches=pairs,
+                    username=username,
+                    password=password,
+                    auth_proto=auth_proto,
+                    platform_type=platform_type,
+                    preserve_config=preserve_config,
+                )
+                for cfg, disc in pairs:
+                    sn = disc.get("serialNumber")
+                    if sn:
+                        switch_actions.append((sn, cfg))
+                        self._log_operation("add", cfg.seed_ip)
+                        self.sent_adds.append(cfg)
+
+        for cfg in plan.migration_mode:
+            sw = existing_by_ip.get(cfg.seed_ip)
+            if sw and sw.switch_id:
+                switch_actions.append((sw.switch_id, cfg))
+                self._log_operation("migrate", cfg.seed_ip)
+                self.sent_adds.append(cfg)
+
+        if switch_actions:
+            all_preserve_config = all(cfg.preserve_config for _sn, cfg in switch_actions)
+            self.fabric_ops.post_add_processing(
+                switch_actions,
+                wait_utils=self.wait_utils,
+                context="replaced",
+                all_preserve_config=all_preserve_config,
+                update_roles=have_migration,
+            )
+        elif idempotent_save_req:
+            self.log.info("No adds/migrations but config-sync required — running finalize")
+            self.fabric_ops.finalize()
+
+        # --- Phase 4: POAP workflows (bootstrap / preprovision / swap) ----------
+        poap_workflow_configs = plan.to_bootstrap + plan.to_preprovision + plan.to_swap
+        if poap_workflow_configs:
+            self.sent_adds.extend(poap_workflow_configs)
+            self.poap_handler.handle(poap_workflow_configs, list(self.existing))
+
+        self.log.debug("EXIT: _handle_replaced_state()")
+
     def _handle_gathered_state(self) -> None:
         """Handle gathered-state read of the fabric inventory.
 
@@ -3121,6 +3303,7 @@ class NDSwitchResourceModule:
         self.log.info("Total switches marked for deletion: %s", len(switches_to_delete))
         if not switches_to_delete:
             self.log.info("No switches to delete")
+            self.msg = "No switches to delete - fabric already matches desired config"
             return
 
         # Check mode

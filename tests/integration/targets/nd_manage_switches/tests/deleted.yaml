@@ -92,7 +92,7 @@
   ansible.builtin.assert:
     that:
       - 'result.changed == false'
-      # - 'result.response == "The switch provided is not part of the fabric and cannot be deleted"'
+      - 'result.msg == "No switches to delete - fabric already matches desired config"'
   tags: deleted
 
 # TC - 4
@@ -139,4 +139,5 @@
   ansible.builtin.assert:
     that:
       - 'result.changed == false'
+      - 'result.msg == "No switches to delete - fabric already matches desired config"'
   tags: deleted

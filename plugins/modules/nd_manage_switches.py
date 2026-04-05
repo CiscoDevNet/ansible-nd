@@ -30,14 +30,18 @@ options:
     state:
         description:
         - The state of ND and switch(es) after module completion.
-        - C(merged) and C(overridden) are supported for POAP and pre-provision operations.
+        - C(merged), C(replaced), and C(overridden) are supported for POAP and pre-provision operations.
         - C(merged) is the only state supported for RMA.
+        - C(replaced) reconciles only the switches listed in C(config). Field differences
+          trigger delete and re-add, but fabric switches not listed in C(config) are left
+          untouched.
         - C(gathered) reads the current fabric inventory and returns it in the
           C(gathered) key in config format. No changes are made.
         type: str
         default: merged
         choices:
         - merged
+        - replaced
         - overridden
         - deleted
         - gathered
@@ -49,6 +53,7 @@ options:
     deploy:
         description:
         - Deploy the pending configuration of the fabric after inventory is updated.
+        - When set to C(true), C(save) must also be C(true).
         type: bool
         default: true
     config:
@@ -397,10 +402,14 @@ def main():
         supports_check_mode=True,
         required_if=[
             ("state", "merged", ["config"]),
+            ("state", "replaced", ["config"]),
         ],
     )
 
     require_pydantic(module)
+
+    if module.params.get("deploy") and not module.params.get("save"):
+        module.fail_json(msg="'deploy: true' requires 'save: true'")
 
     # Initialize logging
     try:

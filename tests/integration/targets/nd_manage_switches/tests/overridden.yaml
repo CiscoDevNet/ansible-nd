@@ -42,6 +42,7 @@
   ansible.builtin.assert:
     that:
       - 'result.changed == false'
+      - 'result.msg == "No switches to merge — fabric already matches desired config"'
   tags: overridden
 
 # TC - 3
@@ -151,7 +152,8 @@
 - name: Assert
   ansible.builtin.assert:
     that:
-      - 'overridden_result.changed == false'
+      - 'overridden_result.changed == false'      
+      - 'result.msg == "No switches to override — fabric already matches desired config"'
   tags: overridden
 
 # ----------------------------------------------

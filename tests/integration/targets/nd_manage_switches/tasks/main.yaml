@@ -1,7 +1,7 @@
 ---
 - name: Discover ND Test Cases
   ansible.builtin.find:
-    paths: "{{ role_path }}/tests/nd"
+    paths: "{{ role_path }}/tests"
     patterns: "{{ testcase }}.yaml"
   connection: local
   register: nd_testcases

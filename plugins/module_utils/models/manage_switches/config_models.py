@@ -434,16 +434,11 @@ class SwitchConfigModel(NDBaseModel):
         """
         state = (info.context or {}).get("state") if info else None
 
-        # POAP/Pre-provision/Swap allowed with merged, overridden, or deleted
-        # (deleted ignores the sub-config and only uses seed_ip + role)
-        if (self.poap or self.preprovision) and state not in (None, "merged", "overridden", "deleted"):
-            raise ValueError(f"POAP/Pre-provision operations require 'merged' or 'overridden' state, " f"got '{state}' (switch: {self.seed_ip})")
-
         # RMA only allowed with merged
         if self.rma and state not in (None, "merged"):
             raise ValueError(f"RMA operations require 'merged' state, " f"got '{state}' (switch: {self.seed_ip})")
 
-        if state in ("merged", "overridden"):
+        if state in ("merged", "overridden", "replaced"):
             if self.role is None:
                 self.role = SwitchRole.LEAF
             if not self.username or not self.password:
@@ -562,15 +557,9 @@ class SwitchConfigModel(NDBaseModel):
             Dict with seed_ip, role, auth_proto, preserve_config,
             username set to ``"<username>"``, password set to ``"<password>"``.
         """
-        result = self.to_config(
-            exclude={
-                "platform_type": True,
-                "poap": True,
-                "preprovision": True,
-                "rma": True,
-                "operation_type": True,
-            }
-        )
+        result = self.to_config()
+        for key in ("platform_type", "poap", "preprovision", "rma", "operation_type"):
+            result.pop(key, None)
         result["username"] = "<username>"
         result["password"] = "<password>"
         return result
@@ -583,7 +572,7 @@ class SwitchConfigModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "overridden", "deleted", "gathered"],
+                choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
             save=dict(type="bool", default=True),
             deploy=dict(type="bool", default=True),
