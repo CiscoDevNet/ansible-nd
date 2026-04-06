@@ -25,13 +25,9 @@ in the ND Manage API.
   (GET /api/v1/manage/fabrics/{fabric_name}/summary)
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-# from plugins.module_utils.endpoints.base import NDBaseEndpoint
-
-# pylint: disable=invalid-name
 __metaclass__ = type
-# pylint: enable=invalid-name
 
 from typing import ClassVar, Literal, Optional
 

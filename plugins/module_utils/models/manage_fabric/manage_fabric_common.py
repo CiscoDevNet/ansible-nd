@@ -29,9 +29,7 @@ Common Pydantic models shared across fabric types (iBGP, eBGP, External Connecti
 
 from __future__ import absolute_import, division, print_function
 
-# pylint: disable=invalid-name
 __metaclass__ = type
-# pylint: enable=invalid-name
 
 import re
 from typing import List, Dict, Any
