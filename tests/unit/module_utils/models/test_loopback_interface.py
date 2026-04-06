@@ -20,7 +20,6 @@ import copy
 from contextlib import contextmanager
 
 import pytest  # pylint: disable=unused-import
-from pydantic import ValidationError  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
     LOOPBACK_POLICY_TYPE_MAPPING,
     LoopbackConfigDataModel,
@@ -28,6 +27,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopbac
     LoopbackNetworkOSModel,
     LoopbackPolicyModel,
 )
+from pydantic import ValidationError  # pylint: disable=unused-import
 
 
 @contextmanager
@@ -41,6 +41,7 @@ def does_not_raise():
 # =============================================================================
 
 SAMPLE_API_RESPONSE = {
+    "switchIp": "192.168.1.1",
     "interfaceName": "loopback0",
     "interfaceType": "loopback",
     "configData": {
@@ -60,6 +61,7 @@ SAMPLE_API_RESPONSE = {
 }
 
 SAMPLE_ANSIBLE_CONFIG = {
+    "switch_ip": "192.168.1.1",
     "interface_name": "loopback0",
     "interface_type": "loopback",
     "config_data": {
@@ -563,15 +565,15 @@ def test_loopback_interface_00200():
 
     ## Test
 
-    - identifiers == ["interface_name"]
-    - identifier_strategy == "single"
+    - identifiers == ["switch_ip", "interface_name"]
+    - identifier_strategy == "composite"
 
     ## Classes and Methods
 
     - LoopbackInterfaceModel class attributes
     """
-    assert LoopbackInterfaceModel.identifiers == ["interface_name"]
-    assert LoopbackInterfaceModel.identifier_strategy == "single"
+    assert LoopbackInterfaceModel.identifiers == ["switch_ip", "interface_name"]
+    assert LoopbackInterfaceModel.identifier_strategy == "composite"
 
 
 def test_loopback_interface_00210():
@@ -582,7 +584,7 @@ def test_loopback_interface_00210():
 
     ## Test
 
-    - Construct with only interface_name
+    - Construct with switch_ip and interface_name
     - interface_type defaults to "loopback"
 
     ## Classes and Methods
@@ -590,7 +592,7 @@ def test_loopback_interface_00210():
     - LoopbackInterfaceModel.__init__()
     """
     with does_not_raise():
-        instance = LoopbackInterfaceModel(interface_name="loopback0")
+        instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
     assert instance.interface_type == "loopback"
 
 
@@ -602,14 +604,14 @@ def test_loopback_interface_00220():
 
     ## Test
 
-    - Construct with only interface_name
+    - Construct with switch_ip and interface_name
     - config_data defaults to None
 
     ## Classes and Methods
 
     - LoopbackInterfaceModel.__init__()
     """
-    instance = LoopbackInterfaceModel(interface_name="loopback0")
+    instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
     assert instance.config_data is None
 
 
@@ -617,11 +619,11 @@ def test_loopback_interface_00230():
     """
     # Summary
 
-    Verify interface_name is required — ValidationError without it.
+    Verify switch_ip and interface_name are required — ValidationError without them.
 
     ## Test
 
-    - Construct without interface_name
+    - Construct without required fields
     - Raises ValidationError
 
     ## Classes and Methods
@@ -630,6 +632,10 @@ def test_loopback_interface_00230():
     """
     with pytest.raises(ValidationError):
         LoopbackInterfaceModel()
+    with pytest.raises(ValidationError):
+        LoopbackInterfaceModel(interface_name="loopback0")
+    with pytest.raises(ValidationError):
+        LoopbackInterfaceModel(switch_ip="192.168.1.1")
 
 
 # =============================================================================
@@ -652,7 +658,7 @@ def test_loopback_interface_00250():
 
     - LoopbackInterfaceModel.normalize_interface_name()
     """
-    instance = LoopbackInterfaceModel(interface_name="Loopback0")
+    instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="Loopback0")
     assert instance.interface_name == "loopback0"
 
 
@@ -671,7 +677,7 @@ def test_loopback_interface_00251():
 
     - LoopbackInterfaceModel.normalize_interface_name()
     """
-    instance = LoopbackInterfaceModel(interface_name="LOOPBACK1")
+    instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="LOOPBACK1")
     assert instance.interface_name == "loopback1"
 
 
@@ -690,7 +696,7 @@ def test_loopback_interface_00252():
 
     - LoopbackInterfaceModel.normalize_interface_name()
     """
-    instance = LoopbackInterfaceModel(interface_name="loopback0")
+    instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
     assert instance.interface_name == "loopback0"
 
 
@@ -735,10 +741,11 @@ def test_loopback_interface_00310():
 
     - LoopbackInterfaceModel.to_payload()
     """
-    instance = LoopbackInterfaceModel(interface_name="loopback0")
+    instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
     result = instance.to_payload()
     assert "configData" not in result
     assert "interfaceName" in result
+    assert "switchIp" not in result  # switch_ip excluded from payload
 
 
 def test_loopback_interface_00320():
@@ -789,6 +796,31 @@ def test_loopback_interface_00330():
 # =============================================================================
 # Test: LoopbackInterfaceModel — to_config
 # =============================================================================
+
+
+def test_loopback_interface_00340():
+    """
+    # Summary
+
+    Verify switch_ip is excluded from payload output but present in config output.
+
+    ## Test
+
+    - to_payload() does not include switchIp or switch_ip
+    - to_config() includes switch_ip
+
+    ## Classes and Methods
+
+    - LoopbackInterfaceModel.to_payload()
+    - LoopbackInterfaceModel.to_config()
+    """
+    instance = LoopbackInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
+    payload = instance.to_payload()
+    assert "switchIp" not in payload
+    assert "switch_ip" not in payload
+    config = instance.to_config()
+    assert "switch_ip" in config
+    assert config["switch_ip"] == "192.168.1.1"
 
 
 def test_loopback_interface_00350():
@@ -992,7 +1024,8 @@ def test_loopback_interface_00460():
 
     - LoopbackInterfaceModel.from_config()
     """
-    instance = LoopbackInterfaceModel.from_config({"interface_name": "loopback0"})
+    instance = LoopbackInterfaceModel.from_config({"switch_ip": "192.168.1.1", "interface_name": "loopback0"})
+    assert instance.switch_ip == "192.168.1.1"
     assert instance.interface_name == "loopback0"
     assert instance.config_data is None
 
@@ -1008,6 +1041,10 @@ def test_loopback_interface_00500():
 
     Verify config -> from_config -> to_payload -> from_response -> to_config == original.
 
+    `switch_ip` is excluded from payload (it's a routing concern, not an API field).
+    The orchestrator re-injects `switchIp` when building models from API responses.
+    This test simulates that injection.
+
     ## Test
 
     - Round-trip through all serialization methods preserves data
@@ -1022,6 +1059,8 @@ def test_loopback_interface_00500():
     original = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
     instance = LoopbackInterfaceModel.from_config(original)
     payload = instance.to_payload()
+    # Simulate orchestrator injecting switchIp back into API response
+    payload["switchIp"] = original["switch_ip"]
     instance2 = LoopbackInterfaceModel.from_response(payload)
     result = instance2.to_config()
     assert result == original
@@ -1031,11 +1070,13 @@ def test_loopback_interface_00510():
     """
     # Summary
 
-    Verify response -> from_response -> to_config -> from_config -> to_payload == original.
+    Verify response -> from_response -> to_config -> from_config -> to_payload round-trip.
+
+    `switch_ip` is excluded from payload output, so the round-trip comparison excludes it.
 
     ## Test
 
-    - Round-trip starting from API response preserves data
+    - Round-trip starting from API response preserves data (except switchIp in payload)
 
     ## Classes and Methods
 
@@ -1049,7 +1090,9 @@ def test_loopback_interface_00510():
     config = instance.to_config()
     instance2 = LoopbackInterfaceModel.from_config(config)
     result = instance2.to_payload()
-    assert result == original
+    # switchIp is excluded from payload, so compare without it
+    expected = {k: v for k, v in original.items() if k != "switchIp"}
+    assert result == expected
 
 
 def test_loopback_interface_00520():
@@ -1074,6 +1117,8 @@ def test_loopback_interface_00520():
     payload = instance.to_payload()
     assert payload["configData"]["networkOS"]["policy"]["policyType"] == "ipfmLoopback"
 
+    # Simulate orchestrator injecting switchIp back into API response
+    payload["switchIp"] = config["switch_ip"]
     instance2 = LoopbackInterfaceModel.from_response(payload)
     result_config = instance2.to_config()
     assert result_config["config_data"]["network_os"]["policy"]["policy_type"] == "ipfm_loopback"
@@ -1088,38 +1133,38 @@ def test_loopback_interface_00550():
     """
     # Summary
 
-    Verify get_identifier_value() returns "loopback0".
+    Verify get_identifier_value() returns composite tuple (switch_ip, interface_name).
 
     ## Test
 
-    - get_identifier_value() returns the interface_name
+    - get_identifier_value() returns a tuple of (switch_ip, interface_name)
 
     ## Classes and Methods
 
     - LoopbackInterfaceModel.get_identifier_value()
     """
-    instance = LoopbackInterfaceModel(interface_name="loopback0")
-    assert instance.get_identifier_value() == "loopback0"
+    instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
+    assert instance.get_identifier_value() == ("192.168.1.1", "loopback0")
 
 
 def test_loopback_interface_00560():
     """
     # Summary
 
-    Verify get_identifier_value returns lowercased value when constructed with "Loopback1".
+    Verify get_identifier_value returns lowercased interface_name in composite tuple.
 
     ## Test
 
     - Constructed with "Loopback1"
-    - get_identifier_value() returns "loopback1"
+    - get_identifier_value() returns ("192.168.1.1", "loopback1")
 
     ## Classes and Methods
 
     - LoopbackInterfaceModel.get_identifier_value()
     - LoopbackInterfaceModel.normalize_interface_name()
     """
-    instance = LoopbackInterfaceModel(interface_name="Loopback1")
-    assert instance.get_identifier_value() == "loopback1"
+    instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="Loopback1")
+    assert instance.get_identifier_value() == ("192.168.1.1", "loopback1")
 
 
 # =============================================================================
@@ -1186,7 +1231,7 @@ def test_loopback_interface_00620():
     - LoopbackInterfaceModel.get_diff()
     """
     instance_full = LoopbackInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
-    instance_minimal = LoopbackInterfaceModel(interface_name="loopback0")
+    instance_minimal = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
     assert instance_full.get_diff(instance_minimal) is True
 
 
@@ -1211,6 +1256,7 @@ def test_loopback_interface_00650():
     - LoopbackInterfaceModel.merge()
     """
     config_base = {
+        "switch_ip": "192.168.1.1",
         "interface_name": "loopback0",
         "config_data": {
             "network_os": {
@@ -1221,6 +1267,7 @@ def test_loopback_interface_00650():
         },
     }
     config_other = {
+        "switch_ip": "192.168.1.1",
         "interface_name": "loopback0",
         "config_data": {
             "network_os": {
@@ -1252,7 +1299,7 @@ def test_loopback_interface_00660():
     - LoopbackInterfaceModel.merge()
     """
     instance = LoopbackInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
-    other = LoopbackInterfaceModel(interface_name="loopback0")
+    other = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
     instance.merge(other)
     assert instance.config_data.network_os.policy.ip == "10.1.1.1/32"
 
@@ -1271,7 +1318,7 @@ def test_loopback_interface_00670():
 
     - LoopbackInterfaceModel.merge()
     """
-    instance = LoopbackInterfaceModel(interface_name="loopback0")
+    instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
     with pytest.raises(TypeError, match="Cannot merge"):
         instance.merge(LoopbackPolicyModel())
 
@@ -1290,8 +1337,8 @@ def test_loopback_interface_00680():
 
     - LoopbackInterfaceModel.merge()
     """
-    instance = LoopbackInterfaceModel(interface_name="loopback0")
-    other = LoopbackInterfaceModel(interface_name="loopback0")
+    instance = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
+    other = LoopbackInterfaceModel(switch_ip="192.168.1.1", interface_name="loopback0")
     result = instance.merge(other)
     assert result is instance
 
@@ -1309,7 +1356,8 @@ def test_loopback_interface_00700():
 
     ## Test
 
-    - get_argument_spec() returns fabric_name, switch_ip, config, state
+    - get_argument_spec() returns fabric_name, config, state
+    - switch_ip is inside config options, not top-level
 
     ## Classes and Methods
 
@@ -1317,9 +1365,10 @@ def test_loopback_interface_00700():
     """
     spec = LoopbackInterfaceModel.get_argument_spec()
     assert "fabric_name" in spec
-    assert "switch_ip" in spec
+    assert "switch_ip" not in spec
     assert "config" in spec
     assert "state" in spec
+    assert "switch_ip" in spec["config"]["options"]
 
 
 def test_loopback_interface_00710():

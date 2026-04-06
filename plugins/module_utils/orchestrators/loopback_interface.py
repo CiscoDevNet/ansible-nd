@@ -6,8 +6,12 @@
 Loopback interface orchestrator for Nexus Dashboard.
 
 This module provides `LoopbackInterfaceOrchestrator`, which implements CRUD operations
-for loopback interfaces via the ND Manage Interfaces API. Each mutation operation
-(create, update, delete) is followed by a deploy call to persist changes to the switch.
+for loopback interfaces via the ND Manage Interfaces API. Supports configuring interfaces
+across multiple switches in a single task.
+
+Each mutation operation (create, update, delete) is followed by a deploy call to persist
+changes to the switch. Deploy and remove operations are batched per-switch and executed
+in bulk after all mutations are complete.
 
 Uses `FabricContext` for pre-flight validation (fabric existence, deployment-freeze check)
 and switch IP-to-serial resolution. The model structure mirrors the API payload, so the
@@ -43,6 +47,9 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
 
     Orchestrator for loopback interface CRUD operations on Nexus Dashboard.
 
+    Supports configuring interfaces across multiple switches in a single task. Each config item
+    includes a `switch_ip` that is resolved to a `switchId` via `FabricContext`.
+
     Overrides the base orchestrator to handle the ND interfaces API, which requires `fabric_name` and `switch_sn`
     on every endpoint, injects `switchId` into payloads, and defers deploy calls for bulk execution.
 
@@ -50,14 +57,16 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
     after all mutations are complete to deploy all changes in a single API call. `delete` queues interfaces for bulk
     removal via `remove_pending`.
 
+    For `state: overridden`, `query_all` queries ALL switches in the fabric to enable fabric-wide convergence.
+
     Uses `FabricContext` for pre-flight validation and switch resolution.
 
     ## Raises
 
     ### RuntimeError
 
-    - Via `validate` if the fabric does not exist or is in deployment-freeze mode.
-    - Via `validate` if no switch matches the given IP in the fabric.
+    - Via `validate_prerequisites` if the fabric does not exist or is in deployment-freeze mode.
+    - Via `_resolve_switch_id` if no switch matches the given IP in the fabric.
     - Via `create` if the create API request fails.
     - Via `update` if the update API request fails.
     - Via `remove_pending` if the bulk remove API request fails.
@@ -77,8 +86,8 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
     deploy: bool = True
 
     _fabric_context: Optional[FabricContext] = None
-    _pending_deploys: list[str] = []
-    _pending_removes: list[str] = []
+    _pending_deploys: list[tuple[str, str]] = []
+    _pending_removes: list[tuple[str, str]] = []
 
     @property
     def fabric_name(self) -> str:
@@ -108,12 +117,11 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
             self._fabric_context = FabricContext(sender=self.sender, fabric_name=self.fabric_name)
         return self._fabric_context
 
-    @property
-    def switch_id(self) -> str:
+    def _resolve_switch_id(self, switch_ip: str) -> str:
         """
         # Summary
 
-        Return `switchId` resolved from the `switch_ip` module param via `FabricContext`.
+        Resolve a `switch_ip` to its `switchId` via `FabricContext`.
 
         ## Raises
 
@@ -121,15 +129,13 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
 
         - If no switch matches the given IP in the fabric.
         """
-        switch_ip = self.sender.params.get("switch_ip")
         return self.fabric_context.get_switch_id(switch_ip)
 
     def validate_prerequisites(self) -> None:
         """
         # Summary
 
-        Run pre-flight validation before any CRUD operations. Checks that the fabric exists and is modifiable, and that
-        the target switch exists in the fabric.
+        Run pre-flight validation before any CRUD operations. Checks that the fabric exists and is modifiable.
 
         ## Raises
 
@@ -137,13 +143,10 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
 
         - If the fabric does not exist on the target ND node.
         - If the fabric is in deployment-freeze mode.
-        - If no switch matches the given `switch_ip` in the fabric.
         """
         self.fabric_context.validate_for_mutation()
-        # Eagerly resolve switch_id to fail fast if the switch IP is invalid
-        result = self.switch_id  # pylint: disable=unused-variable
 
-    def _configure_endpoint(self, api_endpoint):
+    def _configure_endpoint(self, api_endpoint, switch_sn: str):
         """
         # Summary
 
@@ -154,34 +157,38 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         None
         """
         api_endpoint.fabric_name = self.fabric_name
-        api_endpoint.switch_sn = self.switch_id
+        api_endpoint.switch_sn = switch_sn
         return api_endpoint
 
-    def _queue_deploy(self, interface_name: str) -> None:
+    def _queue_deploy(self, interface_name: str, switch_id: str) -> None:
         """
         # Summary
 
-        Queue an interface name for deferred deployment. Call `deploy_pending` after all mutations are complete to deploy in bulk.
+        Queue an `(interface_name, switch_id)` pair for deferred deployment. Call `deploy_pending` after all mutations
+        are complete to deploy in bulk.
 
         ## Raises
 
         None
         """
-        if interface_name not in self._pending_deploys:
-            self._pending_deploys.append(interface_name)
+        pair = (interface_name, switch_id)
+        if pair not in self._pending_deploys:
+            self._pending_deploys.append(pair)
 
-    def _queue_remove(self, interface_name: str) -> None:
+    def _queue_remove(self, interface_name: str, switch_id: str) -> None:
         """
         # Summary
 
-        Queue an interface name for deferred bulk removal. Call `remove_pending` after all mutations are complete to remove in bulk.
+        Queue an `(interface_name, switch_id)` pair for deferred bulk removal. Call `remove_pending` after all mutations
+        are complete to remove in bulk.
 
         ## Raises
 
         None
         """
-        if interface_name not in self._pending_removes:
-            self._pending_removes.append(interface_name)
+        pair = (interface_name, switch_id)
+        if pair not in self._pending_removes:
+            self._pending_removes.append(pair)
 
     def deploy_pending(self) -> ResponseType | None:
         """
@@ -221,7 +228,7 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         """
         api_endpoint = EpManageInterfacesDeploy()
         api_endpoint.fabric_name = self.fabric_name
-        payload = {"interfaces": [{"interfaceName": name, "switchId": self.switch_id} for name in self._pending_deploys]}
+        payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in self._pending_deploys]}
         return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
 
     def remove_pending(self) -> ResponseType | None:
@@ -261,15 +268,15 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         """
         api_endpoint = EpManageInterfacesRemove()
         api_endpoint.fabric_name = self.fabric_name
-        payload = {"interfaces": [{"interfaceName": name, "switchId": self.switch_id} for name in self._pending_removes]}
+        payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in self._pending_removes]}
         return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
 
     def create(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
         # Summary
 
-        Create a loopback interface. Injects `switchId` and wraps the payload in an `interfaces` array. Queues a deploy for later
-        bulk execution via `deploy_pending`.
+        Create a loopback interface. Resolves `switch_ip` from the model instance, injects `switchId`, and wraps the payload
+        in an `interfaces` array. Queues a deploy for later bulk execution via `deploy_pending`.
 
         ## Raises
 
@@ -278,12 +285,13 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         - If the create API request fails.
         """
         try:
-            api_endpoint = self._configure_endpoint(self.create_endpoint())
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
             payload = model_instance.to_payload()
-            payload["switchId"] = self.switch_id
+            payload["switchId"] = switch_id
             request_body = {"interfaces": [payload]}
             result = self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=request_body)
-            self._queue_deploy(model_instance.interface_name)
+            self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
             raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
@@ -292,7 +300,8 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         """
         # Summary
 
-        Update a loopback interface. Injects `switchId` into the payload. Queues a deploy for later bulk execution via `deploy_pending`.
+        Update a loopback interface. Resolves `switch_ip` from the model instance, injects `switchId` into the payload.
+        Queues a deploy for later bulk execution via `deploy_pending`.
 
         ## Raises
 
@@ -301,12 +310,13 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         - If the update API request fails.
         """
         try:
-            api_endpoint = self._configure_endpoint(self.update_endpoint())
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
             payload = model_instance.to_payload()
-            payload["switchId"] = self.switch_id
+            payload["switchId"] = switch_id
             result = self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
-            self._queue_deploy(model_instance.interface_name)
+            self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
@@ -324,14 +334,15 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
 
         None
         """
-        self._queue_remove(model_instance.interface_name)
-        self._queue_deploy(model_instance.interface_name)
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        self._queue_remove(model_instance.interface_name, switch_id)
+        self._queue_deploy(model_instance.interface_name, switch_id)
 
     def query_one(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
         # Summary
 
-        Query a single loopback interface by name.
+        Query a single loopback interface by name on a specific switch.
 
         ## Raises
 
@@ -340,7 +351,8 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         - If the query API request fails.
         """
         try:
-            api_endpoint = self._configure_endpoint(self.query_one_endpoint())
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            api_endpoint = self._configure_endpoint(self.query_one_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
             return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb)
         except Exception as e:
@@ -350,13 +362,16 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         """
         # Summary
 
-        Validate the fabric context and query all interfaces on the switch, filtering for user-managed loopback interfaces only.
+        Validate the fabric context and query all interfaces across ALL switches in the fabric, filtering for user-managed
+        loopback interfaces only.
 
         System-provisioned loopbacks (e.g. Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) are excluded because they are managed by ND
         during initial switch role configuration and cannot be deleted or modified by this module.
 
-        Runs `validate` on first call to ensure the fabric exists, is modifiable, and the target switch is reachable
-        before returning any data.
+        Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
+
+        Each returned interface dict is enriched with a `switch_ip` field so that `LoopbackInterfaceModel` can be constructed
+        with the composite identifier `(switch_ip, interface_name)`.
 
         ## Raises
 
@@ -364,18 +379,23 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
 
         - If the fabric does not exist on the target ND node.
         - If the fabric is in deployment-freeze mode.
-        - If no switch matches the given `switch_ip` in the fabric.
         - If the query API request fails.
         """
         managed_policy_types = set(LOOPBACK_POLICY_TYPE_MAPPING.data.values())
         try:
             self.validate_prerequisites()
-            api_endpoint = self._configure_endpoint(self.query_all_endpoint())
-            result = self.sender.query_obj(api_endpoint.path)
-            if not result:
-                return []
-            interfaces = result.get("interfaces", []) or []
-            loopbacks = [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
-            return [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_policy_types]
+            all_loopbacks = []
+            for switch_ip, switch_id in self.fabric_context.switch_map.items():
+                api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
+                result = self.sender.query_obj(api_endpoint.path)
+                if not result:
+                    continue
+                interfaces = result.get("interfaces", []) or []
+                loopbacks = [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
+                managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_policy_types]
+                for iface in managed:
+                    iface["switchIp"] = switch_ip
+                all_loopbacks.extend(managed)
+            return all_loopbacks
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e

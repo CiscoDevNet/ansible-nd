@@ -10,11 +10,13 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
-      - interface_name: loopback100
-      - interface_name: loopback101
-      - interface_name: loopback102
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback100
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback101
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback102
     state: deleted
   tags: always
 
@@ -24,7 +26,6 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
       - "{{ loopback_100 }}"
     state: merged
@@ -35,7 +36,6 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
       - "{{ loopback_100 }}"
     state: merged
@@ -53,7 +53,6 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
       - "{{ loopback_101 }}"
       - "{{ loopback_102 }}"
@@ -65,7 +64,6 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
       - "{{ loopback_101 }}"
       - "{{ loopback_102 }}"
@@ -86,7 +84,6 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
       - "{{ loopback_100 }}"
     state: merged
@@ -97,7 +94,6 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
       - "{{ loopback_100 }}"
     state: merged
@@ -115,7 +111,6 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
       - "{{ loopback_100_updated }}"
     state: merged
@@ -126,7 +121,6 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
       - "{{ loopback_100_updated }}"
     state: merged
@@ -151,7 +145,6 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
       - "{{ loopback_100_updated }}"
     state: merged
@@ -168,9 +161,9 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
-      - interface_name: loopback103
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback103
         config_data:
           network_os:
             policy:
@@ -192,7 +185,7 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
-      - interface_name: loopback103
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback103
     state: deleted
