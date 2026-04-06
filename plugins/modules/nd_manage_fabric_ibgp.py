@@ -1290,7 +1290,6 @@ options:
                     description:
                     - UDP port for netflow export (1-65535).
                     type: int
-                    required: true
               netflow_record_collection:
                 description:
                 - List of netflow records.

@@ -32,7 +32,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -86,7 +86,7 @@ class NetflowExporterModel(NDNestedModel):
     exporter_ip: str = Field(alias="exporterIp", description="IP address of the netflow collector")
     vrf: str = Field(description="VRF name for the exporter", default="management")
     source_interface_name: str = Field(alias="sourceInterfaceName", description="Source interface name")
-    udp_port: int = Field(alias="udpPort", description="UDP port for netflow export", ge=1, le=65535)
+    udp_port: Optional[int] = Field(alias="udpPort", description="UDP port for netflow export", ge=1, le=65535, default=None)
 
 
 class NetflowRecordModel(NDNestedModel):
