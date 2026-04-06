@@ -1,0 +1,48 @@
+# Test code for the cisco.nd.nd_links module.
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Replace numbered link config fully (replaced state - check mode)
+  cisco.nd.nd_links: &replace_numbered_link
+    config:
+      - src_fabric_name: '{{ test_fabric }}'
+        dst_fabric_name: '{{ test_fabric }}'
+        src_switch_name: '{{ test_switch_a }}'
+        dst_switch_name: '{{ test_switch_b }}'
+        src_interface_name: Ethernet1/30
+        dst_interface_name: Ethernet1/30
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.99.30.1
+            dst_ip: 10.99.30.2
+            mtu: 9216
+            interface_admin_state: true
+    state: replaced
+  check_mode: true
+  register: cm_replaced_numbered_link
+
+- name: Replace numbered link config fully (replaced state - normal mode)
+  cisco.nd.nd_links:
+    <<: *replace_numbered_link
+  register: nm_replaced_numbered_link
+
+- name: Replace numbered link config again (replaced state - idempotency)
+  cisco.nd.nd_links:
+    <<: *replace_numbered_link
+  register: nm_replaced_numbered_link_again
+
+- name: Asserts for replaced state tasks
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_numbered_link is changed
+      - cm_replaced_numbered_link.proposed.0.config_data.template_inputs.mtu == 9216
+
+      - nm_replaced_numbered_link is changed
+      - (nm_replaced_numbered_link.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.mtu == 9216
+      - (nm_replaced_numbered_link.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 1
+      - (nm_replaced_numbered_link.after | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 1
+      - (nm_replaced_numbered_link.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | first).config_data.policy_type == "numbered"
+      - (nm_replaced_numbered_link.after | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | first).config_data.policy_type == "numbered"
+
+      - nm_replaced_numbered_link_again is not changed

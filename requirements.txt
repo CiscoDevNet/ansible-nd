@@ -1,3 +1,4 @@
+requests>=2.25
 requests_toolbelt
 jsonpath-ng
 lxml

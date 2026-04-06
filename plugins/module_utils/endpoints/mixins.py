@@ -84,3 +84,30 @@ class VrfNameMixin(BaseModel):
     """Mixin for endpoints that require vrf_name parameter."""
 
     vrf_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="VRF name")
+
+class SrcClusterNameMixin(BaseModel):
+    """Mixin for endpoints that require src_cluster_name parameter."""
+    src_cluster_name: Optional[str] = Field(default=None, min_length=1, description="Source cluster name")
+
+
+class DstClusterNameMixin(BaseModel):
+    """Mixin for endpoints that require dst_cluster_name parameter."""
+    dst_cluster_name: Optional[str] = Field(default=None, min_length=1, description="Destination cluster name")
+
+
+class TicketIdMixin(BaseModel):
+    """Mixin for endpoints that support change control tickets."""
+    ticket_id: Optional[str] = Field(default=None, description="Change Control Ticket Id")
+
+
+class IsLogicalLinkMixin(BaseModel):
+    """Mixin for endpoints that accept isLogicalLink parameter."""
+    is_logical_link: BooleanStringEnum = Field(
+        default=BooleanStringEnum.FALSE,
+        description="Indicates if the link is a logical link"
+    )
+
+
+class SwitchIdMixin(BaseModel):
+    """Mixin for endpoints that accept switchId filter."""
+    switch_id: Optional[str] = Field(default=None, min_length=1, description="Switch serial number or Id")

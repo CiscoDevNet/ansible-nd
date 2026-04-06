@@ -221,7 +221,17 @@ class NDModule(object):
 
     def set_connection(self):
         if self.connection is None:
-            self.connection = Connection(self.module._socket_path)
+            # If the action plugin has attached an NDClient to the module
+            # (in-process execution path), use the client-backed connection
+            # shim. Otherwise fall back to the legacy Unix-socket IPC path.
+            nd_client = getattr(self.module, "_nd_client", None)
+            if nd_client is not None:
+                from ansible_collections.cisco.nd.plugins.module_utils.client.nd_client_connection import (
+                    NDClientConnection,
+                )
+                self.connection = NDClientConnection(nd_client)
+            else:
+                self.connection = Connection(self.module._socket_path)
             self.connection.set_params(self.params)
 
     def request(
@@ -276,8 +286,8 @@ class NDModule(object):
             elif info.get("modified") == "true":
                 self.result["changed"] = True
 
-        # 200: OK, 201: Created, 202: Accepted, 204: No Content
-        if self.status in (200, 201, 202, 204):
+        # 200: OK, 201: Created, 202: Accepted, 204: No Content, 207: Multi-Status
+        if self.status in (200, 201, 202, 204, 207):
             if output_format == "raw":
                 return info.get("raw")
             return info.get("body")

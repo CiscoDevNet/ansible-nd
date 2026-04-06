@@ -1,0 +1,85 @@
+# Test code for the cisco.nd.nd_links module.
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set test variables
+  ansible.builtin.set_fact:
+    test_fabric: '{{ nd_test_fabric | default("fab1") }}'
+    test_switch_a: '{{ nd_test_switch_a | default("n9k-z17-62") }}'
+    test_switch_b: '{{ nd_test_switch_b | default("n9k-z17-63") }}'
+
+- name: Run nd_links test suite (manage scope)
+  module_defaults:
+    cisco.nd.nd_links:
+      output_level: '{{ nd_output_level | default("debug") }}'
+      fabric_name: '{{ test_fabric }}'
+      link_scope: manage
+  block:
+    - name: Ensure test links do not exist before test starts
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric }}'
+            dst_fabric_name: '{{ test_fabric }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+          - src_fabric_name: '{{ test_fabric }}'
+            dst_fabric_name: '{{ test_fabric }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+          - src_fabric_name: '{{ test_fabric }}'
+            dst_fabric_name: '{{ test_fabric }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/32
+            dst_interface_name: Ethernet1/32
+        state: deleted
+
+    - name: Test merged state bulk create
+      ansible.builtin.import_tasks: merged_create.yml
+
+    - name: Test merged state update existing link
+      ansible.builtin.import_tasks: merged_update.yml
+
+    - name: Test replaced state
+      ansible.builtin.import_tasks: replaced.yml
+
+    - name: Test overridden state
+      ansible.builtin.import_tasks: overridden.yml
+
+    - name: Test deleted state
+      ansible.builtin.import_tasks: deleted.yml
+
+    - name: Test discriminated union validation
+      ansible.builtin.import_tasks: discriminated_union.yml
+
+    - name: Ensure test links do not exist after test run
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric }}'
+            dst_fabric_name: '{{ test_fabric }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+          - src_fabric_name: '{{ test_fabric }}'
+            dst_fabric_name: '{{ test_fabric }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+          - src_fabric_name: '{{ test_fabric }}'
+            dst_fabric_name: '{{ test_fabric }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/32
+            dst_interface_name: Ethernet1/32
+        state: deleted
