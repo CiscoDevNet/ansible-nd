@@ -2455,14 +2455,16 @@ class NDSwitchResourceModule:
             if not sw.fabric_management_ip:
                 continue
             role = sw.switch_role
-            result.append({
-                "seed_ip": sw.fabric_management_ip,
-                "role": getattr(role, "value", str(role)) if role else "leaf",
-                "auth_proto": "MD5",
-                "preserve_config": False,
-                "username": "<username>",
-                "password": "<password>",
-            })
+            result.append(
+                {
+                    "seed_ip": sw.fabric_management_ip,
+                    "role": getattr(role, "value", str(role)) if role else "leaf",
+                    "auth_proto": "MD5",
+                    "preserve_config": False,
+                    "username": "<username>",
+                    "password": "<password>",
+                }
+            )
         return result
 
     def _proposed_to_config_list(self, configs: List["SwitchConfigModel"]) -> List[Dict[str, Any]]:
