@@ -1606,6 +1606,10 @@ class NDPolicyModule:
 
         # ------------------------------------------------------------------
         # Check 3: Basic type validation (soft checks)
+        # Empty strings are treated as "not set" — the controller accepts
+        # them for optional fields, so we skip validation for them.  This
+        # is especially important for the gathered → merged roundtrip
+        # where the controller returns "" for unset optional parameters.
         # ------------------------------------------------------------------
         for user_key, user_val in template_inputs.items():
             pdef = param_map.get(user_key)
@@ -1614,6 +1618,10 @@ class NDPolicyModule:
 
             ptype = (pdef.get("parameterType") or "").lower()
             val_str = str(user_val)
+
+            # Skip type validation for empty/blank values — they mean "not set"
+            if val_str.strip() == "":
+                continue
 
             if ptype == "boolean":
                 if val_str.lower() not in ("true", "false"):
@@ -3360,6 +3368,11 @@ class NDPolicyModule:
         bulk = PolicyCreateBulk(policies=policy_models)
         payload = bulk.to_request_dict()
 
+        self.log.info(
+            f"Bulk create payload templateInputs: "
+            f"{[{k: v for k, v in (w.get('templateInputs') or {}).items()} for w in want_list]}"
+        )
+
         ep = EpManagePoliciesPost()
         ep.fabric_name = self.fabric_name
         if self.cluster_name:
@@ -3423,6 +3436,7 @@ class NDPolicyModule:
         for k, v in (want.get("templateInputs") or {}).items():
             merged_inputs[k] = v
         self.log.debug(f"Merged templateInputs: {len(merged_inputs)} keys")
+        self.log.info(f"Update payload templateInputs for {policy_id}: {merged_inputs}")
 
         update_model = PolicyUpdate(
             switch_id=want["switchId"],
