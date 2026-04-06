@@ -13,9 +13,9 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
-      - interface_name: loopback101
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback101
     state: deleted
   check_mode: true
   register: cm_deleted_101
@@ -24,9 +24,9 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
-      - interface_name: loopback101
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback101
     state: deleted
   register: nm_deleted_101
 
@@ -43,9 +43,9 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
-      - interface_name: loopback101
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback101
     state: deleted
   register: nm_deleted_101_idem
 
@@ -61,7 +61,6 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
       - "{{ loopback_100 }}"
       - "{{ loopback_101 }}"
@@ -71,11 +70,13 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
-      - interface_name: loopback100
-      - interface_name: loopback101
-      - interface_name: loopback102
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback100
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback101
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback102
     state: deleted
   check_mode: true
   register: cm_deleted_multi
@@ -84,11 +85,13 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
-      - interface_name: loopback100
-      - interface_name: loopback101
-      - interface_name: loopback102
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback100
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback101
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback102
     state: deleted
   register: nm_deleted_multi
 
@@ -107,9 +110,9 @@
   cisco.nd.nd_interface_loopback:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    switch_ip: "{{ test_switch_ip }}"
     config:
-      - interface_name: loopback199
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback199
     state: deleted
   register: nm_deleted_nonexistent
 

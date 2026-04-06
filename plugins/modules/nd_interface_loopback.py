@@ -19,23 +19,25 @@ author:
 options:
   fabric_name:
     description:
-    - The name of the fabric containing the target switch.
-    type: str
-    required: true
-  switch_ip:
-    description:
-    - The management IP address of the switch on which to manage loopback interfaces.
-    - This is resolved to the switch serial number (switchId) internally.
+    - The name of the fabric containing the target switches.
     type: str
     required: true
   config:
     description:
     - The list of loopback interfaces to configure.
+    - Each item specifies the target switch and interface configuration.
+    - Multiple switches can be configured in a single task.
     - The structure mirrors the ND Manage Interfaces API payload.
     type: list
     elements: dict
     required: true
     suboptions:
+      switch_ip:
+        description:
+        - The management IP address of the switch on which to manage this loopback interface.
+        - This is resolved to the switch serial number (switchId) internally.
+        type: str
+        required: true
       interface_name:
         description:
         - The name of the loopback interface (e.g., C(loopback0), C(Loopback10)).
@@ -147,12 +149,12 @@ notes:
 """
 
 EXAMPLES = r"""
-- name: Create a loopback interface
+- name: Create a loopback interface on a single switch
   cisco.nd.nd_interface_loopback:
     fabric_name: my_fabric
-    switch_ip: 192.168.1.1
     config:
-      - interface_name: loopback0
+      - switch_ip: 192.168.1.1
+        interface_name: loopback0
         config_data:
           network_os:
             policy:
@@ -164,32 +166,40 @@ EXAMPLES = r"""
     state: merged
   register: result
 
-- name: Create multiple loopback interfaces
+- name: Create loopback interfaces across multiple switches
   cisco.nd.nd_interface_loopback:
     fabric_name: my_fabric
-    switch_ip: 192.168.1.1
     config:
-      - interface_name: loopback0
+      - switch_ip: 192.168.1.1
+        interface_name: loopback0
         config_data:
           network_os:
             policy:
               ip: 10.1.1.1
               description: Router ID loopback
-      - interface_name: loopback1
+      - switch_ip: 192.168.1.1
+        interface_name: loopback1
         config_data:
           network_os:
             policy:
               ip: 10.2.1.1
               description: VTEP loopback
               link_state_routing_tag: UNDERLAY
+      - switch_ip: 192.168.1.2
+        interface_name: loopback0
+        config_data:
+          network_os:
+            policy:
+              ip: 10.1.1.2
+              description: Router ID loopback on switch 2
     state: merged
 
-- name: Update a loopback interface
+- name: Replace a loopback interface
   cisco.nd.nd_interface_loopback:
     fabric_name: my_fabric
-    switch_ip: 192.168.1.1
     config:
-      - interface_name: loopback0
+      - switch_ip: 192.168.1.1
+        interface_name: loopback0
         config_data:
           network_os:
             policy:
@@ -200,17 +210,17 @@ EXAMPLES = r"""
 - name: Delete a loopback interface
   cisco.nd.nd_interface_loopback:
     fabric_name: my_fabric
-    switch_ip: 192.168.1.1
     config:
-      - interface_name: loopback0
+      - switch_ip: 192.168.1.1
+        interface_name: loopback0
     state: deleted
 
 - name: Create loopback interfaces without deploying (for batching)
   cisco.nd.nd_interface_loopback:
     fabric_name: my_fabric
-    switch_ip: 192.168.1.1
     config:
-      - interface_name: loopback0
+      - switch_ip: 192.168.1.1
+        interface_name: loopback0
         config_data:
           network_os:
             policy:

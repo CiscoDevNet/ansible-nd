@@ -22,16 +22,17 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
                 - `admin_state`, `ip`, `ipv6`, `vrf`, `policy_type`, etc.
 """
 
-from typing import Dict, List, Optional, ClassVar, Literal
+from typing import ClassVar, Dict, List, Literal, Optional, Set
+
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
-    field_validator,
-    field_serializer,
     FieldSerializationInfo,
+    field_serializer,
+    field_validator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
 
 LOOPBACK_POLICY_TYPE_MAPPING = NDConstantMapping(
     {
@@ -149,11 +150,16 @@ class LoopbackInterfaceModel(NDBaseModel):
 
     # --- Identifier Configuration ---
 
-    identifiers: ClassVar[Optional[List[str]]] = ["interface_name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifiers: ClassVar[Optional[List[str]]] = ["switch_ip", "interface_name"]
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "composite"
+
+    # --- Serialization Configuration ---
+
+    payload_exclude_fields: ClassVar[Set[str]] = {"switch_ip"}
 
     # --- Fields ---
 
+    switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
     interface_type: str = Field(default="loopback", alias="interfaceType")
     config_data: Optional[LoopbackConfigDataModel] = Field(default=None, alias="configData")
@@ -189,12 +195,12 @@ class LoopbackInterfaceModel(NDBaseModel):
         """
         return dict(
             fabric_name=dict(type="str", required=True),
-            switch_ip=dict(type="str", required=True),
             config=dict(
                 type="list",
                 elements="dict",
                 required=True,
                 options=dict(
+                    switch_ip=dict(type="str", required=True),
                     interface_name=dict(type="str", required=True),
                     interface_type=dict(type="str", default="loopback"),
                     config_data=dict(
