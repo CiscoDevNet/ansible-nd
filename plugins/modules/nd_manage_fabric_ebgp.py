@@ -673,9 +673,12 @@ options:
           bootstrap_subnet_collection:
             description:
             - List of IPv4 or IPv6 subnets to be used for bootstrap.
-            - When O(state=merged), omitting this option preserves the existing collection, but providing it replaces the entire collection with the supplied list.
-            - Under O(state=merged), entries in this list are not merged item-by-item. Removing one entry from the playbook removes it from the fabric, and setting an empty list clears the collection.
-            - When O(state=replaced), this option is also treated as the exact desired collection. If omitted, the collection is reset to its default empty value.
+            - When O(state=merged), omitting this option preserves the existing collection.
+            - When O(state=merged), providing this option replaces the entire collection with the supplied list.
+            - Under O(state=merged), entries in this list are not merged item-by-item.
+            - Under O(state=merged), removing one entry from the playbook removes it from the fabric, and setting an empty list clears the collection.
+            - When O(state=replaced), this option is also treated as the exact desired collection.
+            - When O(state=replaced), omitting this option resets the collection to its default empty value.
             type: list
             elements: dict
             suboptions:
