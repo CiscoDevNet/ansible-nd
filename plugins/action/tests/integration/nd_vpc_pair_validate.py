@@ -223,10 +223,7 @@ class ActionModule(ActionBase):
 
         if isinstance(gathered_data, dict):
             # Could be the full register dict or just the gathered sub-dict
-            vpc_pairs = (
-                gathered_data.get("gathered", {}).get("vpc_pairs")
-                or gathered_data.get("vpc_pairs")
-            )
+            vpc_pairs = gathered_data.get("gathered", {}).get("vpc_pairs") or gathered_data.get("vpc_pairs")
         else:
             results["failed"] = True
             results["msg"] = "gathered_data must be a dict (register output or gathered sub-dict)."
@@ -251,11 +248,7 @@ class ActionModule(ActionBase):
         if mode in ("full", "count_only"):
             if len(vpc_pairs) != len(expected_data):
                 results["failed"] = True
-                results["msg"] = (
-                    "Pair count mismatch: gathered {0} pair(s) but expected {1}.".format(
-                        len(vpc_pairs), len(expected_data)
-                    )
-                )
+                results["msg"] = "Pair count mismatch: gathered {0} pair(s) but expected {1}.".format(len(vpc_pairs), len(expected_data))
                 results["gathered_count"] = len(vpc_pairs)
                 results["expected_count"] = len(expected_data)
                 return results
@@ -318,9 +311,7 @@ class ActionModule(ActionBase):
                     expected_details = _get_vpc_pair_details(expected)
                     gathered_details = _get_vpc_pair_details(gathered_pair)
                     if expected_details is not None:
-                        details_mismatches = _compare_vpc_pair_details(
-                            expected_details, gathered_details
-                        )
+                        details_mismatches = _compare_vpc_pair_details(expected_details, gathered_details)
                         for item in details_mismatches:
                             field_mismatches.append(
                                 {
@@ -348,8 +339,6 @@ class ActionModule(ActionBase):
             results["missing_pairs"] = missing_pairs
             results["field_mismatches"] = field_mismatches
         else:
-            results["msg"] = "Validation successful: {0} pair(s) verified ({1} mode).".format(
-                len(expected_data), mode
-            )
+            results["msg"] = "Validation successful: {0} pair(s) verified ({1} mode).".format(len(expected_data), mode)
 
         return results

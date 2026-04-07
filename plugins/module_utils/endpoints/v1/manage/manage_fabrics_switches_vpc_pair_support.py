@@ -46,12 +46,8 @@ class EpVpcPairSupportGet(
     GET /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPairSupport
     """
 
-    class_name: Literal["EpVpcPairSupportGet"] = Field(
-        default="EpVpcPairSupportGet", frozen=True, description="Class name for backward compatibility"
-    )
-    endpoint_params: VpcPairSupportEndpointParams = Field(
-        default_factory=VpcPairSupportEndpointParams, description="Endpoint-specific query parameters"
-    )
+    class_name: Literal["EpVpcPairSupportGet"] = Field(default="EpVpcPairSupportGet", frozen=True, description="Class name for backward compatibility")
+    endpoint_params: VpcPairSupportEndpointParams = Field(default_factory=VpcPairSupportEndpointParams, description="Endpoint-specific query parameters")
 
     @property
     def path(self) -> str:

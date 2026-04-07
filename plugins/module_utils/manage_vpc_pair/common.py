@@ -10,7 +10,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
     VpcPairResourceError,
 )
 
-
 DEFAULT_VERIFY_TIMEOUT = 5
 DEFAULT_VERIFY_ITERATION = 3
 
@@ -71,17 +70,12 @@ def _canonicalize_for_compare(value: Any) -> Any:
         Canonicalized copy with sorted dicts and sorted lists.
     """
     if isinstance(value, dict):
-        return {
-            key: _canonicalize_for_compare(item)
-            for key, item in sorted(value.items())
-        }
+        return {key: _canonicalize_for_compare(item) for key, item in sorted(value.items())}
     if isinstance(value, list):
         normalized_items = [_canonicalize_for_compare(item) for item in value]
         return sorted(
             normalized_items,
-            key=lambda item: json.dumps(
-                item, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-            ),
+            key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
         )
     return value
 
@@ -114,9 +108,7 @@ def _is_update_needed(want: Dict[str, Any], have: Dict[str, Any]) -> bool:
     return normalized_want != normalized_have
 
 
-def _normalize_timeout(
-    value: Optional[Any], fallback: int
-) -> int:
+def _normalize_timeout(value: Optional[Any], fallback: int) -> int:
     """
     Normalize timeout values from module params with sane fallback.
 
@@ -171,12 +163,8 @@ def get_verify_option(module: Any) -> Dict[str, int]:
         raw_options = {}
 
     return {
-        "timeout": _normalize_timeout(
-            raw_options.get("timeout"), DEFAULT_VERIFY_TIMEOUT
-        ),
-        "iteration": _normalize_iteration(
-            raw_options.get("iteration"), DEFAULT_VERIFY_ITERATION
-        ),
+        "timeout": _normalize_timeout(raw_options.get("timeout"), DEFAULT_VERIFY_TIMEOUT),
+        "iteration": _normalize_iteration(raw_options.get("iteration"), DEFAULT_VERIFY_ITERATION),
     }
 
 

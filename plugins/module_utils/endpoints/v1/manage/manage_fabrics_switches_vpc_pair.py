@@ -64,12 +64,8 @@ class EpVpcPairGet(_EpVpcPairBase):
     GET /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPair
     """
 
-    class_name: Literal["EpVpcPairGet"] = Field(
-        default="EpVpcPairGet", frozen=True, description="Class name for backward compatibility"
-    )
-    endpoint_params: VpcPairGetEndpointParams = Field(
-        default_factory=VpcPairGetEndpointParams, description="Endpoint-specific query parameters"
-    )
+    class_name: Literal["EpVpcPairGet"] = Field(default="EpVpcPairGet", frozen=True, description="Class name for backward compatibility")
+    endpoint_params: VpcPairGetEndpointParams = Field(default_factory=VpcPairGetEndpointParams, description="Endpoint-specific query parameters")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -81,12 +77,8 @@ class EpVpcPairPut(_EpVpcPairBase):
     PUT /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPair
     """
 
-    class_name: Literal["EpVpcPairPut"] = Field(
-        default="EpVpcPairPut", frozen=True, description="Class name for backward compatibility"
-    )
-    endpoint_params: VpcPairPutEndpointParams = Field(
-        default_factory=VpcPairPutEndpointParams, description="Endpoint-specific query parameters"
-    )
+    class_name: Literal["EpVpcPairPut"] = Field(default="EpVpcPairPut", frozen=True, description="Class name for backward compatibility")
+    endpoint_params: VpcPairPutEndpointParams = Field(default_factory=VpcPairPutEndpointParams, description="Endpoint-specific query parameters")
 
     @property
     def verb(self) -> HttpVerbEnum:

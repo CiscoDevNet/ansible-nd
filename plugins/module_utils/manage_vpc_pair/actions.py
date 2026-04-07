@@ -136,9 +136,7 @@ def custom_vpc_create(nrm: Any) -> Optional[Dict[str, Any]]:
 
         if not _is_update_needed(want_dict, have_dict):
             # Already exists in desired state - return existing config without changes
-            nrm.module.warn(
-                f"VPC pair {nrm.current_identifier} already exists in desired state - skipping create"
-            )
+            nrm.module.warn(f"VPC pair {nrm.current_identifier} already exists in desired state - skipping create")
             return nrm.existing_config
 
     # Initialize RestSend via NDModuleV2
@@ -155,13 +153,9 @@ def custom_vpc_create(nrm: Any) -> Optional[Dict[str, Any]]:
             component_type=ComponentTypeSupportEnum.CHECK_PAIRING.value,
         )
         if support_details:
-            is_pairing_allowed = _get_api_field_value(
-                support_details, "isPairingAllowed", None
-            )
+            is_pairing_allowed = _get_api_field_value(support_details, "isPairingAllowed", None)
             if is_pairing_allowed is False:
-                reason = _get_api_field_value(
-                    support_details, "reason", "pairing blocked by support checks"
-                )
+                reason = _get_api_field_value(support_details, "reason", "pairing blocked by support checks")
                 _raise_vpc_error(
                     msg=f"VPC pairing is not allowed for switch {switch_id}: {reason}",
                     fabric=fabric_name,
@@ -172,10 +166,7 @@ def custom_vpc_create(nrm: Any) -> Optional[Dict[str, Any]]:
     except VpcPairResourceError:
         raise
     except Exception as support_error:
-        nrm.module.warn(
-            f"Pairing support check failed for switch {switch_id}: "
-            f"{str(support_error).splitlines()[0]}. Continuing with create operation."
-        )
+        nrm.module.warn(f"Pairing support check failed for switch {switch_id}: " f"{str(support_error).splitlines()[0]}. Continuing with create operation.")
 
     # Validate fabric peering support if virtual peer link is requested.
     _validate_fabric_peering_support(
@@ -196,12 +187,7 @@ def custom_vpc_create(nrm: Any) -> Optional[Dict[str, Any]]:
     payload = _build_vpc_pair_payload(nrm.proposed_config)
 
     # Log the operation
-    nrm.format_log(
-        identifier=nrm.current_identifier,
-        status="created",
-        after_data=payload,
-        sent_payload_data=payload
-    )
+    nrm.format_log(identifier=nrm.current_identifier, status="created", after_data=payload, sent_payload_data=payload)
 
     try:
         # Use PUT (not POST!) for create via RestSend
@@ -211,15 +197,15 @@ def custom_vpc_create(nrm: Any) -> Optional[Dict[str, Any]]:
     except NDModuleError as error:
         error_dict = error.to_dict()
         # Preserve original API error message with different key to avoid conflict
-        if 'msg' in error_dict:
-            error_dict['api_error_msg'] = error_dict.pop('msg')
+        if "msg" in error_dict:
+            error_dict["api_error_msg"] = error_dict.pop("msg")
         _raise_vpc_error(
             msg=f"Failed to create VPC pair {nrm.current_identifier}: {error.msg}",
             fabric=fabric_name,
             switch_id=switch_id,
             peer_switch_id=peer_switch_id,
             path=path,
-            **error_dict
+            **error_dict,
         )
     except VpcPairResourceError:
         raise
@@ -230,7 +216,7 @@ def custom_vpc_create(nrm: Any) -> Optional[Dict[str, Any]]:
             switch_id=switch_id,
             peer_switch_id=peer_switch_id,
             path=path,
-            exception_type=type(e).__name__
+            exception_type=type(e).__name__,
         )
 
 
@@ -280,10 +266,7 @@ def custom_vpc_update(nrm: Any) -> Optional[Dict[str, Any]]:
     have_vpc_pairs = nrm.module.params.get("_have", [])
     if have_vpc_pairs:
         # Filter out the current VPC pair being updated
-        other_vpc_pairs = [
-            vpc for vpc in have_vpc_pairs
-            if vpc.get(VpcFieldNames.SWITCH_ID) != switch_id
-        ]
+        other_vpc_pairs = [vpc for vpc in have_vpc_pairs if vpc.get(VpcFieldNames.SWITCH_ID) != switch_id]
         if other_vpc_pairs:
             _validate_switch_conflicts([nrm.proposed_config], other_vpc_pairs, nrm.module)
 
@@ -293,9 +276,7 @@ def custom_vpc_update(nrm: Any) -> Optional[Dict[str, Any]]:
 
         if not _is_update_needed(want_dict, have_dict):
             # No changes needed - return existing config
-            nrm.module.warn(
-                f"VPC pair {nrm.current_identifier} is already in desired state - skipping update"
-            )
+            nrm.module.warn(f"VPC pair {nrm.current_identifier} is already in desired state - skipping update")
             return nrm.existing_config
 
     # Initialize RestSend via NDModuleV2
@@ -321,12 +302,7 @@ def custom_vpc_update(nrm: Any) -> Optional[Dict[str, Any]]:
     payload = _build_vpc_pair_payload(nrm.proposed_config)
 
     # Log the operation
-    nrm.format_log(
-        identifier=nrm.current_identifier,
-        status="updated",
-        after_data=payload,
-        sent_payload_data=payload
-    )
+    nrm.format_log(identifier=nrm.current_identifier, status="updated", after_data=payload, sent_payload_data=payload)
 
     try:
         # Use PUT for update via RestSend
@@ -336,14 +312,10 @@ def custom_vpc_update(nrm: Any) -> Optional[Dict[str, Any]]:
     except NDModuleError as error:
         error_dict = error.to_dict()
         # Preserve original API error message with different key to avoid conflict
-        if 'msg' in error_dict:
-            error_dict['api_error_msg'] = error_dict.pop('msg')
+        if "msg" in error_dict:
+            error_dict["api_error_msg"] = error_dict.pop("msg")
         _raise_vpc_error(
-            msg=f"Failed to update VPC pair {nrm.current_identifier}: {error.msg}",
-            fabric=fabric_name,
-            switch_id=switch_id,
-            path=path,
-            **error_dict
+            msg=f"Failed to update VPC pair {nrm.current_identifier}: {error.msg}", fabric=fabric_name, switch_id=switch_id, path=path, **error_dict
         )
     except VpcPairResourceError:
         raise
@@ -353,7 +325,7 @@ def custom_vpc_update(nrm: Any) -> Optional[Dict[str, Any]]:
             fabric=fabric_name,
             switch_id=switch_id,
             path=path,
-            exception_type=type(e).__name__
+            exception_type=type(e).__name__,
         )
 
 
@@ -428,7 +400,7 @@ def custom_vpc_delete(nrm: Any) -> bool:
                 ),
                 vpc_pair_key=vpc_pair_key,
                 validation_error=str(validation_error),
-                force_available=True
+                force_available=True,
             )
         else:
             # Force enabled and validation failed - this is when force was actually needed
@@ -447,15 +419,11 @@ def custom_vpc_delete(nrm: Any) -> bool:
     payload = {
         VpcFieldNames.VPC_ACTION: VpcActionEnum.UNPAIR.value,  # ← Discriminator for DELETE
         VpcFieldNames.SWITCH_ID: nrm.existing_config.get(VpcFieldNames.SWITCH_ID),
-        VpcFieldNames.PEER_SWITCH_ID: nrm.existing_config.get(VpcFieldNames.PEER_SWITCH_ID)
+        VpcFieldNames.PEER_SWITCH_ID: nrm.existing_config.get(VpcFieldNames.PEER_SWITCH_ID),
     }
 
     # Log the operation
-    nrm.format_log(
-        identifier=nrm.current_identifier,
-        status="deleted",
-        sent_payload_data=payload
-    )
+    nrm.format_log(identifier=nrm.current_identifier, status="deleted", sent_payload_data=payload)
 
     try:
         # Use PUT (not DELETE!) for unpair via RestSend
@@ -478,21 +446,16 @@ def custom_vpc_delete(nrm: Any) -> bool:
                     last_log.pop("sent_payload", None)
 
             nrm.module.warn(
-                f"VPC pair {nrm.current_identifier} is already unpaired on the controller. "
-                f"Treating as idempotent success. API response: {error.msg}"
+                f"VPC pair {nrm.current_identifier} is already unpaired on the controller. " f"Treating as idempotent success. API response: {error.msg}"
             )
             return False
 
         error_dict = error.to_dict()
         # Preserve original API error message with different key to avoid conflict
-        if 'msg' in error_dict:
-            error_dict['api_error_msg'] = error_dict.pop('msg')
+        if "msg" in error_dict:
+            error_dict["api_error_msg"] = error_dict.pop("msg")
         _raise_vpc_error(
-            msg=f"Failed to delete VPC pair {nrm.current_identifier}: {error.msg}",
-            fabric=fabric_name,
-            switch_id=switch_id,
-            path=path,
-            **error_dict
+            msg=f"Failed to delete VPC pair {nrm.current_identifier}: {error.msg}", fabric=fabric_name, switch_id=switch_id, path=path, **error_dict
         )
     except VpcPairResourceError:
         raise
@@ -502,7 +465,7 @@ def custom_vpc_delete(nrm: Any) -> bool:
             fabric=fabric_name,
             switch_id=switch_id,
             path=path,
-            exception_type=type(e).__name__
+            exception_type=type(e).__name__,
         )
 
     return True

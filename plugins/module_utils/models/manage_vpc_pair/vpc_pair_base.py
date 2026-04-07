@@ -5,7 +5,6 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 
-
 from typing import Any, Annotated, List
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
@@ -87,9 +86,7 @@ class SwitchPairKeyMixin:
     def get_switch_pair_key(self) -> str:
         identifiers = getattr(self, "identifiers", []) or []
         if len(identifiers) != 2:
-            raise ValueError(
-                "get_switch_pair_key only works with exactly 2 identifier fields"
-            )
+            raise ValueError("get_switch_pair_key only works with exactly 2 identifier fields")
 
         values = []
         for field in identifiers:

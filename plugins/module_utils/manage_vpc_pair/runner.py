@@ -64,8 +64,7 @@ def run_vpc_module(nrm: Any) -> Dict[str, Any]:
         module = nrm.module
         module.fail_json(
             msg="Config parameter is required for state '%s'. "
-            "Specify the vPC pair(s) to %s using the config parameter."
-            % (state, "delete" if state == "deleted" else "override"),
+            "Specify the vPC pair(s) to %s using the config parameter." % (state, "delete" if state == "deleted" else "override"),
         )
 
     nrm.manage_state(state=state, new_configs=config)

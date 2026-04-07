@@ -46,15 +46,9 @@ class EpVpcPairsListGet(
     GET /api/v1/manage/fabrics/{fabricName}/vpcPairs
     """
 
-    class_name: Literal["EpVpcPairsListGet"] = Field(
-        default="EpVpcPairsListGet", frozen=True, description="Class name for backward compatibility"
-    )
-    endpoint_params: VpcPairsListEndpointParams = Field(
-        default_factory=VpcPairsListEndpointParams, description="Endpoint-specific query parameters"
-    )
-    lucene_params: LuceneQueryParams = Field(
-        default_factory=LuceneQueryParams, description="Lucene query parameters"
-    )
+    class_name: Literal["EpVpcPairsListGet"] = Field(default="EpVpcPairsListGet", frozen=True, description="Class name for backward compatibility")
+    endpoint_params: VpcPairsListEndpointParams = Field(default_factory=VpcPairsListEndpointParams, description="Endpoint-specific query parameters")
+    lucene_params: LuceneQueryParams = Field(default_factory=LuceneQueryParams, description="Lucene query parameters")
 
     @property
     def path(self) -> str:

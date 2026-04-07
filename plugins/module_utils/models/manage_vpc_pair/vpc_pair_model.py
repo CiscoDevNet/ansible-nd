@@ -109,9 +109,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         Raises:
             ValueError: If both switch IDs are identical
         """
-        validate_distinct_switches(
-            self.switch_id, self.peer_switch_id, "switch_id", "peer_switch_id"
-        )
+        validate_distinct_switches(self.switch_id, self.peer_switch_id, "switch_id", "peer_switch_id")
         return self
 
     def to_payload(self) -> Dict[str, Any]:
@@ -187,9 +185,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
             TypeError: If other is not the same type
         """
         if not isinstance(other, type(self)):
-            raise TypeError(
-                "VpcPairModel.merge requires both models to be the same type"
-            )
+            raise TypeError("VpcPairModel.merge requires both models to be the same type")
 
         merged_data = self.model_dump(by_alias=False, exclude_none=False)
         incoming_data = other.model_dump(by_alias=False, exclude_none=False)
@@ -216,9 +212,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         data = {
             VpcFieldNames.SWITCH_ID: response.get(VpcFieldNames.SWITCH_ID),
             VpcFieldNames.PEER_SWITCH_ID: response.get(VpcFieldNames.PEER_SWITCH_ID),
-            VpcFieldNames.USE_VIRTUAL_PEER_LINK: response.get(
-                VpcFieldNames.USE_VIRTUAL_PEER_LINK, False
-            ),
+            VpcFieldNames.USE_VIRTUAL_PEER_LINK: response.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False),
             VpcFieldNames.VPC_PAIR_DETAILS: response.get(VpcFieldNames.VPC_PAIR_DETAILS),
         }
         return cls.model_validate(data)
@@ -358,17 +352,11 @@ class VpcPairPlaybookConfigModel(BaseModel):
     )
     verify_option: Optional[Dict[str, int]] = Field(
         default=None,
-        description=(
-            "Verification controls used only when suppress_verification=true. "
-            "Supported keys: timeout (seconds), iteration (attempt count)."
-        ),
+        description=("Verification controls used only when suppress_verification=true. " "Supported keys: timeout (seconds), iteration (attempt count)."),
     )
     suppress_verification: bool = Field(
         default=False,
-        description=(
-            "Suppress automatic post-apply verification after write operations. "
-            "When true, verification runs only if verify_option is provided."
-        ),
+        description=("Suppress automatic post-apply verification after write operations. " "When true, verification runs only if verify_option is provided."),
     )
     config: Optional[List[VpcPairPlaybookItemModel]] = Field(
         default=None,
@@ -377,9 +365,7 @@ class VpcPairPlaybookConfigModel(BaseModel):
 
     @field_validator("verify_option")
     @classmethod
-    def validate_verify_option(
-        cls, value: Optional[Dict[str, Any]]
-    ) -> Optional[Dict[str, int]]:
+    def validate_verify_option(cls, value: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
         """
         Validate verify_option schema and normalize values.
 
@@ -440,12 +426,8 @@ class VpcPairPlaybookConfigModel(BaseModel):
                 type="list",
                 elements="dict",
                 options=dict(
-                    peer1_switch_id=dict(
-                        type="str", required=True, aliases=["switch_id"]
-                    ),
-                    peer2_switch_id=dict(
-                        type="str", required=True, aliases=["peer_switch_id"]
-                    ),
+                    peer1_switch_id=dict(type="str", required=True, aliases=["switch_id"]),
+                    peer2_switch_id=dict(type="str", required=True, aliases=["peer_switch_id"]),
                     use_virtual_peer_link=dict(type="bool", default=False),
                     vpc_pair_details=dict(type="dict"),
                 ),

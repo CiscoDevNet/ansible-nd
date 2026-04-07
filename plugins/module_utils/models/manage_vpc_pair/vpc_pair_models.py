@@ -5,7 +5,6 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 
-
 """
 Pydantic models for VPC pair management in Nexus Dashboard 4.x API.
 
@@ -19,6 +18,7 @@ organized into functional domains:
 """
 
 from typing import List, Dict, Any, Optional, Union, ClassVar, Literal
+
 try:
     from typing import Self
 except ImportError:  # pragma: no cover - Python < 3.11
@@ -216,18 +216,8 @@ class VpcPairBase(SwitchPairKeyMixin, NDBaseModel):
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical"]] = "composite"
 
     # Fields with validation constraints
-    switch_id: str = Field(
-        alias="switchId",
-        description="Switch serial number (Peer-1)",
-        min_length=3,
-        max_length=64
-    )
-    peer_switch_id: str = Field(
-        alias="peerSwitchId",
-        description="Peer switch serial number (Peer-2)",
-        min_length=3,
-        max_length=64
-    )
+    switch_id: str = Field(alias="switchId", description="Switch serial number (Peer-1)", min_length=3, max_length=64)
+    peer_switch_id: str = Field(alias="peerSwitchId", description="Peer switch serial number (Peer-2)", min_length=3, max_length=64)
     use_virtual_peer_link: FlexibleBool = Field(default=False, alias="useVirtualPeerLink", description="Virtual peer link present")
     vpc_pair_details: Optional[Union[VpcPairDetailsDefault, VpcPairDetailsCustom]] = Field(
         default=None, discriminator="type", alias="vpcPairDetails", description="VPC pair configuration details"
@@ -261,9 +251,7 @@ class VpcPairBase(SwitchPairKeyMixin, NDBaseModel):
         Raises:
             ValueError: If switch_id equals peer_switch_id
         """
-        validate_distinct_switches(
-            self.switch_id, self.peer_switch_id, "switch_id", "peer_switch_id"
-        )
+        validate_distinct_switches(self.switch_id, self.peer_switch_id, "switch_id", "peer_switch_id")
         return self
 
     def to_payload(self) -> Dict[str, Any]:
@@ -290,18 +278,8 @@ class VpcPairingRequest(SwitchPairKeyMixin, NDBaseModel):
 
     # Fields with validation constraints
     vpc_action: VpcActionEnum = Field(default=VpcActionEnum.PAIR, alias="vpcAction", description="Action to pair")
-    switch_id: str = Field(
-        alias="switchId",
-        description="Switch serial number (Peer-1)",
-        min_length=3,
-        max_length=64
-    )
-    peer_switch_id: str = Field(
-        alias="peerSwitchId",
-        description="Peer switch serial number (Peer-2)",
-        min_length=3,
-        max_length=64
-    )
+    switch_id: str = Field(alias="switchId", description="Switch serial number (Peer-1)", min_length=3, max_length=64)
+    peer_switch_id: str = Field(alias="peerSwitchId", description="Peer switch serial number (Peer-2)", min_length=3, max_length=64)
     use_virtual_peer_link: FlexibleBool = Field(default=False, alias="useVirtualPeerLink", description="Virtual peer link present")
     vpc_pair_details: Optional[Union[VpcPairDetailsDefault, VpcPairDetailsCustom]] = Field(
         default=None, discriminator="type", alias="vpcPairDetails", description="VPC pair configuration details"
@@ -335,9 +313,7 @@ class VpcPairingRequest(SwitchPairKeyMixin, NDBaseModel):
         Raises:
             ValueError: If switch_id equals peer_switch_id
         """
-        validate_distinct_switches(
-            self.switch_id, self.peer_switch_id, "switch_id", "peer_switch_id"
-        )
+        validate_distinct_switches(self.switch_id, self.peer_switch_id, "switch_id", "peer_switch_id")
         return self
 
     def to_payload(self) -> Dict[str, Any]:

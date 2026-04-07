@@ -117,13 +117,9 @@ def _validate_fabric_peering_support(
             if not support_details:
                 continue
 
-            is_supported = _get_api_field_value(
-                support_details, "isVpcFabricPeeringSupported", None
-            )
+            is_supported = _get_api_field_value(support_details, "isVpcFabricPeeringSupported", None)
             if is_supported is False:
-                status = _get_api_field_value(
-                    support_details, "status", "Fabric peering not supported"
-                )
+                status = _get_api_field_value(support_details, "status", "Fabric peering not supported")
                 nrm.module.warn(
                     f"VPC fabric peering is not supported for switch {support_switch_id}: {status}. "
                     f"Continuing, but config save/deploy may report a platform limitation. "
@@ -204,9 +200,7 @@ def _is_switch_in_vpc_pair(
     if not fabric_name or not switch_id:
         return None
 
-    path = VpcPairEndpoints.switch_vpc_overview(
-        fabric_name, switch_id, component_type="full"
-    )
+    path = VpcPairEndpoints.switch_vpc_overview(fabric_name, switch_id, component_type="full")
 
     if timeout is None:
         timeout = get_verify_timeout(nd_v2.module)
@@ -255,18 +249,14 @@ def _validate_fabric_switches(nd_v2: Any, fabric_name: str) -> Dict[str, Dict[st
 
     # Validate response structure
     if not isinstance(switches_response, dict):
-        nd_v2.module.warn(
-            f"Unexpected switches response format: expected dict, got {type(switches_response).__name__}"
-        )
+        nd_v2.module.warn(f"Unexpected switches response format: expected dict, got {type(switches_response).__name__}")
         return {}
 
     switches = switches_response.get(VpcFieldNames.SWITCHES, [])
 
     # Validate switches is a list
     if not isinstance(switches, list):
-        nd_v2.module.warn(
-            f"Unexpected switches format: expected list, got {type(switches).__name__}"
-        )
+        nd_v2.module.warn(f"Unexpected switches format: expected list, got {type(switches).__name__}")
         return {}
 
     # Build validated switch dictionary
@@ -290,9 +280,7 @@ def _validate_fabric_switches(nd_v2: Any, fabric_name: str) -> Dict[str, Dict[st
     return result
 
 
-def _validate_switch_conflicts(
-    want_configs: List[Dict], have_vpc_pairs: List[Dict], module: Any
-) -> None:
+def _validate_switch_conflicts(want_configs: List[Dict], have_vpc_pairs: List[Dict], module: Any) -> None:
     """
     Validate that switches in want configs aren't already in different VPC pairs.
 
@@ -358,16 +346,10 @@ def _validate_switch_conflicts(
                 overlap_list = [str(s) for s in switch_overlap if s is not None]
                 want_key = f"{want.get(VpcFieldNames.SWITCH_ID)}-{want.get(VpcFieldNames.PEER_SWITCH_ID)}"
                 have_key = f"{have.get(VpcFieldNames.SWITCH_ID)}-{have.get(VpcFieldNames.PEER_SWITCH_ID)}"
-                conflicts.append(
-                    f"Switch(es) {', '.join(overlap_list)} in wanted VPC pair {want_key} "
-                    f"are already part of existing VPC pair {have_key}"
-                )
+                conflicts.append(f"Switch(es) {', '.join(overlap_list)} in wanted VPC pair {want_key} " f"are already part of existing VPC pair {have_key}")
 
     if conflicts:
-        _raise_vpc_error(
-            msg="Switch conflicts detected. A switch can only be part of one VPC pair at a time.",
-            conflicts=conflicts
-        )
+        _raise_vpc_error(msg="Switch conflicts detected. A switch can only be part of one VPC pair at a time.", conflicts=conflicts)
 
 
 def _validate_switches_exist_in_fabric(
@@ -454,9 +436,7 @@ def _validate_switches_exist_in_fabric(
     )
 
 
-def _validate_vpc_pair_deletion(
-    nd_v2: Any, fabric_name: str, switch_id: str, vpc_pair_key: str, module: Any
-) -> None:
+def _validate_vpc_pair_deletion(nd_v2: Any, fabric_name: str, switch_id: str, vpc_pair_key: str, module: Any) -> None:
     """
     Validate VPC pair can be safely deleted by checking for dependencies.
 
@@ -493,10 +473,7 @@ def _validate_vpc_pair_deletion(
 
         # If no response, VPC pair doesn't exist - deletion not needed
         if not response:
-            module.warn(
-                f"VPC pair {vpc_pair_key} not found in overview query. "
-                f"It may not exist or may have already been deleted."
-            )
+            module.warn(f"VPC pair {vpc_pair_key} not found in overview query. " f"It may not exist or may have already been deleted.")
             return
 
         # Query consistency endpoint for additional diagnostics before deletion.
@@ -506,24 +483,14 @@ def _validate_vpc_pair_deletion(
             if consistency:
                 type2_consistency = _get_api_field_value(consistency, "type2Consistency", None)
                 if type2_consistency is False:
-                    reason = _get_api_field_value(
-                        consistency, "type2ConsistencyReason", "unknown reason"
-                    )
-                    module.warn(
-                        f"VPC pair {vpc_pair_key} reports type2 consistency issue: {reason}"
-                    )
+                    reason = _get_api_field_value(consistency, "type2ConsistencyReason", "unknown reason")
+                    module.warn(f"VPC pair {vpc_pair_key} reports type2 consistency issue: {reason}")
         except Exception as consistency_error:
-            module.warn(
-                f"Failed to query consistency details for VPC pair {vpc_pair_key}: "
-                f"{str(consistency_error).splitlines()[0]}"
-            )
+            module.warn(f"Failed to query consistency details for VPC pair {vpc_pair_key}: " f"{str(consistency_error).splitlines()[0]}")
 
         # Validate response structure
         if not isinstance(response, dict):
-            _raise_vpc_error(
-                msg=f"Expected dict response from vPC pair overview for {vpc_pair_key}, got {type(response).__name__}",
-                response=response
-            )
+            _raise_vpc_error(msg=f"Expected dict response from vPC pair overview for {vpc_pair_key}, got {type(response).__name__}", response=response)
 
         # Validate overlay data exists
         overlay = response.get(VpcFieldNames.OVERLAY)
@@ -554,17 +521,14 @@ def _validate_vpc_pair_deletion(
                             vpc_pair_key=vpc_pair_key,
                             network_count=network_count,
                             blocking_status=status,
-                            blocking_count=count_int
+                            blocking_count=count_int,
                         )
                 except (ValueError, TypeError) as e:
                     # Best effort - log warning and continue
                     module.warn(f"Error parsing network count for status '{status}': {e}")
         elif network_count:
             # Non-dict format - log warning
-            module.warn(
-                f"networkCount is not a dict for {vpc_pair_key}: {type(network_count).__name__}. "
-                f"Skipping network validation."
-            )
+            module.warn(f"networkCount is not a dict for {vpc_pair_key}: {type(network_count).__name__}. " f"Skipping network validation.")
 
         # Check 2: Validate no VRFs are attached
         vrf_count = overlay.get(VpcFieldNames.VRF_COUNT, {})
@@ -582,17 +546,14 @@ def _validate_vpc_pair_deletion(
                             vpc_pair_key=vpc_pair_key,
                             vrf_count=vrf_count,
                             blocking_status=status,
-                            blocking_count=count_int
+                            blocking_count=count_int,
                         )
                 except (ValueError, TypeError) as e:
                     # Best effort - log warning and continue
                     module.warn(f"Error parsing VRF count for status '{status}': {e}")
         elif vrf_count:
             # Non-dict format - log warning
-            module.warn(
-                f"vrfCount is not a dict for {vpc_pair_key}: {type(vrf_count).__name__}. "
-                f"Skipping VRF validation."
-            )
+            module.warn(f"vrfCount is not a dict for {vpc_pair_key}: {type(vrf_count).__name__}. " f"Skipping VRF validation.")
 
         # Check 3: Warn if vPC interfaces exist (non-blocking)
         inventory = response.get(VpcFieldNames.INVENTORY, {})
@@ -613,8 +574,7 @@ def _validate_vpc_pair_deletion(
         elif not inventory:
             # No inventory data - warn user
             module.warn(
-                f"Inventory data not available in overview response for {vpc_pair_key}. "
-                f"Proceeding with deletion, but it may fail if vPC interfaces exist."
+                f"Inventory data not available in overview response for {vpc_pair_key}. " f"Proceeding with deletion, but it may fail if vPC interfaces exist."
             )
 
     except VpcPairResourceError:
@@ -628,10 +588,7 @@ def _validate_vpc_pair_deletion(
         # by raising a ValueError with a sentinel message so that the
         # delete function can treat this as an idempotent no-op.
         if status_code in (400, 404) and "not a part of" in error_msg:
-            raise ValueError(
-                f"VPC pair {vpc_pair_key} is already unpaired on the controller. "
-                f"No deletion required."
-            )
+            raise ValueError(f"VPC pair {vpc_pair_key} is already unpaired on the controller. " f"No deletion required.")
 
         # Best effort validation - if overview query fails, log warning and proceed
         # The API will still reject deletion if dependencies exist
@@ -642,10 +599,7 @@ def _validate_vpc_pair_deletion(
 
     except Exception as e:
         # Best effort validation - log warning and continue
-        module.warn(
-            f"Unexpected error validating VPC pair {vpc_pair_key} for deletion: {str(e)}. "
-            f"Proceeding with deletion attempt."
-        )
+        module.warn(f"Unexpected error validating VPC pair {vpc_pair_key} for deletion: {str(e)}. " f"Proceeding with deletion attempt.")
 
 
 # ===== Custom Action Functions (used by VpcPairResourceService via orchestrator) =====

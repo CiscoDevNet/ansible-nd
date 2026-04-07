@@ -41,9 +41,7 @@ class EpVpcPairConsistencyGet(
     GET /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPairConsistency
     """
 
-    class_name: Literal["EpVpcPairConsistencyGet"] = Field(
-        default="EpVpcPairConsistencyGet", frozen=True, description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpVpcPairConsistencyGet"] = Field(default="EpVpcPairConsistencyGet", frozen=True, description="Class name for backward compatibility")
     endpoint_params: VpcPairConsistencyEndpointParams = Field(
         default_factory=VpcPairConsistencyEndpointParams, description="Endpoint-specific query parameters"
     )

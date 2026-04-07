@@ -54,7 +54,7 @@ class VpcActionEnum(str, Enum):
     - "unPair" (camelCase) for unpairing operations
     """
 
-    PAIR = "pair"      # Create or update VPC pair (lowercase per OpenAPI spec)
+    PAIR = "pair"  # Create or update VPC pair (lowercase per OpenAPI spec)
     UNPAIR = "unPair"  # Delete VPC pair (camelCase per OpenAPI spec)
 
 
@@ -71,7 +71,7 @@ class VpcPairTypeEnum(str, Enum):
     """
 
     DEFAULT = "default"  # Use default VPC pair template
-    CUSTOM = "custom"    # Use custom VPC pair template
+    CUSTOM = "custom"  # Use custom VPC pair template
 
 
 class KeepAliveVrfEnum(str, Enum):
@@ -81,7 +81,7 @@ class KeepAliveVrfEnum(str, Enum):
     VRF used for vPC keep-alive link traffic.
     """
 
-    DEFAULT = "default"        # Use default VRF
+    DEFAULT = "default"  # Use default VRF
     MANAGEMENT = "management"  # Use management VRF
 
 
@@ -92,7 +92,7 @@ class PoModeEnum(str, Enum):
     Defines LACP behavior.
     """
 
-    ON = "on"          # Static channel mode (no LACP)
+    ON = "on"  # Static channel mode (no LACP)
     ACTIVE = "active"  # LACP active mode (initiates negotiation)
     PASSIVE = "passive"  # LACP passive mode (waits for negotiation)
 
@@ -116,9 +116,9 @@ class VpcRoleEnum(str, Enum):
     VPC role designation for switches in a vPC pair.
     """
 
-    PRIMARY = "primary"                          # Configured primary peer
-    SECONDARY = "secondary"                      # Configured secondary peer
-    OPERATIONAL_PRIMARY = "operationalPrimary"   # Runtime primary role
+    PRIMARY = "primary"  # Configured primary peer
+    SECONDARY = "secondary"  # Configured secondary peer
+    OPERATIONAL_PRIMARY = "operationalPrimary"  # Runtime primary role
     OPERATIONAL_SECONDARY = "operationalSecondary"  # Runtime secondary role
 
 
@@ -128,7 +128,7 @@ class MaintenanceModeEnum(str, Enum):
     """
 
     MAINTENANCE = "maintenance"  # Switch in maintenance mode
-    NORMAL = "normal"           # Switch in normal operation
+    NORMAL = "normal"  # Switch in normal operation
 
 
 # ============================================================================
@@ -143,11 +143,11 @@ class ComponentTypeOverviewEnum(str, Enum):
     Used for filtering overview endpoint responses.
     """
 
-    FULL = "full"            # Full overview with all components
-    HEALTH = "health"        # Health status only
-    MODULE = "module"        # Module information only
-    VXLAN = "vxlan"         # VXLAN configuration only
-    OVERLAY = "overlay"      # Overlay information only
+    FULL = "full"  # Full overview with all components
+    HEALTH = "health"  # Health status only
+    MODULE = "module"  # Module information only
+    VXLAN = "vxlan"  # VXLAN configuration only
+    OVERLAY = "overlay"  # Overlay information only
     PAIRS_INFO = "pairsInfo"  # Pairs information only
     INVENTORY = "inventory"  # Inventory information only
     ANOMALIES = "anomalies"  # Anomalies information only
@@ -171,7 +171,7 @@ class VpcPairViewEnum(str, Enum):
     Controls which VPC pairs are returned in queries.
     """
 
-    INTENDED_PAIRS = "intendedPairs"      # Show intended VPC pairs
+    INTENDED_PAIRS = "intendedPairs"  # Show intended VPC pairs
     DISCOVERED_PAIRS = "discoveredPairs"  # Show discovered VPC pairs (default)
 
 

@@ -260,7 +260,5 @@ class VpcPairEndpoints:
         """
         endpoint = EpFabricDeployPost(fabric_name=fabric_name)
         base_path = endpoint.path
-        query_params = _ForceShowRunQueryParams(
-            force_show_run=True if force_show_run else None
-        )
+        query_params = _ForceShowRunQueryParams(force_show_run=True if force_show_run else None)
         return VpcPairEndpoints._append_query(base_path, query_params)

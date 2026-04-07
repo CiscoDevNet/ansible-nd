@@ -36,8 +36,7 @@
       timeout: 60
       iteration: 3
   register: fabric_query
-  ignore_errors: true
-
+  failed_when: false
 - name: BASE - Assert fabric exists
   ansible.builtin.assert:
     that:
@@ -55,4 +54,4 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-  ignore_errors: true
+  failed_when: false

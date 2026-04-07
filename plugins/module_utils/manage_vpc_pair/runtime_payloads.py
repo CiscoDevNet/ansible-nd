@@ -83,9 +83,7 @@ API_FIELD_ALIASES = {
 }
 
 
-def _get_api_field_value(
-    api_response: Dict[str, Any], field_name: str, default: Any = None
-) -> Any:
+def _get_api_field_value(api_response: Dict[str, Any], field_name: str, default: Any = None) -> Any:
     """
     Get a field value across known ND API naming aliases.
 

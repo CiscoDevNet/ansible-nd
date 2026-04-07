@@ -344,7 +344,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runner im
     run_vpc_module,
 )
 
-
 # ===== Module Entry Point =====
 
 
@@ -370,9 +369,7 @@ def main() -> None:
     setup_logging(module)
 
     try:
-        module_config = VpcPairPlaybookConfigModel.model_validate(
-            module.params, by_alias=True, by_name=True
-        )
+        module_config = VpcPairPlaybookConfigModel.model_validate(module.params, by_alias=True, by_name=True)
     except ValidationError as e:
         module.fail_json(
             msg="Invalid nd_manage_vpc_pair playbook configuration",
@@ -391,15 +388,10 @@ def main() -> None:
     force = module_config.force
     force_applicable = state == "deleted"
     if force and not force_applicable:
-        module.warn(
-            "Parameter 'force' only applies to state 'deleted'. "
-            f"Ignoring force for state '{state}'."
-        )
+        module.warn("Parameter 'force' only applies to state 'deleted'. " f"Ignoring force for state '{state}'.")
 
     # Normalize config keys for runtime/state-machine model handling.
-    normalized_config = [
-        item.to_runtime_config() for item in (module_config.config or [])
-    ]
+    normalized_config = [item.to_runtime_config() for item in (module_config.config or [])]
 
     module.params["config"] = normalized_config
 

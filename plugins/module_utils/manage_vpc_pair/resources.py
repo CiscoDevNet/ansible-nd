@@ -111,9 +111,7 @@ class VpcPairStateMachine(NDStateMachine):
         formatted.setdefault("response", [])
         formatted.setdefault("result", [])
         class_diff = self._build_class_diff()
-        changed_by_class_diff = bool(
-            class_diff["created"] or class_diff["deleted"] or class_diff["updated"]
-        )
+        changed_by_class_diff = bool(class_diff["created"] or class_diff["deleted"] or class_diff["updated"])
         formatted["changed"] = bool(formatted.get("changed")) or changed_by_class_diff
         formatted["created"] = class_diff["created"]
         formatted["deleted"] = class_diff["deleted"]
@@ -147,18 +145,13 @@ class VpcPairStateMachine(NDStateMachine):
             return
         if suppress_verification and isinstance(verify_option, dict) and not verify_option:
             return
-        if self.logs and not any(
-            log.get("status") in ("created", "updated", "deleted")
-            for log in self.logs
-        ):
+        if self.logs and not any(log.get("status") in ("created", "updated", "deleted") for log in self.logs):
             # Skip refresh for pure no-op runs to avoid false changed flips from
             # stale/synthetic before-state fallbacks.
             return
 
         changed_pairs = self._count_changed_pairs()
-        verify_attempts = get_verify_iterations(
-            self.module, changed_pairs=changed_pairs
-        )
+        verify_attempts = get_verify_iterations(self.module, changed_pairs=changed_pairs)
         refresh_errors: List[str] = []
         for attempt in range(1, verify_attempts + 1):
             try:
@@ -171,19 +164,12 @@ class VpcPairStateMachine(NDStateMachine):
             except Exception as exc:
                 refresh_errors.append(str(exc))
                 if attempt < verify_attempts:
-                    self.module.warn(
-                        "Post-apply refresh attempt "
-                        f"{attempt}/{verify_attempts} failed: {exc}. "
-                        "Retrying..."
-                    )
+                    self.module.warn("Post-apply refresh attempt " f"{attempt}/{verify_attempts} failed: {exc}. " "Retrying...")
                     time.sleep(POST_APPLY_REFRESH_RETRY_DELAY_SECONDS)
                     continue
 
                 raise VpcPairResourceError(
-                    msg=(
-                        "Failed to refresh final after-state from controller query "
-                        "after write operation."
-                    ),
+                    msg=("Failed to refresh final after-state from controller query " "after write operation."),
                     attempts=verify_attempts,
                     retry_delay_seconds=POST_APPLY_REFRESH_RETRY_DELAY_SECONDS,
                     refresh_errors=refresh_errors,
@@ -369,16 +355,10 @@ class VpcPairStateMachine(NDStateMachine):
                 self.current_identifier = identifier
 
                 existing_item = self.existing.get(identifier)
-                self.existing_config = (
-                    existing_item.model_dump(by_alias=True, exclude_none=True)
-                    if existing_item
-                    else {}
-                )
+                self.existing_config = existing_item.model_dump(by_alias=True, exclude_none=True) if existing_item else {}
 
                 try:
-                    diff_status = self.existing.get_diff_config(
-                        proposed_item, unwanted_keys=unwanted_keys
-                    )
+                    diff_status = self.existing.get_diff_config(proposed_item, unwanted_keys=unwanted_keys)
                 except TypeError:
                     diff_status = self.existing.get_diff_config(proposed_item)
 
@@ -417,11 +397,7 @@ class VpcPairStateMachine(NDStateMachine):
                 self.format_log(
                     identifier=identifier,
                     status=operation_status,
-                    after_data=(
-                        response
-                        if not self.module.check_mode
-                        else final_item.model_dump(by_alias=True, exclude_none=True)
-                    ),
+                    after_data=(response if not self.module.check_mode else final_item.model_dump(by_alias=True, exclude_none=True)),
                     sent_payload_data=sent_payload,
                 )
             except VpcPairResourceError as e:
@@ -474,9 +450,7 @@ class VpcPairStateMachine(NDStateMachine):
                 existing_item = self.existing.get(identifier)
                 if not existing_item:
                     continue
-                self.existing_config = existing_item.model_dump(
-                    by_alias=True, exclude_none=True
-                )
+                self.existing_config = existing_item.model_dump(by_alias=True, exclude_none=True)
                 delete_changed = self.model_orchestrator.delete(existing_item)
                 if delete_changed is not False:
                     self.existing.delete(identifier)
@@ -520,9 +494,7 @@ class VpcPairStateMachine(NDStateMachine):
                     self.format_log(identifier=identifier, status="no_change", after_data={})
                     continue
 
-                self.existing_config = existing_item.model_dump(
-                    by_alias=True, exclude_none=True
-                )
+                self.existing_config = existing_item.model_dump(by_alias=True, exclude_none=True)
                 delete_changed = self.model_orchestrator.delete(existing_item)
                 if delete_changed is not False:
                     self.existing.delete(identifier)

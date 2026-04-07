@@ -20,6 +20,7 @@
   ansible.builtin.template:
     src: "{{ role_path }}/templates/nd_vpc_pair_conf.j2"
     dest: "{{ role_path }}/files/nd_vpc_pair_{{ file }}_conf.yaml"
+    mode: "0644"
   delegate_to: localhost
 
 - name: Load Configuration Data into Variable

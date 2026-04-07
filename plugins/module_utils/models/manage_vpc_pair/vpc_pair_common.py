@@ -26,9 +26,7 @@ def validate_distinct_switches(
 ) -> None:
     """Ensure two switch identifiers are not equal."""
     if first_switch_id == second_switch_id:
-        raise ValueError(
-            f"{first_label} and {second_label} must be different: {first_switch_id}"
-        )
+        raise ValueError(f"{first_label} and {second_label} must be different: {first_switch_id}")
 
 
 def normalize_vpc_pair_aliases(ansible_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -43,10 +41,7 @@ def normalize_vpc_pair_aliases(ansible_config: Dict[str, Any]) -> Dict[str, Any]
         data[VpcFieldNames.SWITCH_ID] = data.get("switch_id")
     if VpcFieldNames.PEER_SWITCH_ID not in data and "peer_switch_id" in data:
         data[VpcFieldNames.PEER_SWITCH_ID] = data.get("peer_switch_id")
-    if (
-        VpcFieldNames.USE_VIRTUAL_PEER_LINK not in data
-        and "use_virtual_peer_link" in data
-    ):
+    if VpcFieldNames.USE_VIRTUAL_PEER_LINK not in data and "use_virtual_peer_link" in data:
         data[VpcFieldNames.USE_VIRTUAL_PEER_LINK] = data.get("use_virtual_peer_link")
     if VpcFieldNames.VPC_PAIR_DETAILS not in data and "vpc_pair_details" in data:
         data[VpcFieldNames.VPC_PAIR_DETAILS] = data.get("vpc_pair_details")
