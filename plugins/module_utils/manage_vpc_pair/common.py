@@ -2,7 +2,6 @@
 
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-from __future__ import absolute_import, division, print_function
 
 import json
 from typing import Any, Dict, List, Optional
@@ -16,7 +15,7 @@ DEFAULT_VERIFY_TIMEOUT = 5
 DEFAULT_VERIFY_ITERATION = 3
 
 
-def _collection_to_list_flex(collection) -> List[Dict[str, Any]]:
+def _collection_to_list_flex(collection: Any) -> List[Dict[str, Any]]:
     """
     Serialize NDConfigCollection across old/new framework variants.
 
@@ -157,7 +156,7 @@ def _normalize_iteration(value: Optional[Any], fallback: int) -> int:
     return fallback
 
 
-def get_verify_option(module) -> Dict[str, int]:
+def get_verify_option(module: Any) -> Dict[str, int]:
     """
     Return normalized verify_option dictionary.
 
@@ -181,7 +180,7 @@ def get_verify_option(module) -> Dict[str, int]:
     }
 
 
-def get_verify_timeout(module) -> int:
+def get_verify_timeout(module: Any) -> int:
     """
     Return normalized read-operation timeout.
 
@@ -202,7 +201,7 @@ def get_verify_timeout(module) -> int:
     return get_verify_option(module).get("timeout", DEFAULT_VERIFY_TIMEOUT)
 
 
-def get_verify_iterations(module, changed_pairs: Optional[int] = None) -> int:
+def get_verify_iterations(module: Any, changed_pairs: Optional[int] = None) -> int:
     """
     Return normalized verification attempt count.
 

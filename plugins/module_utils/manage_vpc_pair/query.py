@@ -3,10 +3,9 @@
 # Copyright: (c) 2026, Sivakami S <sivakasi@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
 
 import ipaddress
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -54,7 +53,7 @@ def _as_int_or_zero(value: Any) -> int:
 
 
 def _is_pair_in_sync_from_overview(
-    nd_v2,
+    nd_v2: Any,
     fabric_name: str,
     switch_id: str,
     timeout: Optional[int] = None,
@@ -138,7 +137,7 @@ def _is_pair_in_sync_from_overview(
     return None
 
 
-def _is_external_fabric(nd_v2, fabric_name: str, module) -> bool:
+def _is_external_fabric(nd_v2: Any, fabric_name: str, module: Any) -> bool:
     """
     Best-effort external-fabric detection from fabric details endpoint.
 
@@ -197,7 +196,9 @@ def _is_external_fabric(nd_v2, fabric_name: str, module) -> bool:
     return any("external" in token for token in candidates)
 
 
-def _get_recommendation_details(nd_v2, fabric_name: str, switch_id: str, timeout: Optional[int] = None) -> Optional[Dict]:
+def _get_recommendation_details(
+    nd_v2: Any, fabric_name: str, switch_id: str, timeout: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
     """
     Get VPC pair recommendation details from ND for a specific switch.
 
@@ -345,7 +346,7 @@ def _extract_vpc_pairs_from_list_response(vpc_pairs_response: Any) -> List[Dict[
 
 
 def _enrich_pairs_from_direct_vpc(
-    nd_v2,
+    nd_v2: Any,
     fabric_name: str,
     pairs: List[Dict[str, Any]],
     timeout: Optional[int] = None,
@@ -418,10 +419,10 @@ def _enrich_pairs_from_direct_vpc(
 
 
 def _filter_stale_vpc_pairs(
-    nd_v2,
+    nd_v2: Any,
     fabric_name: str,
     pairs: List[Dict[str, Any]],
-    module,
+    module: Any,
 ) -> List[Dict[str, Any]]:
     """
     Remove stale pairs using overview membership checks.
@@ -532,11 +533,11 @@ def _is_ip_literal(value: Any) -> bool:
 
 
 def _resolve_config_switch_ips(
-    nd_v2,
-    module,
+    nd_v2: Any,
+    module: Any,
     fabric_name: str,
     config: List[Dict[str, Any]],
-):
+) -> Tuple[List[Dict[str, Any]], Dict[str, str], Optional[Dict[str, Dict[str, Any]]]]:
     """
     Resolve switch identifiers from management IPs to serial numbers.
 
@@ -637,11 +638,11 @@ def _resolve_config_switch_ips(
 
 
 def normalize_vpc_playbook_switch_identifiers(
-    module,
-    nd_v2=None,
+    module: Any,
+    nd_v2: Optional[Any] = None,
     fabric_name: Optional[str] = None,
     state: Optional[str] = None,
-):
+) -> Optional[Dict[str, Dict[str, Any]]]:
     """
     Normalize playbook switch identifiers from management IPs to serial numbers.
 
@@ -692,7 +693,7 @@ def normalize_vpc_playbook_switch_identifiers(
     return preloaded_fabric_switches
 
 
-def custom_vpc_query_all(nrm) -> List[Dict]:
+def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
     """
     Query existing VPC pairs with state-aware enrichment.
 

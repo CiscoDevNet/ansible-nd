@@ -6,11 +6,8 @@
 Unit tests for manage_vpc_pair model layer.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
@@ -24,7 +21,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.vp
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 
-def test_manage_vpc_pair_model_00010():
+def test_manage_vpc_pair_model_00010() -> None:
     """Verify VpcPairModel.from_config accepts snake_case keys."""
     with does_not_raise():
         model = VpcPairModel.from_config(
@@ -39,7 +36,7 @@ def test_manage_vpc_pair_model_00010():
     assert model.use_virtual_peer_link is True
 
 
-def test_manage_vpc_pair_model_00020():
+def test_manage_vpc_pair_model_00020() -> None:
     """Verify VpcPairModel identifier is order-independent."""
     with does_not_raise():
         model = VpcPairModel.from_config(
@@ -51,7 +48,7 @@ def test_manage_vpc_pair_model_00020():
     assert model.get_identifier_value() == ("SN01", "SN02")
 
 
-def test_manage_vpc_pair_model_00030():
+def test_manage_vpc_pair_model_00030() -> None:
     """Verify merge handles reversed switch order without transient validation failure."""
     with does_not_raise():
         base = VpcPairModel.from_config(
@@ -75,7 +72,7 @@ def test_manage_vpc_pair_model_00030():
     assert merged.use_virtual_peer_link is False
 
 
-def test_manage_vpc_pair_model_00040():
+def test_manage_vpc_pair_model_00040() -> None:
     """Verify playbook item normalization includes both snake_case and API keys."""
     with does_not_raise():
         item = VpcPairPlaybookItemModel(
@@ -93,13 +90,13 @@ def test_manage_vpc_pair_model_00040():
     assert runtime[VpcFieldNames.USE_VIRTUAL_PEER_LINK] is False
 
 
-def test_manage_vpc_pair_model_00050():
+def test_manage_vpc_pair_model_00050() -> None:
     """Verify playbook item model rejects identical peer switch IDs."""
     with pytest.raises(ValidationError):
         VpcPairPlaybookItemModel(peer1_switch_id="SN01", peer2_switch_id="SN01")
 
 
-def test_manage_vpc_pair_model_00060():
+def test_manage_vpc_pair_model_00060() -> None:
     """Verify argument_spec keeps vPC pair config aliases."""
     with does_not_raise():
         spec = VpcPairPlaybookConfigModel.get_argument_spec()

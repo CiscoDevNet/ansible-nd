@@ -2,7 +2,6 @@
 
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-from __future__ import absolute_import, division, print_function
 
 import json
 import time
@@ -44,7 +43,7 @@ POST_APPLY_REFRESH_RETRY_DELAY_SECONDS = 1
 class VpcPairStateMachine(NDStateMachine):
     """NDStateMachine adapter with state handling for nd_manage_vpc_pair."""
 
-    def __init__(self, module: AnsibleModule):
+    def __init__(self, module: AnsibleModule) -> None:
         """
         Initialize VpcPairStateMachine.
 
@@ -563,7 +562,7 @@ class VpcPairResourceService:
         run_state_handler: RunStateHandler,
         deploy_handler: DeployHandler,
         needs_deployment_handler: NeedsDeployHandler,
-    ):
+    ) -> None:
         """
         Initialize VpcPairResourceService.
 

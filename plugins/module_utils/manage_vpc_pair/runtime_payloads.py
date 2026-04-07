@@ -3,7 +3,6 @@
 # Copyright: (c) 2026, Sivakami S <sivakasi@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
 
 from typing import Any, Dict, Optional
 
@@ -21,7 +20,7 @@ Note:
 """
 
 
-def _get_template_config(vpc_pair_model) -> Optional[Dict[str, Any]]:
+def _get_template_config(vpc_pair_model: Any) -> Optional[Dict[str, Any]]:
     """
     Extract template configuration from a vPC pair model if present.
 
@@ -41,7 +40,7 @@ def _get_template_config(vpc_pair_model) -> Optional[Dict[str, Any]]:
     return vpc_pair_details.model_dump(by_alias=True, exclude_none=True)
 
 
-def _build_vpc_pair_payload(vpc_pair_model) -> Dict[str, Any]:
+def _build_vpc_pair_payload(vpc_pair_model: Any) -> Dict[str, Any]:
     """
     Build pair payload with vpcAction discriminator for ND 4.2 APIs.
 
@@ -84,7 +83,9 @@ API_FIELD_ALIASES = {
 }
 
 
-def _get_api_field_value(api_response: Dict[str, Any], field_name: str, default=None):
+def _get_api_field_value(
+    api_response: Dict[str, Any], field_name: str, default: Any = None
+) -> Any:
     """
     Get a field value across known ND API naming aliases.
 

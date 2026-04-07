@@ -3,24 +3,23 @@
 # Copyright: (c) 2026, Sivakami Sivaraman <sivakasi@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
-
+from typing import Any, Optional
 from ansible.plugins.action import ActionBase
 from ansible.utils.display import Display
 
 display = Display()
 
 
-def _normalize_pair(pair):
+def _normalize_pair(pair: dict[str, Any]) -> frozenset[str]:
     """Return a frozenset key of (switch_id, peer_switch_id) so order does not matter."""
     s1 = pair.get("switchId") or pair.get("switch_id") or pair.get("peer1_switch_id", "")
     s2 = pair.get("peerSwitchId") or pair.get("peer_switch_id") or pair.get("peer2_switch_id", "")
     return frozenset([s1.strip(), s2.strip()])
 
 
-def _get_virtual_peer_link(pair):
+def _get_virtual_peer_link(pair: dict[str, Any]) -> Optional[Any]:
     """Extract the use_virtual_peer_link / useVirtualPeerLink value from a pair dict."""
     for key in ("useVirtualPeerLink", "use_virtual_peer_link"):
         if key in pair:
@@ -28,7 +27,7 @@ def _get_virtual_peer_link(pair):
     return None
 
 
-def _get_vpc_pair_details(pair):
+def _get_vpc_pair_details(pair: dict[str, Any]) -> Optional[dict[str, Any]]:
     """Extract vpc_pair_details / vpcPairDetails from a pair dict."""
     for key in ("vpc_pair_details", "vpcPairDetails"):
         if key in pair:
@@ -36,7 +35,7 @@ def _get_vpc_pair_details(pair):
     return None
 
 
-def _coerce_scalar(value):
+def _coerce_scalar(value: Any) -> Any:
     """Normalize scalar value types for stable comparisons across API/model formats."""
     if isinstance(value, str):
         text = value.strip()
@@ -52,7 +51,7 @@ def _coerce_scalar(value):
     return value
 
 
-def _values_equal(expected, actual):
+def _values_equal(expected: Any, actual: Any) -> bool:
     """Compare values with lightweight normalization for bool/int/string drift."""
     if isinstance(expected, list) and isinstance(actual, list):
         if len(expected) != len(actual):
@@ -61,7 +60,7 @@ def _values_equal(expected, actual):
     return _coerce_scalar(expected) == _coerce_scalar(actual)
 
 
-def _detail_value_with_alias(details, key):
+def _detail_value_with_alias(details: dict[str, Any], key: str) -> tuple[Any, Optional[str]]:
     """
     Fetch detail value supporting snake_case/camelCase alias forms.
     Returns tuple(value, resolved_key). value is None if not found.
@@ -81,7 +80,7 @@ def _detail_value_with_alias(details, key):
     return None, None
 
 
-def _compare_vpc_pair_details(expected_details, actual_details):
+def _compare_vpc_pair_details(expected_details: Any, actual_details: Any) -> list[dict[str, Any]]:
     """Compare expected details as a subset of actual details and return mismatches."""
     mismatches = []
 
@@ -184,7 +183,7 @@ class ActionModule(ActionBase):
 
     VALID_MODES = frozenset(["full", "count_only", "exists"])
 
-    def run(self, tmp=None, task_vars=None):
+    def run(self, tmp: Any = None, task_vars: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         results = super(ActionModule, self).run(tmp, task_vars)
         results["failed"] = False
 

@@ -2,13 +2,15 @@
 
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-from __future__ import absolute_import, division, print_function
 
 from typing import Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     CompositeQueryParams,
     EndpointQueryParams,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ForceShowRunMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
     ComponentTypeSupportEnum,
@@ -45,7 +47,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 
 
-class _ForceShowRunQueryParams(EndpointQueryParams):
+class _ForceShowRunQueryParams(ForceShowRunMixin, EndpointQueryParams):
     """Query params for deploy endpoint."""
 
     force_show_run: Optional[bool] = None

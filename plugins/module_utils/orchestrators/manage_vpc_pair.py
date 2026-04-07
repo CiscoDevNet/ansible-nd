@@ -2,9 +2,8 @@
 
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-from __future__ import absolute_import, division, print_function
 
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.vpc_pair_model import (
@@ -28,7 +27,7 @@ class _VpcPairQueryContext:
     before the full state machine is constructed.
     """
 
-    def __init__(self, module: AnsibleModule):
+    def __init__(self, module: AnsibleModule) -> None:
         """
         Initialize query context.
 
@@ -52,8 +51,8 @@ class VpcPairOrchestrator:
         self,
         module: Optional[AnsibleModule] = None,
         sender: Optional[Any] = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize VpcPairOrchestrator.
 
@@ -87,7 +86,7 @@ class VpcPairOrchestrator:
         """
         self.state_machine = state_machine
 
-    def query_all(self):
+    def query_all(self) -> List[Dict[str, Any]]:
         """
         Query all existing vPC pairs from the controller.
 
@@ -103,7 +102,7 @@ class VpcPairOrchestrator:
         )
         return custom_vpc_query_all(context)
 
-    def create(self, model_instance, **kwargs):
+    def create(self, model_instance: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
         """
         Create a new vPC pair via custom_vpc_create handler.
 
@@ -122,7 +121,7 @@ class VpcPairOrchestrator:
             raise RuntimeError("VpcPairOrchestrator is not bound to a state machine")
         return custom_vpc_create(self.state_machine)
 
-    def update(self, model_instance, **kwargs):
+    def update(self, model_instance: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
         """
         Update an existing vPC pair via custom_vpc_update handler.
 
@@ -141,7 +140,7 @@ class VpcPairOrchestrator:
             raise RuntimeError("VpcPairOrchestrator is not bound to a state machine")
         return custom_vpc_update(self.state_machine)
 
-    def delete(self, model_instance, **kwargs):
+    def delete(self, model_instance: Any, **kwargs: Any) -> bool:
         """
         Delete a vPC pair via custom_vpc_delete handler.
 

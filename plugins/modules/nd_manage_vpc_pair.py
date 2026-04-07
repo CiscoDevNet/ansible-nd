@@ -2,7 +2,6 @@
 
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-from __future__ import absolute_import, division, print_function
 
 __copyright__ = "Copyright (c) 2026 Cisco and/or its affiliates."
 __author__ = "Sivakami S"
@@ -349,7 +348,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runner im
 # ===== Module Entry Point =====
 
 
-def main():
+def main() -> None:
     """
     Module entry point combining framework + RestSend.
 

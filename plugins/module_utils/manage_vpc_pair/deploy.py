@@ -3,7 +3,6 @@
 # Copyright: (c) 2026, Sivakami S <sivakasi@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
 
 from typing import Any, Dict
 
@@ -25,7 +24,7 @@ except Exception:
     from ansible_collections.cisco.nd.plugins.module_utils.results import Results
 
 
-def _needs_deployment(result: Dict, nrm) -> bool:
+def _needs_deployment(result: Dict[str, Any], nrm: Any) -> bool:
     """
     Determine if deployment is needed based on changes and pending operations.
 
@@ -89,7 +88,7 @@ def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
     return any(signature in message for signature in non_fatal_signatures)
 
 
-def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
+def custom_vpc_deploy(nrm: Any, fabric_name: str, result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Custom deploy function for fabric configuration changes using RestSend.
 

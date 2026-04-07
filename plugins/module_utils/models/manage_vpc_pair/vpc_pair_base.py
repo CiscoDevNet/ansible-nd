@@ -4,17 +4,15 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
 
-__metaclass__ = type
 
-from typing import Annotated, List
+from typing import Any, Annotated, List
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
 )
 
 
-def coerce_str_to_int(data):
+def coerce_str_to_int(data: Any) -> Any:
     """
     Convert string to int, handle None.
 
@@ -36,7 +34,7 @@ def coerce_str_to_int(data):
     return int(data)
 
 
-def coerce_to_bool(data):
+def coerce_to_bool(data: Any) -> Any:
     """
     Convert various formats to bool.
 
@@ -54,7 +52,7 @@ def coerce_to_bool(data):
     return bool(data)
 
 
-def coerce_list_of_str(data):
+def coerce_list_of_str(data: Any) -> Any:
     """
     Ensure data is a list of strings.
 

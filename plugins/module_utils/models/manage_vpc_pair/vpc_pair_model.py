@@ -3,7 +3,6 @@
 # Copyright: (c) 2026, Sivakami S <sivakasi@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
 
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Union
 
@@ -137,7 +136,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
             exclude=set(self.exclude_from_diff),
         )
 
-    def get_identifier_value(self):
+    def get_identifier_value(self) -> tuple[str, str]:
         """
         Return the unique identifier for this vPC pair.
 
@@ -146,7 +145,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         """
         return tuple(sorted([self.switch_id, self.peer_switch_id]))
 
-    def to_config(self, **kwargs) -> Dict[str, Any]:
+    def to_config(self, **kwargs: Any) -> Dict[str, Any]:
         """
         Serialize model to snake_case Ansible config dict.
 
@@ -393,7 +392,7 @@ class VpcPairPlaybookConfigModel(BaseModel):
         if not isinstance(value, dict):
             raise ValueError("verify_option must be a dictionary")
 
-        def _as_positive_int(raw, default, field_name):
+        def _as_positive_int(raw: Any, default: int, field_name: str) -> int:
             if raw is None:
                 return default
             try:

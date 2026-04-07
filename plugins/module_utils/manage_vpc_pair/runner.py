@@ -3,7 +3,6 @@
 # Copyright: (c) 2026, Sivakami S <sivakasi@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
 
 from typing import Any, Dict
 
@@ -12,7 +11,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
 )
 
 
-def run_vpc_module(nrm) -> Dict[str, Any]:
+def run_vpc_module(nrm: Any) -> Dict[str, Any]:
     """
     Run VPC module state machine with VPC-specific gathered output.
 

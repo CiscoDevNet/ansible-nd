@@ -2,7 +2,6 @@
 
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-from __future__ import absolute_import, division, print_function
 
 from typing import Any, Dict, List, Optional
 
@@ -28,7 +27,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModuleErro
 
 
 def _get_pairing_support_details(
-    nd_v2,
+    nd_v2: Any,
     fabric_name: str,
     switch_id: str,
     component_type: str = ComponentTypeSupportEnum.CHECK_PAIRING.value,
@@ -79,8 +78,8 @@ def _get_pairing_support_details(
 
 
 def _validate_fabric_peering_support(
-    nrm,
-    nd_v2,
+    nrm: Any,
+    nd_v2: Any,
     fabric_name: str,
     switch_id: str,
     peer_switch_id: str,
@@ -138,7 +137,7 @@ def _validate_fabric_peering_support(
 
 
 def _get_consistency_details(
-    nd_v2,
+    nd_v2: Any,
     fabric_name: str,
     switch_id: str,
     timeout: Optional[int] = None,
@@ -183,7 +182,7 @@ def _get_consistency_details(
 
 
 def _is_switch_in_vpc_pair(
-    nd_v2,
+    nd_v2: Any,
     fabric_name: str,
     switch_id: str,
     timeout: Optional[int] = None,
@@ -229,7 +228,7 @@ def _is_switch_in_vpc_pair(
         rest_send.restore_settings()
 
 
-def _validate_fabric_switches(nd_v2, fabric_name: str) -> Dict[str, Dict]:
+def _validate_fabric_switches(nd_v2: Any, fabric_name: str) -> Dict[str, Dict[str, Any]]:
     """
     Query and validate fabric switch inventory.
 
@@ -291,7 +290,9 @@ def _validate_fabric_switches(nd_v2, fabric_name: str) -> Dict[str, Dict]:
     return result
 
 
-def _validate_switch_conflicts(want_configs: List[Dict], have_vpc_pairs: List[Dict], module) -> None:
+def _validate_switch_conflicts(
+    want_configs: List[Dict], have_vpc_pairs: List[Dict], module: Any
+) -> None:
     """
     Validate that switches in want configs aren't already in different VPC pairs.
 
@@ -370,7 +371,7 @@ def _validate_switch_conflicts(want_configs: List[Dict], have_vpc_pairs: List[Di
 
 
 def _validate_switches_exist_in_fabric(
-    nrm,
+    nrm: Any,
     fabric_name: str,
     switch_id: str,
     peer_switch_id: str,
@@ -453,7 +454,9 @@ def _validate_switches_exist_in_fabric(
     )
 
 
-def _validate_vpc_pair_deletion(nd_v2, fabric_name: str, switch_id: str, vpc_pair_key: str, module) -> None:
+def _validate_vpc_pair_deletion(
+    nd_v2: Any, fabric_name: str, switch_id: str, vpc_pair_key: str, module: Any
+) -> None:
     """
     Validate VPC pair can be safely deleted by checking for dependencies.
 

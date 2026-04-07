@@ -2,7 +2,6 @@
 
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-from __future__ import absolute_import, division, print_function
 
 from typing import Any, Dict, Optional, Tuple
 
@@ -39,7 +38,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
 )
 
 
-def _build_compare_payloads(nrm) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def _build_compare_payloads(nrm: Any) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Build normalized want/have payloads for idempotence comparisons.
 
@@ -83,7 +82,7 @@ def _build_compare_payloads(nrm) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     return want_payload, have_payload
 
 
-def custom_vpc_create(nrm) -> Optional[Dict[str, Any]]:
+def custom_vpc_create(nrm: Any) -> Optional[Dict[str, Any]]:
     """
     Custom create function for VPC pairs using RestSend with PUT + discriminator.
     - Validates switches exist in fabric (Common.validate_switches_exist)
@@ -235,7 +234,7 @@ def custom_vpc_create(nrm) -> Optional[Dict[str, Any]]:
         )
 
 
-def custom_vpc_update(nrm) -> Optional[Dict[str, Any]]:
+def custom_vpc_update(nrm: Any) -> Optional[Dict[str, Any]]:
     """
     Custom update function for VPC pairs using RestSend.
 
@@ -358,7 +357,7 @@ def custom_vpc_update(nrm) -> Optional[Dict[str, Any]]:
         )
 
 
-def custom_vpc_delete(nrm) -> bool:
+def custom_vpc_delete(nrm: Any) -> bool:
     """
     Custom delete function for VPC pairs using RestSend with PUT + discriminator.
 
