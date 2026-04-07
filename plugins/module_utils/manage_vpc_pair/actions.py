@@ -125,7 +125,7 @@ def custom_vpc_create(nrm) -> Optional[Dict[str, Any]]:
         switch_id=switch_id,
         peer_switch_id=peer_switch_id,
     )
-    
+
     # Validation Step 2: Check for switch conflicts (from Common.validate_no_switch_conflicts)
     have_vpc_pairs = nrm.module.params.get("_have", [])
     if have_vpc_pairs:
@@ -276,13 +276,13 @@ def custom_vpc_update(nrm) -> Optional[Dict[str, Any]]:
         switch_id=switch_id,
         peer_switch_id=peer_switch_id,
     )
-    
+
     # Validation Step 2: Check for switch conflicts (from Common.validate_no_switch_conflicts)
     have_vpc_pairs = nrm.module.params.get("_have", [])
     if have_vpc_pairs:
         # Filter out the current VPC pair being updated
         other_vpc_pairs = [
-            vpc for vpc in have_vpc_pairs 
+            vpc for vpc in have_vpc_pairs
             if vpc.get(VpcFieldNames.SWITCH_ID) != switch_id
         ]
         if other_vpc_pairs:
@@ -291,7 +291,7 @@ def custom_vpc_update(nrm) -> Optional[Dict[str, Any]]:
     # Validation Step 3: Check if update is actually needed
     if nrm.existing_config:
         want_dict, have_dict = _build_compare_payloads(nrm)
-        
+
         if not _is_update_needed(want_dict, have_dict):
             # No changes needed - return existing config
             nrm.module.warn(

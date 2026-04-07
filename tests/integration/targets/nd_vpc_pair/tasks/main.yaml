@@ -6,41 +6,37 @@
 #   ansible-playbook -i hosts.yaml tasks/main.yaml -e testcase=nd_vpc_pair_merge  # run one
 #   ansible-playbook -i hosts.yaml tasks/main.yaml --tags merge    # run by tag
 
-- name: nd_vpc_pair integration tests
-  hosts: nd
-  gather_facts: false
-  tasks:
-    - name: Test that we have a Nexus Dashboard host, username and password
-      ansible.builtin.fail:
-        msg: "Please define the following variables: ansible_host, ansible_user and ansible_password."
-      when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: "Please define the following variables: ansible_host, ansible_user and ansible_password."
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
 
-    - name: Discover nd_vpc_pair test cases
-      ansible.builtin.find:
-        paths: "{{ playbook_dir }}"
-        patterns: "{{ testcase | default('nd_vpc_pair_*') }}.yaml"
-        file_type: file
-      connection: local
-      register: nd_vpc_pair_testcases
+- name: Discover nd_vpc_pair test cases
+  ansible.builtin.find:
+    paths: "{{ role_path }}/tasks"
+    patterns: "{{ testcase | default('nd_vpc_pair_*') }}.yaml"
+    file_type: file
+  connection: local
+  register: nd_vpc_pair_testcases
 
-    - name: Build list of test items
-      ansible.builtin.set_fact:
-        test_items: "{{ nd_vpc_pair_testcases.files | map(attribute='path') | sort | list }}"
+- name: Build list of test items
+  ansible.builtin.set_fact:
+    test_items: "{{ nd_vpc_pair_testcases.files | map(attribute='path') | sort | list }}"
 
-    - name: Assert nd_vpc_pair test discovery has matches
-      ansible.builtin.assert:
-        that:
-          - test_items | length > 0
-        fail_msg: >-
-          No nd_vpc_pair test cases matched pattern
-          '{{ testcase | default("nd_vpc_pair_*") }}.yaml' under '{{ playbook_dir }}'.
+- name: Assert nd_vpc_pair test discovery has matches
+  ansible.builtin.assert:
+    that:
+      - test_items | length > 0
+    fail_msg: >-
+      No nd_vpc_pair test cases matched pattern
+      '{{ testcase | default("nd_vpc_pair_*") }}.yaml' under '{{ role_path }}/tasks'.
 
-    - name: Display discovered tests
-      ansible.builtin.debug:
-        msg: "Discovered {{ test_items | length }} test file(s): {{ test_items | map('basename') | list }}"
+- name: Display discovered tests
+  ansible.builtin.debug:
+    msg: "Discovered {{ test_items | length }} test file(s): {{ test_items | map('basename') | list }}"
 
-    - name: Run nd_vpc_pair test cases
-      ansible.builtin.include_tasks: "{{ test_case_to_run }}"
-      loop: "{{ test_items }}"
-      loop_control:
-        loop_var: test_case_to_run
+- name: Run nd_vpc_pair test cases
+  ansible.builtin.include_tasks: "{{ test_case_to_run }}"
+  loop: "{{ test_items }}"
+  loop_control:
+    loop_var: test_case_to_run

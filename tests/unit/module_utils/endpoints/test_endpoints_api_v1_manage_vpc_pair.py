@@ -83,7 +83,7 @@ def test_endpoints_api_v1_manage_vpc_pair_00040():
     """Verify EpVpcPairGet path raises when required path fields are missing."""
     instance = EpVpcPairGet()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_vpc_pair_00050():
@@ -238,7 +238,7 @@ def test_endpoints_api_v1_manage_vpc_pair_00510():
     """Verify EpVpcPairsListGet raises when fabric_name is missing."""
     instance = EpVpcPairsListGet()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_endpoints_api_v1_manage_vpc_pair_00520():

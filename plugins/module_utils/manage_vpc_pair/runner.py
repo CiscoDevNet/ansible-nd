@@ -11,6 +11,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
     VpcFieldNames,
 )
 
+
 def run_vpc_module(nrm) -> Dict[str, Any]:
     """
     Run VPC module state machine with VPC-specific gathered output.

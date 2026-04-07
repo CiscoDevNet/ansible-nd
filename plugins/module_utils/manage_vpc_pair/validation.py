@@ -26,6 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runtime_p
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModuleError
 
+
 def _get_pairing_support_details(
     nd_v2,
     fabric_name: str,

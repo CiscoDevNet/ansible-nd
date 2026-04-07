@@ -65,7 +65,7 @@ class VpcPairOrchestrator:
         Raises:
             ValueError: If neither module nor sender provides an AnsibleModule
         """
-        _ = kwargs
+        del kwargs
         if module is None and sender is not None:
             module = getattr(sender, "module", None)
         if module is None:
@@ -117,7 +117,7 @@ class VpcPairOrchestrator:
         Raises:
             RuntimeError: If orchestrator is not bound to a state machine
         """
-        _ = (model_instance, kwargs)
+        del model_instance, kwargs
         if self.state_machine is None:
             raise RuntimeError("VpcPairOrchestrator is not bound to a state machine")
         return custom_vpc_create(self.state_machine)
@@ -136,7 +136,7 @@ class VpcPairOrchestrator:
         Raises:
             RuntimeError: If orchestrator is not bound to a state machine
         """
-        _ = (model_instance, kwargs)
+        del model_instance, kwargs
         if self.state_machine is None:
             raise RuntimeError("VpcPairOrchestrator is not bound to a state machine")
         return custom_vpc_update(self.state_machine)
@@ -155,7 +155,7 @@ class VpcPairOrchestrator:
         Raises:
             RuntimeError: If orchestrator is not bound to a state machine
         """
-        _ = (model_instance, kwargs)
+        del model_instance, kwargs
         if self.state_machine is None:
             raise RuntimeError("VpcPairOrchestrator is not bound to a state machine")
         return custom_vpc_delete(self.state_machine)

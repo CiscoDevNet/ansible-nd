@@ -15,6 +15,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
 DEFAULT_VERIFY_TIMEOUT = 5
 DEFAULT_VERIFY_ITERATION = 3
 
+
 def _collection_to_list_flex(collection) -> List[Dict[str, Any]]:
     """
     Serialize NDConfigCollection across old/new framework variants.

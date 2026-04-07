@@ -10,6 +10,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums imp
     VpcFieldNames,
 )
 
+# pylint: disable=undefined-all-variable
 __all__ = [
     "ComponentTypeSupportEnum",
     "VpcActionEnum",
