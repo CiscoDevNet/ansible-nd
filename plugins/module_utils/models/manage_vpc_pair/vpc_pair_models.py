@@ -21,7 +21,10 @@ organized into functional domains:
 """
 
 from typing import List, Dict, Any, Optional, Union, ClassVar, Literal
-from typing_extensions import Self
+try:
+    from typing import Self
+except ImportError:  # pragma: no cover - Python < 3.11
+    Self = Any  # type: ignore[misc,assignment]
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     field_validator,
@@ -47,16 +50,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
 # Import enums from centralized location
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
     VpcActionEnum,
-    VpcPairTypeEnum,
     KeepAliveVrfEnum,
-    PoModeEnum,
-    PortChannelDuplexEnum,
     VpcRoleEnum,
-    MaintenanceModeEnum,
     ComponentTypeOverviewEnum,
-    ComponentTypeSupportEnum,
-    VpcPairViewEnum,
-    VpcFieldNames,
 )
 
 # ============================================================================

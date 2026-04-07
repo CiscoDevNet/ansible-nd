@@ -174,26 +174,26 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         data = normalize_vpc_pair_aliases(ansible_config)
         return cls.model_validate(data, by_alias=True, by_name=True)
 
-    def merge(self, other_model: "VpcPairModel") -> "VpcPairModel":
+    def merge(self, other: "VpcPairModel") -> "VpcPairModel":
         """
         Merge non-None values from another model into this instance.
 
         Args:
-            other_model: VpcPairModel whose non-None fields overwrite this model
+            other: VpcPairModel whose non-None fields overwrite this model
 
         Returns:
             Self with merged values.
 
         Raises:
-            TypeError: If other_model is not the same type
+            TypeError: If other is not the same type
         """
-        if not isinstance(other_model, type(self)):
+        if not isinstance(other, type(self)):
             raise TypeError(
                 "VpcPairModel.merge requires both models to be the same type"
             )
 
         merged_data = self.model_dump(by_alias=False, exclude_none=False)
-        incoming_data = other_model.model_dump(by_alias=False, exclude_none=False)
+        incoming_data = other.model_dump(by_alias=False, exclude_none=False)
         for field, value in incoming_data.items():
             if value is None:
                 continue
@@ -424,10 +424,6 @@ class VpcPairPlaybookConfigModel(BaseModel):
             force=dict(
                 type="bool",
                 default=False,
-                description=(
-                    "Force deletion without pre-deletion validation "
-                    "(bypasses safety checks)"
-                ),
             ),
             verify_option=dict(
                 type="dict",
@@ -436,19 +432,10 @@ class VpcPairPlaybookConfigModel(BaseModel):
                     timeout=dict(type="int", default=5),
                     iteration=dict(type="int", default=3),
                 ),
-                description=(
-                    "Verification options used only when suppress_verification=true. "
-                    "Keys: timeout (seconds), iteration (attempt count)."
-                ),
             ),
             suppress_verification=dict(
                 type="bool",
                 default=False,
-                description=(
-                    "Suppress automatic final after-state verification query "
-                    "after write operations. When true, verification runs "
-                    "only if verify_option is provided."
-                ),
             ),
             config=dict(
                 type="list",

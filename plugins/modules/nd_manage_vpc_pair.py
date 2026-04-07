@@ -16,6 +16,8 @@ description:
 - Uses NDStateMachine framework with a vPC orchestrator.
 - Integrates RestSend for battle-tested HTTP handling with retry logic.
 - Handles VPC API quirks via custom orchestrator action handlers.
+author:
+- Sivakami Sivaraman (@sivakasi)
 options:
     state:
         choices:
@@ -56,9 +58,13 @@ options:
         type: dict
         suboptions:
             timeout:
+                description:
+                - Per-query timeout in seconds when optional verification runs.
                 type: int
                 default: 5
             iteration:
+                description:
+                - Number of verification attempts when optional verification runs.
                 type: int
                 default: 3
     suppress_verification:
@@ -78,16 +84,24 @@ options:
                 - Peer1 switch serial number or management IP address for the vPC pair.
                 required: true
                 type: str
+                aliases:
+                - switch_id
             peer2_switch_id:
                 description:
                 - Peer2 switch serial number or management IP address for the vPC pair.
                 required: true
                 type: str
+                aliases:
+                - peer_switch_id
             use_virtual_peer_link:
                 description:
                 - Enable virtual peer link for the vPC pair.
                 type: bool
                 default: false
+            vpc_pair_details:
+                description:
+                - Optional vPC pair template details (default/custom template fields).
+                type: dict
 notes:
     - This module uses NDStateMachine framework for state management
     - RestSend provides protocol-based HTTP abstraction with automatic retry logic

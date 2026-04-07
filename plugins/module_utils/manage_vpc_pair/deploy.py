@@ -24,40 +24,41 @@ try:
 except Exception:
     from ansible_collections.cisco.nd.plugins.module_utils.results import Results
 
+
 def _needs_deployment(result: Dict, nrm) -> bool:
     """
     Determine if deployment is needed based on changes and pending operations.
-    
+
     Deployment is needed if any of:
     1. There are items in the diff (configuration changes)
     2. There are pending create VPC pairs
     3. There are pending delete VPC pairs
     4. There are active pairs currently not in-sync (not yet deployed)
-    
+
     Args:
         result: Module result dictionary with diff info
         nrm: NDStateMachine instance
-        
+
     Returns:
         True if deployment is needed, False otherwise
     """
     # Check if there are any changes in the result
     has_changes = result.get("changed", False)
-    
+
     # Check diff - framework stores before/after
     before = result.get("before", [])
     after = result.get("after", [])
     has_diff_changes = before != after
-    
+
     # Check pending operations
     pending_create = nrm.module.params.get("_pending_create", [])
     pending_delete = nrm.module.params.get("_pending_delete", [])
     has_pending = bool(pending_create or pending_delete)
     not_in_sync_pairs = nrm.module.params.get("_not_in_sync_pairs", [])
     has_not_in_sync = bool(not_in_sync_pairs)
-    
+
     needs_deploy = has_changes or has_diff_changes or has_pending or has_not_in_sync
-    
+
     return needs_deploy
 
 
@@ -116,9 +117,9 @@ def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
             "msg": "No configuration changes, pending operations, or out-of-sync pairs detected, skipping deployment",
             "fabric": fabric_name,
             "deployment_needed": False,
-            "changed": False
+            "changed": False,
         }
-    
+
     if nrm.module.check_mode:
         # check_mode deployment preview
         before = result.get("before", [])
@@ -126,7 +127,7 @@ def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
         pending_create = nrm.module.params.get("_pending_create", [])
         pending_delete = nrm.module.params.get("_pending_delete", [])
         not_in_sync_pairs = nrm.module.params.get("_not_in_sync_pairs", [])
-        
+
         deployment_info = {
             "msg": "CHECK MODE: Would save and deploy fabric configuration",
             "fabric": fabric_name,
@@ -138,12 +139,12 @@ def custom_vpc_deploy(nrm, fabric_name: str, result: Dict) -> Dict[str, Any]:
                 "pending_create_operations": len(pending_create),
                 "pending_delete_operations": len(pending_delete),
                 "not_in_sync_pairs": len(not_in_sync_pairs),
-                "actual_changes": result.get("changed", False)
+                "actual_changes": result.get("changed", False),
             },
             "planned_actions": [
                 f"POST {VpcPairEndpoints.fabric_config_save(fabric_name)}",
-                f"POST {VpcPairEndpoints.fabric_config_deploy(fabric_name, force_show_run=True)}"
-            ]
+                f"POST {VpcPairEndpoints.fabric_config_deploy(fabric_name, force_show_run=True)}",
+            ],
         }
         return deployment_info
 
