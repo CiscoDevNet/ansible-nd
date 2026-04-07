@@ -49,7 +49,6 @@ from .config_models import (  # noqa: F401
     PlaybookSwitchPolicyConfig,
 )
 
-
 __all__ = [
     # Enums
     "PolicyEntityType",

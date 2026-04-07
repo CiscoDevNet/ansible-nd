@@ -6,7 +6,7 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
-# pylint: disable=invalid-name
+# pylint: disable=invalid-name,logging-fstring-interpolation
 __metaclass__ = type
 # pylint: enable=invalid-name
 __copyright__ = "Copyright (c) 2026 Cisco and/or its affiliates."
@@ -51,7 +51,7 @@ description:
   When O(use_desc_as_key=true), the description uniquely identifies the policy, so
   in-place updates are supported.
 author:
-- L Nikhil Sri Krishna
+- L Nikhil Sri Krishna (@nisaikri)
 options:
   fabric_name:
     description:
@@ -240,8 +240,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 seealso:
-- name: Cisco ND Policy Management
-  description: Understanding switch policy management on ND.
+- module: cisco.nd.nd_rest
 notes:
 - When O(use_desc_as_key=false) and O(config[].name) is a template name (not a policy ID),
   existing policies are B(never) updated in-place. The module always creates a new policy.

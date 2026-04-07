@@ -32,11 +32,10 @@ __metaclass__ = type
 
 from typing import Any, ClassVar, Dict, List, Optional
 
-from pydantic import ValidationInfo, model_validator
-from typing_extensions import Self
-
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    ValidationInfo,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
     NDNestedModel,
@@ -189,7 +188,7 @@ class PlaybookPolicyConfig(NDNestedModel):
     )
 
     @model_validator(mode="after")
-    def validate_state_requirements(self, info: ValidationInfo) -> Self:
+    def validate_state_requirements(self, info: ValidationInfo) -> "PlaybookPolicyConfig":
         """Apply state-aware validation using context.
 
         When ``context={"state": "merged", "use_desc_as_key": True}`` is
@@ -229,13 +228,7 @@ class PlaybookPolicyConfig(NDNestedModel):
 
         # When use_desc_as_key=true, description must not be empty for
         # template-name entries (not policy IDs) in merged/deleted states.
-        if (
-            use_desc_as_key
-            and state in ("merged", "deleted")
-            and self.name
-            and not self.name.startswith("POLICY-")
-            and not self.description
-        ):
+        if use_desc_as_key and state in ("merged", "deleted") and self.name and not self.name.startswith("POLICY-") and not self.description:
             raise ValueError(
                 f"'description' cannot be empty when use_desc_as_key=true "
                 f"and name is a template name ('{self.name}'). "
@@ -259,9 +252,7 @@ class PlaybookPolicyConfig(NDNestedModel):
             deploy=dict(type="bool", default=True),
             ticket_id=dict(type="str"),
             cluster_name=dict(type="str"),
-            state=dict(
-                type="str", default="merged", choices=["merged", "deleted", "gathered"]
-            ),
+            state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),
         )
 
 

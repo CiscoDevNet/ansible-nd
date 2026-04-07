@@ -43,7 +43,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
 
-
 # ============================================================================
 # Query parameter classes
 # ============================================================================

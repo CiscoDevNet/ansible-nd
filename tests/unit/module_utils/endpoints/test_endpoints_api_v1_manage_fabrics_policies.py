@@ -28,7 +28,6 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
     does_not_raise,
 )
 
-
 # =============================================================================
 # Test: PoliciesGetEndpointParams
 # =============================================================================
@@ -237,7 +236,7 @@ def test_manage_policies_00110():
     """
     instance = EpManagePoliciesGet()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_manage_policies_00120():
@@ -402,7 +401,7 @@ def test_manage_policies_00210():
     """
     instance = EpManagePoliciesPost()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_manage_policies_00220():
@@ -496,7 +495,7 @@ def test_manage_policies_00310():
     """
     instance = EpManagePoliciesPut()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_manage_policies_00320():
@@ -516,7 +515,7 @@ def test_manage_policies_00320():
     instance = EpManagePoliciesPut()
     instance.fabric_name = "my-fabric"
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_manage_policies_00330():
@@ -612,7 +611,7 @@ def test_manage_policies_00410():
     """
     instance = EpManagePoliciesDelete()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_manage_policies_00420():
@@ -632,7 +631,7 @@ def test_manage_policies_00420():
     instance = EpManagePoliciesDelete()
     instance.fabric_name = "my-fabric"
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_manage_policies_00430():

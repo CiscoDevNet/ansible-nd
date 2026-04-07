@@ -35,7 +35,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 
 from .enums import PolicyEntityType
 
-
 # ============================================================================
 # Policy Create Model (base for all CRUD body models)
 # ============================================================================

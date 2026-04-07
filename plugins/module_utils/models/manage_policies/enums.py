@@ -16,7 +16,6 @@ __metaclass__ = type
 from enum import Enum
 from typing import List, Union
 
-
 # =============================================================================
 # ENUMS - Extracted from OpenAPI Schema components/schemas
 # =============================================================================

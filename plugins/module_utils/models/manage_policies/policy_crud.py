@@ -35,7 +35,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.po
     PolicyCreate,
 )
 
-
 # ============================================================================
 # Policy Create Bulk Model
 # ============================================================================

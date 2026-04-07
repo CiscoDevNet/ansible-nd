@@ -24,7 +24,6 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
     does_not_raise,
 )
 
-
 # =============================================================================
 # Test: ConfigTemplateEndpointParams
 # =============================================================================
@@ -150,7 +149,7 @@ def test_manage_config_templates_00110():
     """
     instance = EpManageConfigTemplateParametersGet()
     with pytest.raises(ValueError):
-        _ = instance.path
+        instance.path
 
 
 def test_manage_config_templates_00120():
@@ -214,9 +213,7 @@ def test_manage_config_templates_00140():
         instance.template_name = "switch_freeform"
         instance.endpoint_params.cluster_name = "cluster1"
         result = instance.path
-    assert result == (
-        "/api/v1/manage/configTemplates/switch_freeform/parameters?clusterName=cluster1"
-    )
+    assert result == ("/api/v1/manage/configTemplates/switch_freeform/parameters?clusterName=cluster1")
 
 
 def test_manage_config_templates_00150():

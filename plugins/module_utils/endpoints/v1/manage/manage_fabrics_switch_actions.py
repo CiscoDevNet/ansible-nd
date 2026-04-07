@@ -41,7 +41,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
 
-
 # ============================================================================
 # Query parameter classes
 # ============================================================================
@@ -68,10 +67,7 @@ class SwitchDeployEndpointParams(EndpointQueryParams):
 
     force_show_run: Optional[bool] = Field(
         default=None,
-        description=(
-            "If true, Config compliance fetches the latest running config "
-            "from the device. If false, uses the cached version."
-        ),
+        description=("If true, Config compliance fetches the latest running config " "from the device. If false, uses the cached version."),
     )
     cluster_name: Optional[str] = Field(
         default=None,

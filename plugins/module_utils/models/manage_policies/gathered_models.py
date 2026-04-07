@@ -39,8 +39,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
-
 log = logging.getLogger("nd.GatheredPolicy")
+
+# pylint: disable=logging-fstring-interpolation
 
 
 class GatheredPolicy(NDBaseModel):
@@ -57,15 +58,16 @@ class GatheredPolicy(NDBaseModel):
 
     # --- NDBaseModel ClassVars ---
     identifiers: ClassVar[List[str]] = ["policy_id"]
-    identifier_strategy: ClassVar[Optional[Literal[
-        "single", "composite", "hierarchical", "singleton"
-    ]]] = "single"
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
     exclude_from_diff: ClassVar[Set[str]] = set()
 
     # Fields excluded from config output (internal / not user-facing)
     config_exclude_fields: ClassVar[Set[str]] = {
-        "entity_type", "entity_name", "source",
-        "secondary_entity_name", "secondary_entity_type",
+        "entity_type",
+        "entity_name",
+        "source",
+        "secondary_entity_name",
+        "secondary_entity_type",
     }
 
     # --- Fields ---
@@ -145,10 +147,7 @@ class GatheredPolicy(NDBaseModel):
             try:
                 raw_inputs = json.loads(raw_inputs)
             except (json.JSONDecodeError, ValueError):
-                log.warning(
-                    f"Failed to parse templateInputs for "
-                    f"{data.get('policyId', '?')}: {raw_inputs!r}"
-                )
+                log.warning(f"Failed to parse templateInputs for " f"{data.get('policyId', '?')}: {raw_inputs!r}")
                 raw_inputs = {}
         data["templateInputs"] = raw_inputs
 
