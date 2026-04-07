@@ -3,7 +3,7 @@
 ##############################################
 
 - name: Import nd_vpc_pair Base Tasks
-  import_tasks: base_tasks.yaml
+  ansible.builtin.import_tasks: base_tasks.yaml
   tags: delete
 
 ##############################################
@@ -22,7 +22,7 @@
 - name: Import Configuration Prepare Tasks - delete_setup
   vars:
     file: delete_setup
-  import_tasks: conf_prep_tasks.yaml
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
   tags: delete
 
 ##############################################
@@ -150,6 +150,28 @@
       - result.failed == false
       - result.changed == true
       - result.deployment is defined
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
+  tags: delete
+
+- name: DELETE - TC2b - ASSERT - Verify config-save and deploy API traces
+  ansible.builtin.assert:
+    that:
+      - result.deployment.response is defined
+      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | list
+          | length
+        ) > 0
   tags: delete
 
 - name: DELETE - TC2b - GATHER - Verify deploy delete result in ND
@@ -204,6 +226,7 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
   tags: delete
 
 - name: DELETE - TC4 - DELETE - Delete vPC pair with force true
@@ -263,6 +286,6 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-  ignore_errors: true
+  failed_when: false
   when: cleanup_at_end | default(true)
   tags: delete

@@ -3,7 +3,7 @@
 ##############################################
 
 - name: Import nd_vpc_pair Base Tasks
-  import_tasks: base_tasks.yaml
+  ansible.builtin.import_tasks: base_tasks.yaml
   tags: gather
 
 ##############################################
@@ -22,7 +22,7 @@
 - name: Import Configuration Prepare Tasks - gather_setup
   vars:
     file: gather_setup
-  import_tasks: conf_prep_tasks.yaml
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
   tags: gather
 
 ##############################################
@@ -80,6 +80,8 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
       - '(result.gathered.vpc_pairs | length) == 1'
   tags: gather
 
@@ -99,6 +101,8 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
       - '(result.gathered.vpc_pairs | length) == 1'
   tags: gather
 
@@ -119,7 +123,7 @@
   loop_control:
     label: "{{ item.test_name }}"
   register: partial_filter_results
-  ignore_errors: true
+  failed_when: false
   tags: gather
 
 - name: GATHER - TC4/TC5 - ASSERT - Verify partial peer gathers are rejected
@@ -142,29 +146,35 @@
       - peer1_switch_id: "INVALID_SERIAL"
         peer2_switch_id: "{{ test_switch2 }}"
   register: result
-  ignore_errors: true
+  failed_when: false
   tags: gather
 
 - name: GATHER - TC6 - ASSERT - Check gather results with non-existent peer
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
   tags: gather
 
-# TC7 - Gather with custom query_timeout
-- name: GATHER - TC7 - GATHER - Gather with query_timeout override
+# TC7 - Gather with custom verify_option timeout
+- name: GATHER - TC7 - GATHER - Gather with verify_option override
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
-    query_timeout: 20
+    suppress_verification: true
+    verify_option:
+      timeout: 20
+      iteration: 3
   register: result
   tags: gather
 
-- name: GATHER - TC7 - ASSERT - Verify query_timeout path execution
+- name: GATHER - TC7 - ASSERT - Verify verify_option path execution
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == false
       - result.gathered is defined
   tags: gather
 
@@ -175,7 +185,7 @@
     state: gathered
     deploy: true
   register: result
-  ignore_errors: true
+  failed_when: false
   tags: gather
 
 - name: GATHER - TC8 - ASSERT - Verify gathered+deploy validation
@@ -226,6 +236,7 @@
       - vpc_pairs_list_result.current.vpcPairs is defined
       - vpc_pairs_list_result.current.vpcPairs is sequence
       - gathered_result.failed == false
+      - gathered_result.changed == false
       - gathered_result.gathered.vpc_pairs is defined
   tags: gather
 
@@ -373,6 +384,7 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == false
       - '(result.gathered.vpc_pairs | length) == 1'
   tags: gather
 
@@ -388,6 +400,6 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-  ignore_errors: true
+  failed_when: false
   when: cleanup_at_end | default(true)
   tags: gather

@@ -164,7 +164,6 @@ EXAMPLES = """
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
   check_mode: true
-
 """
 
 RETURN = """

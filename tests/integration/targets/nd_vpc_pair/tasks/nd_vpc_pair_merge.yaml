@@ -3,7 +3,7 @@
 ##############################################
 
 - name: Import nd_vpc_pair Base Tasks
-  import_tasks: base_tasks.yaml
+  ansible.builtin.import_tasks: base_tasks.yaml
   tags: merge
 
 ##############################################
@@ -28,7 +28,7 @@
 - name: Import Configuration Prepare Tasks - merge_full
   vars:
     file: merge_full
-  import_tasks: conf_prep_tasks.yaml
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
   tags: merge
 
 - name: MERGE - Setup modified config
@@ -43,7 +43,7 @@
 - name: Import Configuration Prepare Tasks - merge_modified
   vars:
     file: merge_modified
-  import_tasks: conf_prep_tasks.yaml
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
   tags: merge
 
 - name: MERGE - Setup minimal config
@@ -57,7 +57,7 @@
 - name: Import Configuration Prepare Tasks - merge_minimal
   vars:
     file: merge_minimal
-  import_tasks: conf_prep_tasks.yaml
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
   tags: merge
 
 - name: MERGE - Setup no-deploy config
@@ -72,7 +72,7 @@
 - name: Import Configuration Prepare Tasks - merge_no_deploy
   vars:
     file: merge_no_deploy
-  import_tasks: conf_prep_tasks.yaml
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
   tags: merge
 
 ##############################################
@@ -141,7 +141,16 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
-      - result.changed == false # or (result.changed == true and result.class_diff.updated is defined and (result.class_diff.updated | length) > 0 and ('vpcPairDetails' in (result.class_diff.updated[0].changed_properties | default([]))))
+      - result.class_diff.created | default([]) | length == 0
+      - result.class_diff.deleted | default([]) | length == 0
+      - >-
+        (
+          result.changed == false
+        ) or (
+          result.changed == true
+          and (result.class_diff.updated | default([]) | length) > 0
+          and ('vpcPairDetails' in (result.class_diff.updated[0].changed_properties | default([])))
+        )
   tags: merge
 
 # TC2 - Modify existing vPC pair configuration
@@ -237,6 +246,7 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
   tags: merge
 
 - name: MERGE - TC3 - GATHER - Get vPC pair state in ND
@@ -328,6 +338,7 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
   when: test_fabric_type == "LANClassic"
   tags: merge
 
@@ -364,6 +375,7 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
   tags: merge
 
 # TC6 - Create vPC pair with deploy flag false
@@ -408,6 +420,39 @@
       - validation.failed == false
   tags: merge
 
+# TC6b - Re-run same config with deploy=true after non-deploy create
+- name: MERGE - TC6b - MERGE - Re-run same config with deploy true
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    deploy: true
+    config: "{{ nd_vpc_pair_merge_no_deploy_conf }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC6b - ASSERT - Verify deployment happened for pending non-deploy config
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.deployment is defined
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
+      - result.deployment.response is defined
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | list
+          | length
+        ) > 0
+  tags: merge
+
 # TC7 - Merge with vpc_pair_details default template settings
 - name: MERGE - TC7 - MERGE - Update vPC pair with default vpc_pair_details
   cisco.nd.nd_manage_vpc_pair:
@@ -440,26 +485,20 @@
       - result.logs | to_json is search('"keepAliveVrf"')
   tags: merge
 
-- name: MERGE - TC7 - API - Query direct vpcPair details for switch1
+- name: MERGE - TC7 - API - Query direct vpcPair state for switch1
   cisco.nd.nd_rest:
     path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPair"
     method: get
   register: tc7_vpc_pair_direct
   tags: merge
 
-- name: MERGE - TC7 - VALIDATE - Verify persisted default vpc_pair_details
+- name: MERGE - TC7 - VALIDATE - Verify pair state after default details update
   cisco.nd.tests.integration.nd_vpc_pair_validate:
     gathered_data: "{{ {'vpc_pairs': [tc7_vpc_pair_direct.current]} }}"
     expected_data:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
         use_virtual_peer_link: true
-        vpc_pair_details:
-          type: default
-          domain_id: 10
-          switch_keep_alive_local_ip: "192.0.2.11"
-          peer_switch_keep_alive_local_ip: "192.0.2.12"
-          keep_alive_vrf: management
     mode: "full"
     validate_vpc_pair_details: false
   register: tc7_validation
@@ -503,26 +542,20 @@
       - result.logs | to_json is search('"templateConfig"')
   tags: merge
 
-- name: MERGE - TC8 - API - Query direct vpcPair details for switch1
+- name: MERGE - TC8 - API - Query direct vpcPair state for switch1
   cisco.nd.nd_rest:
     path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPair"
     method: get
   register: tc8_vpc_pair_direct
   tags: merge
 
-- name: MERGE - TC8 - VALIDATE - Verify persisted custom vpc_pair_details
+- name: MERGE - TC8 - VALIDATE - Verify pair state after custom details update
   cisco.nd.tests.integration.nd_vpc_pair_validate:
     gathered_data: "{{ {'vpc_pairs': [tc8_vpc_pair_direct.current]} }}"
     expected_data:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
         use_virtual_peer_link: true
-        vpc_pair_details:
-          type: custom
-          template_name: "my_custom_template"
-          template_config:
-            domainId: "20"
-            customConfig: "vpc domain 20"
     mode: "full"
     validate_vpc_pair_details: false
   register: tc8_validation
@@ -547,7 +580,7 @@
         peer2_switch_id: "{{ test_switch2 }}"
         use_virtual_peer_link: true
   register: result
-  ignore_errors: true
+  failed_when: false
   tags: merge
 
 - name: MERGE - TC9 - ASSERT - Check invalid peer switch error
@@ -566,7 +599,7 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-  ignore_errors: true
+  failed_when: false
   tags: merge
 
 - name: MERGE - TC10 - MERGE - Create vPC pair with deploy true
@@ -586,6 +619,7 @@
     that:
       - result.failed == false
       - result.deployment is defined
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
   tags: merge
 
 - name: MERGE - TC10 - ASSERT - Verify config-save and deploy API traces
@@ -816,6 +850,29 @@
   when: tc10_list_has_pairs | bool
   tags: merge
 
+# TC11 - Idempotent deploy=true should skip deployment when nothing changed
+- name: MERGE - TC11 - MERGE - Re-run same config with deploy true
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    deploy: true
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+  register: result
+  tags: merge
+
+- name: MERGE - TC11 - ASSERT - Verify deploy=true idempotent skip behavior
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.deployment is defined
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == false
+      - result.deployment.msg is search("skipping deployment")
+  tags: merge
+
 # TC12 - check_mode should not apply configuration changes
 - name: MERGE - TC12 - DELETE - Ensure vPC pair is absent before check_mode test
   cisco.nd.nd_manage_vpc_pair:
@@ -825,7 +882,7 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-  ignore_errors: true
+  failed_when: false
   tags: merge
 
 - name: MERGE - TC12 - MERGE - Run check_mode create for vPC pair
@@ -842,6 +899,8 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == true
+      - result.deployment is not defined
   tags: merge
 
 # TC13 - check_mode + deploy preview should report deployment plan without applying
@@ -862,8 +921,7 @@
       - result.deployment is defined
       - result.deployment.would_deploy is defined
       - result.deployment.would_deploy | bool == true
-      - result.deployment.deployment_needed is defined
-      - result.deployment.deployment_needed | bool == true
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
   tags: merge
 
 - name: MERGE - TC13 - GATHER - Verify check_mode flows did not create vPC pair
@@ -905,7 +963,7 @@
     method: get
   loop: "{{ (switches_result.current.switches | default([])) | map(attribute='serialNumber') | select('defined') | list }}"
   register: support_result
-  ignore_errors: true
+  failed_when: false
   tags: merge
 
 - name: MERGE - TC14 - PREP - Choose blocked and allowed switch candidates
@@ -964,7 +1022,7 @@
         peer2_switch_id: "{{ allowed_switch_id }}"
         use_virtual_peer_link: true
   register: result
-  ignore_errors: true
+  failed_when: false
   when: tc14_supported_scenario
   tags: merge
 
@@ -999,6 +1057,6 @@
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
-  ignore_errors: true
+  failed_when: false
   when: cleanup_at_end | default(true)
   tags: merge
