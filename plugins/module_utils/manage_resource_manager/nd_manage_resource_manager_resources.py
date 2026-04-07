@@ -1,4 +1,3 @@
-#!/usr/bin/python
 # -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Cisco and/or its affiliates.
@@ -213,7 +212,7 @@ class ResourceManagerDiffEngine:
         log.debug("ENTER: validate_configs()")
 
         configs_list = config if isinstance(config, list) else [config]
-        log.debug(f"Normalized to {len(configs_list)} configuration(s)")
+        log.debug("Normalized to %s configuration(s)", len(configs_list))
 
         validated_configs: List[ResourceManagerConfigModel] = []
         for idx, cfg in enumerate(configs_list):
@@ -252,8 +251,8 @@ class ResourceManagerDiffEngine:
         seen_keys: set = set()
         duplicate_keys: set = set()
         log.debug(
-            f"validate_configs: starting duplicate check on "
-            f"{len(validated_configs)} validated config(s)"
+            "validate_configs: starting duplicate check on %s validated config(s)",
+            len(validated_configs),
         )
         for cfg_dup_idx, cfg in enumerate(validated_configs):
             key = (
@@ -263,22 +262,28 @@ class ResourceManagerDiffEngine:
                 frozenset(cfg.switch or []),
             )
             log.debug(
-                f"validate_configs: duplicate-check [{cfg_dup_idx}] — "
-                f"entity_name='{cfg.entity_name}', pool_name='{cfg.pool_name}', "
-                f"scope_type='{cfg.scope_type}', switch={list(cfg.switch or [])}, "
-                f"key_seen_before={key in seen_keys}"
+                "validate_configs: duplicate-check [%s] — entity_name='%s', pool_name='%s', scope_type='%s', switch=%s, key_seen_before=%s",
+                cfg_dup_idx,
+                cfg.entity_name,
+                cfg.pool_name,
+                cfg.scope_type,
+                list(cfg.switch or []),
+                key in seen_keys,
             )
             if key in seen_keys:
                 log.warning(
-                    f"validate_configs: [{cfg_dup_idx}] duplicate key detected — "
-                    f"entity_name='{cfg.entity_name}', pool_name='{cfg.pool_name}', "
-                    f"scope_type='{cfg.scope_type}'"
+                    "validate_configs: [%s] duplicate key detected — entity_name='%s', pool_name='%s', scope_type='%s'",
+                    cfg_dup_idx,
+                    cfg.entity_name,
+                    cfg.pool_name,
+                    cfg.scope_type,
                 )
                 duplicate_keys.add(key)
             else:
                 log.debug(
-                    f"validate_configs: [{cfg_dup_idx}] key is unique so far — "
-                    f"entity_name='{cfg.entity_name}'"
+                    "validate_configs: [%s] key is unique so far — entity_name='%s'",
+                    cfg_dup_idx,
+                    cfg.entity_name,
                 )
             seen_keys.add(key)
 
@@ -295,9 +300,10 @@ class ResourceManagerDiffEngine:
                 raise ValueError(error_msg)
 
         log.info(
-            f"Successfully validated {len(validated_configs)} configuration(s)"
+            "Successfully validated %s configuration(s)",
+            len(validated_configs),
         )
-        log.debug(f"EXIT: validate_configs() -> {len(validated_configs)} configs")
+        log.debug("EXIT: validate_configs() -> %s configs", len(validated_configs))
         return validated_configs
 
     @staticmethod
@@ -328,10 +334,14 @@ class ResourceManagerDiffEngine:
         """
         log.debug("ENTER: compute_changes()")
         log.debug(
-            f"Comparing {len(proposed)} proposed vs {len(existing)} existing resources"
+            "Comparing %s proposed vs %s existing resources",
+            len(proposed),
+            len(existing),
         )
         log.debug(
-            f"Comparing proposed : {proposed}  vs  existing : {existing} existing resources"
+            "Comparing proposed : %s  vs  existing : %s existing resources",
+            proposed,
+            existing,
         )
 
         # Build index of existing resources keyed by
@@ -345,11 +355,14 @@ class ResourceManagerDiffEngine:
             key = ResourceManagerDiffEngine._make_resource_key(entity, pool, scope_type, switch_id)
             existing_index[key] = res
             log.debug(
-                f"Existing index entry: entity={entity}, pool={pool}, "
-                f"scope_type={scope_type}, switch_id={switch_id}"
+                "Existing index entry: entity=%s, pool=%s, scope_type=%s, switch_id=%s",
+                entity,
+                pool,
+                scope_type,
+                switch_id,
             )
 
-        log.debug(f"Built existing index with {len(existing_index)} entries")
+        log.debug("Built existing index with %s entries", len(existing_index))
 
         changes: Dict[str, List] = {
             "to_add": [],
@@ -367,11 +380,13 @@ class ResourceManagerDiffEngine:
             norm = ResourceManagerDiffEngine._normalize_entity_key(res.entity_name or "")
             entity_only_index.setdefault(norm, []).append(res)
             log.debug(
-                f"entity_only_index: added entity='{res.entity_name}' "
-                f"under norm_key='{norm}' (total under key: {len(entity_only_index[norm])})"
+                "entity_only_index: added entity='%s' under norm_key='%s' (total under key: %s)",
+                res.entity_name,
+                norm,
+                len(entity_only_index[norm]),
             )
 
-        log.debug(f"Built entity_only_index with {len(entity_only_index)} unique normalised key(s)")
+        log.debug("Built entity_only_index with %s unique normalised key(s)", len(entity_only_index))
 
         # Track which existing keys matched at least one proposed entry
         matched_existing_keys: set = set()
@@ -384,22 +399,29 @@ class ResourceManagerDiffEngine:
             resource_value = cfg.resource
 
             log.debug(
-                f"Processing proposed cfg: entity={entity_name}, pool={pool_name}, "
-                f"scope={scope_type}, resource={resource_value}, switch={cfg.switch}"
+                "Processing proposed cfg: entity=%s, pool=%s, scope=%s, resource=%s, switch=%s",
+                entity_name,
+                pool_name,
+                scope_type,
+                resource_value,
+                cfg.switch,
             )
 
             # device_pair and link encode both endpoints in entity_name; one lookup covers the pair.
             if scope_type in ("device_pair", "link"):
                 switches = [None]
                 log.debug(
-                    f"scope_type='{scope_type}' is multi-endpoint — "
-                    f"using single switch=None lookup for entity='{entity_name}'"
+                    "scope_type='%s' is multi-endpoint — using single switch=None lookup for entity='%s'",
+                    scope_type,
+                    entity_name,
                 )
             else:
                 switches = cfg.switch if (scope_type != "fabric" and cfg.switch) else [None]
                 log.debug(
-                    f"scope_type='{scope_type}' — resolved switches={switches} "
-                    f"for entity='{entity_name}'"
+                    "scope_type='%s' — resolved switches=%s for entity='%s'",
+                    scope_type,
+                    switches,
+                    entity_name,
                 )
 
             for sw in switches:
@@ -407,16 +429,22 @@ class ResourceManagerDiffEngine:
                     entity_name, pool_name, scope_type, sw
                 )
                 log.debug(
-                    f"Lookup key={key} for entity='{entity_name}', "
-                    f"pool='{pool_name}', scope='{scope_type}', switch={sw}"
+                    "Lookup key=%s for entity='%s', pool='%s', scope='%s', switch=%s",
+                    key,
+                    entity_name,
+                    pool_name,
+                    scope_type,
+                    sw,
                 )
                 existing_res = existing_index.get(key)
 
                 if existing_res is None:
                     log.info(
-                        f"Resource (entity={entity_name}, pool={pool_name}, "
-                        f"scope={scope_type}, switch={sw}) not found in existing — "
-                        f"marking to_add"
+                        "Resource (entity=%s, pool=%s, scope=%s, switch=%s) not found in existing — marking to_add",
+                        entity_name,
+                        pool_name,
+                        scope_type,
+                        sw,
                     )
                     changes["to_add"].append((cfg, sw, None))
 
@@ -426,8 +454,10 @@ class ResourceManagerDiffEngine:
                     norm = ResourceManagerDiffEngine._normalize_entity_key(entity_name)
                     partials = entity_only_index.get(norm, [])
                     log.debug(
-                        f"Partial-match scan for entity='{entity_name}' "
-                        f"(norm='{norm}'): {len(partials)} candidate(s)"
+                        "Partial-match scan for entity='%s' (norm='%s'): %s candidate(s)",
+                        entity_name,
+                        norm,
+                        len(partials),
                     )
                     for partial in partials:
                         partial_pool = partial.pool_name
@@ -445,17 +475,22 @@ class ResourceManagerDiffEngine:
                             "have_switch_ip": partial_sw,
                         }
                         log.debug(
-                            f"compute_changes: partial match for entity='{entity_name}': {mismatch}"
+                            "compute_changes: partial match for entity='%s': %s",
+                            entity_name,
+                            mismatch,
                         )
                         changes["debugs"].append(
                             {"Entity Name": entity_name, "MISMATCHED_VALUES": mismatch}
                         )
                 else:
                     log.debug(
-                        f"Resource (entity={entity_name}, pool={pool_name}, "
-                        f"scope={scope_type}, switch={sw}) found in existing — "
-                        f"resource_id={getattr(existing_res, 'resource_id', None)}, "
-                        f"existing_value='{existing_res.resource_value}'"
+                        "Resource (entity=%s, pool=%s, scope=%s, switch=%s) found in existing — resource_id=%s, existing_value='%s'",
+                        entity_name,
+                        pool_name,
+                        scope_type,
+                        sw,
+                        getattr(existing_res, 'resource_id', None),
+                        existing_res.resource_value,
                     )
                     matched_existing_keys.add(key)
                     existing_value = existing_res.resource_value
@@ -464,46 +499,56 @@ class ResourceManagerDiffEngine:
                         existing_value, resource_value
                     ):
                         log.debug(
-                            f"Resource (entity={entity_name}, pool={pool_name}, "
-                            f"scope={scope_type}, switch={sw}) is idempotent "
-                            f"(value={existing_value})"
+                            "Resource (entity=%s, pool=%s, scope=%s, switch=%s) is idempotent (value=%s)",
+                            entity_name,
+                            pool_name,
+                            scope_type,
+                            sw,
+                            existing_value,
                         )
                         changes["idempotent"].append((cfg, sw, existing_res))
                     else:
                         log.info(
-                            f"Resource (entity={entity_name}, pool={pool_name}, "
-                            f"scope={scope_type}, switch={sw}) value differs "
-                            f"(existing={existing_value}, desired={resource_value}) — "
-                            f"marking to_update"
+                            "Resource (entity=%s, pool=%s, scope=%s, switch=%s) value differs (existing=%s, desired=%s) — marking to_update",
+                            entity_name,
+                            pool_name,
+                            scope_type,
+                            sw,
+                            existing_value,
+                            resource_value,
                         )
                         changes["to_update"].append((cfg, sw, existing_res))
 
         log.debug(
-            f"Proposed scan complete — matched_existing_keys={len(matched_existing_keys)}, "
-            f"total existing_index keys={len(existing_index)}"
+            "Proposed scan complete — matched_existing_keys=%s, total existing_index keys=%s",
+            len(matched_existing_keys),
+            len(existing_index),
         )
 
         # Resources in existing but not matched by any proposed entry → to_delete
         for key, res in existing_index.items():
             if key not in matched_existing_keys:
                 log.info(
-                    f"Existing resource (entity={res.entity_name}, pool={res.pool_name}) "
-                    f"not in proposed — marking to_delete"
+                    "Existing resource (entity=%s, pool=%s) not in proposed — marking to_delete",
+                    res.entity_name,
+                    res.pool_name,
                 )
                 changes["to_delete"].append(res)
             else:
                 log.debug(
-                    f"Existing resource (entity={res.entity_name}, pool={res.pool_name}, "
-                    f"key={key}) was matched by a proposed entry — skipping to_delete"
+                    "Existing resource (entity=%s, pool=%s, key=%s) was matched by a proposed entry — skipping to_delete",
+                    res.entity_name,
+                    res.pool_name,
+                    key,
                 )
 
         log.info(
-            f"Compute changes summary: "
-            f"to_add={len(changes['to_add'])}, "
-            f"to_update={len(changes['to_update'])}, "
-            f"to_delete={len(changes['to_delete'])}, "
-            f"idempotent={len(changes['idempotent'])}, "
-            f"debugs={len(changes['debugs'])}"
+            "Compute changes summary: to_add=%s, to_update=%s, to_delete=%s, idempotent=%s, debugs=%s",
+            len(changes['to_add']),
+            len(changes['to_update']),
+            len(changes['to_delete']),
+            len(changes['idempotent']),
+            len(changes['debugs']),
         )
         log.debug("EXIT: compute_changes()")
         return changes
@@ -546,13 +591,15 @@ class ResourceManagerDiffEngine:
                 if api_resource.entity_name else None
             )
             log.debug(
-                f"validate_resource_api_fields: checking entity_name — "
-                f"cfg_norm='{cfg_norm}', api_norm='{api_norm}'"
+                "validate_resource_api_fields: checking entity_name — cfg_norm='%s', api_norm='%s'",
+                cfg_norm,
+                api_norm,
             )
             if cfg_norm != api_norm:
                 log.debug(
-                    f"validate_resource_api_fields: entity_name MISMATCH — "
-                    f"provided='{resource_cfg.entity_name}', API='{api_resource.entity_name}'"
+                    "validate_resource_api_fields: entity_name MISMATCH — provided='%s', API='%s'",
+                    resource_cfg.entity_name,
+                    api_resource.entity_name,
                 )
                 mismatches.append(
                     f"entity_name: provided '{resource_cfg.entity_name}', "
@@ -560,25 +607,27 @@ class ResourceManagerDiffEngine:
                 )
             else:
                 log.debug(
-                    f"validate_resource_api_fields: entity_name OK — "
-                    f"'{resource_cfg.entity_name}' matches API"
+                    "validate_resource_api_fields: entity_name OK — '%s' matches API",
+                    resource_cfg.entity_name,
                 )
         else:
             log.debug(
-                f"validate_resource_api_fields: entity_name not provided in cfg — skipping check "
-                f"(api_entity_name='{api_resource.entity_name}')"
+                "validate_resource_api_fields: entity_name not provided in cfg — skipping check (api_entity_name='%s')",
+                api_resource.entity_name,
             )
 
         # pool_name: exact match
         if resource_cfg.pool_name is not None:
             log.debug(
-                f"validate_resource_api_fields: checking pool_name — "
-                f"cfg='{resource_cfg.pool_name}', api='{api_resource.pool_name}'"
+                "validate_resource_api_fields: checking pool_name — cfg='%s', api='%s'",
+                resource_cfg.pool_name,
+                api_resource.pool_name,
             )
             if resource_cfg.pool_name != api_resource.pool_name:
                 log.debug(
-                    f"validate_resource_api_fields: pool_name MISMATCH — "
-                    f"provided='{resource_cfg.pool_name}', API='{api_resource.pool_name}'"
+                    "validate_resource_api_fields: pool_name MISMATCH — provided='%s', API='%s'",
+                    resource_cfg.pool_name,
+                    api_resource.pool_name,
                 )
                 mismatches.append(
                     f"pool_name: provided '{resource_cfg.pool_name}', "
@@ -586,27 +635,29 @@ class ResourceManagerDiffEngine:
                 )
             else:
                 log.debug(
-                    f"validate_resource_api_fields: pool_name OK — "
-                    f"'{resource_cfg.pool_name}' matches API"
+                    "validate_resource_api_fields: pool_name OK — '%s' matches API",
+                    resource_cfg.pool_name,
                 )
         else:
             log.debug(
-                f"validate_resource_api_fields: pool_name not provided in cfg — skipping check "
-                f"(api_pool_name='{api_resource.pool_name}')"
+                "validate_resource_api_fields: pool_name not provided in cfg — skipping check (api_pool_name='%s')",
+                api_resource.pool_name,
             )
 
         # resource vs resource_value: IPv4/v6-aware comparison
         if resource_cfg.resource is not None:
             log.debug(
-                f"validate_resource_api_fields: checking resource value — "
-                f"cfg='{resource_cfg.resource}', api='{api_resource.resource_value}'"
+                "validate_resource_api_fields: checking resource value — cfg='%s', api='%s'",
+                resource_cfg.resource,
+                api_resource.resource_value,
             )
             if not ResourceManagerDiffEngine._compare_resource_values(
                 api_resource.resource_value, resource_cfg.resource
             ):
                 log.debug(
-                    f"validate_resource_api_fields: resource value MISMATCH — "
-                    f"provided='{resource_cfg.resource}', API='{api_resource.resource_value}'"
+                    "validate_resource_api_fields: resource value MISMATCH — provided='%s', API='%s'",
+                    resource_cfg.resource,
+                    api_resource.resource_value,
                 )
                 mismatches.append(
                     f"resource: provided '{resource_cfg.resource}', "
@@ -614,13 +665,14 @@ class ResourceManagerDiffEngine:
                 )
             else:
                 log.debug(
-                    f"validate_resource_api_fields: resource value OK — "
-                    f"'{resource_cfg.resource}' matches API '{api_resource.resource_value}'"
+                    "validate_resource_api_fields: resource value OK — '%s' matches API '%s'",
+                    resource_cfg.resource,
+                    api_resource.resource_value,
                 )
         else:
             log.debug(
-                f"validate_resource_api_fields: resource not provided in cfg — skipping check "
-                f"(api_resource_value='{api_resource.resource_value}')"
+                "validate_resource_api_fields: resource not provided in cfg — skipping check (api_resource_value='%s')",
+                api_resource.resource_value,
             )
 
         if mismatches:
@@ -633,8 +685,9 @@ class ResourceManagerDiffEngine:
             )
 
         log.debug(
-            f"validate_resource_api_fields: all provided fields match API for "
-            f"entity='{resource_cfg.entity_name}', pool='{resource_cfg.pool_name}'"
+            "validate_resource_api_fields: all provided fields match API for entity='%s', pool='%s'",
+            resource_cfg.entity_name,
+            resource_cfg.pool_name,
         )
 
 
@@ -705,8 +758,10 @@ class NDResourceManagerModule:
         self.output: NDOutput = NDOutput(output_level=nd.params.get("output_level", "normal"))
 
         self.log.info(
-            f"NDResourceManagerModule initialized: fabric={self.fabric}, "
-            f"state={self.state}, config_count={len(self.config)}"
+            "NDResourceManagerModule initialized: fabric=%s, state=%s, config_count=%s",
+            self.fabric,
+            self.state,
+            len(self.config),
         )
 
     # ------------------------------------------------------------------
@@ -734,12 +789,14 @@ class NDResourceManagerModule:
         scope_type = item.get("scope_type")
 
         self.log.debug(
-            f"Validating resource params: pool_type={pool_type}, "
-            f"pool_name={pool_name}, scope_type={scope_type}"
+            "Validating resource params: pool_type=%s, pool_name=%s, scope_type=%s",
+            pool_type,
+            pool_name,
+            scope_type,
         )
 
         if pool_type == "ID":
-            self.log.debug(f"pool_type is 'ID', using pool_name as check_key: {pool_name}")
+            self.log.debug("pool_type is 'ID', using pool_name as check_key: %s", pool_name)
             check_key = pool_name
         elif pool_type == "IP":
             self.log.debug("pool_type is 'IP', using check_key='IP_POOL'")
@@ -752,13 +809,13 @@ class NDResourceManagerModule:
                 "Given pool type = '{0}' is invalid,"
                 " Allowed pool types = ['ID', 'IP', 'SUBNET']".format(pool_type)
             )
-            self.log.warning(f"Validation failed: {msg}")
+            self.log.warning("Validation failed: %s", msg)
             return False, msg
 
         allowed_scopes = _POOLNAME_TO_SCOPE_TYPE.get(check_key)
         if allowed_scopes is None:
             msg = "Given pool name '{0}' is not valid".format(pool_name)
-            self.log.warning(f"Validation failed: {msg}")
+            self.log.warning("Validation failed: %s", msg)
             return False, msg
 
         if scope_type not in allowed_scopes:
@@ -768,12 +825,14 @@ class NDResourceManagerModule:
                     scope_type, pool_name, allowed_scopes
                 )
             )
-            self.log.warning(f"Validation failed: {msg}")
+            self.log.warning("Validation failed: %s", msg)
             return False, msg
 
         self.log.debug(
-            f"Validation passed: pool_name={pool_name}, scope_type={scope_type}, "
-            f"allowed_scopes={allowed_scopes}"
+            "Validation passed: pool_name=%s, scope_type=%s, allowed_scopes=%s",
+            pool_name,
+            scope_type,
+            allowed_scopes,
         )
         return True, ""
 
@@ -793,13 +852,16 @@ class NDResourceManagerModule:
         Calls ``self.nd.module.fail_json`` directly on any validation failure.
         """
         self.log.info(
-            f"Validating input: state={self.state}, config_count={len(self.config)}"
+            "Validating input: state=%s, config_count=%s",
+            self.state,
+            len(self.config),
         )
 
         if not self.config:
             if self.state in ("merged", "deleted", "overridden"):
                 self.log.error(
-                    f"'config' is mandatory for state '{self.state}' but was not provided"
+                    "'config' is mandatory for state '%s' but was not provided",
+                    self.state,
                 )
                 self.nd.module.fail_json(
                     msg="'config' element is mandatory for state '{0}'".format(
@@ -810,46 +872,53 @@ class NDResourceManagerModule:
 
         for item in self.config:
             self.log.debug(
-                f"Validating config item: entity_name={item.get('entity_name')}, "
-                f"pool_name={item.get('pool_name')}, scope_type={item.get('scope_type')}, "
-                f"pool_type={item.get('pool_type')}"
+                "Validating config item: entity_name=%s, pool_name=%s, scope_type=%s, pool_type=%s",
+                item.get('entity_name'),
+                item.get('pool_name'),
+                item.get('scope_type'),
+                item.get('pool_type'),
             )
             if self.state != "gathered":
                 # Mandatory parameter checks
                 for field in ("scope_type", "pool_type", "pool_name", "entity_name"):
                     if item.get(field) is None:
                         self.log.error(
-                            f"Mandatory parameter '{field}' is missing in config item: {item}"
+                            "Mandatory parameter '%s' is missing in config item: %s",
+                            field,
+                            item,
                         )
                         self.nd.module.fail_json(
                             msg="Mandatory parameter '{0}' missing".format(field)
                         )
                     else:
-                        self.log.debug(f"Mandatory parameter '{field}' present: {item.get(field)}")
+                        self.log.debug("Mandatory parameter '%s' present: %s", field, item.get(field))
 
                 # Switch required for non-fabric scopes
                 if item.get("scope_type") != "fabric" and not item.get("switch"):
                     self.log.error(
-                        f"'switch' is required for scope_type='{item.get('scope_type')}' "
-                        f"but is missing in config item: {item}"
+                        "'switch' is required for scope_type='%s' but is missing in config item: %s",
+                        item.get('scope_type'),
+                        item,
                     )
                     self.nd.module.fail_json(msg="switch : Required parameter not found")
                 elif item.get("scope_type") != "fabric":
                     self.log.debug(
-                        f"'switch' provided for scope_type='{item.get('scope_type')}': "
-                        f"{item.get('switch')}"
+                        "'switch' provided for scope_type='%s': %s",
+                        item.get('scope_type'),
+                        item.get('switch'),
                     )
 
             # Validate pool_name / scope_type combination (only when pool_type is provided)
             if item.get("pool_type") is not None:
                 self.log.debug(
-                    f"Running pool_type/pool_name/scope_type compatibility check for: "
-                    f"pool_type={item.get('pool_type')}, pool_name={item.get('pool_name')}, "
-                    f"scope_type={item.get('scope_type')}"
+                    "Running pool_type/pool_name/scope_type compatibility check for: pool_type=%s, pool_name=%s, scope_type=%s",
+                    item.get('pool_type'),
+                    item.get('pool_name'),
+                    item.get('scope_type'),
                 )
                 rc, mesg = self._validate_resource_params(item)
                 if not rc:
-                    self.log.error(f"Pool/scope compatibility check failed: {mesg}")
+                    self.log.error("Pool/scope compatibility check failed: %s", mesg)
                     self.nd.module.fail_json(msg=mesg)
                 else:
                     self.log.debug("Pool/scope compatibility check passed")
@@ -859,11 +928,14 @@ class NDResourceManagerModule:
                 try:
                     ResourceManagerConfigModel.from_config(item)
                     self.log.debug(
-                        f"Pydantic validation passed for entity_name={item.get('entity_name')}"
+                        "Pydantic validation passed for entity_name=%s",
+                        item.get('entity_name'),
                     )
                 except Exception as exc:
                     self.log.error(
-                        f"Pydantic validation failed for entity_name={item.get('entity_name')}: {exc}"
+                        "Pydantic validation failed for entity_name=%s: %s",
+                        item.get('entity_name'),
+                        exc,
                     )
                     self.nd.module.fail_json(
                         msg="Invalid parameters in playbook: {0}".format(str(exc))
@@ -887,12 +959,13 @@ class NDResourceManagerModule:
         """
         if self._resources_fetched:
             self.log.debug(
-                f"Resources already cached for fabric={self.fabric}: "
-                f"{len(self._all_resources)} resource(s)"
+                "Resources already cached for fabric=%s: %s resource(s)",
+                self.fabric,
+                len(self._all_resources),
             )
             return
 
-        self.log.info(f"Fetching all resources for fabric={self.fabric}")
+        self.log.info("Fetching all resources for fabric=%s", self.fabric)
 
         ep = EpManageFabricResourcesGet(fabric_name=self.fabric)
         try:
@@ -901,7 +974,8 @@ class NDResourceManagerModule:
             if exc.status == 404:
                 # Fabric has no resources yet — that is valid
                 self.log.info(
-                    f"No resources found (404) for fabric={self.fabric}, treating as empty"
+                    "No resources found (404) for fabric=%s, treating as empty",
+                    self.fabric,
                 )
                 self._resources_fetched = True
                 return
@@ -909,12 +983,12 @@ class NDResourceManagerModule:
 
         # The ND API may return a list directly or {"resources": [...], "meta": {...}}
         if isinstance(data, list):
-            self.log.debug(f"API returned a list with {len(data)} item(s)")
+            self.log.debug("API returned a list with %s item(s)", len(data))
             raw_list = data
         elif isinstance(data, dict) and "resources" in data:
             self.log.debug(
-                f"API returned dict with 'resources' key, "
-                f"{len(data['resources'])} resource(s)"
+                "API returned dict with 'resources' key, %s resource(s)",
+                len(data['resources']),
             )
             raw_list = data["resources"]
         elif isinstance(data, dict) and data:
@@ -928,20 +1002,25 @@ class NDResourceManagerModule:
             try:
                 resource_model = ResourceManagerResponse.from_response(raw)
                 self.log.debug(
-                    f"Parsed resource: entity_name={getattr(resource_model, 'entity_name', None)}, "
-                    f"pool_name={getattr(resource_model, 'pool_name', None)}"
+                    "Parsed resource: entity_name=%s, pool_name=%s",
+                    getattr(resource_model, 'entity_name', None),
+                    getattr(resource_model, 'pool_name', None),
                 )
                 self._all_resources.append(resource_model)
             except Exception as exc:
                 # If parsing fails, keep the raw dict so we can still match on it
                 self.log.warning(
-                    f"Failed to parse resource into ResourceManagerResponse (keeping raw): {exc} | raw={raw}"
+                    "Failed to parse resource into ResourceManagerResponse (keeping raw): %s | raw=%s",
+                    exc,
+                    raw,
                 )
                 self._all_resources.append(raw)
 
         self._resources_fetched = True
         self.log.info(
-            f"Fetched {len(self._all_resources)} resource(s) for fabric={self.fabric}"
+            "Fetched %s resource(s) for fabric=%s",
+            len(self._all_resources),
+            self.fabric,
         )
 
     def _get_all_switches(self):
@@ -958,16 +1037,19 @@ class NDResourceManagerModule:
         """
         if self._switches_fetched:
             self.log.debug(
-                f"_get_all_switches: Switches already cached for fabric={self.fabric}: "
-                f"{len(self._all_switches)} switch(es)"
+                "_get_all_switches: Switches already cached for fabric=%s: %s switch(es)",
+                self.fabric,
+                len(self._all_switches),
             )
             return
 
-        self.log.info(f"_get_all_switches: Fetching all switches for fabric={self.fabric}")
+        self.log.info("_get_all_switches: Fetching all switches for fabric=%s", self.fabric)
 
         ep = EpManageFabricSwitchesGet(fabric_name=self.fabric)
         self.log.debug(
-            f"_get_all_switches: querying path='{ep.path}' for fabric='{self.fabric}'"
+            "_get_all_switches: querying path='%s' for fabric='%s'",
+            ep.path,
+            self.fabric,
         )
 
         try:
@@ -975,15 +1057,16 @@ class NDResourceManagerModule:
         except NDModuleError as exc:
             if exc.status == 404:
                 self.log.info(
-                    f"_get_all_switches: No switches found (404) for fabric={self.fabric}, "
-                    f"treating as empty"
+                    "_get_all_switches: No switches found (404) for fabric=%s, treating as empty",
+                    self.fabric,
                 )
                 self._switches_fetched = True
                 return
             raise
 
         self.log.debug(
-            f"_get_all_switches: received response type={type(data).__name__}"
+            "_get_all_switches: received response type=%s",
+            type(data).__name__,
         )
 
         parsed = GetAllSwitchesResponse.from_response(data)
@@ -992,8 +1075,10 @@ class NDResourceManagerModule:
         self._switches_fetched = True
         total = parsed.meta.counts.total if (parsed.meta and parsed.meta.counts) else len(self._all_switches)
         self.log.info(
-            f"_get_all_switches: Fetched {len(self._all_switches)} switch(es) for fabric={self.fabric} "
-            f"(API total={total})"
+            "_get_all_switches: Fetched %s switch(es) for fabric=%s (API total=%s)",
+            len(self._all_switches),
+            self.fabric,
+            total,
         )
 
     def _build_switch_ip_to_id_map(self):
@@ -1004,32 +1089,39 @@ class NDResourceManagerModule:
         or ``switch_id`` are skipped with a debug log entry.
         """
         self.log.debug(
-            f"_build_switch_ip_to_id_map: building map from "
-            f"{len(self._all_switches)} cached switch record(s)"
+            "_build_switch_ip_to_id_map: building map from %s cached switch record(s)",
+            len(self._all_switches),
         )
 
         for idx, sw in enumerate(self._all_switches):
             switch_id = sw.switch_id
             switch_ip = sw.fabric_management_ip
             self.log.debug(
-                f"_build_switch_ip_to_id_map: [{idx}] switchId='{switch_id}', "
-                f"fabricManagementIp='{switch_ip}'"
+                "_build_switch_ip_to_id_map: [%s] switchId='%s', fabricManagementIp='%s'",
+                idx,
+                switch_id,
+                switch_ip,
             )
             if switch_id and switch_ip:
                 self._switch_ip_to_id[str(switch_ip).strip()] = switch_id
                 self.log.debug(
-                    f"_build_switch_ip_to_id_map: [{idx}] mapped ip='{switch_ip}' "
-                    f"-> switchId='{switch_id}' (map_size={len(self._switch_ip_to_id)})"
+                    "_build_switch_ip_to_id_map: [%s] mapped ip='%s' -> switchId='%s' (map_size=%s)",
+                    idx,
+                    switch_ip,
+                    switch_id,
+                    len(self._switch_ip_to_id),
                 )
             else:
                 self.log.debug(
-                    f"_build_switch_ip_to_id_map: [{idx}] skipping — "
-                    f"missing switch_id='{switch_id}' or fabric_management_ip='{switch_ip}'"
+                    "_build_switch_ip_to_id_map: [%s] skipping — missing switch_id='%s' or fabric_management_ip='%s'",
+                    idx,
+                    switch_id,
+                    switch_ip,
                 )
 
         self.log.info(
-            f"_build_switch_ip_to_id_map: map complete — "
-            f"{len(self._switch_ip_to_id)} entry/entries"
+            "_build_switch_ip_to_id_map: map complete — %s entry/entries",
+            len(self._switch_ip_to_id),
         )
 
     def _resolve_switch_ids_in_config(self, config):
@@ -1050,8 +1142,9 @@ class NDResourceManagerModule:
             A deep copy of ``config`` with switch IPs replaced by switchId values.
         """
         self.log.debug(
-            f"_resolve_switch_ids_in_config: translating {len(config or [])} "
-            f"config item(s) using map of {len(self._switch_ip_to_id)} entry/entries"
+            "_resolve_switch_ids_in_config: translating %s config item(s) using map of %s entry/entries",
+            len(config or []),
+            len(self._switch_ip_to_id),
         )
 
         config_copy = copy.deepcopy(config or [])
@@ -1062,14 +1155,18 @@ class NDResourceManagerModule:
             scope_type = item.get("scope_type")
 
             self.log.debug(
-                f"_resolve_switch_ids_in_config: [{idx}] entity='{entity_name}', "
-                f"scope_type='{scope_type}', raw_switch_list={raw_switch_list}"
+                "_resolve_switch_ids_in_config: [%s] entity='%s', scope_type='%s', raw_switch_list=%s",
+                idx,
+                entity_name,
+                scope_type,
+                raw_switch_list,
             )
 
             if not raw_switch_list:
                 self.log.debug(
-                    f"_resolve_switch_ids_in_config: [{idx}] entity='{entity_name}' — "
-                    f"no switch list present, skipping translation"
+                    "_resolve_switch_ids_in_config: [%s] entity='%s' — no switch list present, skipping translation",
+                    idx,
+                    entity_name,
                 )
                 continue
 
@@ -1079,25 +1176,33 @@ class NDResourceManagerModule:
                 sw_id = self._switch_ip_to_id.get(sw_key, sw_key)
                 if sw_id != sw_key:
                     self.log.debug(
-                        f"_resolve_switch_ids_in_config: [{idx}] entity='{entity_name}' "
-                        f"switch '{sw_ip}' -> resolved switchId='{sw_id}'"
+                        "_resolve_switch_ids_in_config: [%s] entity='%s' switch '%s' -> resolved switchId='%s'",
+                        idx,
+                        entity_name,
+                        sw_ip,
+                        sw_id,
                     )
                 else:
                     self.log.debug(
-                        f"_resolve_switch_ids_in_config: [{idx}] entity='{entity_name}' "
-                        f"switch '{sw_ip}' not found in map — passing through unchanged"
+                        "_resolve_switch_ids_in_config: [%s] entity='%s' switch '%s' not found in map — passing through unchanged",
+                        idx,
+                        entity_name,
+                        sw_ip,
                     )
                 resolved.append(sw_id)
 
             item["switch"] = resolved
             self.log.debug(
-                f"_resolve_switch_ids_in_config: [{idx}] entity='{entity_name}' "
-                f"final switch list: {raw_switch_list} -> {resolved}"
+                "_resolve_switch_ids_in_config: [%s] entity='%s' final switch list: %s -> %s",
+                idx,
+                entity_name,
+                raw_switch_list,
+                resolved,
             )
 
         self.log.debug(
-            f"_resolve_switch_ids_in_config: completed, "
-            f"returning {len(config_copy)} translated config item(s)"
+            "_resolve_switch_ids_in_config: completed, returning %s translated config item(s)",
+            len(config_copy),
         )
         return config_copy
 
@@ -1122,13 +1227,13 @@ class NDResourceManagerModule:
         """
         if hasattr(resource, model_attr):
             value = getattr(resource, model_attr)
-            self.log.debug(f"_attr: resolved '{model_attr}' from model: {value}")
+            self.log.debug("_attr: resolved '%s' from model: %s", model_attr, value)
             return value
         if isinstance(resource, dict):
             value = resource.get(dict_key)
-            self.log.debug(f"_attr: resolved '{dict_key}' from dict: {value}")
+            self.log.debug("_attr: resolved '%s' from dict: %s", dict_key, value)
             return value
-        self.log.debug(f"_attr: could not resolve '{model_attr}'/'{dict_key}' from resource type {type(resource)}")
+        self.log.debug("_attr: could not resolve '%s'/'%s' from resource type %s", model_attr, dict_key, type(resource))
         return None
 
     def _get_entity_name(self, resource):
@@ -1164,16 +1269,16 @@ class NDResourceManagerModule:
         """
         if hasattr(resource, "scope_details") and resource.scope_details:
             raw = getattr(resource.scope_details, "scope_type", None)
-            self.log.debug(f"_get_scope_type: from model scope_details, raw={raw}")
+            self.log.debug("_get_scope_type: from model scope_details, raw=%s", raw)
         elif isinstance(resource, dict):
             sd = resource.get("scopeDetails") or {}
             raw = sd.get("scopeType")
-            self.log.debug(f"_get_scope_type: from dict scopeDetails, raw={raw}")
+            self.log.debug("_get_scope_type: from dict scopeDetails, raw=%s", raw)
         else:
-            self.log.debug(f"_get_scope_type: unrecognised resource type {type(resource)}, returning None")
+            self.log.debug("_get_scope_type: unrecognised resource type %s, returning None", type(resource))
             return None
         mapped = _API_SCOPE_TYPE_TO_PLAYBOOK.get(raw, raw) if raw else None
-        self.log.debug(f"_get_scope_type: mapped API scope '{raw}' -> playbook scope '{mapped}'")
+        self.log.debug("_get_scope_type: mapped API scope '%s' -> playbook scope '%s'", raw, mapped)
         return mapped
 
     def _get_switch_ip(self, resource):
@@ -1187,15 +1292,15 @@ class NDResourceManagerModule:
         """
         if hasattr(resource, "scope_details") and resource.scope_details:
             value = ResourceManagerDiffEngine._extract_scope_switch_key_val(resource.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip")
-            self.log.debug(f"_get_switch_ip: from model scope_details, switch_ip={value}")
+            self.log.debug("_get_switch_ip: from model scope_details, switch_ip=%s", value)
             return value
         if isinstance(resource, dict):
             sd = resource.get("scopeDetails") or {}
             # device/deviceInterface use "switchIp"; device_pair/link use "srcSwitchIp"
             value = sd.get("switchIp") or sd.get("srcSwitchIp")
-            self.log.debug(f"_get_switch_ip: from dict scopeDetails, switch_ip={value}")
+            self.log.debug("_get_switch_ip: from dict scopeDetails, switch_ip=%s", value)
             return value
-        self.log.debug(f"_get_switch_ip: unrecognised resource type {type(resource)}, returning None")
+        self.log.debug("_get_switch_ip: unrecognised resource type %s, returning None", type(resource))
         return None
 
     def _to_dict(self, resource):
@@ -1213,9 +1318,9 @@ class NDResourceManagerModule:
         """
         if hasattr(resource, "to_payload"):
             result = resource.to_payload()
-            self.log.debug(f"_to_dict: converted ResourceManagerResponse to dict via to_payload(): {result}")
+            self.log.debug("_to_dict: converted ResourceManagerResponse to dict via to_payload(): %s", result)
             return result
-        self.log.debug(f"_to_dict: resource is already a raw dict, returning as-is")
+        self.log.debug("_to_dict: resource is already a raw dict, returning as-is")
         return resource
 
     # ------------------------------------------------------------------
@@ -1240,15 +1345,19 @@ class NDResourceManagerModule:
         """
         if e1 is None or e2 is None:
             self.log.debug(
-                f"_entity_names_match: one or both entity names are None "
-                f"(e1={e1}, e2={e2}), returning False"
+                "_entity_names_match: one or both entity names are None (e1=%s, e2=%s), returning False",
+                e1,
+                e2,
             )
             return False
         result = sorted(e1.split("~")) == sorted(e2.split("~"))
         self.log.debug(
-            f"_entity_names_match: e1='{e1}', e2='{e2}', "
-            f"sorted_e1={sorted(e1.split('~'))}, sorted_e2={sorted(e2.split('~'))}, "
-            f"match={result}"
+            "_entity_names_match: e1='%s', e2='%s', sorted_e1=%s, sorted_e2=%s, match=%s",
+            e1,
+            e2,
+            sorted(e1.split('~')),
+            sorted(e2.split('~')),
+            result,
         )
         return result
 
@@ -1272,19 +1381,24 @@ class NDResourceManagerModule:
           - link:             LinkScope(srcSwitchId, srcInterfaceName)  — dst derived by server from entityName
         """
         self.log.debug(
-            f"_build_scope_details: scope_type={scope_type}, switch_ip={switch_ip}, "
-            f"entity_name={entity_name}, fabric={self.fabric}"
+            "_build_scope_details: scope_type=%s, switch_ip=%s, entity_name=%s, fabric=%s",
+            scope_type,
+            switch_ip,
+            entity_name,
+            self.fabric,
         )
 
         if scope_type == "fabric":
             self.log.debug(
-                f"_build_scope_details: fabric scope -> fabricName={self.fabric}"
+                "_build_scope_details: fabric scope -> fabricName=%s",
+                self.fabric,
             )
             result = FabricScope(fabric_name=self.fabric)
 
         elif scope_type == "device":
             self.log.debug(
-                f"_build_scope_details: device scope -> switchId={switch_ip}"
+                "_build_scope_details: device scope -> switchId=%s",
+                switch_ip,
             )
             result = DeviceScope(switch_id=switch_ip)
 
@@ -1294,14 +1408,15 @@ class NDResourceManagerModule:
             parts = (entity_name or "").split("~", 1)
             if_name = parts[1] if len(parts) > 1 else None
             self.log.debug(
-                f"_build_scope_details: device_interface scope -> "
-                f"switchId={switch_ip}, interfaceName={if_name} "
-                f"(interfaceName parsed from entity_name='{entity_name}')"
+                "_build_scope_details: device_interface scope -> switchId=%s, interfaceName=%s (interfaceName parsed from entity_name='%s')",
+                switch_ip,
+                if_name,
+                entity_name,
             )
             if not if_name:
                 self.log.warning(
-                    f"_build_scope_details: device_interface scope: could not parse "
-                    f"interfaceName from entity_name='{entity_name}'"
+                    "_build_scope_details: device_interface scope: could not parse interfaceName from entity_name='%s'",
+                    entity_name,
                 )
             result = DeviceInterfaceScope(switch_id=switch_ip, interface_name=if_name)
 
@@ -1314,8 +1429,10 @@ class NDResourceManagerModule:
             src_sn = parts[0] if len(parts) > 0 else None
             dst_sn = parts[1] if len(parts) > 1 else None
             self.log.debug(
-                f"_build_scope_details: device_pair scope -> srcSwitchId={src_sn}, "
-                f"dstSwitchId={dst_sn} (parsed from entity_name='{entity_name}')"
+                "_build_scope_details: device_pair scope -> srcSwitchId=%s, dstSwitchId=%s (parsed from entity_name='%s')",
+                src_sn,
+                dst_sn,
+                entity_name,
             )
             result = DevicePairScope(src_switch_id=src_sn, dst_switch_id=dst_sn)
 
@@ -1329,9 +1446,12 @@ class NDResourceManagerModule:
             dst_sn = parts[2] if len(parts) > 2 else None
             dst_if = parts[3] if len(parts) > 3 else None
             self.log.debug(
-                f"_build_scope_details: link scope -> srcSwitchId={src_sn}, "
-                f"srcInterfaceName={src_if}, dstSwitchId={dst_sn}, "
-                f"dstInterfaceName={dst_if} (parsed from entity_name='{entity_name}')"
+                "_build_scope_details: link scope -> srcSwitchId=%s, srcInterfaceName=%s, dstSwitchId=%s, dstInterfaceName=%s (parsed from entity_name='%s')",
+                src_sn,
+                src_if,
+                dst_sn,
+                dst_if,
+                entity_name,
             )
             result = LinkScope(
                 src_switch_id=src_sn,
@@ -1342,12 +1462,12 @@ class NDResourceManagerModule:
 
         else:
             self.log.warning(
-                f"_build_scope_details: unrecognised scope_type='{scope_type}', "
-                f"falling back to generic DeviceScope payload"
+                "_build_scope_details: unrecognised scope_type='%s', falling back to generic DeviceScope payload",
+                scope_type,
             )
             result = DeviceScope(switch_id=switch_ip)
 
-        self.log.debug(f"_build_scope_details: result={result}")
+        self.log.debug("_build_scope_details: result=%s", result)
         return result
 
     def _build_create_payload(self, cfg, switch_ip=None):
@@ -1383,9 +1503,13 @@ class NDResourceManagerModule:
             resource_value = cfg.get("resource")
 
         self.log.debug(
-            f"_build_create_payload: pool_name={pool_name}, pool_type={pool_type}, "
-            f"entity_name={entity_name}, scope_type={scope_type}, "
-            f"switch_ip={switch_ip}, resource={resource_value}"
+            "_build_create_payload: pool_name=%s, pool_type=%s, entity_name=%s, scope_type=%s, switch_ip=%s, resource=%s",
+            pool_name,
+            pool_type,
+            entity_name,
+            scope_type,
+            switch_ip,
+            resource_value,
         )
 
         scope = self._build_scope_details(scope_type, switch_ip, entity_name=entity_name)
@@ -1401,7 +1525,8 @@ class NDResourceManagerModule:
 
         if resource_value is not None:
             self.log.debug(
-                f"_build_create_payload: adding resourceValue='{resource_value}' to payload"
+                "_build_create_payload: adding resourceValue='%s' to payload",
+                resource_value,
             )
         else:
             self.log.debug(
@@ -1409,7 +1534,7 @@ class NDResourceManagerModule:
             )
 
         payload = request.to_payload()
-        self.log.debug(f"_build_create_payload: final payload={payload}")
+        self.log.debug("_build_create_payload: final payload=%s", payload)
         return payload
 
 
@@ -1433,7 +1558,8 @@ class NDResourceManagerModule:
             One of ``'ID'``, ``'IP'``, or ``'SUBNET'``.
         """
         self.log.debug(
-            f"_determine_pool_type: evaluating resource_value='{resource_value}'"
+            "_determine_pool_type: evaluating resource_value='%s'",
+            resource_value,
         )
         if not resource_value:
             self.log.debug(
@@ -1443,34 +1569,37 @@ class NDResourceManagerModule:
         val = str(resource_value).strip()
         if "/" in val:
             self.log.debug(
-                f"_determine_pool_type: value='{val}' contains '/' — "
-                f"attempting ip_network parse"
+                "_determine_pool_type: value='%s' contains '/' — attempting ip_network parse",
+                val,
             )
             try:
                 ipaddress.ip_network(val, strict=False)
                 self.log.debug(
-                    f"_determine_pool_type: '{val}' is a valid IP network — returning 'SUBNET'"
+                    "_determine_pool_type: '%s' is a valid IP network — returning 'SUBNET'",
+                    val,
                 )
                 return "SUBNET"
             except ValueError:
                 self.log.debug(
-                    f"_determine_pool_type: '{val}' failed ip_network parse — "
-                    f"falling through to ip_address check"
+                    "_determine_pool_type: '%s' failed ip_network parse — falling through to ip_address check",
+                    val,
                 )
         else:
             self.log.debug(
-                f"_determine_pool_type: value='{val}' has no '/' — "
-                f"skipping ip_network check"
+                "_determine_pool_type: value='%s' has no '/' — skipping ip_network check",
+                val,
             )
         try:
             ipaddress.ip_address(val)
             self.log.debug(
-                f"_determine_pool_type: '{val}' is a valid IP address — returning 'IP'"
+                "_determine_pool_type: '%s' is a valid IP address — returning 'IP'",
+                val,
             )
             return "IP"
         except ValueError:
             self.log.debug(
-                f"_determine_pool_type: '{val}' is not an IP address — returning 'ID'"
+                "_determine_pool_type: '%s' is not an IP address — returning 'ID'",
+                val,
             )
         return "ID"
 
@@ -1484,8 +1613,8 @@ class NDResourceManagerModule:
         """
         translated = []
         self.log.debug(
-            f"translate_gathered_results: translating {len(resources)} resource(s) "
-            f"to playbook config format"
+            "translate_gathered_results: translating %s resource(s) to playbook config format",
+            len(resources),
         )
         for res_idx, res in enumerate(resources):
             entity_name = self._get_entity_name(res)
@@ -1495,10 +1624,14 @@ class NDResourceManagerModule:
             switch_ip = self._get_switch_ip(res)
             pool_type = self._determine_pool_type(resource_value)
             self.log.debug(
-                f"translate_gathered_results: [{res_idx}] resolved fields — "
-                f"entity_name='{entity_name}', pool_name='{pool_name}', "
-                f"scope_type='{scope_type}', pool_type='{pool_type}', "
-                f"resource_value='{resource_value}', switch_ip='{switch_ip}'"
+                "translate_gathered_results: [%s] resolved fields — entity_name='%s', pool_name='%s', scope_type='%s', pool_type='%s', resource_value='%s', switch_ip='%s'",
+                res_idx,
+                entity_name,
+                pool_name,
+                scope_type,
+                pool_type,
+                resource_value,
+                switch_ip,
             )
 
             item = {
@@ -1511,23 +1644,30 @@ class NDResourceManagerModule:
             if scope_type != "fabric" and switch_ip:
                 item["switch"] = [switch_ip]
                 self.log.debug(
-                    f"translate_gathered_results: [{res_idx}] entity='{entity_name}' — "
-                    f"non-fabric scope ('{scope_type}'), adding switch=['{switch_ip}'] to item"
+                    "translate_gathered_results: [%s] entity='%s' — non-fabric scope ('%s'), adding switch=['%s'] to item",
+                    res_idx,
+                    entity_name,
+                    scope_type,
+                    switch_ip,
                 )
             else:
                 self.log.debug(
-                    f"translate_gathered_results: [{res_idx}] entity='{entity_name}' — "
-                    f"scope_type='{scope_type}', switch_ip='{switch_ip}' — "
-                    f"no switch field added"
+                    "translate_gathered_results: [%s] entity='%s' — scope_type='%s', switch_ip='%s' — no switch field added",
+                    res_idx,
+                    entity_name,
+                    scope_type,
+                    switch_ip,
                 )
 
             translated.append(item)
             self.log.debug(
-                f"translate_gathered_results: [{res_idx}] appended item={item}"
+                "translate_gathered_results: [%s] appended item=%s",
+                res_idx,
+                item,
             )
         self.log.debug(
-            f"translate_gathered_results: completed — "
-            f"{len(translated)} item(s) translated"
+            "translate_gathered_results: completed — %s item(s) translated",
+            len(translated),
         )
         return translated
 
@@ -1547,8 +1687,9 @@ class NDResourceManagerModule:
             NDModuleError: Propagated from ``self.nd.request`` on API failure.
         """
         self.log.info(
-            f"manage_merged: Processing {len(self.config)} config item(s) "
-            f"for fabric={self.fabric}"
+            "manage_merged: Processing %s config item(s) for fabric=%s",
+            len(self.config),
+            self.fabric,
         )
 
         # Use compute_changes as the canonical diff engine (GAP-4).
@@ -1572,27 +1713,31 @@ class NDResourceManagerModule:
             payload = self._build_create_payload(cfg, switch_ip=sw)
             pending_payloads.append((cfg, payload))
             self.log.debug(
-                f"manage_merged: Queuing resource for batch create: "
-                f"entity_name={cfg.entity_name}, pool_name={cfg.pool_name}, "
-                f"scope_type={cfg.scope_type}, switch_ip={sw}"
+                "manage_merged: Queuing resource for batch create: entity_name=%s, pool_name=%s, scope_type=%s, switch_ip=%s",
+                cfg.entity_name,
+                cfg.pool_name,
+                cfg.scope_type,
+                sw,
             )
 
         # Track diff BEFORE the API call so --check mode also shows what would change (GAP-3).
-        self.changed_dict[0]["merged"].extend(p for _, p in pending_payloads)
+        self.changed_dict[0]["merged"].extend(p for _cfg, p in pending_payloads)
 
         if self.nd.module.check_mode:
             self.log.info(
-                f"Check mode: would create {len(pending_payloads)} resource(s) "
-                f"for fabric={self.fabric}"
+                "Check mode: would create %s resource(s) for fabric=%s",
+                len(pending_payloads),
+                self.fabric,
             )
             return
 
         self.log.info(
-            f"manage_merged: Making batch API call with {len(pending_payloads)} resource(s) "
-            f"for fabric={self.fabric}"
+            "manage_merged: Making batch API call with %s resource(s) for fabric=%s",
+            len(pending_payloads),
+            self.fabric,
         )
 
-        payloads_only = [p for _, p in pending_payloads]
+        payloads_only = [p for _cfg, p in pending_payloads]
         batch = ResourceManagerBatchRequest.model_validate({"resources": payloads_only})
         ep = EpManageFabricResourcesPost(fabric_name=self.fabric)
         resp_data = self.nd.request(ep.path, ep.verb, data=batch.to_payload())
@@ -1600,8 +1745,8 @@ class NDResourceManagerModule:
         # Parse batch response.
         batch_response = ResourcesManagerBatchResponse.from_response(resp_data)
         self.log.debug(
-            f"manage_merged: Batch API response parsed — "
-            f"{len(batch_response.resources)} item(s) returned"
+            "manage_merged: Batch API response parsed — %s item(s) returned",
+            len(batch_response.resources),
         )
 
         # Build a normalised entity_name → cfg lookup for GAP-5 field validation.
@@ -1609,7 +1754,7 @@ class NDResourceManagerModule:
         # acceptable because validate_resource_api_fields uses order-insensitive comparison.
         cfg_by_entity: Dict[str, ResourceManagerConfigModel] = {
             ResourceManagerDiffEngine._normalize_entity_key(cfg.entity_name): cfg
-            for cfg, _ in pending_payloads
+            for cfg, _payload in pending_payloads
         }
 
         for resp_item in batch_response.resources:
@@ -1626,8 +1771,9 @@ class NDResourceManagerModule:
                     )
 
         self.log.info(
-            f"manage_merged: Batch create successful — {len(pending_payloads)} resource(s) created "
-            f"for fabric={self.fabric}"
+            "manage_merged: Batch create successful — %s resource(s) created for fabric=%s",
+            len(pending_payloads),
+            self.fabric,
         )
 
     def manage_deleted(self):
@@ -1646,8 +1792,9 @@ class NDResourceManagerModule:
             NDModuleError: Propagated from ``self.nd.request`` on API failure.
         """
         self.log.info(
-            f"manage_deleted: Processing {len(self.config)} config item(s) "
-            f"for fabric={self.fabric}"
+            "manage_deleted: Processing %s config item(s) for fabric=%s",
+            len(self.config),
+            self.fabric,
         )
 
         # Use compute_changes as the canonical diff engine (GAP-4).
@@ -1670,37 +1817,45 @@ class NDResourceManagerModule:
             rid = self._get_resource_id(existing_res)
             if rid is not None and rid not in resource_ids:
                 self.log.debug(
-                    f"manage_deleted: Queuing resource ID '{rid}' for deletion "
-                    f"(entity_name={_cfg.entity_name}, pool_name={_cfg.pool_name}, switch_ip={_sw})"
+                    "manage_deleted: Queuing resource ID '%s' for deletion (entity_name=%s, pool_name=%s, switch_ip=%s)",
+                    rid,
+                    _cfg.entity_name,
+                    _cfg.pool_name,
+                    _sw,
                 )
                 resource_ids.append(rid)
             elif rid is not None:
                 self.log.debug(
-                    f"manage_deleted: Resource ID '{rid}' already queued, skipping duplicate"
+                    "manage_deleted: Resource ID '%s' already queued, skipping duplicate",
+                    rid,
                 )
             else:
                 self.log.debug(
-                    f"manage_deleted: Matched resource has no resource ID, skipping: {existing_res}"
+                    "manage_deleted: Matched resource has no resource ID, skipping: %s",
+                    existing_res,
                 )
 
         if not resource_ids:
             # Nothing to delete — idempotent
             self.log.info(
-                f"manage_deleted: No matching resources found to delete "
-                f"for fabric={self.fabric}, nothing to do"
+                "manage_deleted: No matching resources found to delete for fabric=%s, nothing to do",
+                self.fabric,
             )
             return
 
         self.log.info(
-            f"manage_deleted: Collected {len(resource_ids)} resource ID(s) "
-            f"to delete: {resource_ids}"
+            "manage_deleted: Collected %s resource ID(s) to delete: %s",
+            len(resource_ids),
+            resource_ids,
         )
 
         self.changed_dict[0]["deleted"].extend(str(r) for r in resource_ids)
 
         if self.nd.module.check_mode:
             self.log.info(
-                f"Check mode: would delete {len(resource_ids)} resource(s): {resource_ids}"
+                "Check mode: would delete %s resource(s): %s",
+                len(resource_ids),
+                resource_ids,
             )
             self.api_responses.append(
                 {"RETURN_CODE": 200, "DATA": {"resourceIds": resource_ids}}
@@ -1714,8 +1869,8 @@ class NDResourceManagerModule:
         remove_response = RemoveResourcesByIdsResponse.from_response(resp_data)
 
         self.log.debug(
-            f"manage_deleted: Delete API response parsed — "
-            f"{len(remove_response.resources)} item(s) returned"
+            "manage_deleted: Delete API response parsed — %s item(s) returned",
+            len(remove_response.resources),
         )
 
         for resp_item in remove_response.resources:
@@ -1724,8 +1879,9 @@ class NDResourceManagerModule:
             )
 
         self.log.info(
-            f"manage_deleted: Successfully deleted {len(resource_ids)} resource(s): "
-            f"{resource_ids}"
+            "manage_deleted: Successfully deleted %s resource(s): %s",
+            len(resource_ids),
+            resource_ids,
         )
 
     def manage_gathered(self):
@@ -1743,16 +1899,17 @@ class NDResourceManagerModule:
         """
         config_count = len(self.config) if self.config else 0
         self.log.info(
-            f"manage_gathered: Gathering resources for fabric={self.fabric}, "
-            f"filter_count={config_count}"
+            "manage_gathered: Gathering resources for fabric=%s, filter_count=%s",
+            self.fabric,
+            config_count,
         )
 
         if not self.config:
             # No filters — return everything translated to merged format
             results = self.translate_gathered_results(self._all_resources)
             self.log.info(
-                f"manage_gathered: No filter criteria provided, "
-                f"returning all {len(results)} resource(s)"
+                "manage_gathered: No filter criteria provided, returning all %s resource(s)",
+                len(results),
             )
             self.api_responses.extend(results)
             self.changed_dict[0]["gathered"].extend(results)
@@ -1770,13 +1927,18 @@ class NDResourceManagerModule:
             if not filter_entity and not filter_pool and not filter_switches:
                 self.log.debug(
                     "manage_query: Skipping filter item with no active criteria "
-                    f"(entity_name={filter_entity}, pool_name={filter_pool}, switches={filter_switches})"
+                    "(entity_name=%s, pool_name=%s, switches=%s)",
+                    filter_entity,
+                    filter_pool,
+                    filter_switches,
                 )
                 continue
 
             self.log.debug(
-                f"manage_query: Applying filter: entity_name={filter_entity}, "
-                f"pool_name={filter_pool}, switches={filter_switches}"
+                "manage_query: Applying filter: entity_name=%s, pool_name=%s, switches=%s",
+                filter_entity,
+                filter_pool,
+                filter_switches,
             )
 
             for res in self._all_resources:
@@ -1785,7 +1947,8 @@ class NDResourceManagerModule:
                 # Deduplicate across filter criteria
                 if rid is not None and rid in seen_ids:
                     self.log.debug(
-                        f"manage_query: Skipping resource id='{rid}' (already included via previous filter)"
+                        "manage_query: Skipping resource id='%s' (already included via previous filter)",
+                        rid,
                     )
                     continue
 
@@ -1807,16 +1970,20 @@ class NDResourceManagerModule:
                     res_entity, filter_entity
                 ):
                     self.log.debug(
-                        f"manage_query: Skipping resource id='{rid}', entity_name mismatch: "
-                        f"resource='{res_entity}' vs filter='{filter_entity}'"
+                        "manage_query: Skipping resource id='%s', entity_name mismatch: resource='%s' vs filter='%s'",
+                        rid,
+                        res_entity,
+                        filter_entity,
                     )
                     continue
 
                 # Apply pool_name filter
                 if filter_pool and res_pool != filter_pool:
                     self.log.debug(
-                        f"manage_query: Skipping resource id='{rid}', pool_name mismatch: "
-                        f"resource='{res_pool}' vs filter='{filter_pool}'"
+                        "manage_query: Skipping resource id='%s', pool_name mismatch: resource='%s' vs filter='%s'",
+                        rid,
+                        res_pool,
+                        filter_pool,
                     )
                     continue
 
@@ -1824,14 +1991,19 @@ class NDResourceManagerModule:
                 # fabric-scoped resources (no switchId) are correctly excluded
                 if filter_switches and res_sw not in filter_switches:
                     self.log.debug(
-                        f"manage_query: Skipping resource id='{rid}', switchId not in filter: "
-                        f"resource_switch='{res_sw}', filter_switches={filter_switches}"
+                        "manage_query: Skipping resource id='%s', switchId not in filter: resource_switch='%s', filter_switches=%s",
+                        rid,
+                        res_sw,
+                        filter_switches,
                     )
                     continue
 
                 self.log.debug(
-                    f"manage_query: Resource id='{rid}' matched all filters "
-                    f"(entity_name='{res_entity}', pool_name='{res_pool}', switch_ip='{res_sw}')"
+                    "manage_query: Resource id='%s' matched all filters (entity_name='%s', pool_name='%s', switch_ip='%s')",
+                    rid,
+                    res_entity,
+                    res_pool,
+                    res_sw,
                 )
                 result_dict = self.translate_gathered_results([res])[0]
                 results.append(result_dict)
@@ -1839,7 +2011,8 @@ class NDResourceManagerModule:
                     seen_ids.add(rid)
 
         self.log.info(
-            f"manage_gathered: Gather complete, {len(results)} resource(s) matched filters"
+            "manage_gathered: Gather complete, %s resource(s) matched filters",
+            len(results),
         )
         self.api_responses.extend(results)
         self.changed_dict[0]["gathered"].extend(results)
@@ -1873,8 +2046,10 @@ class NDResourceManagerModule:
         """
         self.log.debug("ENTER: manage_overridden()")
         self.log.info(
-            f"manage_overridden: Processing {len(self.proposed)} proposed config item(s) "
-            f"against {len(self.existing)} existing resource(s) for fabric={self.fabric}"
+            "manage_overridden: Processing %s proposed config item(s) against %s existing resource(s) for fabric=%s",
+            len(self.proposed),
+            len(self.existing),
+            self.fabric,
         )
 
         # Compute the full diff in one pass
@@ -1885,12 +2060,12 @@ class NDResourceManagerModule:
         # Propagate partial-match diagnostics
         self.changed_dict[0]["debugs"].extend(changes["debugs"])
         self.log.debug(
-            f"manage_overridden: compute_changes result — "
-            f"to_add={len(changes['to_add'])}, "
-            f"to_update={len(changes['to_update'])}, "
-            f"to_delete={len(changes['to_delete'])}, "
-            f"idempotent={len(changes['idempotent'])}, "
-            f"debugs={len(changes['debugs'])}"
+            "manage_overridden: compute_changes result — to_add=%s, to_update=%s, to_delete=%s, idempotent=%s, debugs=%s",
+            len(changes['to_add']),
+            len(changes['to_update']),
+            len(changes['to_delete']),
+            len(changes['idempotent']),
+            len(changes['debugs']),
         )
 
         has_work = bool(
@@ -1909,9 +2084,9 @@ class NDResourceManagerModule:
         # ------------------------------------------------------------------
         if self.nd.module.check_mode:
             self.log.info(
-                f"manage_overridden: check mode — "
-                f"would_delete={len(changes['to_delete']) + len(changes['to_update'])}, "
-                f"would_create={len(changes['to_add']) + len(changes['to_update'])}"
+                "manage_overridden: check mode — would_delete=%s, would_create=%s",
+                len(changes['to_delete']) + len(changes['to_update']),
+                len(changes['to_add']) + len(changes['to_update']),
             )
 
             if changes["to_delete"]:
@@ -1923,7 +2098,10 @@ class NDResourceManagerModule:
                     entity = self._get_entity_name(res)
                     pool = self._get_pool_name(res)
                     self.log.info(
-                        f"  [check-mode delete] entity='{entity}', pool='{pool}', id='{rid}'"
+                        "  [check-mode delete] entity='%s', pool='%s', id='%s'",
+                        entity,
+                        pool,
+                        rid,
                     )
                     self.changed_dict[0]["deleted"].append(str(rid) if rid else entity)
             else:
@@ -1937,8 +2115,11 @@ class NDResourceManagerModule:
                 for cfg, sw, existing_res in changes["to_update"]:
                     rid = self._get_resource_id(existing_res)
                     self.log.info(
-                        f"  [check-mode update] entity='{cfg.entity_name}', "
-                        f"pool='{cfg.pool_name}', switch={sw}, id='{rid}'"
+                        "  [check-mode update] entity='%s', pool='%s', switch=%s, id='%s'",
+                        cfg.entity_name,
+                        cfg.pool_name,
+                        sw,
+                        rid,
                     )
                     self.changed_dict[0]["deleted"].append(str(rid) if rid else cfg.entity_name)
                     self.changed_dict[0]["merged"].append(cfg.entity_name)
@@ -1951,8 +2132,10 @@ class NDResourceManagerModule:
                 )
                 for cfg, sw, _existing in changes["to_add"]:
                     self.log.info(
-                        f"  [check-mode add] entity='{cfg.entity_name}', "
-                        f"pool='{cfg.pool_name}', switch={sw}"
+                        "  [check-mode add] entity='%s', pool='%s', switch=%s",
+                        cfg.entity_name,
+                        cfg.pool_name,
+                        sw,
                     )
                     self.changed_dict[0]["merged"].append(cfg.entity_name)
             else:
@@ -1967,15 +2150,16 @@ class NDResourceManagerModule:
         delete_ids: List[str] = []
 
         self.log.info(
-            f"manage_overridden: Phase 1 — collecting resource IDs to delete: "
-            f"{len(changes['to_delete'])} orphan(s), "
-            f"{len(changes['to_update'])} to-update (old value) resource(s)"
+            "manage_overridden: Phase 1 — collecting resource IDs to delete: %s orphan(s), %s to-update (old value) resource(s)",
+            len(changes['to_delete']),
+            len(changes['to_update']),
         )
 
         # Orphans: exist in fabric, not in desired config
         if changes["to_delete"]:
             self.log.info(
-                f"manage_overridden: Phase 1 — processing {len(changes['to_delete'])} orphan resource(s)"
+                "manage_overridden: Phase 1 — processing %s orphan resource(s)",
+                len(changes['to_delete']),
             )
             for res_idx, res in enumerate(changes["to_delete"]):
                 rid = self._get_resource_id(res)
@@ -1984,22 +2168,33 @@ class NDResourceManagerModule:
                 scope_type = self._get_scope_type(res)
                 switch_ip = self._get_switch_ip(res)
                 self.log.info(
-                    f"  [Phase1-orphan idx={res_idx}] entity='{entity}', pool='{pool}', "
-                    f"scope_type='{scope_type}', switch='{switch_ip}', id='{rid}'"
+                    "  [Phase1-orphan idx=%s] entity='%s', pool='%s', scope_type='%s', switch='%s', id='%s'",
+                    res_idx,
+                    entity,
+                    pool,
+                    scope_type,
+                    switch_ip,
+                    rid,
                 )
                 if rid is not None and rid not in delete_ids:
                     self.log.debug(
-                        f"  [Phase1-orphan idx={res_idx}] queuing id='{rid}' for deletion"
+                        "  [Phase1-orphan idx=%s] queuing id='%s' for deletion",
+                        res_idx,
+                        rid,
                     )
                     delete_ids.append(rid)
                     self.changed_dict[0]["deleted"].append(str(rid))
                 elif rid is not None:
                     self.log.debug(
-                        f"  [Phase1-orphan idx={res_idx}] id='{rid}' already queued — skipping duplicate"
+                        "  [Phase1-orphan idx=%s] id='%s' already queued — skipping duplicate",
+                        res_idx,
+                        rid,
                     )
                 else:
                     self.log.warning(
-                        f"  [Phase1-orphan idx={res_idx}] entity='{entity}' has no resource ID — skipping"
+                        "  [Phase1-orphan idx=%s] entity='%s' has no resource ID — skipping",
+                        res_idx,
+                        entity,
                     )
         else:
             self.log.info("manage_overridden: Phase 1 — no orphan resources to delete")
@@ -2007,31 +2202,41 @@ class NDResourceManagerModule:
         # Value-changed resources: delete old value before recreating with new value
         if changes["to_update"]:
             self.log.info(
-                f"manage_overridden: Phase 1 — processing "
-                f"{len(changes['to_update'])} value-changed resource(s) for old-value deletion"
+                "manage_overridden: Phase 1 — processing %s value-changed resource(s) for old-value deletion",
+                len(changes['to_update']),
             )
             for upd_idx, (cfg, sw, existing_res) in enumerate(changes["to_update"]):
                 rid = self._get_resource_id(existing_res)
                 old_val = self._get_resource_value(existing_res)
                 self.log.info(
-                    f"  [Phase1-update idx={upd_idx}] entity='{cfg.entity_name}', "
-                    f"pool='{cfg.pool_name}', switch={sw}, old_value='{old_val}', "
-                    f"new_value='{cfg.resource}', id='{rid}'"
+                    "  [Phase1-update idx=%s] entity='%s', pool='%s', switch=%s, old_value='%s', new_value='%s', id='%s'",
+                    upd_idx,
+                    cfg.entity_name,
+                    cfg.pool_name,
+                    sw,
+                    old_val,
+                    cfg.resource,
+                    rid,
                 )
                 if rid is not None and rid not in delete_ids:
                     self.log.debug(
-                        f"  [Phase1-update idx={upd_idx}] queuing old id='{rid}' for deletion"
+                        "  [Phase1-update idx=%s] queuing old id='%s' for deletion",
+                        upd_idx,
+                        rid,
                     )
                     delete_ids.append(rid)
                     self.changed_dict[0]["deleted"].append(str(rid))
                 elif rid is not None:
                     self.log.debug(
-                        f"  [Phase1-update idx={upd_idx}] id='{rid}' already queued — skipping duplicate"
+                        "  [Phase1-update idx=%s] id='%s' already queued — skipping duplicate",
+                        upd_idx,
+                        rid,
                     )
                 else:
                     self.log.warning(
-                        f"  [Phase1-update idx={upd_idx}] entity='{cfg.entity_name}' "
-                        f"has no resource ID — cannot delete old value"
+                        "  [Phase1-update idx=%s] entity='%s' has no resource ID — cannot delete old value",
+                        upd_idx,
+                        cfg.entity_name,
                     )
         else:
             self.log.info(
@@ -2040,16 +2245,17 @@ class NDResourceManagerModule:
 
         if delete_ids:
             self.log.info(
-                f"manage_overridden: Phase 1 — executing bulk delete for "
-                f"{len(delete_ids)} resource ID(s): {delete_ids}"
+                "manage_overridden: Phase 1 — executing bulk delete for %s resource ID(s): %s",
+                len(delete_ids),
+                delete_ids,
             )
             ep = EpManageFabricResourcesActionsRemovePost(fabric_name=self.fabric)
             remove_req = RemoveResourcesByIdsRequest(resource_ids=delete_ids)
             resp_data = self.nd.request(ep.path, ep.verb, data=remove_req.to_payload())
             remove_response = RemoveResourcesByIdsResponse.from_response(resp_data)
             self.log.info(
-                f"manage_overridden: Phase 1 — bulk delete complete, "
-                f"API returned {len(remove_response.resources)} item(s)"
+                "manage_overridden: Phase 1 — bulk delete complete, API returned %s item(s)",
+                len(remove_response.resources),
             )
             for resp_item in remove_response.resources:
                 self.api_responses.append(
@@ -2067,9 +2273,10 @@ class NDResourceManagerModule:
         pending_items: List[Tuple] = changes["to_add"] + changes["to_update"]
 
         self.log.info(
-            f"manage_overridden: Phase 2 — preparing to create "
-            f"{len(pending_items)} resource(s): "
-            f"{len(changes['to_add'])} new, {len(changes['to_update'])} value-changed"
+            "manage_overridden: Phase 2 — preparing to create %s resource(s): %s new, %s value-changed",
+            len(pending_items),
+            len(changes['to_add']),
+            len(changes['to_update']),
         )
 
         if not pending_items:
@@ -2085,37 +2292,43 @@ class NDResourceManagerModule:
             payload = self._build_create_payload(cfg, switch_ip=sw)
             pending_payloads.append((cfg, payload))
             self.log.debug(
-                f"  [Phase2-create idx={item_idx}] entity='{cfg.entity_name}', "
-                f"pool='{cfg.pool_name}', scope_type='{cfg.scope_type}', switch={sw}, "
-                f"resource='{cfg.resource}'"
+                "  [Phase2-create idx=%s] entity='%s', pool='%s', scope_type='%s', switch=%s, resource='%s'",
+                item_idx,
+                cfg.entity_name,
+                cfg.pool_name,
+                cfg.scope_type,
+                sw,
+                cfg.resource,
             )
             self.changed_dict[0]["merged"].append(payload)
 
         self.log.info(
-            f"manage_overridden: Phase 2 — sending batch create POST with "
-            f"{len(pending_payloads)} payload(s) for fabric={self.fabric}"
+            "manage_overridden: Phase 2 — sending batch create POST with %s payload(s) for fabric=%s",
+            len(pending_payloads),
+            self.fabric,
         )
-        payloads_only = [p for _, p in pending_payloads]
+        payloads_only = [p for _cfg, p in pending_payloads]
         batch = ResourceManagerBatchRequest.model_validate({"resources": payloads_only})
         ep = EpManageFabricResourcesPost(fabric_name=self.fabric)
         resp_data = self.nd.request(ep.path, ep.verb, data=batch.to_payload())
 
         batch_response = ResourcesManagerBatchResponse.from_response(resp_data)
         self.log.info(
-            f"manage_overridden: Phase 2 — batch create returned "
-            f"{len(batch_response.resources)} item(s)"
+            "manage_overridden: Phase 2 — batch create returned %s item(s)",
+            len(batch_response.resources),
         )
 
         # Build cfg lookup for post-create field validation
         cfg_by_entity: Dict[str, ResourceManagerConfigModel] = {
             ResourceManagerDiffEngine._normalize_entity_key(cfg.entity_name): cfg
-            for cfg, _ in pending_payloads
+            for cfg, _payload in pending_payloads
         }
 
         for resp_idx, resp_item in enumerate(batch_response.resources):
             self.log.debug(
-                f"  [Phase2-validate idx={resp_idx}] validating response for "
-                f"entity='{resp_item.entity_name}'"
+                "  [Phase2-validate idx=%s] validating response for entity='%s'",
+                resp_idx,
+                resp_item.entity_name,
             )
             self.api_responses.append(
                 {"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)}
@@ -2125,19 +2338,24 @@ class NDResourceManagerModule:
                 matched_cfg = cfg_by_entity.get(norm_key)
                 if matched_cfg is not None:
                     self.log.debug(
-                        f"  [Phase2-validate idx={resp_idx}] matched cfg for entity='{resp_item.entity_name}' — validating fields"
+                        "  [Phase2-validate idx=%s] matched cfg for entity='%s' — validating fields",
+                        resp_idx,
+                        resp_item.entity_name,
                     )
                     ResourceManagerDiffEngine.validate_resource_api_fields(
                         self.nd, matched_cfg, resp_item, self.log, "Resource"
                     )
                 else:
                     self.log.debug(
-                        f"  [Phase2-validate idx={resp_idx}] no cfg match for entity='{resp_item.entity_name}' — skipping field validation"
+                        "  [Phase2-validate idx=%s] no cfg match for entity='%s' — skipping field validation",
+                        resp_idx,
+                        resp_item.entity_name,
                     )
 
         self.log.info(
-            f"manage_overridden: Phase 2 — batch create successful, "
-            f"{len(pending_payloads)} resource(s) created for fabric={self.fabric}"
+            "manage_overridden: Phase 2 — batch create successful, %s resource(s) created for fabric=%s",
+            len(pending_payloads),
+            self.fabric,
         )
         self.log.debug("EXIT: manage_overridden()")
 
@@ -2150,7 +2368,7 @@ class NDResourceManagerModule:
         Dispatches to ``manage_merged``, ``manage_deleted``, ``manage_overridden``, or
         ``manage_gathered`` depending on ``self.state``.
         """
-        self.log.info(f"manage_state: Dispatching to state handler: state={self.state}")
+        self.log.info("manage_state: Dispatching to state handler: state=%s", self.state)
         self._validate_input()
 
         if self.config and self.state != "gathered":
@@ -2177,7 +2395,7 @@ class NDResourceManagerModule:
             self.log.info("manage_state: Dispatching to manage_gathered()")
             self.manage_gathered()
 
-        self.log.info(f"manage_state: State handler completed for state={self.state}")
+        self.log.info("manage_state: State handler completed for state=%s", self.state)
 
     def exit_module(self):
         """Build the final module result and call ``exit_json`` to return it to Ansible.
@@ -2193,8 +2411,8 @@ class NDResourceManagerModule:
         # gathered state: return gathered list via NDOutput so output_level is always present
         if self.state == "gathered":
             self.log.info(
-                f"exit_module: gathered state, returning "
-                f"{len(self.changed_dict[0]['gathered'])} resource(s)"
+                "exit_module: gathered state, returning %s resource(s)",
+                len(self.changed_dict[0]['gathered']),
             )
             self.output.assign(
                 current=self.translate_gathered_results(self.existing)
@@ -2213,15 +2431,18 @@ class NDResourceManagerModule:
         if self.nd.module.check_mode:
             self.log.info(
                 "exit_module: check_mode is enabled, overriding changed=False "
-                f"(would have been changed={changed})"
+                "(would have been changed=%s)",
+                changed,
             )
             changed = False
 
         self.log.info(
-            f"exit_module: merged={len(self.changed_dict[0]['merged'])}, "
-            f"deleted={len(self.changed_dict[0]['deleted'])}, "
-            f"gathered={len(self.changed_dict[0]['gathered'])}, "
-            f"changed={changed}, check_mode={self.nd.module.check_mode}"
+            "exit_module: merged=%s, deleted=%s, gathered=%s, changed=%s, check_mode=%s",
+            len(self.changed_dict[0]['merged']),
+            len(self.changed_dict[0]['deleted']),
+            len(self.changed_dict[0]['gathered']),
+            changed,
+            self.nd.module.check_mode,
         )
 
         # Re-query to capture post-operation state for current snapshot

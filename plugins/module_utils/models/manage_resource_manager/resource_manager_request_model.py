@@ -30,7 +30,6 @@ __metaclass__ = type
 
 from ipaddress import ip_address
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Union
-from typing_extensions import Self
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel

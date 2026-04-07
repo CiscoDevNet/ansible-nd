@@ -400,8 +400,9 @@ def main():
         pass  # logging will fall back to root logger; detailed reason captured below
 
     log.debug(
-        f"main: logging initialised (logger='{log.name}', "
-        f"effective_level={logging.getLevelName(log.getEffectiveLevel())})"
+        "main: logging initialised (logger='%s', effective_level=%s)",
+        log.name,
+        logging.getLevelName(log.getEffectiveLevel()),
     )
 
     # Get parameters
@@ -410,9 +411,12 @@ def main():
     state = module.params.get("state")
     config_count = len(module.params.get("config") or [])
     log.debug(
-        f"main: resolved module params — fabric='{fabric}', state='{state}', "
-        f"output_level='{output_level}', config_count={config_count}, "
-        f"check_mode={module.check_mode}"
+        "main: resolved module params — fabric='%s', state='%s', output_level='%s', config_count=%s, check_mode=%s",
+        fabric,
+        state,
+        output_level,
+        config_count,
+        module.check_mode,
     )
 
     # Initialize Results - this collects all operation results
@@ -424,8 +428,9 @@ def main():
         # Initialize NDModule (uses RestSend infrastructure internally)
         nd = NDModule(module)
         log.debug(
-            f"main: NDModule initialised — host='{module.params.get('host')}', "
-            f"username='{module.params.get('username')}'"
+            "main: NDModule initialised — host='%s', username='%s'",
+            module.params.get('host'),
+            module.params.get('username'),
         )
 
         # Create NDResourceManagerModule — switch IP→ID resolution and config translation
@@ -436,27 +441,33 @@ def main():
             logger=log
         )
         log.debug(
-            f"main: NDResourceManagerModule created — fabric='{fabric}', "
-            f"state='{state}', config_count={len(rm_module.config or [])}"
+            "main: NDResourceManagerModule created — fabric='%s', state='%s', config_count=%s",
+            fabric,
+            state,
+            len(rm_module.config or []),
         )
 
         # Manage state for merged, overridden, deleted
-        log.debug(f"main: dispatching manage_state() for state='{state}'")
+        log.debug("main: dispatching manage_state() for state='%s'", state)
         rm_module.manage_state()
 
         # Exit with results
         log.info(
-            f"main: manage_state() completed successfully — state='{state}', "
-            f"fabric='{fabric}', changed={results.changed}"
+            "main: manage_state() completed successfully — state='%s', fabric='%s', changed=%s",
+            state,
+            fabric,
+            results.changed,
         )
         rm_module.exit_module()
 
     except NDModuleError as error:
         # NDModule-specific errors (API failures, authentication issues, etc.)
         log.error(
-            f"main: NDModuleError caught — error_type=NDModuleError, "
-            f"status={getattr(error, 'status', None)}, msg='{error.msg}', "
-            f"fabric='{fabric}', state='{state}'"
+            "main: NDModuleError caught — error_type=NDModuleError, status=%s, msg='%s', fabric='%s', state='%s'",
+            getattr(error, 'status', None),
+            error.msg,
+            fabric,
+            state,
         )
 
         # Try to get response from RestSend if available
@@ -464,14 +475,16 @@ def main():
             results.response_current = nd.rest_send.response_current
             results.result_current = nd.rest_send.result_current
             log.debug(
-                f"main: RestSend response captured — "
-                f"RETURN_CODE={getattr(nd.rest_send.response_current, 'RETURN_CODE', 'N/A')}"
+                "main: RestSend response captured — RETURN_CODE=%s",
+                getattr(nd.rest_send.response_current, 'RETURN_CODE', 'N/A'),
             )
         except (AttributeError, ValueError) as rest_exc:
             # Fallback if RestSend wasn't initialized or no response available
             log.debug(
-                f"main: RestSend not available ({type(rest_exc).__name__}: {rest_exc}), "
-                f"building fallback response — RETURN_CODE={error.status if error.status else -1}"
+                "main: RestSend not available (%s: %s), building fallback response — RETURN_CODE=%s",
+                type(rest_exc).__name__,
+                rest_exc,
+                error.status if error.status else -1,
             )
             results.response_current = {
                 "RETURN_CODE": error.status if error.status else -1,
@@ -490,26 +503,31 @@ def main():
         # Add error details if debug output is requested
         if output_level == "debug":
             log.debug(
-                f"main: output_level='debug' — attaching error_details to final_result "
-                f"(error_type=NDModuleError, msg='{error.msg}')"
+                "main: output_level='debug' — attaching error_details to final_result (error_type=NDModuleError, msg='%s')",
+                error.msg,
             )
             results.final_result["error_details"] = error.to_dict()
         else:
             log.debug(
-                f"main: output_level='{output_level}' — skipping error_details attachment"
+                "main: output_level='%s' — skipping error_details attachment",
+                output_level,
             )
 
         log.error(
-            f"main: module failing with NDModuleError — msg='{error.msg}', "
-            f"final_result_keys={list(results.final_result.keys())}"
+            "main: module failing with NDModuleError — msg='%s', final_result_keys=%s",
+            error.msg,
+            list(results.final_result.keys()),
         )
         module.fail_json(msg=error.msg, **results.final_result)
 
     except Exception as error:
         # Unexpected errors
         log.error(
-            f"main: unexpected exception caught — error_type='{type(error).__name__}', "
-            f"msg='{str(error)}', fabric='{fabric}', state='{state}'"
+            "main: unexpected exception caught — error_type='%s', msg='%s', fabric='%s', state='%s'",
+            type(error).__name__,
+            str(error),
+            fabric,
+            state,
         )
 
         # Build failed result
@@ -526,8 +544,8 @@ def main():
         results.register_api_call()
         results.build_final_result()
         log.debug(
-            f"main: built fallback failed result — RETURN_CODE=-1, "
-            f"error_type='{type(error).__name__}'"
+            "main: built fallback failed result — RETURN_CODE=-1, error_type='%s'",
+            type(error).__name__,
         )
 
         if output_level == "debug":
@@ -535,17 +553,19 @@ def main():
             tb_str = traceback.format_exc()
             results.final_result["traceback"] = tb_str
             log.debug(
-                f"main: output_level='debug' — attaching traceback "
-                f"({len(tb_str.splitlines())} lines) to final_result"
+                "main: output_level='debug' — attaching traceback (%s lines) to final_result",
+                len(tb_str.splitlines()),
             )
         else:
             log.debug(
-                f"main: output_level='{output_level}' — skipping traceback attachment"
+                "main: output_level='%s' — skipping traceback attachment",
+                output_level,
             )
 
         log.error(
-            f"main: module failing with unexpected error — "
-            f"error_type='{type(error).__name__}', msg='{str(error)}'"
+            "main: module failing with unexpected error — error_type='%s', msg='%s'",
+            type(error).__name__,
+            str(error),
         )
         module.fail_json(msg=str(error), **results.final_result)
 
