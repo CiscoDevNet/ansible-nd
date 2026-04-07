@@ -68,10 +68,7 @@ class VpcPairOrchestrator:
         if module is None and sender is not None:
             module = getattr(sender, "module", None)
         if module is None:
-            raise ValueError(
-                "VpcPairOrchestrator requires either module=AnsibleModule "
-                "or sender=<NDModule with .module>."
-            )
+            raise ValueError("VpcPairOrchestrator requires either module=AnsibleModule or sender=<NDModule with .module>.")
 
         self.module = module
         self.sender = sender
@@ -95,11 +92,7 @@ class VpcPairOrchestrator:
         Returns:
             List of existing pair dicts for NDConfigCollection initialization.
         """
-        context = (
-            self.state_machine
-            if self.state_machine is not None
-            else _VpcPairQueryContext(self.module)
-        )
+        context = self.state_machine if self.state_machine is not None else _VpcPairQueryContext(self.module)
         return custom_vpc_query_all(context)
 
     def create(self, model_instance: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:

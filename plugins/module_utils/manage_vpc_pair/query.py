@@ -52,6 +52,37 @@ def _as_int_or_zero(value: Any) -> int:
         return 0
 
 
+def _is_switch_config_in_sync(switch_data: Optional[Dict[str, Any]]) -> Optional[bool]:
+    """
+    Determine switch-level config sync state from switch inventory payload.
+
+    Args:
+        switch_data: Switch payload from /fabric/switches lookup.
+
+    Returns:
+        True when config sync is explicitly in-sync, False when explicitly
+        non-sync/pending, or None when state is unavailable/unknown.
+    """
+    if not isinstance(switch_data, dict):
+        return None
+
+    additional = switch_data.get("additionalData")
+    if isinstance(additional, dict):
+        status = additional.get("configSyncStatus")
+    else:
+        status = switch_data.get("configSyncStatus")
+
+    if not isinstance(status, str):
+        return None
+
+    normalized = status.strip().lower()
+    if normalized in ("insync", "in_sync", "in-sync"):
+        return True
+    if normalized in ("pending", "outofsync", "out_of_sync", "out-of-sync", "failed", "error"):
+        return False
+    return None
+
+
 def _is_pair_in_sync_from_overview(
     nd_v2: Any,
     fabric_name: str,
@@ -108,10 +139,7 @@ def _is_pair_in_sync_from_overview(
     def _has_non_sync(counts: Dict[str, Any]) -> bool:
         if not isinstance(counts, dict):
             return False
-        return any(
-            _as_int_or_zero(counts.get(key)) > 0
-            for key in ("pending", "outOfSync", "inProgress")
-        )
+        return any(_as_int_or_zero(counts.get(key)) > 0 for key in ("pending", "outOfSync", "inProgress"))
 
     # Inventory sync status is the strongest direct signal.
     inventory = response.get(VpcFieldNames.INVENTORY)
@@ -160,10 +188,7 @@ def _is_external_fabric(nd_v2: Any, fabric_name: str, module: Any) -> bool:
     try:
         details = nd_v2.request(details_path, HttpVerbEnum.GET)
     except Exception as exc:
-        module.warn(
-            f"Unable to determine fabric type for '{fabric_name}': "
-            f"{str(exc).splitlines()[0]}. Using fallback detection."
-        )
+        module.warn(f"Unable to determine fabric type for '{fabric_name}': " f"{str(exc).splitlines()[0]}. Using fallback detection.")
         return fallback
     finally:
         rest_send.restore_settings()
@@ -196,9 +221,7 @@ def _is_external_fabric(nd_v2: Any, fabric_name: str, module: Any) -> bool:
     return any("external" in token for token in candidates)
 
 
-def _get_recommendation_details(
-    nd_v2: Any, fabric_name: str, switch_id: str, timeout: Optional[int] = None
-) -> Optional[Dict[str, Any]]:
+def _get_recommendation_details(nd_v2: Any, fabric_name: str, switch_id: str, timeout: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """
     Get VPC pair recommendation details from ND for a specific switch.
 
@@ -245,27 +268,19 @@ def _get_recommendation_details(
             for sw in vpc_recommendations:
                 # Validate each entry
                 if not isinstance(sw, dict):
-                    nd_v2.module.warn(
-                        f"Skipping invalid recommendation entry for switch {switch_id}: "
-                        f"expected dict, got {type(sw).__name__}"
-                    )
+                    nd_v2.module.warn(f"Skipping invalid recommendation entry for switch {switch_id}: " f"expected dict, got {type(sw).__name__}")
                     continue
 
                 # Check for current peer indicators
                 if sw.get(VpcFieldNames.CURRENT_PEER) or sw.get(VpcFieldNames.IS_CURRENT_PEER):
                     # Validate required fields exist
                     if VpcFieldNames.SERIAL_NUMBER not in sw:
-                        nd_v2.module.warn(
-                            f"Recommendation missing serialNumber field for switch {switch_id}"
-                        )
+                        nd_v2.module.warn(f"Recommendation missing serialNumber field for switch {switch_id}")
                         continue
                     return sw
         elif vpc_recommendations:
             # Unexpected response format
-            nd_v2.module.warn(
-                f"Unexpected recommendation response format for switch {switch_id}: "
-                f"expected list, got {type(vpc_recommendations).__name__}"
-            )
+            nd_v2.module.warn(f"Unexpected recommendation response format for switch {switch_id}: " f"expected list, got {type(vpc_recommendations).__name__}")
 
         return None
     except NDModuleError as error:
@@ -276,10 +291,7 @@ def _get_recommendation_details(
         elif error.status == 500:
             # Server error - recommendation API may be unstable
             # Treat as "no recommendations available" to allow graceful degradation
-            nd_v2.module.warn(
-                f"VPC recommendation API returned 500 error for switch {switch_id} - "
-                f"treating as no recommendations available"
-            )
+            nd_v2.module.warn(f"VPC recommendation API returned 500 error for switch {switch_id} - " f"treating as no recommendations available")
             return None
         # Let other errors (timeouts, rate limits) propagate
         raise
@@ -330,15 +342,11 @@ def _extract_vpc_pairs_from_list_response(vpc_pairs_response: Any) -> List[Dict[
         extracted_pair = {
             VpcFieldNames.SWITCH_ID: switch_id,
             VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
-            VpcFieldNames.USE_VIRTUAL_PEER_LINK: item.get(
-                VpcFieldNames.USE_VIRTUAL_PEER_LINK, False
-            ),
+            VpcFieldNames.USE_VIRTUAL_PEER_LINK: item.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False),
             VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
         }
         if VpcFieldNames.VPC_PAIR_DETAILS in item:
-            extracted_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(
-                VpcFieldNames.VPC_PAIR_DETAILS
-            )
+            extracted_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(VpcFieldNames.VPC_PAIR_DETAILS)
 
         extracted_pairs.append(extracted_pair)
 
@@ -409,9 +417,7 @@ def _enrich_pairs_from_direct_vpc(
 
             enriched[VpcFieldNames.VPC_ACTION] = VpcActionEnum.PAIR.value
             if VpcFieldNames.VPC_PAIR_DETAILS in direct_vpc:
-                enriched[VpcFieldNames.VPC_PAIR_DETAILS] = direct_vpc.get(
-                    VpcFieldNames.VPC_PAIR_DETAILS
-                )
+                enriched[VpcFieldNames.VPC_PAIR_DETAILS] = direct_vpc.get(VpcFieldNames.VPC_PAIR_DETAILS)
 
         enriched_pairs.append(enriched)
 
@@ -457,10 +463,7 @@ def _filter_stale_vpc_pairs(
             timeout=get_verify_timeout(module),
         )
         if membership is False:
-            module.warn(
-                f"Excluding stale vPC pair entry for switch {switch_id} "
-                "because overview reports it is not in a vPC pair."
-            )
+            module.warn(f"Excluding stale vPC pair entry for switch {switch_id} " "because overview reports it is not in a vPC pair.")
             continue
         pruned_pairs.append(pair)
 
@@ -622,10 +625,7 @@ def _resolve_config_switch_ips(
         normalized_config.append(normalized_item)
 
     for ip_value, serial in sorted(resolved_inputs.items()):
-        module.warn(
-            f"Resolved playbook switch IP {ip_value} to switch serial {serial} "
-            f"for fabric {fabric_name}."
-        )
+        module.warn(f"Resolved playbook switch IP {ip_value} to switch serial {serial} " f"for fabric {fabric_name}.")
 
     if unresolved_inputs:
         module.warn(
@@ -745,9 +745,7 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
         nrm.module.params["_fabric_switches"] = []
         nrm.module.params["_fabric_switches_count"] = 0
         existing_map = nrm.module.params.get("_ip_to_sn_mapping")
-        nrm.module.params["_ip_to_sn_mapping"] = (
-            dict(existing_map) if isinstance(existing_map, dict) else {}
-        )
+        nrm.module.params["_ip_to_sn_mapping"] = dict(existing_map) if isinstance(existing_map, dict) else {}
         nrm.module.params["_have"] = lightweight_have
         nrm.module.params["_pending_create"] = []
         nrm.module.params["_pending_delete"] = []
@@ -770,10 +768,7 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
             have.extend(_extract_vpc_pairs_from_list_response(vpc_pairs_response))
             list_query_succeeded = True
         except Exception as list_error:
-            nrm.module.warn(
-                f"VPC pairs list query failed for fabric {fabric_name}: "
-                f"{str(list_error).splitlines()[0]}."
-            )
+            nrm.module.warn(f"VPC pairs list query failed for fabric {fabric_name}: " f"{str(list_error).splitlines()[0]}.")
 
         # Lightweight path for gathered and targeted delete workflows.
         # For delete-all (state=deleted with empty config), use full switch-level
@@ -799,16 +794,11 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                             VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
                         }
                         if VpcFieldNames.VPC_PAIR_DETAILS in item:
-                            fallback_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(
-                                VpcFieldNames.VPC_PAIR_DETAILS
-                            )
+                            fallback_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(VpcFieldNames.VPC_PAIR_DETAILS)
                         fallback_have.append(fallback_pair)
 
                     if fallback_have:
-                        nrm.module.warn(
-                            "vPC list query returned no pairs for delete workflow. "
-                            "Using requested delete config as fallback existing set."
-                        )
+                        nrm.module.warn("vPC list query returned no pairs for delete workflow. Using requested delete config as fallback existing set.")
                         return _set_lightweight_context(fallback_have)
 
                 if state == "gathered":
@@ -827,25 +817,16 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                     )
                     if have:
                         return _set_lightweight_context(lightweight_have=have)
-                    nrm.module.warn(
-                        "vPC list query returned no active pairs for gathered workflow. "
-                        "Falling back to switch-level discovery."
-                    )
+                    nrm.module.warn("vPC list query returned no active pairs for gathered workflow. Falling back to switch-level discovery.")
                 else:
                     return _set_lightweight_context(have)
 
             if not list_query_succeeded:
-                nrm.module.warn(
-                    "Skipping switch-level discovery for read-only/delete workflow because "
-                    "the vPC list endpoint is unavailable."
-                )
+                nrm.module.warn("Skipping switch-level discovery for read-only/delete workflow because the vPC list endpoint is unavailable.")
 
             if state == "gathered":
                 if not list_query_succeeded:
-                    nrm.module.warn(
-                        "vPC list endpoint unavailable for gathered workflow. "
-                        "Falling back to switch-level discovery."
-                    )
+                    nrm.module.warn("vPC list endpoint unavailable for gathered workflow. Falling back to switch-level discovery.")
             else:
                 # Preserve explicit delete intent without full-fabric discovery.
                 # This keeps delete deterministic and avoids expensive inventory calls.
@@ -867,29 +848,18 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                         VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
                     }
                     if VpcFieldNames.VPC_PAIR_DETAILS in item:
-                        fallback_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(
-                            VpcFieldNames.VPC_PAIR_DETAILS
-                        )
+                        fallback_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(VpcFieldNames.VPC_PAIR_DETAILS)
                     fallback_have.append(fallback_pair)
 
                 if fallback_have:
-                    nrm.module.warn(
-                        "Using requested delete config as fallback existing set because "
-                        "vPC list query failed."
-                    )
+                    nrm.module.warn("Using requested delete config as fallback existing set because vPC list query failed.")
                     return _set_lightweight_context(fallback_have)
 
                 if config:
-                    nrm.module.warn(
-                        "Delete config did not contain complete vPC pairs. "
-                        "No delete intents can be built from list-query fallback."
-                    )
+                    nrm.module.warn("Delete config did not contain complete vPC pairs. No delete intents can be built from list-query fallback.")
                     return _set_lightweight_context([])
 
-                nrm.module.warn(
-                    "Delete-all requested with no explicit pairs and unavailable list endpoint. "
-                    "Falling back to switch-level discovery."
-                )
+                nrm.module.warn("Delete-all requested with no explicit pairs and unavailable list endpoint. Falling back to switch-level discovery.")
 
         # Step 2 (write-state enrichment): Query and validate fabric switches.
         fabric_switches = preloaded_fabric_switches
@@ -913,9 +883,7 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
 
         # Build IP-to-SN mapping (extract before dict is discarded).
         ip_to_sn = {
-            sw.get(VpcFieldNames.FABRIC_MGMT_IP): sw.get(VpcFieldNames.SERIAL_NUMBER)
-            for sw in fabric_switches.values()
-            if VpcFieldNames.FABRIC_MGMT_IP in sw
+            sw.get(VpcFieldNames.FABRIC_MGMT_IP): sw.get(VpcFieldNames.SERIAL_NUMBER) for sw in fabric_switches.values() if VpcFieldNames.FABRIC_MGMT_IP in sw
         }
         existing_map = nrm.module.params.get("_ip_to_sn_mapping") or {}
         merged_map = dict(existing_map) if isinstance(existing_map, dict) else {}
@@ -979,11 +947,13 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                         timeout=get_verify_timeout(nrm.module),
                     )
                     if membership is False:
-                        pending_delete.append({
-                            VpcFieldNames.SWITCH_ID: switch_id,
-                            VpcFieldNames.PEER_SWITCH_ID: resolved_peer_switch_id,
-                            VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl,
-                        })
+                        pending_delete.append(
+                            {
+                                VpcFieldNames.SWITCH_ID: switch_id,
+                                VpcFieldNames.PEER_SWITCH_ID: resolved_peer_switch_id,
+                                VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl,
+                            }
+                        )
                     else:
                         current_pair = {
                             VpcFieldNames.SWITCH_ID: switch_id,
@@ -1004,20 +974,22 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                         timeout=get_verify_timeout(nrm.module),
                     )
                     if membership is True:
-                        pending_create.append({
-                            VpcFieldNames.SWITCH_ID: switch_id,
-                            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
-                            VpcFieldNames.USE_VIRTUAL_PEER_LINK: _get_api_field_value(
-                                vpc_data, "useVirtualPeerLink", False
-                            ),
-                        })
+                        pending_create.append(
+                            {
+                                VpcFieldNames.SWITCH_ID: switch_id,
+                                VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
+                                VpcFieldNames.USE_VIRTUAL_PEER_LINK: _get_api_field_value(vpc_data, "useVirtualPeerLink", False),
+                            }
+                        )
                         continue
                     if membership is False:
-                        pending_delete.append({
-                            VpcFieldNames.SWITCH_ID: switch_id,
-                            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
-                            VpcFieldNames.USE_VIRTUAL_PEER_LINK: False,
-                        })
+                        pending_delete.append(
+                            {
+                                VpcFieldNames.SWITCH_ID: switch_id,
+                                VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
+                                VpcFieldNames.USE_VIRTUAL_PEER_LINK: False,
+                            }
+                        )
                         continue
 
                     # Membership unknown - fall back to recommendation.
@@ -1025,10 +997,7 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                         recommendation = _get_recommendation_details(nd_v2, fabric_name, switch_id)
                     except Exception as rec_error:
                         error_msg = str(rec_error).splitlines()[0]
-                        nrm.module.warn(
-                            f"Recommendation query failed for switch {switch_id}: {error_msg}. "
-                            f"Unable to read configured vPC pair details."
-                        )
+                        nrm.module.warn(f"Recommendation query failed for switch {switch_id}: {error_msg}. " f"Unable to read configured vPC pair details.")
                         recommendation = None
 
                     if recommendation:
@@ -1036,20 +1005,24 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                         if resolved_peer_switch_id:
                             processed_switches.add(resolved_peer_switch_id)
                         use_vpl = _get_api_field_value(recommendation, "useVirtualPeerLink", False)
-                        have.append({
-                            VpcFieldNames.SWITCH_ID: switch_id,
-                            VpcFieldNames.PEER_SWITCH_ID: resolved_peer_switch_id,
-                            VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl,
-                            VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
-                        })
+                        have.append(
+                            {
+                                VpcFieldNames.SWITCH_ID: switch_id,
+                                VpcFieldNames.PEER_SWITCH_ID: resolved_peer_switch_id,
+                                VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl,
+                                VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
+                            }
+                        )
                     else:
                         # Unknown membership and no recommendation; conservatively
                         # classify as pending-delete-like transitional state.
-                        pending_delete.append({
-                            VpcFieldNames.SWITCH_ID: switch_id,
-                            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
-                            VpcFieldNames.USE_VIRTUAL_PEER_LINK: False,
-                        })
+                        pending_delete.append(
+                            {
+                                VpcFieldNames.SWITCH_ID: switch_id,
+                                VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
+                                VpcFieldNames.USE_VIRTUAL_PEER_LINK: False,
+                            }
+                        )
             elif not config_switch_ids or switch_id in config_switch_ids:
                 # For unconfigured switches, prefer direct vPC pair query first.
                 try:
@@ -1079,11 +1052,13 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                             timeout=get_verify_timeout(nrm.module),
                         )
                         if membership is False:
-                            pending_delete.append({
-                                VpcFieldNames.SWITCH_ID: switch_id,
-                                VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
-                                VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl,
-                            })
+                            pending_delete.append(
+                                {
+                                    VpcFieldNames.SWITCH_ID: switch_id,
+                                    VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
+                                    VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl,
+                                }
+                            )
                         else:
                             current_pair = {
                                 VpcFieldNames.SWITCH_ID: switch_id,
@@ -1119,11 +1094,13 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                         if peer_switch_id:
                             processed_switches.add(switch_id)
                             processed_switches.add(peer_switch_id)
-                            pending_create.append({
-                                VpcFieldNames.SWITCH_ID: switch_id,
-                                VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
-                                VpcFieldNames.USE_VIRTUAL_PEER_LINK: False,
-                            })
+                            pending_create.append(
+                                {
+                                    VpcFieldNames.SWITCH_ID: switch_id,
+                                    VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
+                                    VpcFieldNames.USE_VIRTUAL_PEER_LINK: False,
+                                }
+                            )
 
         # Step 4: Store all states for use in create/update/delete.
         nrm.module.params["_have"] = have
@@ -1173,7 +1150,17 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                     switch_id=switch_id,
                     timeout=get_verify_timeout(nrm.module),
                 )
-                if sync_state is False:
+                # Overview sync counters can remain unchanged in some external
+                # fabric flows. Fall back to switch-level config sync status.
+                switch_sync = _is_switch_config_in_sync(fabric_switches.get(switch_id))
+                peer_switch_sync = _is_switch_config_in_sync(fabric_switches.get(peer_switch_id))
+                config_sync_state = None
+                if switch_sync is False or peer_switch_sync is False:
+                    config_sync_state = False
+                elif switch_sync is True and peer_switch_sync is True:
+                    config_sync_state = True
+
+                if sync_state is False or config_sync_state is False:
                     not_in_sync_pairs.append(
                         {
                             VpcFieldNames.SWITCH_ID: switch_id,
@@ -1188,16 +1175,8 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
         error_dict = error.to_dict()
         if "msg" in error_dict:
             error_dict["api_error_msg"] = error_dict.pop("msg")
-        _raise_vpc_error(
-            msg=f"Failed to query VPC pairs: {error.msg}",
-            fabric=fabric_name,
-            **error_dict
-        )
+        _raise_vpc_error(msg=f"Failed to query VPC pairs: {error.msg}", fabric=fabric_name, **error_dict)
     except VpcPairResourceError:
         raise
     except Exception as e:
-        _raise_vpc_error(
-            msg=f"Failed to query VPC pairs: {str(e)}",
-            fabric=fabric_name,
-            exception_type=type(e).__name__
-        )
+        _raise_vpc_error(msg=f"Failed to query VPC pairs: {str(e)}", fabric=fabric_name, exception_type=type(e).__name__)
