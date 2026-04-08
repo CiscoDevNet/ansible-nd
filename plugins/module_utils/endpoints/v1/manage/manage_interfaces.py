@@ -17,8 +17,12 @@ in the ND Manage API.
   (POST /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces)
 - `EpManageInterfacesPut` - Update a specific interface
   (PUT /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
+- `EpManageInterfacesDelete` - Delete a virtual interface (loopback, SVI); not supported for physical ethernet
+  (DELETE /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
 - `EpManageInterfacesDeploy` - Deploy interface configurations
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/deploy)
+- `EpManageInterfacesNormalize` - Reset physical interface configurations to default
+  (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/normalize)
 - `EpManageInterfacesRemove` - Bulk delete interfaces
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/remove)
 """
@@ -247,8 +251,9 @@ class EpManageInterfacesDelete(_EpManageInterfacesBase):
     - Path: `/api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name}`
     - Verb: DELETE
 
-    For physical interfaces (ethernet), this removes the managed configuration and returns the interface
-    to its default/unmanaged state. For virtual interfaces (loopback, SVI), this fully removes the interface.
+    This endpoint works for virtual interfaces (loopback, SVI) only. For physical ethernet interfaces,
+    the API returns HTTP 500 ("Interface cannot be deleted!!!"). Use `EpManageInterfacesNormalize` instead
+    to reset physical interfaces to their default state.
 
     ## Raises
 
