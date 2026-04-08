@@ -1,0 +1,175 @@
+---
+# Deleted state tests for nd_interface_ethernet_access
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point Ethernet1/45, Ethernet1/46, Ethernet1/47 exist from overridden tests.
+
+# --- DELETED: SINGLE INTERFACE ---
+
+- name: "DELETED: Delete Ethernet1/45 (check mode)"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/45
+    state: deleted
+  check_mode: true
+  register: cm_deleted_45
+
+- name: "DELETED: Delete Ethernet1/45 (normal mode)"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/45
+    state: deleted
+  register: nm_deleted_45
+
+- name: "DELETED: Verify Ethernet1/45 was deleted"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_45 is changed
+      - nm_deleted_45 is changed
+      - nm_deleted_45.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | list | length == 0
+
+# --- DELETED: IDEMPOTENCY ---
+
+- name: "DELETED IDEMPOTENT: Delete Ethernet1/45 again"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/45
+    state: deleted
+  register: nm_deleted_45_idem
+
+- name: "DELETED IDEMPOTENT: Verify no change when already absent"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_45_idem is not changed
+
+# --- DELETED: FAN-OUT DELETE ---
+
+- name: "DELETED FAN-OUT: Delete Ethernet1/46 and Ethernet1/47 via fan-out (check mode)"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/46
+          - Ethernet1/47
+    state: deleted
+  check_mode: true
+  register: cm_deleted_fanout
+
+- name: "DELETED FAN-OUT: Delete Ethernet1/46 and Ethernet1/47 via fan-out (normal mode)"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/46
+          - Ethernet1/47
+    state: deleted
+  register: nm_deleted_fanout
+
+- name: "DELETED FAN-OUT: Verify both interfaces were deleted"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_fanout is changed
+      - nm_deleted_fanout is changed
+      - nm_deleted_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/46') | list | length == 0
+      - nm_deleted_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/47') | list | length == 0
+
+# --- DELETED: MULTIPLE CONFIG GROUPS ---
+
+# Recreate some interfaces for multi-group delete test
+- name: "SETUP: Recreate Ethernet1/41 and Ethernet1/42-43 for multi-delete test"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41 }}"
+      - "{{ ethernet_42_43 }}"
+    state: merged
+
+- name: "DELETED MULTI: Delete from multiple config groups (check mode)"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/42
+          - Ethernet1/43
+    state: deleted
+  check_mode: true
+  register: cm_deleted_multi
+
+- name: "DELETED MULTI: Delete from multiple config groups (normal mode)"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/42
+          - Ethernet1/43
+    state: deleted
+  register: nm_deleted_multi
+
+- name: "DELETED MULTI: Verify all test interfaces were deleted"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_multi is changed
+      - nm_deleted_multi is changed
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 0
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | list | length == 0
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | list | length == 0
+
+# --- DELETED: NON-EXISTENT INTERFACE ---
+
+- name: "DELETED NON-EXISTENT: Delete interface that does not exist"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/48
+    state: deleted
+  register: nm_deleted_nonexistent
+
+- name: "DELETED NON-EXISTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_nonexistent is not changed
+
+# --- FINAL CLEANUP ---
+
+- name: "CLEANUP: Remove all test interfaces"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names: "{{ cleanup_interface_names }}"
+    state: deleted
+  tags: always
