@@ -4,8 +4,8 @@ name: Documentation Report
 description: Report a documentation issue for the Ansible ND Collection
 title: Documentation Report Title
 labels:
-  - documentation
   - doc
+  - documentation
 body:
   - type: markdown
     attributes:
