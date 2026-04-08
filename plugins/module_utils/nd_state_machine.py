@@ -5,7 +5,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Type, Union, List
+from typing import Type
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -38,6 +38,12 @@ class NDStateMachine:
 
         self.model_class = self.model_orchestrator.model_class
         self.state = self.module.params["state"]
+
+        # Cached flags
+        self.check_mode = self.module.check_mode
+        self.ignore_errors = self.module.params.get("ignore_errors", False)
+        self.supports_bulk_create = getattr(self.model_orchestrator, "supports_bulk_create", False)
+        self.supports_bulk_delete = getattr(self.model_orchestrator, "supports_bulk_delete", False)
 
         # Initialize collections
         try:
@@ -78,7 +84,7 @@ class NDStateMachine:
         """
         Handle merged/replaced/overridden states.
         """
-        items_to_create_bulk: List = []
+        items_to_create_bulk = []
 
         for proposed_item in self.proposed:
             # Extract identifier
@@ -109,92 +115,88 @@ class NDStateMachine:
 
                 # Execute API operation
                 if diff_status == "changed":
-                    if not self.module.check_mode:
+                    if not self.check_mode:
                         self.model_orchestrator.update(final_item)
                 elif diff_status == "new":
-                    if not self.module.check_mode:
-                        if getattr(self.model_orchestrator, "supports_bulk_create", False):
+                    if not self.check_mode:
+                        if self.supports_bulk_create:
                             items_to_create_bulk.append(final_item)
                         else:
                             self.model_orchestrator.create(final_item)
                 self.sent.add(final_item)
 
-                # Log operation
-                self.output.assign(after=self.existing)
-
             except Exception as e:
                 error_msg = f"Failed to process {identifier}: {e}"
-                if not self.module.params.get("ignore_errors", False):
+                if not self.ignore_errors:
                     raise NDStateMachineError(error_msg) from e
 
         # Execute API bulk create operation
         if items_to_create_bulk:
-            self.model_orchestrator.create_bulk(items_to_create_bulk)
+            try:
+                self.model_orchestrator.create_bulk(items_to_create_bulk)
+            except Exception as e:
+                error_msg = f"Failed to create in bulk: {e}"
+                if not self.ignore_errors:
+                    raise NDStateMachineError(error_msg) from e
+
+        # Log operation
+        self.output.assign(after=self.existing)
 
     def _manage_override_deletions(self) -> None:
         """
         Delete items not in proposed config (for overridden state).
         """
         diff_identifiers = self.before.get_diff_identifiers(self.proposed)
-
-        items_to_delete_bulk: List = []
+        items_to_delete = []
 
         for identifier in diff_identifiers:
-            try:
-                existing_item = self.existing.get(identifier)
-                if not existing_item:
-                    continue
+            existing_item = self.existing.get(identifier)
+            if existing_item:
+                items_to_delete.append(existing_item)
 
-                # Execute delete
-                if not self.module.check_mode:
-                    if getattr(self.model_orchestrator, "supports_bulk_delete", False):
-                        items_to_delete_bulk.append(existing_item)
-                    else:
-                        self.model_orchestrator.delete(existing_item)
-
-                # Remove from collection
-                self.existing.delete(identifier)
-
-                # Log deletion
-                self.output.assign(after=self.existing)
-
-            except Exception as e:
-                error_msg = f"Failed to delete {identifier}: {e}"
-                if not self.module.params.get("ignore_errors", False):
-                    raise NDStateMachineError(error_msg) from e
-
-            if items_to_delete_bulk:
-                self.model_orchestrator.delete_bulk(items_to_delete_bulk)
+        self._delete_items(items_to_delete)
 
     def _manage_delete_state(self) -> None:
         """Handle deleted state."""
-        items_to_delete_bulk: List = []
+        items_to_delete = []
 
         for proposed_item in self.proposed:
+            identifier = proposed_item.get_identifier_value()
+            existing_item = self.existing.get(identifier)
+            if existing_item:
+                items_to_delete.append(existing_item)
+
+        self._delete_items(items_to_delete)
+
+    def _delete_items(self, items) -> None:
+        """Delete a list of items individually or in bulk."""
+        items_to_delete_bulk = []
+
+        for item in items:
             try:
-                identifier = proposed_item.get_identifier_value()
+                identifier = item.get_identifier_value()
 
-                existing_item = self.existing.get(identifier)
-                if not existing_item:
-                    continue
-
-                # Execute delete
-                if not self.module.check_mode:
-                    if getattr(self.model_orchestrator, "supports_bulk_delete", False):
-                        items_to_delete_bulk.append(existing_item)
+                if not self.check_mode:
+                    if self.supports_bulk_delete:
+                        items_to_delete_bulk.append(item)
                     else:
-                        self.model_orchestrator.delete(existing_item)
+                        self.model_orchestrator.delete(item)
 
                 # Remove from collection
                 self.existing.delete(identifier)
 
-                # Log deletion
-                self.output.assign(after=self.existing)
-
             except Exception as e:
                 error_msg = f"Failed to delete {identifier}: {e}"
-                if not self.module.params.get("ignore_errors", False):
+                if not self.ignore_errors:
                     raise NDStateMachineError(error_msg) from e
 
         if items_to_delete_bulk:
-            self.model_orchestrator.delete_bulk(items_to_delete_bulk)
+            try:
+                self.model_orchestrator.delete_bulk(items_to_delete_bulk)
+            except Exception as e:
+                error_msg = f"Failed to delete in bulk: {e}"
+                if not self.ignore_errors:
+                    raise NDStateMachineError(error_msg) from e
+
+        # Log deletion
+        self.output.assign(after=self.existing)
