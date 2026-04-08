@@ -1,0 +1,219 @@
+---
+# Overridden state tests for nd_interface_ethernet_access
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point Ethernet1/41, Ethernet1/42-43, Ethernet1/44, Ethernet1/45-47
+# exist from prior tests. Override will reduce the set to only what is specified.
+
+# --- OVERRIDDEN: REDUCE TO A FEW INTERFACES ---
+
+- name: "OVERRIDDEN: Override to only Ethernet1/41 and Ethernet1/42 (check mode)"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 900
+              description: "Overridden Ethernet1/41"
+              policy_type: access_host
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/42
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 901
+              description: "Overridden Ethernet1/42"
+              policy_type: access_host
+    state: overridden
+  check_mode: true
+  register: cm_overridden_reduce
+
+- name: "OVERRIDDEN: Override to only Ethernet1/41 and Ethernet1/42 (normal mode)"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 900
+              description: "Overridden Ethernet1/41"
+              policy_type: access_host
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/42
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 901
+              description: "Overridden Ethernet1/42"
+              policy_type: access_host
+    state: overridden
+  register: nm_overridden_reduce
+
+- name: "OVERRIDDEN: Verify override removed extra interfaces"
+  ansible.builtin.assert:
+    that:
+      - cm_overridden_reduce is changed
+      - nm_overridden_reduce is changed
+      # After should contain only the overridden interfaces (Ethernet1/41 and Ethernet1/42).
+      # Ethernet1/43, Ethernet1/44, Ethernet1/45-47 should have been removed.
+      - nm_overridden_reduce.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1
+      - nm_overridden_reduce.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | list | length == 1
+      - nm_overridden_reduce.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | list | length == 0
+      - nm_overridden_reduce.after | selectattr('interface_name', 'equalto', 'Ethernet1/44') | list | length == 0
+      - nm_overridden_reduce.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | list | length == 0
+      - nm_overridden_reduce.after | selectattr('interface_name', 'equalto', 'Ethernet1/46') | list | length == 0
+      - nm_overridden_reduce.after | selectattr('interface_name', 'equalto', 'Ethernet1/47') | list | length == 0
+
+- name: "OVERRIDDEN: Verify overridden values"
+  vars:
+    eth41_after: "{{ nm_overridden_reduce.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first }}"
+    eth42_after: "{{ nm_overridden_reduce.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first }}"
+  ansible.builtin.assert:
+    that:
+      - eth41_after.config_data.network_os.policy.access_vlan == 900
+      - eth41_after.config_data.network_os.policy.description == "Overridden Ethernet1/41"
+      - eth42_after.config_data.network_os.policy.access_vlan == 901
+      - eth42_after.config_data.network_os.policy.description == "Overridden Ethernet1/42"
+
+# --- OVERRIDDEN: IDEMPOTENCY ---
+
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply same overridden config"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 900
+              description: "Overridden Ethernet1/41"
+              policy_type: access_host
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/42
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 901
+              description: "Overridden Ethernet1/42"
+              policy_type: access_host
+    state: overridden
+  register: nm_overridden_idem
+
+- name: "DEBUG: Show overridden idem result"
+  ansible.builtin.debug:
+    var: nm_overridden_idem
+
+- name: "OVERRIDDEN IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_idem is not changed
+
+# --- OVERRIDDEN: NON-ACCESSHOST FILTERING ---
+# Verifies that interfaces with non-accessHost policy types (e.g., trunkHost, routed,
+# system-managed) are NOT included in the before collection and therefore are NOT
+# targeted for deletion by the overridden state.
+# If filtering is broken, this test would attempt to remove non-accessHost interfaces,
+# and the changed flag would be incorrectly true.
+
+- name: "OVERRIDDEN FILTER: Override with same config, verify non-accessHost interfaces are unaffected"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 900
+              description: "Overridden Ethernet1/41"
+              policy_type: access_host
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/42
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 901
+              description: "Overridden Ethernet1/42"
+              policy_type: access_host
+    state: overridden
+  register: nm_overridden_filter
+
+- name: "OVERRIDDEN FILTER: Verify idempotent (non-accessHost interfaces not in diff)"
+  ansible.builtin.assert:
+    that:
+      # If non-accessHost interfaces were leaking into the before collection, the module
+      # would see them as "extra" and report changed. Since we just ran the same
+      # override, this MUST be idempotent.
+      - nm_overridden_filter is not changed
+
+# --- OVERRIDDEN: SWAP INTERFACES ---
+
+- name: "OVERRIDDEN SWAP: Override to Ethernet1/43 and Ethernet1/44, removing Ethernet1/41 and Ethernet1/42"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_42_43 }}"
+      - "{{ ethernet_44 }}"
+    state: overridden
+  register: nm_overridden_swap
+
+- name: "OVERRIDDEN SWAP: Verify Ethernet1/41 removed and Ethernet1/42-44 present"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_swap is changed
+      - nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 0
+      - nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | list | length == 1
+      - nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | list | length == 1
+      - nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'Ethernet1/44') | list | length == 1
+
+# --- OVERRIDDEN: FAN-OUT OVERRIDE ---
+
+- name: "OVERRIDDEN FAN-OUT: Override to three interfaces via single fan-out config"
+  cisco.nd.nd_interface_ethernet_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_45_46_47 }}"
+    state: overridden
+  register: nm_overridden_fanout
+
+- name: "OVERRIDDEN FAN-OUT: Verify only fan-out interfaces remain"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_fanout is changed
+      - nm_overridden_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | list | length == 0
+      - nm_overridden_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | list | length == 0
+      - nm_overridden_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/44') | list | length == 0
+      - nm_overridden_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | list | length == 1
+      - nm_overridden_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/46') | list | length == 1
+      - nm_overridden_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/47') | list | length == 1
