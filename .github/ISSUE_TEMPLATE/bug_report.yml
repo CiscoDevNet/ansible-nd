@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug impacting VXLAN as Code collection
+description: Report a bug impacting the Ansible ND Collection
 title: Bug Report Title
 labels:
   - bug
@@ -7,17 +7,17 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for creating a bug issue to help us improve the VXLAN as Code collection.
+        Thanks for creating a bug issue to help us improve the Ansible ND Collection.
         Please fill out the sections below to help us understand and reproduce the issue you are facing.
 
   - type: markdown
     attributes:
       value: |
         ### Community Note
-        - Please vote on this issue by adding a 👍 [reaction](https://blog.github.com/2016-03-10-add-reactions-to-pull-requests-issues-and-comments/)
+        * Please vote on this issue by adding a 👍 [reaction](https://blog.github.com/2016-03-10-add-reactions-to-pull-requests-issues-and-comments/)
         to the original issue to help the community and maintainers prioritize this request.
-		- Please do not leave "+1" or other comments that do not add relevant new information or questions, they generate extra noise for issue followers and do not help prioritize the request.
-		- If you are interested in working on this issue or have submitted a pull request, please leave a comment
+		* Please do not leave "+1" or other comments that do not add relevant new information or questions, they generate extra noise for issue followers and do not help prioritize the request.
+		* If you are interested in working on this issue or have submitted a pull request, please leave a comment
 
   - type: textarea
     id: ansible-version
