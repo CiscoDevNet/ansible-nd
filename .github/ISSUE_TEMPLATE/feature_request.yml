@@ -4,6 +4,7 @@ name: Feature Request
 description: Request a feature for the Ansible ND Collection
 title: Feature Request Title
 labels:
+  - enhancement
   - feature
 body:
   - type: markdown
