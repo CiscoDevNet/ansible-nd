@@ -4,14 +4,30 @@
 
 from __future__ import absolute_import, division, print_function
 
+from functools import wraps
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
-from typing import ClassVar, Type, Optional, Generic, TypeVar
+from typing import ClassVar, Type, Optional, Generic, TypeVar, List
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 ModelType = TypeVar("ModelType", bound=NDBaseModel)
+
+
+def requires_bulk_support(flag_name: str):
+    """Decorator that restricts method access based on a ClassVar boolean flag."""
+
+    def decorator(method):
+        @wraps(method)
+        def wrapper(self, *args, **kwargs):
+            if not getattr(self, flag_name, False):
+                raise AttributeError(f"'{method.__name__}' is not available when '{flag_name}' is disabled on '{self.__class__.__name__}'.")
+            return method(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
@@ -76,8 +92,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
 
-    def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
+    @requires_bulk_support("supports_bulk_create")
+    def create_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
         pass
 
-    def delete_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
+    @requires_bulk_support("supports_bulk_delete")
+    def delete_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
         pass

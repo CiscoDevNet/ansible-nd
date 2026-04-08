@@ -42,8 +42,8 @@ class NDStateMachine:
         # Cached flags
         self.check_mode = self.module.check_mode
         self.ignore_errors = self.module.params.get("ignore_errors", False)
-        self.supports_bulk_create = getattr(self.model_orchestrator, "supports_bulk_create", False)
-        self.supports_bulk_delete = getattr(self.model_orchestrator, "supports_bulk_delete", False)
+        self.supports_bulk_create = self.model_orchestrator.supports_bulk_create
+        self.supports_bulk_delete = self.model_orchestrator.supports_bulk_delete
 
         # Initialize collections
         try:
