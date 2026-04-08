@@ -1,0 +1,115 @@
+---
+
+name: Feature Request
+description: Request a feature for the Ansible ND Collection
+title: Feature Request Title
+labels:
+  - enhancement
+  - feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for creating a feature request issue to help us improve the Ansible ND Collection.
+        Please fill out the sections below to help us understand and reproduce the issue you are facing.
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Community Note
+        Please vote on this issue by adding a 👍 [reaction](https://blog.github.com/2016-03-10-add-reactions-to-pull-requests-issues-and-comments/)
+        to help the community and maintainers prioritize this request. Please do not leave "+1" or other comments that do not add relevant new information
+        or questions, they generate extra noise for issue followers and do not help prioritize the request. If you are interested in working on this issue
+        or have submitted a pull request, please leave a comment.
+
+  - type: textarea
+    id: new-module-feature
+    attributes:
+      label: "New module/feature description:"
+      description: Please provide input on the new module or feature required
+      placeholder: New module/feature description
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: Which resource area of Cisco Nexus Dashboard does this new feature belong to?
+      multiple: false
+      options:
+        - analyze
+        - infra
+        - manage
+        - onemanage
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: new-or-affected-documentation
+    attributes:
+      label: New or Affected Documentation for New Feature
+      description: Please list the new or affected documentation sections for the new feature
+      placeholder: Documentation section or new documentation that needs attention for the new feature
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: ansible-playbook
+    attributes:
+      label: Potential Ansible Task Config
+      description: Please provide a potential Ansible task configuration for the new feature
+      placeholder: Ansible Playbook
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: ansible-version
+    attributes:
+      label: Ansible Version
+      description: Please provide your Ansible version used if this requires some new feature from Ansible using ```ansible --version```
+      placeholder: ansible --version
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: ansible-collection-versions
+    attributes:
+      label: Ansible Collection Versions
+      description: |
+        Please provide your Ansible Collection versions if this requires some new collection or updated version from ```ansible-galaxy collection list```
+      placeholder: ansible-galaxy collection list
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: nd-version
+    attributes:
+      label: Cisco Nexus Dashboard Version
+      description: Please provide your Cisco Nexus Dashboard version being used
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: nxos-version
+    attributes:
+      label: Cisco NX-OS Version
+      description: Please provide your Cisco NX-OS version being used
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: aci-version
+    attributes:
+      label: Cisco ACI Version
+      description: Please provide your Cisco ACI version being used
+      render: shell
+    validations:
+      required: false
