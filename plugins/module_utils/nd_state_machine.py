@@ -1,10 +1,11 @@
 # Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Type
+from typing import Type, Union, List
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -15,7 +16,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
 
 class NDStateMachine:
     """
-    Generic State Machine for Nexus Dashboard.
+    Generic State Machine for Nexus Dashboard (Bulk Support).
     """
 
     def __init__(self, module: AnsibleModule, model_orchestrator: Type[NDBaseOrchestrator]):
@@ -29,7 +30,12 @@ class NDStateMachine:
         self.output = NDOutput(output_level=module.params.get("output_level", "normal"))
 
         # Configuration
-        self.model_orchestrator = model_orchestrator(sender=self.nd_module)
+        # Accept either an orchestrator instance or a class.
+        if isinstance(model_orchestrator, type):
+            self.model_orchestrator = model_orchestrator(sender=self.nd_module)
+        else:
+            self.model_orchestrator = model_orchestrator
+
         self.model_class = self.model_orchestrator.model_class
         self.state = self.module.params["state"]
 
@@ -72,6 +78,8 @@ class NDStateMachine:
         """
         Handle merged/replaced/overridden states.
         """
+        items_to_create_bulk: List = []
+
         for proposed_item in self.proposed:
             # Extract identifier
             identifier = proposed_item.get_identifier_value()
@@ -105,7 +113,10 @@ class NDStateMachine:
                         self.model_orchestrator.update(final_item)
                 elif diff_status == "new":
                     if not self.module.check_mode:
-                        self.model_orchestrator.create(final_item)
+                        if getattr(self.model_orchestrator, "supports_bulk_create", False):
+                            items_to_create_bulk.append(final_item)
+                        else:
+                            self.model_orchestrator.create(final_item)
                 self.sent.add(final_item)
 
                 # Log operation
@@ -116,11 +127,17 @@ class NDStateMachine:
                 if not self.module.params.get("ignore_errors", False):
                     raise NDStateMachineError(error_msg) from e
 
+        # Execute API bulk create operation
+        if items_to_create_bulk:
+            self.model_orchestrator.create_bulk(items_to_create_bulk)
+
     def _manage_override_deletions(self) -> None:
         """
         Delete items not in proposed config (for overridden state).
         """
         diff_identifiers = self.before.get_diff_identifiers(self.proposed)
+
+        items_to_delete_bulk: List = []
 
         for identifier in diff_identifiers:
             try:
@@ -130,7 +147,10 @@ class NDStateMachine:
 
                 # Execute delete
                 if not self.module.check_mode:
-                    self.model_orchestrator.delete(existing_item)
+                    if getattr(self.model_orchestrator, "supports_bulk_delete", False):
+                        items_to_delete_bulk.append(existing_item)
+                    else:
+                        self.model_orchestrator.delete(existing_item)
 
                 # Remove from collection
                 self.existing.delete(identifier)
@@ -143,8 +163,13 @@ class NDStateMachine:
                 if not self.module.params.get("ignore_errors", False):
                     raise NDStateMachineError(error_msg) from e
 
+            if items_to_delete_bulk:
+                self.model_orchestrator.delete_bulk(items_to_delete_bulk)
+
     def _manage_delete_state(self) -> None:
         """Handle deleted state."""
+        items_to_delete_bulk: List = []
+
         for proposed_item in self.proposed:
             try:
                 identifier = proposed_item.get_identifier_value()
@@ -155,7 +180,10 @@ class NDStateMachine:
 
                 # Execute delete
                 if not self.module.check_mode:
-                    self.model_orchestrator.delete(existing_item)
+                    if getattr(self.model_orchestrator, "supports_bulk_delete", False):
+                        items_to_delete_bulk.append(existing_item)
+                    else:
+                        self.model_orchestrator.delete(existing_item)
 
                 # Remove from collection
                 self.existing.delete(identifier)
@@ -167,3 +195,6 @@ class NDStateMachine:
                 error_msg = f"Failed to delete {identifier}: {e}"
                 if not self.module.params.get("ignore_errors", False):
                     raise NDStateMachineError(error_msg) from e
+
+        if items_to_delete_bulk:
+            self.model_orchestrator.delete_bulk(items_to_delete_bulk)

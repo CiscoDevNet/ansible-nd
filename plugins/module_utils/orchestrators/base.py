@@ -23,6 +23,8 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     )
 
     model_class: ClassVar[Type[NDBaseModel]] = NDBaseModel
+    supports_bulk_create: ClassVar[bool] = False
+    supports_bulk_delete: ClassVar[bool] = False
 
     # NOTE: if not defined by subclasses, return an error as they are required
     create_endpoint: Type[NDEndpointBaseModel]
@@ -73,3 +75,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
+
+    def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
+        pass
+
+    def delete_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
+        pass
