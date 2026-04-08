@@ -196,16 +196,26 @@ class NDBaseModel(BaseModel, ABC):
             **kwargs,
         )
 
-    def get_diff(self, other: "NDBaseModel") -> bool:
-        """Diff comparison."""
+    def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
+        """Diff comparison.
+
+        Args:
+            other: The model to compare against.
+            exclude_unset: When True, only compare fields explicitly set in
+                ``other`` (via Pydantic's ``exclude_unset``). This prevents
+                default values from triggering false diffs during merge
+                operations.
+        """
         self_data = self.to_diff_dict()
-        other_data = other.to_diff_dict()
+        other_data = other.to_diff_dict(exclude_unset=exclude_unset)
         return issubset(other_data, self_data)
 
     def merge(self, other: "NDBaseModel") -> "NDBaseModel":
         """
-        Merge another model's non-None values into this instance.
+        Merge another model's explicitly set, non-None values into this instance.
         Recursively merges nested NDBaseModel fields.
+        Only fields present in ``other.model_fields_set`` are applied so that
+        Pydantic default values do not overwrite existing configuration.
 
         Returns self for chaining.
         """
@@ -214,6 +224,10 @@ class NDBaseModel(BaseModel, ABC):
 
         for field_name, value in other:
             if value is None:
+                continue
+
+            # Only merge fields that were explicitly provided, not defaults
+            if field_name not in other.model_fields_set:
                 continue
 
             current = getattr(self, field_name)

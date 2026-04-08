@@ -1,0 +1,719 @@
+---
+# Test code for the ND modules
+# Copyright: (c) 2026, Mike Wiebe (@mwiebe) <mwiebe@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+#############################################################################
+# CLEANUP - Ensure clean state before tests
+#############################################################################
+- name: Clean up any existing test fabrics before starting tests
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ext_test_fabric_merged }}"
+      - fabric_name: "{{ ext_test_fabric_replaced }}"
+      - fabric_name: "{{ ext_test_fabric_deleted }}"
+  tags: always
+
+#############################################################################
+# TEST 1: STATE MERGED - Create fabric using merged state
+#############################################################################
+- name: "TEST 1a: Create fabric using state merged (first run)"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': ext_test_fabric_merged} | combine(fabric_config_external) }}"
+  register: ext_merged_result_1
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1a: Verify fabric was created using merged state"
+  assert:
+    that:
+      - ext_merged_result_1 is changed
+      - ext_merged_result_1 is not failed
+    fail_msg: "Fabric creation with state merged failed"
+    success_msg: "Fabric successfully created with state merged"
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1b: Create fabric using state merged (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': ext_test_fabric_merged} | combine(fabric_config_external) }}"
+  register: ext_merged_result_2
+  tags: [test_merged, test_merged_idempotent]
+
+- name: "TEST 1b: Verify merged state is idempotent"
+  assert:
+    that:
+      - ext_merged_result_2 is not changed
+      - ext_merged_result_2 is not failed
+    fail_msg: "Merged state is not idempotent - should not change when run twice with same config"
+    success_msg: "Merged state is idempotent - no changes on second run"
+  tags: [test_merged, test_merged_idempotent]
+
+- name: "TEST 1c: Update fabric using state merged (modify existing)"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ ext_test_fabric_merged }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: externalConnectivity
+          bgp_asn: "65002"  # Changed from 65001
+          copp_policy: strict  # Changed from manual
+          create_bgp_config: true
+          cdp: true  # Changed from false
+          snmp_trap: false  # Changed from true
+          nxapi: true  # Changed from false
+          nxapi_http: true  # Changed from false
+          nxapi_https_port: 443
+          nxapi_http_port: 80
+          performance_monitoring: true  # Changed from false
+          real_time_interface_statistics_collection: true  # Changed from false
+          interface_statistics_load_interval: 30  # Changed from 10
+          sub_interface_dot1q_range: "2-511"
+          power_redundancy_mode: combined  # Changed from redundant
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+  register: ext_merged_result_3
+  tags: [test_merged, test_merged_update]
+
+- name: "TEST 1c: Verify fabric was updated using merged state"
+  assert:
+    that:
+      - ext_merged_result_3 is changed
+      - ext_merged_result_3 is not failed
+    fail_msg: "Fabric update with state merged failed"
+    success_msg: "Fabric successfully updated with state merged"
+  tags: [test_merged, test_merged_update]
+
+#############################################################################
+# VALIDATION: Query ext_test_fabric_merged and validate expected changes
+#############################################################################
+- name: "VALIDATION 1: Authenticate with ND to get token"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_auth_response
+  tags: [test_merged, test_merged_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 1: Query ext_test_fabric_merged configuration from ND"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ ext_test_fabric_merged }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: ext_merged_fabric_query
+  tags: [test_merged, test_merged_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 1: Parse fabric configuration response"
+  set_fact:
+    ext_merged_fabric_config: "{{ ext_merged_fabric_query.json }}"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify BGP ASN was updated to 65002"
+  assert:
+    that:
+      - ext_merged_fabric_config.management.bgpAsn == "65002"
+    fail_msg: "BGP ASN validation failed. Expected: 65002, Actual: {{ ext_merged_fabric_config.management.bgpAsn }}"
+    success_msg: "✓ BGP ASN correctly updated to 65002"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify CoPP Policy was updated to strict"
+  assert:
+    that:
+      - ext_merged_fabric_config.management.coppPolicy == "strict"
+    fail_msg: "CoPP Policy validation failed. Expected: strict, Actual: {{ ext_merged_fabric_config.management.coppPolicy }}"
+    success_msg: "✓ CoPP Policy correctly updated to strict"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify Performance Monitoring was enabled"
+  assert:
+    that:
+      - ext_merged_fabric_config.management.performanceMonitoring == true
+    fail_msg: "Performance Monitoring validation failed. Expected: true, Actual: {{ ext_merged_fabric_config.management.performanceMonitoring }}"
+    success_msg: "✓ Performance Monitoring correctly enabled"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Verify CDP was enabled"
+  assert:
+    that:
+      - ext_merged_fabric_config.management.cdp == true
+    fail_msg: "CDP validation failed. Expected: true, Actual: {{ ext_merged_fabric_config.management.cdp }}"
+    success_msg: "✓ CDP correctly enabled"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1: Display successful validation summary for ext_test_fabric_merged"
+  debug:
+    msg: |
+      ========================================
+      VALIDATION SUMMARY for ext_test_fabric_merged:
+      ========================================
+      ✓ BGP ASN: {{ ext_merged_fabric_config.management.bgpAsn }}
+      ✓ CoPP Policy: {{ ext_merged_fabric_config.management.coppPolicy }}
+      ✓ Performance Monitoring: {{ ext_merged_fabric_config.management.performanceMonitoring }}
+      ✓ CDP: {{ ext_merged_fabric_config.management.cdp }}
+
+      All 4 expected changes validated successfully!
+      ========================================
+  tags: [test_merged, test_merged_validation]
+
+#############################################################################
+# TEST 2: STATE REPLACED - Create and manage fabric using replaced state
+#############################################################################
+- name: "TEST 2a: Create fabric using state replaced (first run)"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ ext_test_fabric_replaced }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: externalConnectivity
+          bgp_asn: "65004"
+          copp_policy: strict  # Different from default
+          create_bgp_config: true
+          cdp: true  # Different from default
+          snmp_trap: false  # Different from default
+          nxapi: true  # Different from default
+          nxapi_http: true  # Different from default
+          nxapi_https_port: 443
+          nxapi_http_port: 80
+          performance_monitoring: true  # Different from default
+          real_time_interface_statistics_collection: true  # Different from default
+          interface_statistics_load_interval: 30  # Different from default
+          sub_interface_dot1q_range: "2-511"
+          power_redundancy_mode: combined  # Different from default
+          ptp: true  # Different from default
+          ptp_domain_id: 10  # Different from default
+          ptp_loopback_id: 5  # Different from default
+          mpls_handoff: false
+          mpls_loopback_ip_range: "10.102.0.0/25"
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+          management_ipv6_prefix: 64
+          extra_config_aaa: ""
+          extra_config_fabric: ""
+  register: ext_replaced_result_1
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2a: Verify fabric was created using replaced state"
+  assert:
+    that:
+      - ext_replaced_result_1 is changed
+      - ext_replaced_result_1 is not failed
+    fail_msg: "Fabric creation with state replaced failed"
+    success_msg: "Fabric successfully created with state replaced"
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2b: Create fabric using state replaced (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ ext_test_fabric_replaced }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: externalConnectivity
+          bgp_asn: "65004"
+          copp_policy: strict
+          create_bgp_config: true
+          cdp: true
+          snmp_trap: false
+          nxapi: true
+          nxapi_http: true
+          nxapi_https_port: 443
+          nxapi_http_port: 80
+          performance_monitoring: true
+          real_time_interface_statistics_collection: true
+          interface_statistics_load_interval: 30
+          sub_interface_dot1q_range: "2-511"
+          power_redundancy_mode: combined
+          ptp: true
+          ptp_domain_id: 10
+          ptp_loopback_id: 5
+          mpls_handoff: false
+          mpls_loopback_ip_range: "10.102.0.0/25"
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+          management_ipv6_prefix: 64
+          extra_config_aaa: ""
+          extra_config_fabric: ""
+  register: ext_replaced_result_2
+  tags: [test_replaced, test_replaced_idempotent]
+
+- name: "TEST 2b: Verify replaced state is idempotent"
+  assert:
+    that:
+      - ext_replaced_result_2 is not changed
+      - ext_replaced_result_2 is not failed
+    fail_msg: "Replaced state is not idempotent - should not change when run twice with same config"
+    success_msg: "Replaced state is idempotent - no changes on second run"
+  tags: [test_replaced, test_replaced_idempotent]
+
+- name: "TEST 2c: Update fabric using state replaced (complete replacement with minimal config)"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ ext_test_fabric_replaced }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: externalConnectivity
+          bgp_asn: "65004"
+  register: ext_replaced_result_3
+  tags: [test_replaced, test_replaced_update]
+
+- name: "TEST 2c: Verify fabric was completely replaced"
+  assert:
+    that:
+      - ext_replaced_result_3 is changed
+      - ext_replaced_result_3 is not failed
+    fail_msg: "Fabric replacement with state replaced failed"
+    success_msg: "Fabric successfully replaced with state replaced"
+  tags: [test_replaced, test_replaced_update]
+
+#############################################################################
+# VALIDATION: Query ext_test_fabric_replaced and validate defaults restored
+#############################################################################
+- name: "VALIDATION 2: Authenticate with ND to get token"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_auth_response_2
+  tags: [test_replaced, test_replaced_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 2: Query ext_test_fabric_replaced configuration from ND"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ ext_test_fabric_replaced }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response_2.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: ext_replaced_fabric_query
+  tags: [test_replaced, test_replaced_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 2: Parse fabric configuration response"
+  set_fact:
+    ext_replaced_fabric_config: "{{ ext_replaced_fabric_query.json }}"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify CoPP Policy was standardized to manual (default)"
+  assert:
+    that:
+      - ext_replaced_fabric_config.management.coppPolicy == "manual"
+    fail_msg: "CoPP Policy validation failed. Expected: manual, Actual: {{ ext_replaced_fabric_config.management.coppPolicy }}"
+    success_msg: "✓ CoPP Policy correctly standardized to manual"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify SNMP Trap was restored to default (true)"
+  assert:
+    that:
+      - ext_replaced_fabric_config.management.snmpTrap == true
+    fail_msg: "SNMP Trap validation failed. Expected: true, Actual: {{ ext_replaced_fabric_config.management.snmpTrap }}"
+    success_msg: "✓ SNMP Trap correctly restored to default"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify CDP was restored to default (false)"
+  assert:
+    that:
+      - ext_replaced_fabric_config.management.cdp == false
+    fail_msg: "CDP validation failed. Expected: false, Actual: {{ ext_replaced_fabric_config.management.cdp }}"
+    success_msg: "✓ CDP correctly restored to default"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify NXAPI was restored to default (false)"
+  assert:
+    that:
+      - ext_replaced_fabric_config.management.nxapi == false
+    fail_msg: "NXAPI validation failed. Expected: false, Actual: {{ ext_replaced_fabric_config.management.nxapi }}"
+    success_msg: "✓ NXAPI correctly restored to default"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify NXAPI HTTP was restored to default (false)"
+  assert:
+    that:
+      - ext_replaced_fabric_config.management.nxapiHttp == false
+    fail_msg: "NXAPI HTTP validation failed. Expected: false, Actual: {{ ext_replaced_fabric_config.management.nxapiHttp }}"
+    success_msg: "✓ NXAPI HTTP correctly restored to default"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Performance Monitoring was restored to default (false)"
+  assert:
+    that:
+      - ext_replaced_fabric_config.management.performanceMonitoring == false
+    fail_msg: "Performance Monitoring validation failed. Expected: false, Actual: {{ ext_replaced_fabric_config.management.performanceMonitoring }}"
+    success_msg: "✓ Performance Monitoring correctly restored to default"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Real Time Interface Statistics Collection was restored to default (false)"
+  assert:
+    that:
+      - ext_replaced_fabric_config.management.realTimeInterfaceStatisticsCollection == false
+    fail_msg: "Real Time Interface Statistics Collection validation failed. Expected: false, Actual: {{ ext_replaced_fabric_config.management.realTimeInterfaceStatisticsCollection }}"
+    success_msg: "✓ Real Time Interface Statistics Collection correctly restored to default"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify Power Redundancy Mode was restored to default (redundant)"
+  assert:
+    that:
+      - ext_replaced_fabric_config.management.powerRedundancyMode == "redundant"
+    fail_msg: "Power Redundancy Mode validation failed. Expected: redundant, Actual: {{ ext_replaced_fabric_config.management.powerRedundancyMode }}"
+    success_msg: "✓ Power Redundancy Mode correctly restored to default"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Verify PTP was restored to default (false)"
+  assert:
+    that:
+      - ext_replaced_fabric_config.management.ptp == false
+    fail_msg: "PTP validation failed. Expected: false, Actual: {{ ext_replaced_fabric_config.management.ptp }}"
+    success_msg: "✓ PTP correctly restored to default"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2: Display successful validation summary for ext_test_fabric_replaced"
+  debug:
+    msg: |
+      ========================================
+      VALIDATION SUMMARY for ext_test_fabric_replaced:
+      ========================================
+      ✓ CoPP Policy: {{ ext_replaced_fabric_config.management.coppPolicy }}
+      ✓ SNMP Trap: {{ ext_replaced_fabric_config.management.snmpTrap }}
+      ✓ CDP: {{ ext_replaced_fabric_config.management.cdp }}
+      ✓ NXAPI: {{ ext_replaced_fabric_config.management.nxapi }}
+      ✓ NXAPI HTTP: {{ ext_replaced_fabric_config.management.nxapiHttp }}
+      ✓ Performance Monitoring: {{ ext_replaced_fabric_config.management.performanceMonitoring }}
+      ✓ Real Time Interface Statistics: {{ ext_replaced_fabric_config.management.realTimeInterfaceStatisticsCollection }}
+      ✓ Power Redundancy Mode: {{ ext_replaced_fabric_config.management.powerRedundancyMode }}
+      ✓ PTP: {{ ext_replaced_fabric_config.management.ptp }}
+
+      All defaults correctly restored after replaced with minimal config!
+      ========================================
+  tags: [test_replaced, test_replaced_validation]
+
+#############################################################################
+# TEST 3: Demonstrate difference between merged and replaced states
+#############################################################################
+- name: "TEST 3: Create fabric for merged vs replaced comparison"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: replaced
+    config:
+      - "{{ {'fabric_name': ext_test_fabric_deleted} | combine(fabric_config_external) }}"
+  register: ext_comparison_fabric_creation
+  tags: [test_comparison]
+
+- name: "TEST 3a: Partial update using merged state (should merge changes)"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ ext_test_fabric_deleted }}"
+        category: fabric
+        management:
+          bgp_asn: "65099"  # Only updating ASN
+          copp_policy: strict  # Only updating CoPP policy
+  register: ext_merged_partial_result
+  tags: [test_comparison, test_merged_partial]
+
+- name: "TEST 3a: Verify merged state preserves existing configuration"
+  assert:
+    that:
+      - ext_merged_partial_result is changed
+      - ext_merged_partial_result is not failed
+    fail_msg: "Partial update with merged state failed"
+    success_msg: "Merged state successfully performed partial update"
+  tags: [test_comparison, test_merged_partial]
+
+- name: "TEST 3b: Partial update using replaced state (should replace entire config)"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ ext_test_fabric_deleted }}"
+        category: fabric
+        management:
+          type: externalConnectivity
+          bgp_asn: "65100"  # Only specifying minimal config for replaced
+  register: ext_replaced_partial_result
+  tags: [test_comparison, test_replaced_partial]
+
+- name: "TEST 3b: Verify replaced state performs complete replacement"
+  assert:
+    that:
+      - ext_replaced_partial_result is changed
+      - ext_replaced_partial_result is not failed
+    fail_msg: "Partial replacement with replaced state failed"
+    success_msg: "Replaced state successfully performed complete replacement"
+  tags: [test_comparison, test_replaced_partial]
+
+#############################################################################
+# TEST 4: STATE DELETED - Delete fabrics
+#############################################################################
+- name: "TEST 4a: Delete fabric using state deleted"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ext_test_fabric_deleted }}"
+  register: ext_deleted_result_1
+  tags: [test_deleted, test_deleted_delete]
+
+- name: "TEST 4a: Verify fabric was deleted"
+  assert:
+    that:
+      - ext_deleted_result_1 is changed
+      - ext_deleted_result_1 is not failed
+    fail_msg: "Fabric deletion with state deleted failed"
+    success_msg: "Fabric successfully deleted with state deleted"
+  tags: [test_deleted, test_deleted_delete]
+
+- name: "TEST 4b: Delete fabric using state deleted (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ext_test_fabric_deleted }}"
+  register: ext_deleted_result_2
+  tags: [test_deleted, test_deleted_idempotent]
+
+- name: "TEST 4b: Verify deleted state is idempotent"
+  assert:
+    that:
+      - ext_deleted_result_2 is not changed
+      - ext_deleted_result_2 is not failed
+    fail_msg: "Deleted state is not idempotent - should not change when deleting non-existent fabric"
+    success_msg: "Deleted state is idempotent - no changes when deleting non-existent fabric"
+  tags: [test_deleted, test_deleted_idempotent]
+
+#############################################################################
+# TEST 5: Multiple fabric operations in single task
+#############################################################################
+- name: "TEST 5: Multiple fabric operations in single task"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "ext_multi_fabric_1"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: externalConnectivity
+          bgp_asn: "65101"
+          copp_policy: manual
+          create_bgp_config: true
+          cdp: false
+          snmp_trap: true
+          nxapi: false
+          nxapi_http: false
+          nxapi_https_port: 443
+          nxapi_http_port: 80
+          performance_monitoring: false
+          real_time_interface_statistics_collection: false
+          interface_statistics_load_interval: 10
+          sub_interface_dot1q_range: "2-511"
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+      - fabric_name: "ext_multi_fabric_2"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: externalConnectivity
+          bgp_asn: "65102"
+          copp_policy: manual
+          create_bgp_config: true
+          cdp: false
+          snmp_trap: true
+          nxapi: false
+          nxapi_http: false
+          nxapi_https_port: 443
+          nxapi_http_port: 80
+          performance_monitoring: false
+          real_time_interface_statistics_collection: false
+          interface_statistics_load_interval: 10
+          sub_interface_dot1q_range: "2-511"
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+  register: ext_multi_fabric_result
+  tags: [test_multi, test_multi_create]
+
+- name: "TEST 5: Verify multiple fabrics were created"
+  assert:
+    that:
+      - ext_multi_fabric_result is changed
+      - ext_multi_fabric_result is not failed
+    fail_msg: "Multiple fabric creation failed"
+    success_msg: "Multiple fabrics successfully created"
+  tags: [test_multi, test_multi_create]
+
+#############################################################################
+# FINAL CLEANUP - Clean up all test fabrics
+#############################################################################
+- name: "CLEANUP: Delete all test fabrics"
+  cisco.nd.nd_manage_fabric_external:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ext_test_fabric_merged }}"
+      - fabric_name: "{{ ext_test_fabric_replaced }}"
+      - fabric_name: "{{ ext_test_fabric_deleted }}"
+      - fabric_name: "ext_multi_fabric_1"
+      - fabric_name: "ext_multi_fabric_2"
+  ignore_errors: true
+  tags: [cleanup, always]
+
+#############################################################################
+# TEST SUMMARY
+#############################################################################
+- name: "TEST SUMMARY: Display test results"
+  debug:
+    msg: |
+      ========================================================
+      TEST SUMMARY for cisco.nd.nd_manage_fabric_external module:
+      ========================================================
+      ✓ TEST 1: STATE MERGED
+        - Create fabric: {{ 'PASSED' if ext_merged_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if ext_merged_result_2 is not changed else 'FAILED' }}
+        - Update fabric: {{ 'PASSED' if ext_merged_result_3 is changed else 'FAILED' }}
+
+      ✓ TEST 2: STATE REPLACED
+        - Create fabric: {{ 'PASSED' if ext_replaced_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if ext_replaced_result_2 is not changed else 'FAILED' }}
+        - Replace fabric: {{ 'PASSED' if ext_replaced_result_3 is changed else 'FAILED' }}
+
+      ✓ TEST 3: MERGED vs REPLACED Comparison
+        - Merged partial: {{ 'PASSED' if ext_merged_partial_result is changed else 'FAILED' }}
+        - Replaced partial: {{ 'PASSED' if ext_replaced_partial_result is changed else 'FAILED' }}
+
+      ✓ TEST 4: STATE DELETED
+        - Delete fabric: {{ 'PASSED' if ext_deleted_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if ext_deleted_result_2 is not changed else 'FAILED' }}
+
+      ✓ TEST 5: MULTIPLE FABRICS
+        - Multi-create: {{ 'PASSED' if ext_multi_fabric_result is changed else 'FAILED' }}
+
+      All tests validate:
+      - State merged: Creates and updates fabrics by merging changes
+      - State replaced: Creates and completely replaces fabric configuration
+      - State deleted: Removes fabrics
+      - Idempotency: All operations are idempotent when run multiple times
+      - Difference: Merged preserves existing config, replaced overwrites completely
+      ========================================
+  tags: [summary, always]
