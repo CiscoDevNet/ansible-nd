@@ -1,7 +1,7 @@
 ---
 
 name: Feature Request
-description: Request a feature for the VXLAN as Code collection
+description: Request a feature for the Ansible ND Collection
 title: Feature Request Title
 labels:
   - feature
@@ -9,7 +9,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for creating a feature request issue to help us improve the VXLAN as Code collection.
+        Thanks for creating a feature request issue to help us improve the Ansible ND Collection.
         Please fill out the sections below to help us understand and reproduce the issue you are facing.
 
   - type: markdown
