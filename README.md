@@ -68,10 +68,10 @@ Go to the ansible-nd directory
 cd ansible-nd
 ```
 
-Pull the latest master on your nd
+Pull the latest main on your nd
 
 ```sh
-git pull origin master
+git pull origin main
 ```
 
 Build and Install a collection from source
@@ -83,7 +83,7 @@ ansible-galaxy collection install cisco-nd-* --force
 
 #### Second Approach - Download From Latest CI Build
 
-Go to [ansible-nd Actions](https://github.com/CiscoDevNet/ansible-nd/actions/workflows/ansible-test.yml?query=branch%3Amaster) and select the latest CI build.
+Go to [ansible-nd Actions](https://github.com/CiscoDevNet/ansible-nd/actions/workflows/ansible-test.yml?query=branch%3Amain) and select the latest CI build.
 
 Under Artifacts download collection suffixed with the latest version of Ansible (eg. `collection-stable-2.17`) and unzip it using Terminal or Console.
 
@@ -178,7 +178,7 @@ To find EOL announcements for ND versions, refer to the [End-of-Life and End-of-
 
 ## Release Notes
 
-See the [Changelog](https://github.com/CiscoDevNet/ansible-nd/blob/master/CHANGELOG.rst) for full release notes.
+See the [Changelog](https://github.com/CiscoDevNet/ansible-nd/blob/main/CHANGELOG.rst) for full release notes.
 
 ## Related Information
 
@@ -190,4 +190,4 @@ For further information, refer to the following:
 
 ## License Information
 
-This collection is licensed under the [GNU General Public License v3.0](https://github.com/CiscoDevNet/ansible-nd/blob/master/LICENSE)
+This collection is licensed under the [GNU General Public License v3.0](https://github.com/CiscoDevNet/ansible-nd/blob/main/LICENSE)
