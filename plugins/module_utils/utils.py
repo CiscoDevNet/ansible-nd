@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
     EpManageFabricConfigDeployPost,
-    EpManageFabricGet,
+    EpManageFabricsGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions import (
     EpManageFabricsActionsConfigSavePost,
@@ -146,7 +146,7 @@ class FabricUtils:
         self.ep_switch_deploy = EpManageFabricsSwitchActionsDeployPost()
         self.ep_switch_deploy.fabric_name = fabric
 
-        self.ep_fabric_get = EpManageFabricGet()
+        self.ep_fabric_get = EpManageFabricsGet()
         self.ep_fabric_get.fabric_name = fabric
 
     # -----------------------------------------------------------------
