@@ -377,7 +377,6 @@ EXAMPLES = """
     fabric: my-fabric
     state: gathered
   register: result
-
 """
 
 RETURN = r"""
