@@ -119,10 +119,8 @@ else:
             return kwargs
 
         # Fallback: Field that does nothing
-        def Field(*args, **kwargs) -> Any:  # pylint: disable=unused-argument,invalid-name
+        def Field(**kwargs) -> Any:  # pylint: disable=unused-argument,invalid-name
             """Pydantic Field fallback when pydantic is not available."""
-            if args:
-                return args[0]
             if "default_factory" in kwargs:
                 return kwargs["default_factory"]()
             return kwargs.get("default")
