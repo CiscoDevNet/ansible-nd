@@ -19,7 +19,7 @@ loopback_100:
         ip: "10.100.100.1"
         description: "Ansible integration test loopback100"
         vrf: default
-        route_map_tag: 12345
+        route_map_tag: "12345"
         policy_type: loopback
 
 loopback_101:
@@ -55,7 +55,7 @@ loopback_100_updated:
         ip: "10.100.100.2"
         description: "Updated loopback100 description"
         vrf: default
-        route_map_tag: 54321
+        route_map_tag: "54321"
         policy_type: loopback
 
 loopback_101_updated:

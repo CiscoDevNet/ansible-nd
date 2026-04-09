@@ -22,6 +22,7 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
                 - `admin_state`, `ip`, `ipv6`, `vrf`, `policy_type`, etc.
 """
 
+import ipaddress
 from typing import ClassVar, Dict, List, Literal, Optional, Set
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -54,15 +55,14 @@ class LoopbackPolicyModel(NDNestedModel):
     None
     """
 
-    admin_state: Optional[bool] = Field(default=None, alias="adminState")
-    ip: Optional[str] = Field(default=None, alias="ip")
-    ipv6: Optional[str] = Field(default=None, alias="ipv6")
-    vrf: Optional[str] = Field(default=None, alias="vrfInterface")
-    route_map_tag: Optional[int] = Field(default=None, alias="routeMapTag")
-    link_state_routing_tag: Optional[str] = Field(default=None, alias="linkStateRoutingTag")
-    description: Optional[str] = Field(default=None, alias="description")
-    extra_config: Optional[str] = Field(default=None, alias="extraConfig")
-    policy_type: Optional[str] = Field(default=None, alias="policyType")
+    admin_state: Optional[bool] = Field(default=None, alias="adminState", description="Enable or disable the interface")
+    ip: Optional[str] = Field(default=None, alias="ip", description="Loopback IPv4 address in CIDR notation (e.g. 10.1.1.1/32)")
+    ipv6: Optional[str] = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
+    vrf: Optional[str] = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+    route_map_tag: Optional[str] = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
+    description: Optional[str] = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
+    extra_config: Optional[str] = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    policy_type: Optional[str] = Field(default=None, alias="policyType", description="Interface policy type")
 
     # --- Serializers ---
 
@@ -102,6 +102,66 @@ class LoopbackPolicyModel(NDNestedModel):
             return value
         reverse_mapping = {api: ansible for ansible, api in LOOPBACK_POLICY_TYPE_MAPPING.data.items() if ansible != api}
         return reverse_mapping.get(value, value)
+
+    @field_validator("route_map_tag", mode="before")
+    @classmethod
+    def coerce_route_map_tag(cls, value):
+        """
+        # Summary
+
+        Coerce `route_map_tag` to a string. The ND API returns this field as an integer, but the template defines it as a string.
+
+        ## Raises
+
+        None
+        """
+        if value is None:
+            return value
+        return str(value)
+
+    @field_validator("ip", mode="before")
+    @classmethod
+    def validate_ipv4(cls, value):
+        """
+        # Summary
+
+        Validate that `ip` is a valid IPv4 interface address in CIDR notation.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `value` is not a valid IPv4 interface address in CIDR notation
+        """
+        if value is None:
+            return value
+        try:
+            ipaddress.IPv4Interface(value)
+        except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError) as err:
+            raise ValueError(f"Invalid IPv4 address: {value!r}. Expected CIDR notation (e.g. '10.1.1.1/32').") from err
+        return value
+
+    @field_validator("ipv6", mode="before")
+    @classmethod
+    def validate_ipv6(cls, value):
+        """
+        # Summary
+
+        Validate that `ipv6` is a valid IPv6 interface address in CIDR notation.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `value` is not a valid IPv6 interface address in CIDR notation
+        """
+        if value is None:
+            return value
+        try:
+            ipaddress.IPv6Interface(value)
+        except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError) as err:
+            raise ValueError(f"Invalid IPv6 address: {value!r}. Expected CIDR notation (e.g. '2001:db8::1/128').") from err
+        return value
 
 
 class LoopbackNetworkOSModel(NDNestedModel):
@@ -218,8 +278,7 @@ class LoopbackInterfaceModel(NDBaseModel):
                                             ip=dict(type="str"),
                                             ipv6=dict(type="str"),
                                             vrf=dict(type="str"),
-                                            route_map_tag=dict(type="int"),
-                                            link_state_routing_tag=dict(type="str"),
+                                            route_map_tag=dict(type="str"),
                                             description=dict(type="str"),
                                             extra_config=dict(type="str"),
                                             policy_type=dict(

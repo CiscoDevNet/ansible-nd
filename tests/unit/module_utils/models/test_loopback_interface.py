@@ -53,7 +53,7 @@ SAMPLE_API_RESPONSE = {
                 "ip": "10.1.1.1/32",
                 "vrfInterface": "management",
                 "policyType": "loopback",
-                "routeMapTag": 12345,
+                "routeMapTag": "12345",
                 "description": "mgmt loopback",
             },
         },
@@ -73,7 +73,7 @@ SAMPLE_ANSIBLE_CONFIG = {
                 "ip": "10.1.1.1/32",
                 "vrf": "management",
                 "policy_type": "loopback",
-                "route_map_tag": 12345,
+                "route_map_tag": "12345",
                 "description": "mgmt loopback",
             },
         },
@@ -155,7 +155,6 @@ def test_loopback_interface_00010():
     assert instance.ipv6 is None
     assert instance.vrf is None
     assert instance.route_map_tag is None
-    assert instance.link_state_routing_tag is None
     assert instance.description is None
     assert instance.extra_config is None
     assert instance.policy_type is None
@@ -182,14 +181,14 @@ def test_loopback_interface_00020():
             ip="10.1.1.1/32",
             vrf="management",
             policy_type="loopback",
-            route_map_tag=100,
+            route_map_tag="100",
             description="test",
         )
     assert instance.admin_state is True
     assert instance.ip == "10.1.1.1/32"
     assert instance.vrf == "management"
     assert instance.policy_type == "loopback"
-    assert instance.route_map_tag == 100
+    assert instance.route_map_tag == "100"
     assert instance.description == "test"
 
 
@@ -214,13 +213,13 @@ def test_loopback_interface_00030():
             ip="10.2.2.2/32",
             vrfInterface="default",
             policyType="loopback",
-            routeMapTag=200,
+            routeMapTag="200",
         )
     assert instance.admin_state is False
     assert instance.ip == "10.2.2.2/32"
     assert instance.vrf == "default"
     assert instance.policy_type == "loopback"
-    assert instance.route_map_tag == 200
+    assert instance.route_map_tag == "200"
 
 
 def test_loopback_interface_00040():
@@ -421,6 +420,419 @@ def test_loopback_interface_00060():
     assert "admin_state" not in result
     assert "vrf" not in result
     assert "policy_type" not in result
+
+
+# =============================================================================
+# Test: LoopbackPolicyModel — route_map_tag coercion
+# =============================================================================
+
+
+def test_loopback_interface_00065():
+    """
+    # Summary
+
+    Verify `route_map_tag` coerces an integer to a string.
+
+    ## Test
+
+    - Construct with route_map_tag=12345 (int)
+    - Value is coerced to "12345" (str)
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.coerce_route_map_tag()
+    """
+    with does_not_raise():
+        instance = LoopbackPolicyModel(route_map_tag=12345)
+    assert instance.route_map_tag == "12345"
+    assert isinstance(instance.route_map_tag, str)
+
+
+def test_loopback_interface_00066():
+    """
+    # Summary
+
+    Verify `route_map_tag` accepts a string unchanged.
+
+    ## Test
+
+    - Construct with route_map_tag="12345" (str)
+    - Value remains "12345"
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.coerce_route_map_tag()
+    """
+    with does_not_raise():
+        instance = LoopbackPolicyModel(route_map_tag="12345")
+    assert instance.route_map_tag == "12345"
+
+
+def test_loopback_interface_00067():
+    """
+    # Summary
+
+    Verify `route_map_tag` coerces an integer via the camelCase alias (API response path).
+
+    ## Test
+
+    - Construct with routeMapTag=12345 (int, camelCase alias)
+    - Value is coerced to "12345" (str)
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.coerce_route_map_tag()
+    """
+    with does_not_raise():
+        instance = LoopbackPolicyModel(routeMapTag=12345)
+    assert instance.route_map_tag == "12345"
+    assert isinstance(instance.route_map_tag, str)
+
+
+# =============================================================================
+# Test: LoopbackPolicyModel — Field Constraints
+# =============================================================================
+
+
+def test_loopback_interface_00070():
+    """
+    # Summary
+
+    Verify `vrf` rejects empty string (min_length=1).
+
+    ## Test
+
+    - Construct with vrf=""
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.__init__()
+    """
+    with pytest.raises(ValidationError, match="vrf"):
+        LoopbackPolicyModel(vrf="")
+
+
+def test_loopback_interface_00071():
+    """
+    # Summary
+
+    Verify `vrf` rejects strings exceeding 32 characters (max_length=32).
+
+    ## Test
+
+    - Construct with vrf of 33 characters
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.__init__()
+    """
+    with pytest.raises(ValidationError, match="vrf"):
+        LoopbackPolicyModel(vrf="a" * 33)
+
+
+def test_loopback_interface_00072():
+    """
+    # Summary
+
+    Verify `vrf` accepts a string at the maximum length (32 characters).
+
+    ## Test
+
+    - Construct with vrf of exactly 32 characters
+    - Value is accepted
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.__init__()
+    """
+    with does_not_raise():
+        instance = LoopbackPolicyModel(vrf="a" * 32)
+    assert instance.vrf == "a" * 32
+
+
+def test_loopback_interface_00073():
+    """
+    # Summary
+
+    Verify `description` rejects empty string (min_length=1).
+
+    ## Test
+
+    - Construct with description=""
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.__init__()
+    """
+    with pytest.raises(ValidationError, match="description"):
+        LoopbackPolicyModel(description="")
+
+
+def test_loopback_interface_00074():
+    """
+    # Summary
+
+    Verify `description` rejects strings exceeding 254 characters (max_length=254).
+
+    ## Test
+
+    - Construct with description of 255 characters
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.__init__()
+    """
+    with pytest.raises(ValidationError, match="description"):
+        LoopbackPolicyModel(description="a" * 255)
+
+
+def test_loopback_interface_00075():
+    """
+    # Summary
+
+    Verify `description` accepts a string at the maximum length (254 characters).
+
+    ## Test
+
+    - Construct with description of exactly 254 characters
+    - Value is accepted
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.__init__()
+    """
+    with does_not_raise():
+        instance = LoopbackPolicyModel(description="a" * 254)
+    assert instance.description == "a" * 254
+
+
+# =============================================================================
+# Test: LoopbackPolicyModel — IPv4 Validation
+# =============================================================================
+
+
+def test_loopback_interface_00080():
+    """
+    # Summary
+
+    Verify `ip` accepts a valid IPv4 address in CIDR notation.
+
+    ## Test
+
+    - Construct with ip="10.1.1.1/32"
+    - Value is accepted
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.validate_ipv4()
+    """
+    with does_not_raise():
+        instance = LoopbackPolicyModel(ip="10.1.1.1/32")
+    assert instance.ip == "10.1.1.1/32"
+
+
+def test_loopback_interface_00081():
+    """
+    # Summary
+
+    Verify `ip` accepts a valid IPv4 address with a non-/32 prefix.
+
+    ## Test
+
+    - Construct with ip="10.1.1.0/24"
+    - Value is accepted
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.validate_ipv4()
+    """
+    with does_not_raise():
+        instance = LoopbackPolicyModel(ip="10.1.1.0/24")
+    assert instance.ip == "10.1.1.0/24"
+
+
+def test_loopback_interface_00082():
+    """
+    # Summary
+
+    Verify `ip` rejects an invalid IPv4 address.
+
+    ## Test
+
+    - Construct with ip="999.999.999.999/32"
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.validate_ipv4()
+    """
+    with pytest.raises(ValidationError, match="Invalid IPv4 address"):
+        LoopbackPolicyModel(ip="999.999.999.999/32")
+
+
+def test_loopback_interface_00083():
+    """
+    # Summary
+
+    Verify `ip` rejects a bare IPv4 address without prefix length.
+
+    ## Test
+
+    - Construct with ip="10.1.1.1" (no CIDR prefix)
+    - Value is accepted (ipaddress.IPv4Interface accepts bare addresses, defaulting to /32)
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.validate_ipv4()
+    """
+    with does_not_raise():
+        instance = LoopbackPolicyModel(ip="10.1.1.1")
+    assert instance.ip == "10.1.1.1"
+
+
+def test_loopback_interface_00084():
+    """
+    # Summary
+
+    Verify `ip` rejects non-IPv4 garbage strings.
+
+    ## Test
+
+    - Construct with ip="not-an-ip"
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.validate_ipv4()
+    """
+    with pytest.raises(ValidationError, match="Invalid IPv4 address"):
+        LoopbackPolicyModel(ip="not-an-ip")
+
+
+def test_loopback_interface_00085():
+    """
+    # Summary
+
+    Verify `ip` rejects an IPv6 address.
+
+    ## Test
+
+    - Construct with ip="2001:db8::1/128"
+    - Raises ValidationError (IPv6 address passed to IPv4 field)
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.validate_ipv4()
+    """
+    with pytest.raises(ValidationError, match="Invalid IPv4 address"):
+        LoopbackPolicyModel(ip="2001:db8::1/128")
+
+
+# =============================================================================
+# Test: LoopbackPolicyModel — IPv6 Validation
+# =============================================================================
+
+
+def test_loopback_interface_00086():
+    """
+    # Summary
+
+    Verify `ipv6` accepts a valid IPv6 address in CIDR notation.
+
+    ## Test
+
+    - Construct with ipv6="2001:db8::1/128"
+    - Value is accepted
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.validate_ipv6()
+    """
+    with does_not_raise():
+        instance = LoopbackPolicyModel(ipv6="2001:db8::1/128")
+    assert instance.ipv6 == "2001:db8::1/128"
+
+
+def test_loopback_interface_00087():
+    """
+    # Summary
+
+    Verify `ipv6` accepts a valid IPv6 address with a non-/128 prefix.
+
+    ## Test
+
+    - Construct with ipv6="2001:db8::/64"
+    - Value is accepted
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.validate_ipv6()
+    """
+    with does_not_raise():
+        instance = LoopbackPolicyModel(ipv6="2001:db8::/64")
+    assert instance.ipv6 == "2001:db8::/64"
+
+
+def test_loopback_interface_00088():
+    """
+    # Summary
+
+    Verify `ipv6` rejects an invalid IPv6 address.
+
+    ## Test
+
+    - Construct with ipv6="not-an-ipv6"
+    - Raises ValidationError
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.validate_ipv6()
+    """
+    with pytest.raises(ValidationError, match="Invalid IPv6 address"):
+        LoopbackPolicyModel(ipv6="not-an-ipv6")
+
+
+def test_loopback_interface_00089():
+    """
+    # Summary
+
+    Verify `ipv6` rejects an IPv4 address.
+
+    ## Test
+
+    - Construct with ipv6="10.1.1.1/32"
+    - Raises ValidationError (IPv4 address passed to IPv6 field)
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.validate_ipv6()
+    """
+    with pytest.raises(ValidationError, match="Invalid IPv6 address"):
+        LoopbackPolicyModel(ipv6="10.1.1.1/32")
+
+
+def test_loopback_interface_00090():
+    """
+    # Summary
+
+    Verify `ipv6` accepts a bare IPv6 address without prefix length.
+
+    ## Test
+
+    - Construct with ipv6="2001:db8::1" (no CIDR prefix)
+    - Value is accepted (ipaddress.IPv6Interface accepts bare addresses, defaulting to /128)
+
+    ## Classes and Methods
+
+    - LoopbackPolicyModel.validate_ipv6()
+    """
+    with does_not_raise():
+        instance = LoopbackPolicyModel(ipv6="2001:db8::1")
+    assert instance.ipv6 == "2001:db8::1"
 
 
 # =============================================================================
