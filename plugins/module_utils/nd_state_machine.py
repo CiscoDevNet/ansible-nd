@@ -5,7 +5,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Type
+from typing import Type, Union
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -19,7 +19,7 @@ class NDStateMachine:
     Generic State Machine for Nexus Dashboard (Bulk Support).
     """
 
-    def __init__(self, module: AnsibleModule, model_orchestrator: Type[NDBaseOrchestrator]):
+    def __init__(self, module: AnsibleModule, model_orchestrator: Union[Type[NDBaseOrchestrator], NDBaseOrchestrator]):
         """
         Initialize the ND State Machine.
         """
@@ -31,10 +31,12 @@ class NDStateMachine:
 
         # Configuration
         # Accept either an orchestrator instance or a class.
-        if isinstance(model_orchestrator, type):
+        if isinstance(model_orchestrator, type) and issubclass(model_orchestrator, NDBaseOrchestrator):
             self.model_orchestrator = model_orchestrator(sender=self.nd_module)
-        else:
+        elif isinstance(model_orchestrator, NDBaseOrchestrator):
             self.model_orchestrator = model_orchestrator
+        else:
+            raise NDStateMachineError(f"model_orchestrator must be an NDBaseOrchestrator class or instance. Got: {type(model_orchestrator)}")
 
         self.model_class = self.model_orchestrator.model_class
         self.state = self.module.params["state"]
