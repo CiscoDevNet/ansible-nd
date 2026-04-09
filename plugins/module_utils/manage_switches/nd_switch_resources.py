@@ -2437,6 +2437,8 @@ class NDSwitchResourceModule:
             self.sent: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
             self.sent_adds: List[SwitchConfigModel] = []
             self.proposed_cfgs: List[SwitchConfigModel] = []
+            # Plan stored here after compute_changes so check-mode output can use it
+            self._plan: Optional[SwitchPlan] = None
         except Exception as e:
             msg = f"Failed to query fabric '{self.fabric}' inventory " f"during initialization: {e}"
             log.error(msg)
@@ -2498,6 +2500,131 @@ class NDSwitchResourceModule:
                 self.log.warning("Could not convert config %s for output: %s", cfg.seed_ip, exc)
         return result
 
+    def _build_check_mode_output(self) -> Dict[str, Any]:
+        """Build before/after/diff/changed output for check mode.
+
+        Since no API writes are issued in check mode, ``self.sent`` and
+        ``self.sent_adds`` are always empty.  This method derives the same
+        information directly from the action plan (``self._plan``) and the
+        real pre-operation inventory snapshot (``self.before``).
+
+        For ``deleted`` state the plan may be ``None`` (no config supplied),
+        so the entire existing inventory is treated as the deletion target.
+
+        Returns:
+            Dict suitable for merging into the final ``exit_json`` payload,
+            containing ``before``, ``after``, ``diff``, and ``changed``.
+        """
+        before_list = self._inventory_to_config_list(self.before)
+        existing_by_ip = {sw.fabric_management_ip: sw for sw in self.before}
+        diff_list: List[Dict[str, Any]] = []
+
+        if self._plan is not None:
+            plan = self._plan
+
+            # Switches that would be deleted
+            deleted_sws: List[SwitchDataModel] = list(plan.to_delete) + list(plan.to_delete_existing)
+            if self.state == "deleted":
+                # _handle_deleted_state fills plan.to_delete only for
+                # overridden; for state=deleted the deletions come from the
+                # handler's own switch-by-switch loop which we replicate here.
+                deleted_sws = [
+                    sw for sw in self.before
+                    if sw.fabric_management_ip in {cfg.seed_ip for cfg in (self.proposed_cfgs or [])}
+                    or not self.proposed_cfgs
+                ]
+            for sw in deleted_sws:
+                if not sw.fabric_management_ip:
+                    continue
+                role = sw.switch_role
+                diff_list.append({
+                    "seed_ip": sw.fabric_management_ip,
+                    "role": getattr(role, "value", str(role)) if role else "leaf",
+                    "_action": "deleted",
+                })
+
+            # Switches that would be added (normal to_add + POAP/preprov/rma)
+            adds: List[SwitchConfigModel] = (
+                list(plan.to_add)
+                + list(plan.normal_readd)
+                + list(plan.to_bootstrap)
+                + list(plan.to_preprovision)
+                + list(plan.to_swap)
+                + list(plan.to_rma)
+            )
+            for cfg in adds:
+                try:
+                    entry = cfg.to_config()
+                    entry.pop("platform_type", None)
+                    entry.pop("operation_type", None)
+                    entry["password"] = "<password>"
+                    entry["_action"] = "added"
+                    diff_list.append(entry)
+                except Exception as exc:
+                    self.log.warning("check_mode diff: could not convert %s: %s", cfg.seed_ip, exc)
+
+            # Switches whose role would be updated (overridden/replaced)
+            for cfg in plan.to_update:
+                try:
+                    entry = cfg.to_config()
+                    entry.pop("platform_type", None)
+                    entry.pop("operation_type", None)
+                    entry["password"] = "<password>"
+                    entry["_action"] = "updated"
+                    diff_list.append(entry)
+                except Exception as exc:
+                    self.log.warning("check_mode diff: could not convert %s: %s", cfg.seed_ip, exc)
+
+            # Simulate the post-operation inventory for "after":
+            #   start from before, remove deletions, add additions as stubs
+            deleted_ips = {sw.fabric_management_ip for sw in deleted_sws}
+            after_list = [e for e in before_list if e.get("seed_ip") not in deleted_ips]
+            for cfg in adds:
+                # Mirror the format produced by _inventory_to_config_list — no
+                # poap/preprovision sub-blocks since those reflect the user's
+                # desired discovery method, not the resulting inventory state.
+                role = cfg.role
+                after_list.append({
+                    "seed_ip": cfg.seed_ip,
+                    "role": getattr(role, "value", str(role)) if role else "leaf",
+                    "auth_proto": "MD5",
+                    "preserve_config": bool(getattr(cfg, "preserve_config", False)),
+                    "username": "<username>",
+                    "password": "<password>",
+                })
+            # Apply role updates in-place
+            update_role_map = {cfg.seed_ip: cfg for cfg in plan.to_update}
+            for entry in after_list:
+                ip = entry.get("seed_ip")
+                if ip in update_role_map:
+                    role = update_role_map[ip].role
+                    entry["role"] = getattr(role, "value", str(role)) if role else entry.get("role")
+        else:
+            # deleted state with no config — would delete everything
+            after_list = []
+            for sw in self.before:
+                if not sw.fabric_management_ip:
+                    continue
+                role = sw.switch_role
+                diff_list.append({
+                    "seed_ip": sw.fabric_management_ip,
+                    "role": getattr(role, "value", str(role)) if role else "leaf",
+                    "_action": "deleted",
+                })
+
+        changed = bool(diff_list)
+        output_level = self.module.params.get("output_level", "normal")
+        result: Dict[str, Any] = {
+            "output_level": output_level,
+            "changed": changed,
+            "before": before_list,
+            "after": after_list,
+            "diff": diff_list,
+        }
+        if output_level in ("info", "debug"):
+            result["proposed"] = self._proposed_to_config_list(self.proposed_cfgs)
+        return result
+
     def exit_json(self) -> None:
         """Finalize collected results and exit the Ansible module.
 
@@ -2523,10 +2650,12 @@ class NDSwitchResourceModule:
                     self.nd.module.fail_json(msg=msg)
             self.output.assign(after=self.existing)
             final.update(self.output.format(gathered=gathered))
+        elif self.nd.module.check_mode:
+            final.update(self._build_check_mode_output())
         else:
             # Re-query the fabric to get the actual post-operation inventory so
             # that "after" reflects real state rather than the pre-op snapshot.
-            if True not in self.results.failed and not self.nd.module.check_mode:
+            if True not in self.results.failed:
                 self.existing = NDConfigCollection.from_api_response(
                     response_data=self._query_all_switches(),
                     model_class=SwitchDataModel,
@@ -2635,6 +2764,7 @@ class NDSwitchResourceModule:
 
         # Classify all configs in one pass — idempotency included
         plan = SwitchDiffEngine.compute_changes(proposed_config, list(self.existing), self.log)
+        self._plan = plan
 
         # --- Single combined discovery pass -------------------------------------
         # Discover every switch that is not yet in the fabric:
@@ -2642,23 +2772,37 @@ class NDSwitchResourceModule:
         #   • plan.normal_readd — POAP/preprov mismatches that are reachable
         # Switches already in the fabric (to_update, migration_mode) are
         # skipped here; overridden will re-discover them after deletion.
+        #
+        # In check mode, discovery is skipped entirely: new switches are not
+        # yet reachable/enrolled so shallow discovery would fail or return no
+        # data. The per-state check-mode guards handle reporting via the diff.
         configs_to_discover = plan.to_add + plan.normal_readd
         if configs_to_discover:
-            self.log.info(
-                "Discovering %s switch(es): %s normal-add, %s poap-readd",
-                len(configs_to_discover),
-                len(plan.to_add),
-                len(plan.normal_readd),
-            )
-            discovered_data = self.discovery.discover(configs_to_discover)
+            if self.nd.module.check_mode:
+                self.log.info(
+                    "Check mode: skipping discovery for %s switch(es) (%s normal-add, %s poap-readd) — assuming to_add",
+                    len(configs_to_discover),
+                    len(plan.to_add),
+                    len(plan.normal_readd),
+                )
+                discovered_data = {}
+            else:
+                self.log.info(
+                    "Discovering %s switch(es): %s normal-add, %s poap-readd",
+                    len(configs_to_discover),
+                    len(plan.to_add),
+                    len(plan.normal_readd),
+                )
+                discovered_data = self.discovery.discover(configs_to_discover)
         else:
             self.log.info("No switches need discovery in this run")
             discovered_data = {}
 
         # Build proposed SwitchDataModel collection for normal switches only
-        # (needed for the self.proposed reference used in check-mode reporting)
+        # (needed for the self.proposed reference used in check-mode reporting).
+        # Skipped in check mode since discovered_data is empty for new switches.
         normal_configs = [c for c in proposed_config if c.operation_type == "normal"]
-        if normal_configs:
+        if normal_configs and not self.nd.module.check_mode:
             built = self.discovery.build_proposed(normal_configs, discovered_data, list(self.existing))
             self.proposed = NDConfigCollection(model_class=SwitchDataModel, items=built)
 

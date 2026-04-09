@@ -275,6 +275,12 @@ class RestSend:
         msg += f"verb {self.verb}, path {self.path}."
         self.log.debug(msg)
 
+        # GET is read-only: execute against the real API so check-mode diffs
+        # reflect actual controller state rather than a fake empty response.
+        if self.verb == HttpVerbEnum.GET:
+            self._commit_normal_mode()
+            return
+
         response_current: dict = {}
         response_current["RETURN_CODE"] = 200
         response_current["METHOD"] = self.verb
