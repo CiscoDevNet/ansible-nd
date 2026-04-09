@@ -14,7 +14,10 @@
       sw1: "{{ ansible_switch1 }}"
       sw1_serial: "1ABC23DEFGH"
       sw1_rma_serial: "1ABC23DERMA"
-      deploy: "{{ deploy }}"
+      config_actions:
+        save: "{{ save }}"
+        deploy: "{{ deploy }}"
+        type: "{{ config_actions_type }}"
       rma_enabled: false
   delegate_to: localhost
   tags: rma
@@ -98,7 +101,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: merged
     config: "{{ nd_switches_rma_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   when: rma_enabled == True
   register: merged_result
   tags: rma

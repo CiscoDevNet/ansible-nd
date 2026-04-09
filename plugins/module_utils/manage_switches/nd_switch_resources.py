@@ -125,6 +125,7 @@ class SwitchServiceContext:
     log: logging.Logger
     save_config: bool = True
     deploy_config: bool = True
+    deploy_type: str = "switch"
 
 
 # =========================================================================
@@ -1198,11 +1199,16 @@ class SwitchFabricOps:
 
         log.debug("EXIT: bulk_update_roles()")
 
-    def finalize(self) -> None:
+    def finalize(self, serial_numbers: Optional[List[str]] = None) -> None:
         """Run optional save and deploy actions for the fabric.
 
         Uses service context flags to decide whether save and deploy should be
         executed. No-op in check mode.
+
+        Args:
+            serial_numbers: Switch serial numbers to deploy when
+                            ``deploy_type`` is ``switch``. Falls back to
+                            global deploy if empty or ``None``.
 
         Returns:
             None.
@@ -1215,8 +1221,17 @@ class SwitchFabricOps:
             self.fabric_utils.save_config()
 
         if self.ctx.deploy_config:
-            self.ctx.log.info("Deploying fabric configuration")
-            self.fabric_utils.deploy_config()
+            if self.ctx.deploy_type == "switch" and serial_numbers:
+                self.ctx.log.info("Switch-level deploy for: %s", serial_numbers)
+                self.fabric_utils.deploy_switches(serial_numbers)
+            else:
+                if self.ctx.deploy_type == "switch" and not serial_numbers:
+                    self.ctx.log.warning(
+                        "Switch-level deploy requested but no serial numbers provided "
+                        "— falling back to global deploy"
+                    )
+                self.ctx.log.info("Deploying fabric configuration (global)")
+                self.fabric_utils.deploy_config()
 
     def post_add_processing(
         self,
@@ -1272,7 +1287,7 @@ class SwitchFabricOps:
             self.bulk_update_roles(switch_actions)
 
         try:
-            self.finalize()
+            self.finalize(serial_numbers=all_serials)
         except Exception as e:
             msg = f"Failed to finalize (config-save/deploy) for " f"{context} switches {all_serials}: {e}"
             log.error(msg)
@@ -2139,7 +2154,7 @@ class RMAHandler:
         self.fabric_ops.bulk_save_credentials(switch_actions)
 
         try:
-            self.fabric_ops.finalize()
+            self.fabric_ops.finalize(serial_numbers=all_new_serials)
         except Exception as e:
             msg = f"Failed to finalize (config-save/deploy) for RMA " f"switches {all_new_serials}: {e}"
             log.error(msg)
@@ -2400,13 +2415,15 @@ class NDSwitchResourceModule:
         self.state = self.module.params.get("state")
 
         # Shared context for service classes
+        config_actions = self.module.params.get("config_actions") or {}
         self.ctx = SwitchServiceContext(
             nd=nd,
             results=results,
             fabric=self.fabric,
             log=log,
-            save_config=self.module.params.get("save"),
-            deploy_config=self.module.params.get("deploy"),
+            save_config=config_actions.get("save", True),
+            deploy_config=config_actions.get("deploy", True),
+            deploy_type=config_actions.get("type", "switch"),
         )
 
         # Switch collections
@@ -2848,7 +2865,12 @@ class NDSwitchResourceModule:
             )
         elif idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
-            self.fabric_ops.finalize()
+            sync_serials = [
+                existing_by_ip[cfg.seed_ip].switch_id
+                for cfg in plan.idempotent
+                if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
+            ]
+            self.fabric_ops.finalize(serial_numbers=sync_serials)
 
         # --- POAP / preprovision / swap / RMA -----------------------------------
         # normal_readd was already processed via bulk_add above.
@@ -3032,7 +3054,12 @@ class NDSwitchResourceModule:
             )
         elif idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
-            self.fabric_ops.finalize()
+            sync_serials = [
+                existing_by_ip[cfg.seed_ip].switch_id
+                for cfg in plan.idempotent
+                if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
+            ]
+            self.fabric_ops.finalize(serial_numbers=sync_serials)
 
         # --- Phase 4: POAP workflows (bootstrap / preprovision / swap) ----------
         # plan.to_delete_existing was deleted in Phase 1.
@@ -3207,7 +3234,12 @@ class NDSwitchResourceModule:
             )
         elif idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
-            self.fabric_ops.finalize()
+            sync_serials = [
+                existing_by_ip[cfg.seed_ip].switch_id
+                for cfg in plan.idempotent
+                if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
+            ]
+            self.fabric_ops.finalize(serial_numbers=sync_serials)
 
         # --- Phase 4: POAP workflows (bootstrap / preprovision / swap) ----------
         poap_workflow_configs = plan.to_bootstrap + plan.to_preprovision + plan.to_swap

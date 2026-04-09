@@ -13,7 +13,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: merged
     config: "{{ nd_switches_base_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   register: merged_result
   tags: deleted
 

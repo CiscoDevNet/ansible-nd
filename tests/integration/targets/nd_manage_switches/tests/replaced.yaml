@@ -13,7 +13,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: merged
     config: "{{ nd_switches_base_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   register: merged_result
   tags: replaced
 
@@ -66,7 +66,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: replaced
     config: "{{ nd_switches_replaced_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   register: replaced_result
   tags: replaced
 
@@ -113,7 +113,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: replaced
     config: "{{ nd_switches_replaced_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   register: replaced_result
   tags: replaced
 

@@ -45,17 +45,32 @@ options:
         - overridden
         - deleted
         - gathered
-    save:
+    config_actions:
         description:
-        - Save/Recalculate the configuration of the fabric after inventory is updated.
-        type: bool
-        default: true
-    deploy:
-        description:
-        - Deploy the pending configuration of the fabric after inventory is updated.
-        - When set to C(true), C(save) must also be C(true).
-        type: bool
-        default: true
+        - Controls save and deploy behavior after inventory is updated.
+        type: dict
+        suboptions:
+            save:
+                description:
+                - Save/Recalculate the configuration of the fabric after inventory is updated.
+                type: bool
+                default: true
+            deploy:
+                description:
+                - Deploy the pending configuration after inventory is updated.
+                - When set to C(true), C(save) must also be C(true).
+                type: bool
+                default: true
+            type:
+                description:
+                - Scope of the deploy operation.
+                - C(switch) deploys only the switches affected in this run.
+                - C(global) deploys all pending changes for the entire fabric.
+                type: str
+                default: switch
+                choices:
+                - switch
+                - global
     config:
         description:
         - List of switch configurations. Optional for state C(deleted).
@@ -408,8 +423,9 @@ def main():
 
     require_pydantic(module)
 
-    if module.params.get("deploy") and not module.params.get("save"):
-        module.fail_json(msg="'deploy: true' requires 'save: true'")
+    config_actions = module.params.get("config_actions") or {}
+    if config_actions.get("deploy", True) and not config_actions.get("save", True):
+        module.fail_json(msg="'config_actions.deploy: true' requires 'config_actions.save: true'")
 
     # Initialize logging
     try:

@@ -574,8 +574,18 @@ class SwitchConfigModel(NDBaseModel):
                 default="merged",
                 choices=["merged", "replaced", "overridden", "deleted", "gathered"],
             ),
-            save=dict(type="bool", default=True),
-            deploy=dict(type="bool", default=True),
+            config_actions=dict(
+                type="dict",
+                options=dict(
+                    save=dict(type="bool", default=True),
+                    deploy=dict(type="bool", default=True),
+                    type=dict(
+                        type="str",
+                        default="switch",
+                        choices=["switch", "global"],
+                    ),
+                ),
+            ),
             config=dict(
                 type="list",
                 elements="dict",

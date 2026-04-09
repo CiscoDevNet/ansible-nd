@@ -527,3 +527,78 @@ class EpManageFabricsSwitchActionsRediscoverPost(_EpManageFabricsSwitchActionsBa
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.POST
+
+
+class EpManageFabricsSwitchActionsDeployPost(_EpManageFabricsSwitchActionsBase):
+    """
+    # Summary
+
+    Switch-Level Config Deploy Endpoint
+
+    ## Description
+
+    Endpoint to deploy pending configuration for specific switches in a fabric.
+    Unlike the global ``configDeploy`` endpoint, this deploys only the specified
+    switches identified by their serial numbers.
+
+    ## Path
+
+    - /api/v1/manage/fabrics/{fabricName}/switchActions/deploy
+    - /api/v1/manage/fabrics/{fabricName}/switchActions/deploy?ticketId=CHG12345
+
+    ## Verb
+
+    - POST
+
+    ## Body
+
+    ```json
+    {"switchIds": ["FOC21373AFA", "FVT93126SKE"]}
+    ```
+
+    ## Query Parameters
+
+    - ticket_id: Change control ticket ID (optional)
+
+    ## Usage
+
+    ```python
+    request = EpManageFabricsSwitchActionsDeployPost()
+    request.fabric_name = "MyFabric"
+    path = request.path
+    verb = request.verb
+    # POST body: {"switchIds": ["FOC21373AFA"]}
+    ```
+    """
+
+    class_name: Literal["EpManageFabricsSwitchActionsDeployPost"] = Field(
+        default="EpManageFabricsSwitchActionsDeployPost",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+    endpoint_params: SwitchActionsTicketEndpointParams = Field(
+        default_factory=SwitchActionsTicketEndpointParams,
+        description="Endpoint-specific query parameters",
+    )
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the endpoint path with optional query string.
+
+        ## Returns
+
+        - Complete endpoint path string, optionally including query parameters
+        """
+        base = f"{self._base_path}/deploy"
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{base}?{query_string}"
+        return base
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.POST

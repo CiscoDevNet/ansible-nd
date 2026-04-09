@@ -13,7 +13,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: merged
     config: "{{ nd_switches_base_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   register: merged_result
   tags: overridden
 
@@ -66,7 +66,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: overridden
     config: "{{ nd_switches_overridden_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   register: overridden_result
   tags: overridden
 
@@ -106,7 +106,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: overridden
     config: "{{ nd_switches_overridden_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   register: overridden_result
   tags: overridden
 
@@ -145,7 +145,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: overridden
     config: "{{ nd_switches_overridden_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   register: overridden_result
   tags: overridden
 

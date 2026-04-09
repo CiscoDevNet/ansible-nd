@@ -18,7 +18,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: merged
     config: "{{ nd_switches_base_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   register: create_result
   tags: sanity
 
@@ -114,7 +114,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: replaced
     config: "{{ nd_switches_sanity_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   register: replaced_result
   tags: sanity
 
@@ -178,7 +178,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: overridden
     config: "{{ nd_switches_sanity_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   register: overriden_result
   tags: sanity
 

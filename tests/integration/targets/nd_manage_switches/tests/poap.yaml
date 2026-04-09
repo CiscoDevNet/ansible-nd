@@ -22,7 +22,10 @@
       poap_configmodel: "['ABC-D1230a']"
       poap_gateway: "192.168.2.1/24"
       sw3: "{{ ansible_switch3 }}"
-      deploy: "{{ deploy }}"
+      config_actions:
+        save: "{{ save }}"
+        deploy: "{{ deploy }}"
+        type: "{{ config_actions_type }}"
     poap_enabled: false
   delegate_to: localhost
   tags: poap
@@ -145,7 +148,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: merged
     config: "{{ nd_switches_poap_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   when: poap_enabled == True
   register: merged_result
   tags: poap
@@ -178,7 +181,7 @@
   ansible.builtin.assert:
     that:
       - 'merged_result.changed == false'
-      # - 'merged_result.response == "The switch provided is already part of the fabric and cannot be created again"'
+      - 'merged_result.msg == "No switches to merge — fabric already matches desired config"'
   when: poap_enabled == True
   tags: poap
 
@@ -212,7 +215,7 @@
     fabric: "{{ test_data.test_fabric }}"
     state: merged
     config: "{{ nd_switches_poap_conf }}"
-    deploy: "{{ test_data.deploy }}"
+    config_actions: "{{ test_data.config_actions }}"
   when: poap_enabled == True
   register: merged_result
   tags: poap
@@ -245,7 +248,7 @@
   ansible.builtin.assert:
     that:
       - 'result.changed == false'
-      # - 'result.response == "The switch provided is already part of the fabric and cannot be created again"'
+      - 'result.msg == "No switches to merge — fabric already matches desired config"'
   when: poap_enabled == True
   tags: poap
 

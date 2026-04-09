@@ -16,6 +16,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions import (
     EpManageFabricsActionsConfigSavePost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
+    EpManageFabricsSwitchActionsDeployPost,
+)
 
 
 def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
@@ -129,6 +132,9 @@ class FabricUtils:
         self.ep_config_deploy = EpManageFabricConfigDeployPost()
         self.ep_config_deploy.fabric_name = fabric
 
+        self.ep_switch_deploy = EpManageFabricsSwitchActionsDeployPost()
+        self.ep_switch_deploy.fabric_name = fabric
+
         self.ep_fabric_get = EpManageFabricGet()
         self.ep_fabric_get.fabric_name = fabric
 
@@ -200,6 +206,38 @@ class FabricUtils:
             SwitchOperationError: If the deploy request fails.
         """
         return self._request_endpoint(self.ep_config_deploy, action="Config deploy")
+
+    def deploy_switches(self, serial_numbers: List[str]) -> Dict[str, Any]:
+        """Deploy pending configuration for specific switches only.
+
+        Uses the switch-level deploy endpoint which targets only the supplied
+        switches rather than all pending changes for the entire fabric.
+
+        Args:
+            serial_numbers: Switch serial numbers (identifiers) to deploy.
+
+        Returns:
+            API response dict.
+
+        Raises:
+            SwitchOperationError: If the deploy request fails.
+        """
+        self.log.info(
+            "Switch-level deploy for %s switch(es) in fabric: %s",
+            len(serial_numbers),
+            self.fabric,
+        )
+        try:
+            response = self.nd.request(
+                self.ep_switch_deploy.path,
+                verb=self.ep_switch_deploy.verb,
+                data={"switchIds": serial_numbers},
+            )
+            self.log.info("Switch-level deploy completed for fabric: %s", self.fabric)
+            return response
+        except Exception as e:
+            self.log.error("Switch-level deploy failed for fabric %s: %s", self.fabric, e)
+            raise SwitchOperationError(f"Switch-level deploy failed for fabric {self.fabric}: {e}") from e
 
     def get_fabric_info(self) -> Dict[str, Any]:
         """Retrieve fabric information.

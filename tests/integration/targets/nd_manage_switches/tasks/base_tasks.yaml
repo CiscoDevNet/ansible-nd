@@ -16,7 +16,10 @@
       sw1: "{{ ansible_switch1 }}"
       sw2: "{{ ansible_switch2 }}"
       sw3: "{{ ansible_switch3 }}"
-      deploy: "{{ deploy }}"
+      config_actions:
+        save: "{{ save }}"
+        deploy: "{{ deploy }}"
+        type: "{{ config_actions_type }}"
   delegate_to: localhost
 
 # ----------------------------------------------
