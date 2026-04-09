@@ -106,9 +106,7 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     # Fabric Group Type (required for discriminated union)
-    type: Literal[FabricGroupTypeEnum.VXLAN] = Field(
-        description="Type of the fabric group", default=FabricGroupTypeEnum.VXLAN
-    )
+    type: Literal[FabricGroupTypeEnum.VXLAN] = Field(description="Type of the fabric group", default=FabricGroupTypeEnum.VXLAN)
 
     # VNI Ranges
     l2_vni_range: str = Field(
@@ -419,9 +417,7 @@ class FabricGroupVxlanModel(NDBaseModel):
     fabric_name: str = Field(alias="name", description="Fabric group name", min_length=1, max_length=64)
 
     # Core Management Configuration
-    management: Optional[VxlanFabricGroupManagementModel] = Field(
-        description="VXLAN fabric group management configuration", default=None
-    )
+    management: Optional[VxlanFabricGroupManagementModel] = Field(description="VXLAN fabric group management configuration", default=None)
 
     @field_validator("fabric_name")
     @classmethod
