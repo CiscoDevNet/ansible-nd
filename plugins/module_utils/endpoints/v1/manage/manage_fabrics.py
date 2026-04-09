@@ -508,9 +508,7 @@ class EpManageFabricsSummaryGet(_EpManageFabricsBase):
     ```
     """
 
-    class_name: Literal["EpManageFabricsSummaryGet"] = Field(
-        default="EpManageFabricsSummaryGet", description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpManageFabricsSummaryGet"] = Field(default="EpManageFabricsSummaryGet", description="Class name for backward compatibility")
 
     _path_suffix: ClassVar[Optional[str]] = "summary"
 
@@ -586,4 +584,3 @@ class EpManageFabricConfigDeployPost(_EpManageFabricsBase):
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.POST
-

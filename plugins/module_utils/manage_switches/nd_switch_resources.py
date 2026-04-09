@@ -1226,10 +1226,7 @@ class SwitchFabricOps:
                 self.fabric_utils.deploy_switches(serial_numbers)
             else:
                 if self.ctx.deploy_type == "switch" and not serial_numbers:
-                    self.ctx.log.warning(
-                        "Switch-level deploy requested but no serial numbers provided "
-                        "— falling back to global deploy"
-                    )
+                    self.ctx.log.warning("Switch-level deploy requested but no serial numbers provided — falling back to global deploy")
                 self.ctx.log.info("Deploying fabric configuration (global)")
                 self.fabric_utils.deploy_config()
 
@@ -2529,28 +2526,23 @@ class NDSwitchResourceModule:
                 # overridden; for state=deleted the deletions come from the
                 # handler's own switch-by-switch loop which we replicate here.
                 deleted_sws = [
-                    sw for sw in self.before
-                    if sw.fabric_management_ip in {cfg.seed_ip for cfg in (self.proposed_cfgs or [])}
-                    or not self.proposed_cfgs
+                    sw for sw in self.before if sw.fabric_management_ip in {cfg.seed_ip for cfg in (self.proposed_cfgs or [])} or not self.proposed_cfgs
                 ]
             for sw in deleted_sws:
                 if not sw.fabric_management_ip:
                     continue
                 role = sw.switch_role
-                diff_list.append({
-                    "seed_ip": sw.fabric_management_ip,
-                    "role": getattr(role, "value", str(role)) if role else "leaf",
-                    "_action": "deleted",
-                })
+                diff_list.append(
+                    {
+                        "seed_ip": sw.fabric_management_ip,
+                        "role": getattr(role, "value", str(role)) if role else "leaf",
+                        "_action": "deleted",
+                    }
+                )
 
             # Switches that would be added (normal to_add + POAP/preprov/rma)
             adds: List[SwitchConfigModel] = (
-                list(plan.to_add)
-                + list(plan.normal_readd)
-                + list(plan.to_bootstrap)
-                + list(plan.to_preprovision)
-                + list(plan.to_swap)
-                + list(plan.to_rma)
+                list(plan.to_add) + list(plan.normal_readd) + list(plan.to_bootstrap) + list(plan.to_preprovision) + list(plan.to_swap) + list(plan.to_rma)
             )
             for cfg in adds:
                 try:
@@ -2584,14 +2576,16 @@ class NDSwitchResourceModule:
                 # poap/preprovision sub-blocks since those reflect the user's
                 # desired discovery method, not the resulting inventory state.
                 role = cfg.role
-                after_list.append({
-                    "seed_ip": cfg.seed_ip,
-                    "role": getattr(role, "value", str(role)) if role else "leaf",
-                    "auth_proto": "MD5",
-                    "preserve_config": bool(getattr(cfg, "preserve_config", False)),
-                    "username": "<username>",
-                    "password": "<password>",
-                })
+                after_list.append(
+                    {
+                        "seed_ip": cfg.seed_ip,
+                        "role": getattr(role, "value", str(role)) if role else "leaf",
+                        "auth_proto": "MD5",
+                        "preserve_config": bool(getattr(cfg, "preserve_config", False)),
+                        "username": "<username>",
+                        "password": "<password>",
+                    }
+                )
             # Apply role updates in-place
             update_role_map = {cfg.seed_ip: cfg for cfg in plan.to_update}
             for entry in after_list:
@@ -2606,11 +2600,13 @@ class NDSwitchResourceModule:
                 if not sw.fabric_management_ip:
                     continue
                 role = sw.switch_role
-                diff_list.append({
-                    "seed_ip": sw.fabric_management_ip,
-                    "role": getattr(role, "value", str(role)) if role else "leaf",
-                    "_action": "deleted",
-                })
+                diff_list.append(
+                    {
+                        "seed_ip": sw.fabric_management_ip,
+                        "role": getattr(role, "value", str(role)) if role else "leaf",
+                        "_action": "deleted",
+                    }
+                )
 
         changed = bool(diff_list)
         output_level = self.module.params.get("output_level", "normal")
@@ -3010,9 +3006,7 @@ class NDSwitchResourceModule:
         elif idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
             sync_serials = [
-                existing_by_ip[cfg.seed_ip].switch_id
-                for cfg in plan.idempotent
-                if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
+                existing_by_ip[cfg.seed_ip].switch_id for cfg in plan.idempotent if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
             ]
             self.fabric_ops.finalize(serial_numbers=sync_serials)
 
@@ -3199,9 +3193,7 @@ class NDSwitchResourceModule:
         elif idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
             sync_serials = [
-                existing_by_ip[cfg.seed_ip].switch_id
-                for cfg in plan.idempotent
-                if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
+                existing_by_ip[cfg.seed_ip].switch_id for cfg in plan.idempotent if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
             ]
             self.fabric_ops.finalize(serial_numbers=sync_serials)
 
@@ -3379,9 +3371,7 @@ class NDSwitchResourceModule:
         elif idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
             sync_serials = [
-                existing_by_ip[cfg.seed_ip].switch_id
-                for cfg in plan.idempotent
-                if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
+                existing_by_ip[cfg.seed_ip].switch_id for cfg in plan.idempotent if cfg.seed_ip in existing_by_ip and existing_by_ip[cfg.seed_ip].switch_id
             ]
             self.fabric_ops.finalize(serial_numbers=sync_serials)
 
