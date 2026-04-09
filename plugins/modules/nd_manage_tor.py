@@ -1,4 +1,4 @@
-# Copyright: (c) 2026, Cisco Systems
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -14,9 +14,9 @@ short_description: Manage access or ToR switch associations on Cisco Nexus Dashb
 description:
 - Manage access or ToR (Top of Rack) switch associations with aggregation or leaf switches on Cisco Nexus Dashboard (ND).
 - It supports associating, disassociating, and querying ToR switch pairings within a fabric.
-- Four association topologies are supported: single (1:1), aggregation VPC, back-to-back VPC, and bulk mixed.
+- Four association topologies are supported - single (1:1), aggregation VPC, back-to-back VPC, and bulk mixed.
 author:
-- Cisco Systems
+- Matt Tarkington (@mtarking)
 options:
   fabric_name:
     description:

@@ -1,4 +1,4 @@
-# Copyright: (c) 2026, Cisco Systems
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -76,7 +76,7 @@ def test_endpoints_api_v1_manage_tor_00030():
     """
     with pytest.raises(ValueError):
         instance = EpManageTorAssociatePost()
-        _ = instance.path
+        result = instance.path  # noqa: F841
 
 
 def test_endpoints_api_v1_manage_tor_00040():
@@ -167,7 +167,7 @@ def test_endpoints_api_v1_manage_tor_00120():
     """
     with pytest.raises(ValueError):
         instance = EpManageTorDisassociatePost()
-        _ = instance.path
+        result = instance.path  # noqa: F841
 
 
 def test_endpoints_api_v1_manage_tor_00130():
@@ -239,7 +239,7 @@ def test_endpoints_api_v1_manage_tor_00220():
     """
     with pytest.raises(ValueError):
         instance = EpManageTorAssociationsGet()
-        _ = instance.path
+        result = instance.path  # noqa: F841
 
 
 def test_endpoints_api_v1_manage_tor_00230():
