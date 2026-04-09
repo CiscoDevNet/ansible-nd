@@ -106,8 +106,8 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
 
     @requires_bulk_support("supports_bulk_create")
     def create_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
-        pass
+        raise NotImplementedError
 
     @requires_bulk_support("supports_bulk_delete")
     def delete_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
-        pass
+        raise NotImplementedError
