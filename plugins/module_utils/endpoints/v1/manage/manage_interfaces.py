@@ -336,11 +336,7 @@ class EpManageInterfacesNormalize(FabricNameMixin, NDEndpointBaseModel):
     """
     # Summary
 
-    Normalize (reset) interface configurations on switches.
-
-    For physical ethernet interfaces, this is the API equivalent of the NX-OS `default interface` CLI command.
-    Unlike `interfaceActions/remove` (which silently does nothing for ethernet) and `DELETE` (which returns 500),
-    normalize actually resets the interface configuration.
+    Normalize interface configurations on switches.
 
     - Path: `/api/v1/manage/fabrics/{fabric_name}/interfaceActions/normalize`
     - Verb: POST
