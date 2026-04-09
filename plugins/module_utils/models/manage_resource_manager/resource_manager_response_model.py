@@ -128,4 +128,4 @@ class ResourcesManagerBatchResponse(NDBaseModel):
 __all__ = [
     "ResourcesManagerBatchResponse",
     "ResourceManagerResponse",
-    ]
+]

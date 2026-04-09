@@ -1537,7 +1537,6 @@ class NDResourceManagerModule:
         self.log.debug("_build_create_payload: final payload=%s", payload)
         return payload
 
-
     # ------------------------------------------------------------------
     # Gathered results translation
     # ------------------------------------------------------------------
@@ -1624,7 +1623,9 @@ class NDResourceManagerModule:
             switch_ip = self._get_switch_ip(res)
             pool_type = self._determine_pool_type(resource_value)
             self.log.debug(
-                "translate_gathered_results: [%s] resolved fields — entity_name='%s', pool_name='%s', scope_type='%s', pool_type='%s', resource_value='%s', switch_ip='%s'",
+                "translate_gathered_results: [%s] resolved fields — "
+                "entity_name='%s', pool_name='%s', scope_type='%s', "
+                "pool_type='%s', resource_value='%s', switch_ip='%s'",
                 res_idx,
                 entity_name,
                 pool_name,
