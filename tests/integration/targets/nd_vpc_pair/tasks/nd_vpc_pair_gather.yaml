@@ -129,8 +129,15 @@
 - name: GATHER - TC4/TC5 - ASSERT - Verify partial peer gathers are rejected
   ansible.builtin.assert:
     that:
-      - item.failed == true
       - item.msg is defined
+      - >
+        (
+          item.failed | default(false)
+        )
+        or
+        (
+          (item.msg | lower) is search("missing required arguments")
+        )
   loop: "{{ partial_filter_results.results }}"
   loop_control:
     label: "{{ item.item.test_name }}"
@@ -157,20 +164,19 @@
       - result.gathered is defined
   tags: gather
 
-# TC7 - Gather with custom verify_option timeout
-- name: GATHER - TC7 - GATHER - Gather with verify_option override
+# TC7 - Gather with custom verify timeout/retries
+- name: GATHER - TC7 - GATHER - Gather with verify override
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
-    suppress_verification: true
-    verify_option:
+    verify:
       timeout: 20
-      iteration: 3
+      retries: 3
   register: result
   tags: gather
 
-- name: GATHER - TC7 - ASSERT - Verify verify_option path execution
+- name: GATHER - TC7 - ASSERT - Verify verify path execution
   ansible.builtin.assert:
     that:
       - result.failed == false
@@ -191,7 +197,9 @@
 - name: GATHER - TC8 - ASSERT - Verify gathered+deploy validation
   ansible.builtin.assert:
     that:
-      - result.failed == true
+      - result.changed == false
+      - result.gathered is not defined
+      - result.msg is defined
       - result.msg is search("Deploy parameter cannot be used")
   tags: gather
 
@@ -386,6 +394,84 @@
       - result.failed == false
       - result.changed == false
       - '(result.gathered.vpc_pairs | length) == 1'
+  tags: gather
+
+# TC12 - Gather extended vpc_pair_details coverage
+- name: GATHER - TC12 - MERGE - Apply extended vpc_pair_details for gather coverage
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+        vpc_pair_details: "{{ vpc_pair_details_extended }}"
+  register: result
+  when: test_fabric_type == "LANClassic"
+  tags: gather
+
+- name: GATHER - TC12 - GATHER - Query pair with extended vpc_pair_details
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: tc12_gather_result
+  when: test_fabric_type == "LANClassic"
+  tags: gather
+
+- name: GATHER - TC12 - VALIDATE - Verify extended vpc_pair_details in gathered output
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ tc12_gather_result }}"
+    expected_data:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+        vpc_pair_details: "{{ vpc_pair_details_extended }}"
+    mode: "full"
+    validate_vpc_pair_details: true
+  register: tc12_validation
+  when: test_fabric_type == "LANClassic"
+  tags: gather
+
+- name: GATHER - TC12 - ASSERT - Extended details gather validation passed
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - tc12_gather_result.failed == false
+      - tc12_validation.failed == false
+  when: test_fabric_type == "LANClassic"
+  tags: gather
+
+# TC13 - gathered + config_actions validation (must fail)
+- name: GATHER - TC13 - GATHER - Gather with config_actions enabled (invalid)
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: true
+      deploy: false
+      type: switch
+  register: result
+  failed_when: false
+  tags: gather
+
+- name: GATHER - TC13 - ASSERT - Verify gathered+config_actions validation
+  ansible.builtin.assert:
+    that:
+      - result.changed == false
+      - result.gathered is not defined
+      - result.msg is defined
+      - >
+        (
+          (result.msg is search("Deploy parameter cannot be used"))
+          or
+          (result.msg is search("config_actions.save/config_actions.deploy"))
+        )
   tags: gather
 
 ##############################################

@@ -227,6 +227,161 @@
       - validation.failed == false
   tags: replace
 
+# TC5 - vpc_pair_details extended coverage (single replace testcase)
+- name: REPLACE - TC5 - REPLACE - Apply extended vpc_pair_details payload
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+        vpc_pair_details: "{{ vpc_pair_details_extended }}"
+  register: result
+  when: test_fabric_type == "LANClassic"
+  tags: replace
+
+- name: REPLACE - TC5 - API - Query direct vpcPair state for extended details verification
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPair"
+    method: get
+  register: tc5_vpc_pair_direct
+  when: test_fabric_type == "LANClassic"
+  tags: replace
+
+- name: REPLACE - TC5 - VALIDATE - Verify extended vpc_pair_details state
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ {'vpc_pairs': [tc5_vpc_pair_direct.current]} }}"
+    expected_data:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+        vpc_pair_details: "{{ vpc_pair_details_extended }}"
+    mode: "full"
+    validate_vpc_pair_details: true
+  register: tc5_validation
+  when: test_fabric_type == "LANClassic"
+  tags: replace
+
+- name: REPLACE - TC5 - ASSERT - Extended details validation passed
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - tc5_vpc_pair_direct.failed == false
+      - tc5_vpc_pair_direct.current is mapping
+      - tc5_validation.failed == false
+  when: test_fabric_type == "LANClassic"
+  tags: replace
+
+# TC6 - Replace with config_actions save+deploy
+- name: REPLACE - TC6 - DELETE - Ensure vPC pair absent before config_actions test
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false
+  tags: replace
+
+- name: REPLACE - TC6 - REPLACE - Create vPC pair with config_actions save+deploy
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config: "{{ nd_vpc_pair_replace_initial_conf }}"
+  register: result
+  tags: replace
+
+- name: REPLACE - TC6 - ASSERT - Verify config_actions save+deploy execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+      - result.deployment.config_actions is defined
+      - result.deployment.config_actions.save == true
+      - result.deployment.config_actions.deploy == true
+      - result.deployment.config_actions.type == "switch"
+      - result.deployment.response is defined
+      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | list
+          | length
+        ) > 0
+  tags: replace
+
+# TC7 - check_mode should not apply replace configuration changes
+- name: REPLACE - TC7 - DELETE - Ensure vPC pair is absent before check_mode test
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false
+  tags: replace
+
+- name: REPLACE - TC7 - REPLACE - Run check_mode create for vPC pair
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: replaced
+    deploy: false
+    config: "{{ nd_vpc_pair_replace_initial_conf }}"
+  check_mode: true
+  register: result
+  tags: replace
+
+- name: REPLACE - TC7 - ASSERT - Verify check_mode invocation succeeded
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is not defined
+  tags: replace
+
+- name: REPLACE - TC7 - GATHER - Verify check_mode flow did not create vPC pair
+  cisco.nd.nd_manage_vpc_pair:
+    state: gathered
+    deploy: false
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: verify_result
+  tags: replace
+
+- name: REPLACE - TC7 - VALIDATE - Confirm no persistent changes from check_mode flow
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ verify_result }}"
+    expected_data: []
+    mode: "count_only"
+  register: validation
+  tags: replace
+
+- name: REPLACE - TC7 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - validation.failed == false
+  tags: replace
+
 ##############################################
 ##                 CLEAN-UP                 ##
 ##############################################

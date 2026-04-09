@@ -274,6 +274,182 @@
       - validation.failed == false
   tags: delete
 
+# TC5 - vpc_pair_details extended coverage in delete flow (create with details, then delete)
+- name: DELETE - TC5 - MERGE - Create vPC pair with extended vpc_pair_details
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+        vpc_pair_details: "{{ vpc_pair_details_extended }}"
+  register: result
+  when: test_fabric_type == "LANClassic"
+  tags: delete
+
+- name: DELETE - TC5 - API - Query direct vpcPair state before deletion
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPair"
+    method: get
+  register: tc5_vpc_pair_direct
+  when: test_fabric_type == "LANClassic"
+  tags: delete
+
+- name: DELETE - TC5 - VALIDATE - Verify extended vpc_pair_details before deletion
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ {'vpc_pairs': [tc5_vpc_pair_direct.current]} }}"
+    expected_data:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+        vpc_pair_details: "{{ vpc_pair_details_extended }}"
+    mode: "full"
+    validate_vpc_pair_details: true
+  register: tc5_validation
+  when: test_fabric_type == "LANClassic"
+  tags: delete
+
+- name: DELETE - TC5 - DELETE - Delete vPC pair created with extended details
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: tc5_delete_result
+  when: test_fabric_type == "LANClassic"
+  tags: delete
+
+- name: DELETE - TC5 - ASSERT - Extended details delete flow passed
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - tc5_vpc_pair_direct.failed == false
+      - tc5_vpc_pair_direct.current is mapping
+      - tc5_validation.failed == false
+      - tc5_delete_result.failed == false
+      - tc5_delete_result.changed == true
+  when: test_fabric_type == "LANClassic"
+  tags: delete
+
+# TC6 - Delete with config_actions save+deploy
+- name: DELETE - TC6 - MERGE - Recreate vPC pair for config_actions delete path
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    deploy: false
+    config: "{{ nd_vpc_pair_delete_setup_conf }}"
+  register: result
+  tags: delete
+
+- name: DELETE - TC6 - DELETE - Delete vPC pair with config_actions save+deploy
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: tc6_delete_result
+  tags: delete
+
+- name: DELETE - TC6 - ASSERT - Verify config_actions save+deploy execution in delete flow
+  ansible.builtin.assert:
+    that:
+      - tc6_delete_result.failed == false
+      - tc6_delete_result.changed == true
+      - tc6_delete_result.deployment is defined
+      - tc6_delete_result.deployment.config_actions is defined
+      - tc6_delete_result.deployment.config_actions.save == true
+      - tc6_delete_result.deployment.config_actions.deploy == true
+      - tc6_delete_result.deployment.config_actions.type == "switch"
+      - tc6_delete_result.deployment.response is defined
+      - (tc6_delete_result.deployment.response | length) >= 2
+      - >
+        (
+          tc6_delete_result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          tc6_delete_result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | list
+          | length
+        ) > 0
+  tags: delete
+
+# TC7 - check_mode should not apply delete configuration changes
+- name: DELETE - TC7 - MERGE - Ensure vPC pair exists before check_mode delete test
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    deploy: false
+    config: "{{ nd_vpc_pair_delete_setup_conf }}"
+  register: tc7_setup_result
+  tags: delete
+
+- name: DELETE - TC7 - ASSERT - Verify setup creation for check_mode delete
+  ansible.builtin.assert:
+    that:
+      - tc7_setup_result.failed == false
+      - tc7_setup_result.changed in [true, false]
+  tags: delete
+
+- name: DELETE - TC7 - DELETE - Run check_mode delete for existing vPC pair
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  check_mode: true
+  register: tc7_delete_result
+  tags: delete
+
+- name: DELETE - TC7 - ASSERT - Verify check_mode delete preview behavior
+  ansible.builtin.assert:
+    that:
+      - tc7_delete_result.failed == false
+      - tc7_delete_result.changed == true
+      - tc7_delete_result.deployment is not defined
+  tags: delete
+
+- name: DELETE - TC7 - GATHER - Verify check_mode delete did not remove vPC pair
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    deploy: false
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: tc7_verify_result
+  tags: delete
+
+- name: DELETE - TC7 - VALIDATE - Confirm vPC pair still exists after check_mode delete
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ tc7_verify_result }}"
+    expected_data: "{{ nd_vpc_pair_delete_setup_conf }}"
+    mode: "exists"
+  register: tc7_validation
+  tags: delete
+
+- name: DELETE - TC7 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - tc7_validation.failed == false
+  tags: delete
+
 ##############################################
 ##                 CLEAN-UP                 ##
 ##############################################
