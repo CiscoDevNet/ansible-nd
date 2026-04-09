@@ -109,6 +109,7 @@ class NDStateMachine:
         items_to_update: List[NDBaseModel] = []
 
         for proposed_item in self.proposed:
+            identifier = None
             try:
                 # Extract identifier
                 identifier = proposed_item.get_identifier_value()
@@ -142,7 +143,10 @@ class NDStateMachine:
                     items_to_create.append(final_item)
 
             except Exception as e:
-                error_msg = f"Failed to process {identifier}: {e}"
+                if identifier:
+                    error_msg = f"Failed to process {identifier}: {e}"
+                else:
+                    error_msg = f"Failed to process: {e}"
                 if not self.ignore_errors:
                     raise NDStateMachineError(error_msg) from e
 
