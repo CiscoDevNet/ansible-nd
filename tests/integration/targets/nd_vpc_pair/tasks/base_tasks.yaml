@@ -23,6 +23,43 @@
     deploy_local: true
   delegate_to: localhost
 
+- name: BASE - Setup extended vpc_pair_details payload for coverage
+  ansible.builtin.set_fact:
+    vpc_pair_details_extended:
+      type: default
+      domain_id: 110
+      switch_keep_alive_local_ip: "192.0.2.11"
+      peer_switch_keep_alive_local_ip: "192.0.2.12"
+      keep_alive_vrf: management
+      keep_alive_hold_timeout: 5
+      enable_mirror_config: true
+      is_vpc_plus: true
+      fabric_path_switch_id: 100
+      is_vteps: true
+      nve_interface: 2
+      switch_source_loopback: 10
+      peer_switch_source_loopback: 11
+      switch_primary_ip: "192.0.2.21"
+      peer_switch_primary_ip: "192.0.2.22"
+      loopback_secondary_ip: "192.0.2.23"
+      switch_domain_config: "peer-keepalive destination 10.1.1.2 source 10.1.1.1 vrf management"
+      peer_switch_domain_config: "peer-keepalive destination 10.1.1.1 source 10.1.1.2 vrf management"
+      switch_po_id: 200
+      peer_switch_po_id: 201
+      switch_member_interfaces: ["eth1/5", "eth1/7"]
+      peer_switch_member_interfaces: ["eth1/6", "eth1/8"]
+      po_mode: active
+      switch_po_description: "Peer-1 Port-Channel Description"
+      peer_switch_po_description: "Peer-2 Port-Channel Description"
+      admin_state: true
+      allowed_vlans: "1-100"
+      switch_native_vlan: 1
+      peer_switch_native_vlan: 2
+      switch_po_config: "mtu 9216\nno shutdown"
+      peer_switch_po_config: "mtu 9216\nno shutdown"
+      fabric_name: "{{ fabric_name }}"
+  delegate_to: localhost
+
 # ------------------------------------------
 # Query Fabric Reachability
 # ------------------------------------------
@@ -31,10 +68,9 @@
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
-    suppress_verification: true
-    verify_option:
+    verify:
       timeout: 60
-      iteration: 3
+      retries: 3
   register: fabric_query
   failed_when: false
 - name: BASE - Assert fabric exists

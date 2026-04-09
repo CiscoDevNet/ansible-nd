@@ -186,9 +186,6 @@ def custom_vpc_create(nrm: Any) -> Optional[Dict[str, Any]]:
     # Build payload with discriminator using helper (supports vpc_pair_details)
     payload = _build_vpc_pair_payload(nrm.proposed_config)
 
-    # Log the operation
-    nrm.format_log(identifier=nrm.current_identifier, status="created", after_data=payload, sent_payload_data=payload)
-
     try:
         # Use PUT (not POST!) for create via RestSend
         response = nd_v2.request(path, HttpVerbEnum.PUT, payload)
@@ -300,9 +297,6 @@ def custom_vpc_update(nrm: Any) -> Optional[Dict[str, Any]]:
 
     # Build payload with discriminator using helper (supports vpc_pair_details)
     payload = _build_vpc_pair_payload(nrm.proposed_config)
-
-    # Log the operation
-    nrm.format_log(identifier=nrm.current_identifier, status="updated", after_data=payload, sent_payload_data=payload)
 
     try:
         # Use PUT for update via RestSend
@@ -422,9 +416,6 @@ def custom_vpc_delete(nrm: Any) -> bool:
         VpcFieldNames.PEER_SWITCH_ID: nrm.existing_config.get(VpcFieldNames.PEER_SWITCH_ID),
     }
 
-    # Log the operation
-    nrm.format_log(identifier=nrm.current_identifier, status="deleted", sent_payload_data=payload)
-
     try:
         # Use PUT (not DELETE!) for unpair via RestSend
         nd_v2.request(path, HttpVerbEnum.PUT, payload)
@@ -437,14 +428,6 @@ def custom_vpc_delete(nrm: Any) -> bool:
         # vPC pair, the pair is already gone — treat as a successful no-op.
         # The API may return 400 or 404 depending on the ND version.
         if status_code in (400, 404) and "not a part of" in error_msg:
-            # Keep idempotent semantics: this is a no-op delete, so downgrade the
-            # pre-logged operation from "deleted" to "no_change".
-            if getattr(nrm, "logs", None):
-                last_log = nrm.logs[-1]
-                if last_log.get("identifier") == nrm.current_identifier:
-                    last_log["status"] = "no_change"
-                    last_log.pop("sent_payload", None)
-
             nrm.module.warn(
                 f"VPC pair {nrm.current_identifier} is already unpaired on the controller. " f"Treating as idempotent success. API response: {error.msg}"
             )

@@ -16,7 +16,7 @@ Payload helpers for vPC runtime operations.
 
 Note:
 - This file builds request/response payload structures only.
-- Endpoint paths are resolved in `vpc_pair_runtime_endpoints.py`.
+- Endpoint paths are resolved in `runtime_endpoints.py`.
 """
 
 
@@ -52,14 +52,25 @@ def _build_vpc_pair_payload(vpc_pair_model: Any) -> Dict[str, Any]:
         Dict with vpcAction, switchId, peerSwitchId, useVirtualPeerLink,
         and optional vpcPairDetails keys.
     """
+    template_config = None
     if isinstance(vpc_pair_model, dict):
         switch_id = vpc_pair_model.get(VpcFieldNames.SWITCH_ID)
         peer_switch_id = vpc_pair_model.get(VpcFieldNames.PEER_SWITCH_ID)
         use_virtual_peer_link = vpc_pair_model.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False)
+        template_config = vpc_pair_model.get(VpcFieldNames.VPC_PAIR_DETAILS)
+        if template_config is None:
+            template_config = vpc_pair_model.get("vpc_pair_details")
+        if hasattr(template_config, "model_dump"):
+            template_config = template_config.model_dump(by_alias=True, exclude_none=True)
+        elif isinstance(template_config, dict):
+            template_config = dict(template_config)
+        else:
+            template_config = None
     else:
         switch_id = vpc_pair_model.switch_id
         peer_switch_id = vpc_pair_model.peer_switch_id
         use_virtual_peer_link = vpc_pair_model.use_virtual_peer_link
+        template_config = _get_template_config(vpc_pair_model)
 
     payload = {
         VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
@@ -68,10 +79,8 @@ def _build_vpc_pair_payload(vpc_pair_model: Any) -> Dict[str, Any]:
         VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_virtual_peer_link,
     }
 
-    if not isinstance(vpc_pair_model, dict):
-        template_config = _get_template_config(vpc_pair_model)
-        if template_config:
-            payload[VpcFieldNames.VPC_PAIR_DETAILS] = template_config
+    if template_config is not None:
+        payload[VpcFieldNames.VPC_PAIR_DETAILS] = template_config
 
     return payload
 

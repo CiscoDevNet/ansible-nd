@@ -18,6 +18,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.validatio
     _validate_fabric_switches,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
+    get_config_actions,
     get_verify_timeout,
     _raise_vpc_error,
 )
@@ -722,11 +723,14 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
     state = nrm.module.params.get("state", "merged")
     # Initialize RestSend via NDModuleV2
     nd_v2 = NDModuleV2(nrm.module)
-    nrm.module.params["_is_external_fabric"] = _is_external_fabric(
-        nd_v2=nd_v2,
-        fabric_name=fabric_name,
-        module=nrm.module,
-    )
+    if state in ("merged", "replaced", "overridden"):
+        nrm.module.params["_is_external_fabric"] = _is_external_fabric(
+            nd_v2=nd_v2,
+            fabric_name=fabric_name,
+            module=nrm.module,
+        )
+    else:
+        nrm.module.params["_is_external_fabric"] = False
     preloaded_fabric_switches = normalize_vpc_playbook_switch_identifiers(
         module=nrm.module,
         nd_v2=nd_v2,
@@ -770,10 +774,8 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
         except Exception as list_error:
             nrm.module.warn(f"VPC pairs list query failed for fabric {fabric_name}: " f"{str(list_error).splitlines()[0]}.")
 
-        # Lightweight path for gathered and targeted delete workflows.
-        # For delete-all (state=deleted with empty config), use full switch-level
-        # discovery so stale/lagging list responses do not miss active pairs.
-        if state == "gathered" or (state == "deleted" and bool(config)):
+        # Lightweight path for gathered and explicit-pair delete workflows.
+        if state in ("gathered", "deleted"):
             if list_query_succeeded:
                 if state == "deleted" and config and not have:
                     fallback_have = []
@@ -855,11 +857,8 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                     nrm.module.warn("Using requested delete config as fallback existing set because vPC list query failed.")
                     return _set_lightweight_context(fallback_have)
 
-                if config:
-                    nrm.module.warn("Delete config did not contain complete vPC pairs. No delete intents can be built from list-query fallback.")
-                    return _set_lightweight_context([])
-
-                nrm.module.warn("Delete-all requested with no explicit pairs and unavailable list endpoint. Falling back to switch-level discovery.")
+                nrm.module.warn("Delete config did not contain complete vPC pairs. No delete intents can be built from list-query fallback.")
+                return _set_lightweight_context([])
 
         # Step 2 (write-state enrichment): Query and validate fabric switches.
         fabric_switches = preloaded_fabric_switches
@@ -1133,10 +1132,11 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
 
         existing_pairs = list(pair_by_key.values())
 
+        config_actions = get_config_actions(nrm.module)
         not_in_sync_pairs = []
-        if nrm.module.params.get("deploy", False):
+        if config_actions.get("deploy", False):
             # Step 5: Build in-sync deployment signal from overview endpoint.
-            # This supports the deploy=true no-diff case:
+            # This supports the config_actions.deploy=true no-diff case:
             # pair exists, but is still not deployed/in-sync on controller.
             for pair in existing_pairs:
                 switch_id = pair.get(VpcFieldNames.SWITCH_ID)

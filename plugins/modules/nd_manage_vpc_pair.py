@@ -35,10 +35,32 @@ options:
         - Name of the fabric.
         required: true
         type: str
+    config_actions:
+        description:
+        - Configuration save/deploy controls for write operations.
+        type: dict
+        suboptions:
+            save:
+                description:
+                - Save configuration after state reconciliation.
+                type: bool
+                default: true
+            deploy:
+                description:
+                - Deploy configuration after save.
+                type: bool
+                default: true
+            type:
+                description:
+                - Scope type for save/deploy action payload.
+                - Valid values are C(switch) and C(global).
+                type: str
+                choices: [switch, global]
+                default: switch
     deploy:
         description:
-        - Deploy configuration changes after applying them.
-        - Saves fabric configuration and triggers deployment.
+        - Deprecated. Use C(config_actions.save) and C(config_actions.deploy).
+        - Legacy knob that maps to both save and deploy actions.
         type: bool
         default: true
     force:
@@ -49,29 +71,26 @@ options:
         - Only applies to deleted state.
         type: bool
         default: false
-    verify_option:
+    verify:
         description:
-        - Verification options used only when suppress_verification=true.
-        - timeout is per-query timeout in seconds.
-        - iteration is the number of verification attempts.
+        - Verification controls for post-write refresh behavior.
         type: dict
         suboptions:
-            timeout:
+            enabled:
                 description:
-                - Per-query timeout in seconds when optional verification runs.
+                - Enable post-write verification refresh query.
+                type: bool
+                default: true
+            retries:
+                description:
+                - Number of verification retry attempts.
                 type: int
                 default: 5
-            iteration:
+            timeout:
                 description:
-                - Number of verification attempts when optional verification runs.
+                - Per-query timeout in seconds.
                 type: int
-                default: 3
-    suppress_verification:
-        description:
-        - Suppress automatic post-write controller verification query for final after state.
-        - When set to true, verification runs only if verify_option is provided.
-        type: bool
-        default: false
+                default: 10
     config:
         description:
         - List of vPC pair configuration dictionaries.
@@ -107,6 +126,7 @@ notes:
     - Results are aggregated using the Results class for consistent output format
     - Check mode is fully supported via both framework and RestSend
     - No separate dry_run parameter is supported; use native Ansible check_mode
+    - "Validation error: C(config_actions.save=false) with C(config_actions.deploy=true) is not allowed"
 """
 
 EXAMPLES = """
@@ -150,7 +170,27 @@ EXAMPLES = """
   cisco.nd.nd_manage_vpc_pair:
     fabric_name: myFabric
     state: merged
-    deploy: true
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config:
+      - peer1_switch_id: "FDO23040Q85"
+        peer2_switch_id: "FDO23040Q86"
+
+# Create and save only (no deploy)
+- name: Create vPC pair and save only
+  cisco.nd.nd_manage_vpc_pair:
+    fabric_name: myFabric
+    state: merged
+    config_actions:
+      save: true
+      deploy: false
+      type: global
+    verify:
+      enabled: true
+      retries: 5
+      timeout: 10
     config:
       - peer1_switch_id: "FDO23040Q85"
         peer2_switch_id: "FDO23040Q86"
@@ -183,7 +223,7 @@ after:
     description:
     - vPC pair state after changes.
     - By default this is refreshed from controller after write operations and may include read-only properties.
-    - Refresh verification runs with suppress_verification=false (default).
+    - Refresh verification runs when verify.enabled=true (default).
     type: list
     returned: always
     sample: [{"switchId": "FDO123", "peerSwitchId": "FDO456", "useVirtualPeerLink": true}]
@@ -275,9 +315,9 @@ ip_to_sn_mapping:
     returned: when available from fabric inventory
     sample: {"10.1.1.1": "FDO123", "10.1.1.2": "FDO456"}
 deployment:
-    description: Deployment operation results (when deploy=true)
+    description: Save/deploy action results (when config_actions is enabled)
     type: dict
-    returned: when deploy parameter is true
+    returned: when config_actions.save=true or config_actions.deploy=true
     contains:
         deployment_needed:
             description: Whether deployment was needed based on changes
@@ -286,13 +326,13 @@ deployment:
             description: Whether deployment made changes
             type: bool
         response:
-            description: List of deployment API responses (save and deploy)
+            description: List of action API responses (save and/or deploy)
             type: list
     sample: {"deployment_needed": true, "changed": true, "response": [...]}
 deployment_needed:
     description: Flag indicating if deployment was needed
     type: bool
-    returned: when deploy=true
+    returned: when config_actions.save=true or config_actions.deploy=true
     sample: true
 pending_create_pairs_not_in_delete:
     description: VPC pairs in pending create state not included in delete wants (deleted state only)
@@ -305,6 +345,9 @@ pending_delete_pairs_not_in_delete:
     returned: when state is deleted and pending delete pairs exist
     sample: []
 """
+
+import json
+from typing import Any, Dict
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
@@ -342,8 +385,55 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.deploy im
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runner import (
     run_vpc_module,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
+    get_config_actions,
+    get_verify_settings,
+)
 
 # ===== Module Entry Point =====
+
+
+def _coerce_bool(value: Any, fallback: bool = False) -> bool:
+    """
+    Normalize bool-like values from raw Ansible module args.
+    """
+    if value is None:
+        return fallback
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "yes", "1", "on"):
+            return True
+        if normalized in ("false", "no", "0", "off"):
+            return False
+    return fallback
+
+
+def _get_raw_module_args() -> Dict[str, Any]:
+    """
+    Best-effort extraction of raw user-provided module args before defaults.
+    """
+    try:
+        from ansible.module_utils import basic as ansible_basic
+
+        raw_payload = getattr(ansible_basic, "_ANSIBLE_ARGS", None)
+        if raw_payload is None:
+            return {}
+        if isinstance(raw_payload, (bytes, bytearray)):
+            decoded = raw_payload.decode("utf-8")
+        elif isinstance(raw_payload, str):
+            decoded = raw_payload
+        else:
+            return {}
+
+        parsed = json.loads(decoded)
+        module_args = parsed.get("ANSIBLE_MODULE_ARGS")
+        return module_args if isinstance(module_args, dict) else {}
+    except Exception:
+        return {}
 
 
 def main() -> None:
@@ -377,10 +467,47 @@ def main() -> None:
 
     # State-specific parameter validations
     state = module_config.state
-    deploy = module_config.deploy
+    config_actions = get_config_actions(module)
+    verify_settings = get_verify_settings(module)
+    raw_module_args = _get_raw_module_args()
+    raw_config_actions = raw_module_args.get("config_actions")
+    explicit_config_actions = isinstance(raw_config_actions, dict)
+    explicit_legacy_deploy = "deploy" in raw_module_args
 
-    if state == "gathered" and deploy:
-        module.fail_json(msg="Deploy parameter cannot be used with 'gathered' state")
+    if state == "gathered":
+        explicit_write_requested = False
+
+        if explicit_legacy_deploy and _coerce_bool(raw_module_args.get("deploy"), False):
+            explicit_write_requested = True
+
+        if explicit_config_actions:
+            if _coerce_bool(raw_config_actions.get("save"), False) or _coerce_bool(raw_config_actions.get("deploy"), False):
+                explicit_write_requested = True
+
+        if explicit_write_requested:
+            module.fail_json(
+                msg=(
+                    "Deploy parameter cannot be used with 'gathered' state. "
+                    "config_actions.save/config_actions.deploy (or legacy deploy=true) "
+                    "are not allowed for gathered."
+                )
+            )
+
+        # Gathered is strictly read-only by default.
+        config_actions = {
+            "save": False,
+            "deploy": False,
+            "type": config_actions.get("type", "switch"),
+        }
+
+    # Runtime normalization for downstream service/orchestrator code.
+    module.params["config_actions"] = config_actions
+    module.params["verify"] = verify_settings
+    # Keep legacy deploy param in sync for backward-compatible code paths.
+    module.params["deploy"] = config_actions.get("deploy", False)
+
+    if config_actions.get("deploy", False) and not config_actions.get("save", False):
+        module.fail_json(msg="Invalid config_actions: config_actions.deploy=true requires config_actions.save=true")
 
     # Validate force parameter usage:
     # - state=deleted only

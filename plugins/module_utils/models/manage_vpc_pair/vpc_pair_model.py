@@ -121,7 +121,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         """
         return self.model_dump(by_alias=True, exclude_none=True)
 
-    def to_diff_dict(self) -> Dict[str, Any]:
+    def to_diff_dict(self, exclude_unset: bool = False) -> Dict[str, Any]:
         """
         Serialize model for diff comparison, excluding configured fields.
 
@@ -131,6 +131,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         return self.model_dump(
             by_alias=True,
             exclude_none=True,
+            exclude_unset=exclude_unset,
             exclude=set(self.exclude_from_diff),
         )
 
@@ -188,7 +189,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
             raise TypeError("VpcPairModel.merge requires both models to be the same type")
 
         merged_data = self.model_dump(by_alias=False, exclude_none=False)
-        incoming_data = other.model_dump(by_alias=False, exclude_none=False)
+        incoming_data = other.model_dump(by_alias=False, exclude_none=False, exclude_unset=True)
         for field, value in incoming_data.items():
             if value is None:
                 continue
@@ -307,22 +308,72 @@ class VpcPairPlaybookItemModel(BaseModel):
 
         Returns:
             Dict with both snake_case and camelCase keys for switch IDs,
-            use_virtual_peer_link, and vpc_pair_details.
+            plus optional keys only when explicitly set in playbook input.
         """
         switch_id = self.peer1_switch_id
         peer_switch_id = self.peer2_switch_id
-        use_virtual_peer_link = self.use_virtual_peer_link
-        serialized_details = serialize_vpc_pair_details(self.vpc_pair_details)
-        return {
+        fields_set = getattr(self, "model_fields_set", None)
+        if fields_set is None:
+            fields_set = getattr(self, "__fields_set__", set())
+        runtime_config = {
             "switch_id": switch_id,
             "peer_switch_id": peer_switch_id,
-            "use_virtual_peer_link": use_virtual_peer_link,
-            "vpc_pair_details": serialized_details,
             VpcFieldNames.SWITCH_ID: switch_id,
             VpcFieldNames.PEER_SWITCH_ID: peer_switch_id,
-            VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_virtual_peer_link,
-            VpcFieldNames.VPC_PAIR_DETAILS: serialized_details,
         }
+
+        if "use_virtual_peer_link" in fields_set:
+            use_virtual_peer_link = self.use_virtual_peer_link
+            runtime_config["use_virtual_peer_link"] = use_virtual_peer_link
+            runtime_config[VpcFieldNames.USE_VIRTUAL_PEER_LINK] = use_virtual_peer_link
+
+        if "vpc_pair_details" in fields_set:
+            serialized_details = serialize_vpc_pair_details(self.vpc_pair_details)
+            runtime_config["vpc_pair_details"] = serialized_details
+            runtime_config[VpcFieldNames.VPC_PAIR_DETAILS] = serialized_details
+
+        return runtime_config
+
+
+class VerifyConfigModel(BaseModel):
+    """
+    Verification controls for post-apply refresh behavior.
+    """
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=True, description="Enable post-write verification refresh")
+    retries: int = Field(default=5, description="Verification retry attempts", ge=1)
+    timeout: int = Field(default=10, description="Per-query timeout in seconds", ge=1)
+
+
+class ConfigActionsModel(BaseModel):
+    """
+    Configuration save/deploy controls for write operations.
+    """
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        extra="ignore",
+    )
+
+    save: bool = Field(default=True, description="Save fabric configuration after applying changes")
+    deploy: bool = Field(default=True, description="Deploy fabric configuration after save")
+    type: Literal["switch", "global"] = Field(default="switch", description="Action scope type")
+
+    @model_validator(mode="after")
+    def validate_save_deploy_dependency(self) -> "ConfigActionsModel":
+        """
+        Validate deploy dependency on save action.
+        """
+        if not self.save and self.deploy:
+            raise ValueError("config_actions.deploy=true requires config_actions.save=true")
+        return self
 
 
 class VpcPairPlaybookConfigModel(BaseModel):
@@ -345,53 +396,35 @@ class VpcPairPlaybookConfigModel(BaseModel):
         description="Desired state for vPC pair configuration",
     )
     fabric_name: str = Field(description="Fabric name")
-    deploy: bool = Field(default=True, description="Deploy after configuration changes")
+    deploy: bool = Field(
+        default=True,
+        description="Deprecated. Use config_actions.save/config_actions.deploy instead.",
+    )
     force: bool = Field(
         default=False,
         description="Force deletion without pre-deletion safety checks",
     )
-    verify_option: Optional[Dict[str, int]] = Field(
+    verify: Optional[VerifyConfigModel] = Field(
         default=None,
-        description=("Verification controls used only when suppress_verification=true. " "Supported keys: timeout (seconds), iteration (attempt count)."),
+        description="Verification controls (enabled/retries/timeout).",
     )
-    suppress_verification: bool = Field(
-        default=False,
-        description=("Suppress automatic post-apply verification after write operations. " "When true, verification runs only if verify_option is provided."),
+    config_actions: Optional[ConfigActionsModel] = Field(
+        default=None,
+        description="Configuration action controls (save/deploy/type).",
     )
     config: Optional[List[VpcPairPlaybookItemModel]] = Field(
         default=None,
         description="List of vPC pair configurations",
     )
 
-    @field_validator("verify_option")
-    @classmethod
-    def validate_verify_option(cls, value: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
+    @model_validator(mode="after")
+    def validate_config_actions(self) -> "VpcPairPlaybookConfigModel":
         """
-        Validate verify_option schema and normalize values.
-
-        Allowed keys:
-        - timeout: positive integer seconds (default 5)
-        - iteration: positive integer attempts (default 3)
+        Validate normalized config action dependency at top-level too.
         """
-        if value is None:
-            return None
-        if not isinstance(value, dict):
-            raise ValueError("verify_option must be a dictionary")
-
-        def _as_positive_int(raw: Any, default: int, field_name: str) -> int:
-            if raw is None:
-                return default
-            try:
-                parsed = int(raw)
-            except (TypeError, ValueError):
-                raise ValueError(f"verify_option.{field_name} must be an integer")
-            if parsed <= 0:
-                raise ValueError(f"verify_option.{field_name} must be greater than 0")
-            return parsed
-
-        timeout = _as_positive_int(value.get("timeout"), 5, "timeout")
-        iteration = _as_positive_int(value.get("iteration"), 3, "iteration")
-        return {"timeout": timeout, "iteration": iteration}
+        if self.config_actions and not self.config_actions.save and self.config_actions.deploy:
+            raise ValueError("config_actions.deploy=true requires config_actions.save=true")
+        return self
 
     @classmethod
     def get_argument_spec(cls) -> Dict[str, Any]:
@@ -410,17 +443,23 @@ class VpcPairPlaybookConfigModel(BaseModel):
                 type="bool",
                 default=False,
             ),
-            verify_option=dict(
+            verify=dict(
                 type="dict",
                 required=False,
                 options=dict(
-                    timeout=dict(type="int", default=5),
-                    iteration=dict(type="int", default=3),
+                    enabled=dict(type="bool", default=True),
+                    retries=dict(type="int", default=5),
+                    timeout=dict(type="int", default=10),
                 ),
             ),
-            suppress_verification=dict(
-                type="bool",
-                default=False,
+            config_actions=dict(
+                type="dict",
+                required=False,
+                options=dict(
+                    save=dict(type="bool", default=True),
+                    deploy=dict(type="bool", default=True),
+                    type=dict(type="str", default="switch", choices=["switch", "global"]),
+                ),
             ),
             config=dict(
                 type="list",

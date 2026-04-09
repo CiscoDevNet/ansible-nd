@@ -5,7 +5,6 @@
 """
 Unit tests for vPC pair endpoint models under plugins/module_utils/endpoints/v1/manage.
 
-Mirrors the style used in PR198 endpoint unit tests.
 """
 
 from __future__ import annotations

@@ -90,6 +90,44 @@ def test_manage_vpc_pair_model_00040() -> None:
     assert runtime[VpcFieldNames.USE_VIRTUAL_PEER_LINK] is False
 
 
+def test_manage_vpc_pair_model_00045() -> None:
+    """Verify omitted optional fields are not materialized in runtime config."""
+    with does_not_raise():
+        item = VpcPairPlaybookItemModel(
+            peer1_switch_id="SN01",
+            peer2_switch_id="SN02",
+        )
+        runtime = item.to_runtime_config()
+
+    assert runtime["switch_id"] == "SN01"
+    assert runtime["peer_switch_id"] == "SN02"
+    assert "use_virtual_peer_link" not in runtime
+    assert VpcFieldNames.USE_VIRTUAL_PEER_LINK not in runtime
+    assert "vpc_pair_details" not in runtime
+    assert VpcFieldNames.VPC_PAIR_DETAILS not in runtime
+
+
+def test_manage_vpc_pair_model_00046() -> None:
+    """Verify merged semantics keep existing value when optional field is omitted."""
+    with does_not_raise():
+        existing = VpcPairModel.from_config(
+            {
+                "switch_id": "SN01",
+                "peer_switch_id": "SN02",
+                "use_virtual_peer_link": True,
+            }
+        )
+        incoming_item = VpcPairPlaybookItemModel(
+            peer1_switch_id="SN01",
+            peer2_switch_id="SN02",
+        )
+        incoming = VpcPairModel.from_config(incoming_item.to_runtime_config())
+        merged = existing.merge(incoming)
+
+    assert VpcFieldNames.USE_VIRTUAL_PEER_LINK not in incoming.to_diff_dict(exclude_unset=True)
+    assert merged.use_virtual_peer_link is True
+
+
 def test_manage_vpc_pair_model_00050() -> None:
     """Verify playbook item model rejects identical peer switch IDs."""
     with pytest.raises(ValidationError):
@@ -104,3 +142,54 @@ def test_manage_vpc_pair_model_00060() -> None:
     config_options = spec["config"]["options"]
     assert config_options["peer1_switch_id"]["aliases"] == ["switch_id"]
     assert config_options["peer2_switch_id"]["aliases"] == ["peer_switch_id"]
+
+
+def test_manage_vpc_pair_model_00070() -> None:
+    """Verify verify/config_actions schema is accepted and normalized."""
+    with does_not_raise():
+        model = VpcPairPlaybookConfigModel.model_validate(
+            {
+                "state": "merged",
+                "fabric_name": "fab1",
+                "verify": {"enabled": True, "retries": 7, "timeout": 11},
+                "config_actions": {"save": True, "deploy": False, "type": "global"},
+            }
+        )
+
+    assert model.verify is not None
+    assert model.verify.enabled is True
+    assert model.verify.retries == 7
+    assert model.verify.timeout == 11
+    assert model.config_actions is not None
+    assert model.config_actions.save is True
+    assert model.config_actions.deploy is False
+    assert model.config_actions.type == "global"
+
+
+def test_manage_vpc_pair_model_00080() -> None:
+    """Verify config_actions.deploy requires config_actions.save."""
+    with pytest.raises(ValidationError):
+        VpcPairPlaybookConfigModel.model_validate(
+            {
+                "state": "merged",
+                "fabric_name": "fab1",
+                "config_actions": {"save": False, "deploy": True, "type": "switch"},
+            }
+        )
+
+
+def test_manage_vpc_pair_model_00090() -> None:
+    """Verify empty verify dict normalizes to default values."""
+    with does_not_raise():
+        model = VpcPairPlaybookConfigModel.model_validate(
+            {
+                "state": "merged",
+                "fabric_name": "fab1",
+                "verify": {},
+            }
+        )
+
+    assert model.verify is not None
+    assert model.verify.enabled is True
+    assert model.verify.retries == 5
+    assert model.verify.timeout == 10

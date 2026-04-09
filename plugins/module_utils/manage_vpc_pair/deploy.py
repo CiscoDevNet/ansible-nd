@@ -9,6 +9,7 @@ from typing import Any, Dict
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
     _raise_vpc_error,
+    get_config_actions,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runtime_endpoints import (
     VpcPairEndpoints,
@@ -26,7 +27,7 @@ except Exception:
 
 def _needs_deployment(result: Dict[str, Any], nrm: Any) -> bool:
     """
-    Determine if deployment is needed based on changes and pending operations.
+    Determine if save/deploy actions are needed based on changes/signals.
 
     Deployment is needed if any of:
     1. There are items in the diff (configuration changes)
@@ -39,7 +40,7 @@ def _needs_deployment(result: Dict[str, Any], nrm: Any) -> bool:
         nrm: NDStateMachine instance
 
     Returns:
-        True if deployment is needed, False otherwise
+        True if config action execution is needed, False otherwise
     """
     # Check if there are any changes in the result
     has_changes = result.get("changed", False)
@@ -90,14 +91,14 @@ def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
 
 def custom_vpc_deploy(nrm: Any, fabric_name: str, result: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Custom deploy function for fabric configuration changes using RestSend.
+    Custom save/deploy action handler for vPC fabric changes using RestSend.
 
-    - Smart deployment decision (Common.needs_deployment)
-    - Step 1: Save fabric configuration
-    - Step 2: Deploy fabric with forceShowRun=true
+    - Smart action decision (_needs_deployment)
+    - Optional Step 1: Save fabric configuration
+    - Optional Step 2: Deploy fabric with forceShowRun=true
     - Proper error handling with NDModuleError
     - Results aggregation
-    - Only deploys if there are actual changes or pending operations
+    - Executes only if there are actual changes or pending operations
 
     Args:
         nrm: NDStateMachine instance
@@ -105,18 +106,38 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: Dict[str, Any]) -> Dic
         result: Module result dictionary to check for changes
 
     Returns:
-        Deployment result dictionary
+        Save/deploy result dictionary
 
     Raises:
         NDModuleError: If deployment fails
     """
-    # Smart deployment decision (from Common.needs_deployment)
-    if not _needs_deployment(result, nrm):
+    config_actions = get_config_actions(nrm.module)
+    save_enabled = bool(config_actions.get("save", True))
+    deploy_enabled = bool(config_actions.get("deploy", True))
+    action_type = config_actions.get("type", "switch")
+    action_payload = {"type": action_type}
+
+    # Defensive runtime validation (model validation already enforces this).
+    if deploy_enabled and not save_enabled:
+        _raise_vpc_error(msg="Invalid config_actions: deploy=true requires save=true")
+
+    if not save_enabled and not deploy_enabled:
         return {
-            "msg": "No configuration changes, pending operations, or out-of-sync pairs detected, skipping deployment",
+            "msg": "Config actions disabled (save=false, deploy=false), skipping config save/deploy",
             "fabric": fabric_name,
             "deployment_needed": False,
             "changed": False,
+            "config_actions": config_actions,
+        }
+
+    # Smart deployment decision (from Common.needs_deployment)
+    if not _needs_deployment(result, nrm):
+        return {
+            "msg": ("No configuration changes, pending operations, or out-of-sync pairs " "detected, skipping config actions"),
+            "fabric": fabric_name,
+            "deployment_needed": False,
+            "changed": False,
+            "config_actions": config_actions,
         }
 
     if nrm.module.check_mode:
@@ -126,13 +147,26 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: Dict[str, Any]) -> Dic
         pending_create = nrm.module.params.get("_pending_create", [])
         pending_delete = nrm.module.params.get("_pending_delete", [])
         not_in_sync_pairs = nrm.module.params.get("_not_in_sync_pairs", [])
+        planned_actions = []
+        if save_enabled:
+            planned_actions.append(f"POST {VpcPairEndpoints.fabric_config_save(fabric_name)} payload={action_payload}")
+        if deploy_enabled:
+            planned_actions.append(f"POST {VpcPairEndpoints.fabric_config_deploy(fabric_name, force_show_run=True)} payload={action_payload}")
+        if save_enabled and deploy_enabled:
+            preview_msg = "CHECK MODE: Would save and deploy fabric configuration"
+        elif save_enabled:
+            preview_msg = "CHECK MODE: Would save fabric configuration"
+        else:
+            preview_msg = "CHECK MODE: Would deploy fabric configuration"
 
         deployment_info = {
-            "msg": "CHECK MODE: Would save and deploy fabric configuration",
+            "msg": preview_msg,
             "fabric": fabric_name,
             "deployment_needed": True,
             "changed": True,
-            "would_deploy": True,
+            "would_save": save_enabled,
+            "would_deploy": deploy_enabled,
+            "config_actions": config_actions,
             "deployment_decision_factors": {
                 "diff_has_changes": before != after,
                 "pending_create_operations": len(pending_create),
@@ -140,10 +174,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: Dict[str, Any]) -> Dic
                 "not_in_sync_pairs": len(not_in_sync_pairs),
                 "actual_changes": result.get("changed", False),
             },
-            "planned_actions": [
-                f"POST {VpcPairEndpoints.fabric_config_save(fabric_name)}",
-                f"POST {VpcPairEndpoints.fabric_config_deploy(fabric_name, force_show_run=True)}",
-            ],
+            "planned_actions": planned_actions,
         }
         return deployment_info
 
@@ -152,84 +183,90 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: Dict[str, Any]) -> Dic
     results = Results()
 
     # Step 1: Save config
-    save_path = VpcPairEndpoints.fabric_config_save(fabric_name)
+    if save_enabled:
+        save_path = VpcPairEndpoints.fabric_config_save(fabric_name)
 
-    try:
-        nd_v2.request(save_path, HttpVerbEnum.POST, {})
-
-        results.response_current = {
-            "RETURN_CODE": nd_v2.status,
-            "METHOD": "POST",
-            "REQUEST_PATH": save_path,
-            "MESSAGE": "Config saved successfully",
-            "DATA": {},
-        }
-        results.result_current = {"success": True, "changed": True}
-        results.register_api_call()
-
-    except NDModuleError as error:
-        if _is_non_fatal_config_save_error(error):
-            # Known platform limitation warning; continue to deploy step.
-            nrm.module.warn(f"Config save failed: {error.msg}")
+        try:
+            nd_v2.request(save_path, HttpVerbEnum.POST, action_payload)
 
             results.response_current = {
-                "RETURN_CODE": error.status if error.status else -1,
-                "MESSAGE": error.msg,
-                "REQUEST_PATH": save_path,
+                "RETURN_CODE": nd_v2.status,
                 "METHOD": "POST",
-                "DATA": {},
+                "REQUEST_PATH": save_path,
+                "MESSAGE": "Config saved successfully",
+                "DATA": action_payload,
             }
-            results.result_current = {"success": True, "changed": False}
+            results.result_current = {"success": True, "changed": True}
             results.register_api_call()
-        else:
-            # Unknown config-save failures are fatal.
+
+        except NDModuleError as error:
+            is_non_fatal = _is_non_fatal_config_save_error(error)
+            can_continue = is_non_fatal and deploy_enabled
+            if can_continue:
+                # Known platform limitation warning; continue to deploy step.
+                nrm.module.warn(f"Config save failed: {error.msg}")
+                results.response_current = {
+                    "RETURN_CODE": error.status if error.status else -1,
+                    "MESSAGE": error.msg,
+                    "REQUEST_PATH": save_path,
+                    "METHOD": "POST",
+                    "DATA": action_payload,
+                }
+                results.result_current = {"success": True, "changed": False}
+                results.register_api_call()
+            else:
+                # Unknown config-save failures are fatal. Non-fatal signatures are
+                # only tolerated when deploy is also requested.
+                results.response_current = {
+                    "RETURN_CODE": error.status if error.status else -1,
+                    "MESSAGE": error.msg,
+                    "REQUEST_PATH": save_path,
+                    "METHOD": "POST",
+                    "DATA": action_payload,
+                }
+                results.result_current = {"success": False, "changed": False}
+                results.register_api_call()
+                results.build_final_result()
+                final_result = dict(results.final_result)
+                final_msg = final_result.pop("msg", f"Config save failed: {error.msg}")
+                _raise_vpc_error(msg=final_msg, **final_result)
+
+    # Step 2: Deploy
+    if deploy_enabled:
+        deploy_path = VpcPairEndpoints.fabric_config_deploy(fabric_name, force_show_run=True)
+
+        try:
+            nd_v2.request(deploy_path, HttpVerbEnum.POST, action_payload)
+
+            results.response_current = {
+                "RETURN_CODE": nd_v2.status,
+                "METHOD": "POST",
+                "REQUEST_PATH": deploy_path,
+                "MESSAGE": "Deployment successful",
+                "DATA": action_payload,
+            }
+            results.result_current = {"success": True, "changed": True}
+            results.register_api_call()
+
+        except NDModuleError as error:
             results.response_current = {
                 "RETURN_CODE": error.status if error.status else -1,
                 "MESSAGE": error.msg,
-                "REQUEST_PATH": save_path,
+                "REQUEST_PATH": deploy_path,
                 "METHOD": "POST",
-                "DATA": {},
+                "DATA": action_payload,
             }
             results.result_current = {"success": False, "changed": False}
             results.register_api_call()
+
+            # Build final result and fail
             results.build_final_result()
             final_result = dict(results.final_result)
-            final_msg = final_result.pop("msg", f"Config save failed: {error.msg}")
+            final_msg = final_result.pop("msg", "Fabric deployment failed")
             _raise_vpc_error(msg=final_msg, **final_result)
-
-    # Step 2: Deploy
-    deploy_path = VpcPairEndpoints.fabric_config_deploy(fabric_name, force_show_run=True)
-
-    try:
-        nd_v2.request(deploy_path, HttpVerbEnum.POST, {})
-
-        results.response_current = {
-            "RETURN_CODE": nd_v2.status,
-            "METHOD": "POST",
-            "REQUEST_PATH": deploy_path,
-            "MESSAGE": "Deployment successful",
-            "DATA": {},
-        }
-        results.result_current = {"success": True, "changed": True}
-        results.register_api_call()
-
-    except NDModuleError as error:
-        results.response_current = {
-            "RETURN_CODE": error.status if error.status else -1,
-            "MESSAGE": error.msg,
-            "REQUEST_PATH": deploy_path,
-            "METHOD": "POST",
-            "DATA": {},
-        }
-        results.result_current = {"success": False, "changed": False}
-        results.register_api_call()
-
-        # Build final result and fail
-        results.build_final_result()
-        final_result = dict(results.final_result)
-        final_msg = final_result.pop("msg", "Fabric deployment failed")
-        _raise_vpc_error(msg=final_msg, **final_result)
 
     # Build final result
     results.build_final_result()
-    return results.final_result
+    final_result = dict(results.final_result)
+    final_result["config_actions"] = config_actions
+    return final_result

@@ -21,15 +21,18 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
     VpcPairResourceError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
+    get_config_actions,
     get_verify_iterations,
+    get_verify_settings,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 """
 State-machine resource service for nd_manage_vpc_pair.
 
 Note:
 - This file does not define endpoint paths directly.
-- Runtime endpoint path usage is centralized in `vpc_pair_runtime_endpoints.py`.
+- Runtime endpoint path usage is centralized in `runtime_endpoints.py`.
 """
 
 
@@ -127,31 +130,27 @@ class VpcPairStateMachine(NDStateMachine):
         Optionally refresh the final "after" state from controller query.
 
         Enabled by default for write states to better reflect live controller
-        state when suppress_verification=false.
+        state when verify.enabled=true.
 
         Skipped when:
         - State is gathered (read-only)
         - Running in check mode
-        - suppress_verification is True and verify_option is not provided
+        - verify.enabled is False
         """
         state = self.module.params.get("state")
         if state not in ("merged", "replaced", "overridden", "deleted"):
             return
         if self.module.check_mode:
             return
-        suppress_verification = self.module.params.get("suppress_verification", False)
-        verify_option = self.module.params.get("verify_option")
-        if suppress_verification and not isinstance(verify_option, dict):
-            return
-        if suppress_verification and isinstance(verify_option, dict) and not verify_option:
+        verify_settings = get_verify_settings(self.module)
+        if not verify_settings.get("enabled", True):
             return
         if self.logs and not any(log.get("status") in ("created", "updated", "deleted") for log in self.logs):
             # Skip refresh for pure no-op runs to avoid false changed flips from
             # stale/synthetic before-state fallbacks.
             return
 
-        changed_pairs = self._count_changed_pairs()
-        verify_attempts = get_verify_iterations(self.module, changed_pairs=changed_pairs)
+        verify_attempts = get_verify_iterations(self.module)
         refresh_errors: List[str] = []
         for attempt in range(1, verify_attempts + 1):
             try:
@@ -216,20 +215,6 @@ class VpcPairStateMachine(NDStateMachine):
             changed = list(sent_payload.keys())
 
         return sorted(set(changed))
-
-    def _count_changed_pairs(self) -> int:
-        """
-        Count unique pair identifiers changed in this run.
-
-        Changed means log status is one of: created, updated, deleted.
-        """
-        changed_keys = set()
-        for log_entry in self.logs:
-            if log_entry.get("status") not in ("created", "updated", "deleted"):
-                continue
-            key = self._identifier_to_key(log_entry.get("identifier"))
-            changed_keys.add(key)
-        return len(changed_keys)
 
     def _build_class_diff(self) -> Dict[str, List[Any]]:
         """
@@ -357,10 +342,18 @@ class VpcPairStateMachine(NDStateMachine):
                 existing_item = self.existing.get(identifier)
                 self.existing_config = existing_item.model_dump(by_alias=True, exclude_none=True) if existing_item else {}
 
-                try:
-                    diff_status = self.existing.get_diff_config(proposed_item, unwanted_keys=unwanted_keys)
-                except TypeError:
-                    diff_status = self.existing.get_diff_config(proposed_item)
+                if not existing_item:
+                    diff_status = "new"
+                else:
+                    existing_diff = existing_item.to_diff_dict()
+                    proposed_diff = proposed_item.to_diff_dict(exclude_unset=(state == "merged"))
+
+                    if unwanted_keys:
+                        for key in unwanted_keys:
+                            existing_diff.pop(key, None)
+                            proposed_diff.pop(key, None)
+
+                    diff_status = "no_diff" if issubset(proposed_diff, existing_diff) else "changed"
 
                 if diff_status == "no_diff":
                     self.format_log(
@@ -541,8 +534,8 @@ class VpcPairResourceService:
         Args:
             module: AnsibleModule instance with validated params
             run_state_handler: Callback for state execution (run_vpc_module)
-            deploy_handler: Callback for deployment (custom_vpc_deploy)
-            needs_deployment_handler: Callback to check if deploy is needed (_needs_deployment)
+            deploy_handler: Callback for config actions (custom_vpc_deploy)
+            needs_deployment_handler: Callback to check if actions are needed (_needs_deployment)
         """
         self.module = module
         self.run_state_handler = run_state_handler
@@ -553,7 +546,8 @@ class VpcPairResourceService:
         """
         Execute the full vpc_pair module lifecycle.
 
-        Creates VpcPairStateMachine, runs state handler, optionally deploys.
+        Creates VpcPairStateMachine, runs state handler, optionally executes
+        config save/deploy actions.
 
         Args:
             fabric_name: Fabric name to operate on
@@ -568,8 +562,8 @@ class VpcPairResourceService:
         if "_ip_to_sn_mapping" in self.module.params:
             result["ip_to_sn_mapping"] = self.module.params["_ip_to_sn_mapping"]
 
-        deploy = self.module.params.get("deploy", False)
-        if deploy:
+        config_actions = get_config_actions(self.module)
+        if config_actions.get("save", False) or config_actions.get("deploy", False):
             deploy_result = self.deploy_handler(nd_manage_vpc_pair, fabric_name, result)
             result["deployment"] = deploy_result
             result["deployment_needed"] = deploy_result.get(

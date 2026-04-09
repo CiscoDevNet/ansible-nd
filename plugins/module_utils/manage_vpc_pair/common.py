@@ -10,8 +10,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exception
     VpcPairResourceError,
 )
 
-DEFAULT_VERIFY_TIMEOUT = 5
-DEFAULT_VERIFY_ITERATION = 3
+DEFAULT_VERIFY_TIMEOUT = 10
+DEFAULT_VERIFY_RETRIES = 5
+DEFAULT_CONFIG_ACTION_TYPE = "switch"
+CONFIG_ACTION_TYPE_CHOICES = ("switch", "global")
 
 
 def _collection_to_list_flex(collection: Any) -> List[Dict[str, Any]]:
@@ -148,23 +150,89 @@ def _normalize_iteration(value: Optional[Any], fallback: int) -> int:
     return fallback
 
 
-def get_verify_option(module: Any) -> Dict[str, int]:
+def _normalize_bool(value: Any, fallback: bool) -> bool:
     """
-    Return normalized verify_option dictionary.
+    Normalize bool-like values with string/int support.
 
-    verify_option schema:
-    - timeout: per-query timeout in seconds
-    - iteration: number of verification attempts
+    Args:
+        value: Raw input value
+        fallback: Default when value is None or unsupported type
 
-    Invalid or missing values fall back to defaults.
+    Returns:
+        Boolean result.
     """
-    raw_options = module.params.get("verify_option") or {}
-    if not isinstance(raw_options, dict):
-        raw_options = {}
+    if value is None:
+        return fallback
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "yes", "1", "on"):
+            return True
+        if normalized in ("false", "no", "0", "off"):
+            return False
+    return fallback
+
+
+def get_verify_settings(module: Any) -> Dict[str, Any]:
+    """
+    Return normalized verification settings.
+
+    Schema:
+      verify:
+        enabled: bool
+        retries: int
+        timeout: int
+    """
+    raw_verify = module.params.get("verify")
+    if isinstance(raw_verify, dict):
+        return {
+            "enabled": _normalize_bool(raw_verify.get("enabled"), True),
+            "retries": _normalize_iteration(raw_verify.get("retries"), DEFAULT_VERIFY_RETRIES),
+            "timeout": _normalize_timeout(raw_verify.get("timeout"), DEFAULT_VERIFY_TIMEOUT),
+        }
 
     return {
-        "timeout": _normalize_timeout(raw_options.get("timeout"), DEFAULT_VERIFY_TIMEOUT),
-        "iteration": _normalize_iteration(raw_options.get("iteration"), DEFAULT_VERIFY_ITERATION),
+        "enabled": True,
+        "retries": DEFAULT_VERIFY_RETRIES,
+        "timeout": DEFAULT_VERIFY_TIMEOUT,
+    }
+
+
+def get_config_actions(module: Any) -> Dict[str, Any]:
+    """
+    Return normalized configuration action controls.
+
+    Preferred schema:
+        config_actions:
+          save: bool
+          deploy: bool
+          type: "switch" | "global"
+
+    Legacy fallback:
+        deploy: bool
+    """
+    raw_actions = module.params.get("config_actions")
+    if isinstance(raw_actions, dict):
+        save = _normalize_bool(raw_actions.get("save"), True)
+        deploy = _normalize_bool(raw_actions.get("deploy"), True)
+        action_type_raw = raw_actions.get("type", DEFAULT_CONFIG_ACTION_TYPE)
+        action_type = str(action_type_raw).strip().lower() if action_type_raw is not None else DEFAULT_CONFIG_ACTION_TYPE
+        if action_type not in CONFIG_ACTION_TYPE_CHOICES:
+            action_type = DEFAULT_CONFIG_ACTION_TYPE
+        return {
+            "save": save,
+            "deploy": deploy,
+            "type": action_type,
+        }
+
+    legacy_deploy = _normalize_bool(module.params.get("deploy"), True)
+    return {
+        "save": legacy_deploy,
+        "deploy": legacy_deploy,
+        "type": DEFAULT_CONFIG_ACTION_TYPE,
     }
 
 
@@ -172,47 +240,27 @@ def get_verify_timeout(module: Any) -> int:
     """
     Return normalized read-operation timeout.
 
-    Policy:
-    - When suppress_verification is false (default), query timeout is fixed
-      to DEFAULT_VERIFY_TIMEOUT for automatic verification/read paths.
-    - When suppress_verification is true, timeout can be tuned via
-      verify_option.timeout.
-
     Args:
         module: AnsibleModule with params
 
     Returns:
         Integer timeout for query/recommendation/verification calls.
     """
-    if not module.params.get("suppress_verification", False):
-        return DEFAULT_VERIFY_TIMEOUT
-    return get_verify_option(module).get("timeout", DEFAULT_VERIFY_TIMEOUT)
+    return get_verify_settings(module).get("timeout", DEFAULT_VERIFY_TIMEOUT)
 
 
-def get_verify_iterations(module: Any, changed_pairs: Optional[int] = None) -> int:
+def get_verify_iterations(module: Any) -> int:
     """
     Return normalized verification attempt count.
 
-    Policy:
-    - If suppress_verification is true and verify_option.iteration is provided,
-      use that explicit value.
-    - Otherwise, for automatic verification, use changed_pairs + 1 when
-      changed_pairs is available.
-    - Fall back to DEFAULT_VERIFY_ITERATION when changed_pairs is unavailable.
-
     Args:
         module: AnsibleModule with params
-        changed_pairs: Number of create/update/delete items in this run
 
     Returns:
         Positive integer verification attempt count.
     """
-    if module.params.get("suppress_verification", False):
-        verify_option = module.params.get("verify_option")
-        if isinstance(verify_option, dict) and "iteration" in verify_option:
-            return get_verify_option(module).get("iteration", DEFAULT_VERIFY_ITERATION)
+    raw_verify = module.params.get("verify")
+    if isinstance(raw_verify, dict) and "retries" in raw_verify:
+        return get_verify_settings(module).get("retries", DEFAULT_VERIFY_RETRIES)
 
-    if isinstance(changed_pairs, int) and changed_pairs > 0:
-        return changed_pairs + 1
-
-    return DEFAULT_VERIFY_ITERATION
+    return get_verify_settings(module).get("retries", DEFAULT_VERIFY_RETRIES)

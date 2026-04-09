@@ -12,6 +12,21 @@ from ansible.utils.display import Display
 display = Display()
 
 
+def _as_bool(value: Any, default: bool) -> bool:
+    """Parse bool-like values from task args with a sane default."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "yes", "on"):
+            return True
+        if normalized in ("false", "0", "no", "off"):
+            return False
+    return bool(value)
+
+
 def _normalize_pair(pair: dict[str, Any]) -> frozenset[str]:
     """Return a frozenset key of (switch_id, peer_switch_id) so order does not matter."""
     s1 = pair.get("switchId") or pair.get("switch_id") or pair.get("peer1_switch_id", "")
@@ -179,6 +194,9 @@ class ActionModule(ActionBase):
         ``full``       – (default) match count **and** per-pair field values.
         ``count_only`` – only verify the number of pairs matches.
         ``exists``     – verify that every expected pair exists (extra pairs OK).
+    validate_vpc_pair_details : bool, optional
+        ``true`` (default) validates expected ``vpc_pair_details`` as subset of gathered
+        details for each matched pair. Set to ``false`` to skip details validation.
     """
 
     VALID_MODES = frozenset(["full", "count_only", "exists"])
@@ -194,7 +212,7 @@ class ActionModule(ActionBase):
         expected_data = self._task.args.get("expected_data")
         changed = self._task.args.get("changed")
         mode = self._task.args.get("mode", "full").lower()
-        validate_vpc_pair_details = bool(self._task.args.get("validate_vpc_pair_details", False))
+        validate_vpc_pair_details = _as_bool(self._task.args.get("validate_vpc_pair_details"), True)
 
         if mode not in self.VALID_MODES:
             results["failed"] = True
