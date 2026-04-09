@@ -65,6 +65,15 @@ class NDConfigCollection:
 
         return key
 
+    def add_many(self, items: List[NDBaseModel]) -> List[IdentifierKey]:
+        """
+        Add multiple items to collection (O(k) operation).
+        """
+        keys = []
+        for item in items:
+            keys.append(self.add(item))
+        return keys
+
     def get(self, key: IdentifierKey) -> Optional[NDBaseModel]:
         """
         Get item by identifier key (O(1) operation).
@@ -116,6 +125,27 @@ class NDConfigCollection:
         self._rebuild_index()
 
         return True
+
+    def delete_many(self, keys: List[IdentifierKey]) -> List[IdentifierKey]:
+        """
+        Delete multiple items with single index rebuild (O(n) operation).
+        """
+        deleted = []
+        indices_to_remove = []
+
+        for key in keys:
+            index = self._index.get(key)
+            if index is not None:
+                indices_to_remove.append(index)
+                deleted.append(key)
+
+        if indices_to_remove:
+            # Remove in reverse order to preserve indices
+            for index in sorted(indices_to_remove, reverse=True):
+                del self._items[index]
+            self._rebuild_index()
+
+        return deleted
 
     # Diff Operations
 
