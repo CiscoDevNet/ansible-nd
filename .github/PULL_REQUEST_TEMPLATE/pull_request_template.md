@@ -7,14 +7,6 @@
 <!--- To link the issue to the PR, use one of the keywords: Fixes #xxx or Closes #xxx or Resolves #xxx -->
 
 
-## Related ND API Resource Category
-<!-- Please select ND API resource category, please specify -->
-* [ ] analyze
-* [ ] infa
-* [ ] manage
-* [ ] onemanage
-* [ ] other
-
 ## Proposed Changes
 <!--- Please provide a description of proposed changes -->
 
@@ -25,6 +17,15 @@
 
 ## Cisco Nexus Dashboard Version
 <!-- Please provide Cisco Nexus Dashboard version developed against -->
+
+
+## Related ND API Resource Category
+<!-- Please select ND API resource category, please specify -->
+* [ ] analyze
+* [ ] infa
+* [ ] manage
+* [ ] onemanage
+* [ ] other
 
 
 ## Checklist
