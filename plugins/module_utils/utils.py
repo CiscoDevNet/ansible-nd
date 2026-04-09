@@ -49,7 +49,18 @@ def issubset(subset: Any, superset: Any) -> bool:
 
     if not isinstance(subset, dict):
         if isinstance(subset, list):
-            return all(item in superset for item in subset)
+            if len(subset) != len(superset):
+                return False
+
+            remaining = list(superset)
+            for item in subset:
+                for index, candidate in enumerate(remaining):
+                    if issubset(item, candidate) and issubset(candidate, item):
+                        del remaining[index]
+                        break
+                else:
+                    return False
+            return True
         return subset == superset
 
     for key, value in subset.items():
