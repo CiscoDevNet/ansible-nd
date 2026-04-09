@@ -95,10 +95,6 @@ options:
                   route_map_tag:
                     description:
                     - The route-map tag associated with the interface IP address.
-                    type: int
-                  link_state_routing_tag:
-                    description:
-                    - The link-state routing tag (e.g., C(UNDERLAY)).
                     type: str
                   description:
                     description:
@@ -184,7 +180,7 @@ EXAMPLES = r"""
             policy:
               ip: 10.2.1.1
               description: VTEP loopback
-              link_state_routing_tag: UNDERLAY
+              route_map_tag: "12345"
       - switch_ip: 192.168.1.2
         interface_name: loopback0
         config_data:
