@@ -9,7 +9,6 @@ on:
     branches:
       - develop
       - main
-      - nd42_integration
   # schedule:
   #   # * is a special character in YAML so you have to quote this string
   #   - cron: '0 6 * * *'
@@ -201,7 +200,7 @@ jobs:
   units:
     name: Unit Tests
     needs:
-      - ansible-test
+      - ansible-galaxy-importer
     runs-on: ubuntu-latest
     strategy: *ansible_strategy
 
