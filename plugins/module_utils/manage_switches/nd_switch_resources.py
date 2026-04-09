@@ -3509,12 +3509,22 @@ class NDSwitchResourceModule:
         self.log.debug("Querying all switches with endpoint: %s", endpoint.path)
         self.log.debug("Query verb: %s", endpoint.verb)
 
+        # GETs must run against the real API even in check_mode so that the
+        # before/after diff reflects actual controller state.
+        rest_send = self.nd.rest_send
+        in_check_mode = rest_send.check_mode
+        if in_check_mode:
+            rest_send.save_settings()
+            rest_send.check_mode = False
         try:
             result = self.nd.request(path=endpoint.path, verb=endpoint.verb)
         except Exception as e:
             msg = f"Failed to query switches from " f"fabric '{self.fabric}': {e}"
             self.log.error(msg)
             self.nd.module.fail_json(msg=msg)
+        finally:
+            if in_check_mode:
+                rest_send.restore_settings()
 
         if isinstance(result, list):
             switches = result
