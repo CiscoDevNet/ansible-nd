@@ -84,3 +84,48 @@ class VrfNameMixin(BaseModel):
     """Mixin for endpoints that require vrf_name parameter."""
 
     vrf_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="VRF name")
+
+
+class SwitchIdMixin(BaseModel):
+    """Mixin for endpoints that require switch_id parameter."""
+
+    switch_id: Optional[str] = Field(default=None, min_length=1, description="Switch serial number")
+
+
+class PeerSwitchIdMixin(BaseModel):
+    """Mixin for endpoints that require peer_switch_id parameter."""
+
+    peer_switch_id: Optional[str] = Field(default=None, min_length=1, description="Peer switch serial number")
+
+
+class UseVirtualPeerLinkMixin(BaseModel):
+    """Mixin for endpoints that require use_virtual_peer_link parameter."""
+
+    use_virtual_peer_link: Optional[bool] = Field(
+        default=False,
+        description="Indicates whether a virtual peer link is present",
+    )
+
+
+class FromClusterMixin(BaseModel):
+    """Mixin for endpoints that support fromCluster query parameter."""
+
+    from_cluster: Optional[str] = Field(default=None, description="Optional cluster name")
+
+
+class TicketIdMixin(BaseModel):
+    """Mixin for endpoints that support ticketId query parameter."""
+
+    ticket_id: Optional[str] = Field(default=None, description="Change ticket ID")
+
+
+class ComponentTypeMixin(BaseModel):
+    """Mixin for endpoints that require componentType query parameter."""
+
+    component_type: Optional[str] = Field(default=None, description="Component type for filtering response")
+
+
+class ViewMixin(BaseModel):
+    """Mixin for endpoints that support view parameter."""
+
+    view: Optional[str] = Field(default=None, description="Optional view type for filtering results")
