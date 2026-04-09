@@ -88,7 +88,7 @@ class LoopbackPolicyModel(NDNestedModel):
 
     @field_validator("policy_type", mode="before")
     @classmethod
-    def normalize_policy_type(cls, v):
+    def normalize_policy_type(cls, value):
         """
         # Summary
 
@@ -98,10 +98,10 @@ class LoopbackPolicyModel(NDNestedModel):
 
         None
         """
-        if v is None:
-            return v
+        if value is None:
+            return value
         reverse_mapping = {api: ansible for ansible, api in LOOPBACK_POLICY_TYPE_MAPPING.data.items() if ansible != api}
-        return reverse_mapping.get(v, v)
+        return reverse_mapping.get(value, value)
 
 
 class LoopbackNetworkOSModel(NDNestedModel):
@@ -166,7 +166,7 @@ class LoopbackInterfaceModel(NDBaseModel):
 
     @field_validator("interface_name", mode="before")
     @classmethod
-    def normalize_interface_name(cls, v):
+    def normalize_interface_name(cls, value):
         """
         # Summary
 
@@ -176,9 +176,9 @@ class LoopbackInterfaceModel(NDBaseModel):
 
         None
         """
-        if isinstance(v, str):
-            return v.lower()
-        return v
+        if isinstance(value, str):
+            return value.lower()
+        return value
 
     # --- Argument Spec ---
 
