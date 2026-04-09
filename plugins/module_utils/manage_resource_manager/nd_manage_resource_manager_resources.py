@@ -12,8 +12,7 @@ import ipaddress
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from pydantic import ValidationError
-
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
@@ -53,9 +52,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_ma
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_manager.constants import (
-    API_SCOPE_TYPE_TO_PLAYBOOK as _API_SCOPE_TYPE_TO_PLAYBOOK,
-    POOL_SCOPE_MAP as _POOLNAME_TO_SCOPE_TYPE,
-    SCOPE_TYPE_TO_API as _SCOPE_TYPE_TO_API,
+    API_SCOPE_TYPE_TO_PLAYBOOK,
+    POOL_SCOPE_MAP,
 )
 
 
@@ -122,7 +120,7 @@ class ResourceManagerDiffEngine:
         if scope_details is None:
             return None
         raw = getattr(scope_details, "scope_type", None)
-        return _API_SCOPE_TYPE_TO_PLAYBOOK.get(raw, raw) if raw else None
+        return API_SCOPE_TYPE_TO_PLAYBOOK.get(raw, raw) if raw else None
 
     @staticmethod
     def _compare_resource_values(have: Optional[str], want: Optional[str]) -> bool:
@@ -773,7 +771,7 @@ class NDResourceManagerModule:
 
         Maps pool_type to an internal check_key (the pool_name for ID pools, 'IP_POOL' for
         IP pools, 'SUBNET' for subnet pools), then looks up the allowed scope_type list in
-        ``_POOLNAME_TO_SCOPE_TYPE``.  Fails fast with an informative message if the
+        ``POOL_SCOPE_MAP``.  Fails fast with an informative message if the
         combination is not permitted by the ND Manage API.
 
         Args:
@@ -812,7 +810,7 @@ class NDResourceManagerModule:
             self.log.warning("Validation failed: %s", msg)
             return False, msg
 
-        allowed_scopes = _POOLNAME_TO_SCOPE_TYPE.get(check_key)
+        allowed_scopes = POOL_SCOPE_MAP.get(check_key)
         if allowed_scopes is None:
             msg = "Given pool name '{0}' is not valid".format(pool_name)
             self.log.warning("Validation failed: %s", msg)
@@ -1259,7 +1257,7 @@ class NDResourceManagerModule:
         ``scope_details.scope_type`` attribute or the ``scopeDetails.scopeType`` key of a
         raw dict, then maps it from the API camelCase format (e.g. ``'deviceInterface'``)
         to the playbook format (e.g. ``'device_interface'``) using
-        ``_API_SCOPE_TYPE_TO_PLAYBOOK``.
+        ``API_SCOPE_TYPE_TO_PLAYBOOK``.
 
         Args:
             resource: A ``ResourceManagerResponse`` model instance or a plain dict.
@@ -1277,7 +1275,7 @@ class NDResourceManagerModule:
         else:
             self.log.debug("_get_scope_type: unrecognised resource type %s, returning None", type(resource))
             return None
-        mapped = _API_SCOPE_TYPE_TO_PLAYBOOK.get(raw, raw) if raw else None
+        mapped = API_SCOPE_TYPE_TO_PLAYBOOK.get(raw, raw) if raw else None
         self.log.debug("_get_scope_type: mapped API scope '%s' -> playbook scope '%s'", raw, mapped)
         return mapped
 
