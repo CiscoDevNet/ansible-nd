@@ -129,7 +129,7 @@ class EthernetAccessPolicyModel(NDNestedModel):
 
     @field_validator("policy_type", mode="before")
     @classmethod
-    def normalize_policy_type(cls, v):
+    def normalize_policy_type(cls, value):
         """
         # Summary
 
@@ -139,10 +139,10 @@ class EthernetAccessPolicyModel(NDNestedModel):
 
         None
         """
-        if v is None:
-            return v
+        if value is None:
+            return value
         ansible_to_api = {e.name.lower(): e.value for e in AccessHostPolicyTypeEnum}
-        return ansible_to_api.get(v, v)
+        return ansible_to_api.get(value, value)
 
     # --- Serializers ---
 
@@ -230,7 +230,7 @@ class EthernetAccessInterfaceModel(NDBaseModel):
 
     @field_validator("interface_name", mode="before")
     @classmethod
-    def normalize_interface_name(cls, v):
+    def normalize_interface_name(cls, value):
         """
         # Summary
 
@@ -240,9 +240,9 @@ class EthernetAccessInterfaceModel(NDBaseModel):
 
         None
         """
-        if isinstance(v, str) and v:
-            return v[0].upper() + v[1:]
-        return v
+        if isinstance(value, str) and value:
+            return value[0].upper() + value[1:]
+        return value
 
     # --- Argument Spec ---
 
