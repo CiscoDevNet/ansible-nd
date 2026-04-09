@@ -502,6 +502,9 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_vxlan import FabricGroupVxlanModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_group_vxlan import ManageFabricGroupVxlanOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
@@ -516,27 +519,34 @@ def main():
         supports_check_mode=True,
     )
 
+    state = module.params["state"]
+
     try:
-        # Initialize StateMachine
-        nd_state_machine = NDStateMachine(
-            module=module,
-            model_orchestrator=ManageFabricGroupVxlanOrchestrator,
-        )
-
-        state = module.params.get("state")
-
         if state == "gathered":
-            # Gathered state: return current config without changes
-            module.exit_json(changed=False, **nd_state_machine.output.format())
+            # Handle gathered state: query and return without changes
+            nd_module = NDModule(module)
+            orchestrator = ManageFabricGroupVxlanOrchestrator(sender=nd_module)
+            response_data = orchestrator.query_all()
+            gathered = NDConfigCollection.from_api_response(
+                response_data=response_data,
+                model_class=FabricGroupVxlanModel,
+            )
+            output = NDOutput(output_level=module.params.get("output_level", "normal"))
+            output.assign(before=gathered, after=gathered)
+            module.exit_json(**output.format())
         else:
-            # Manage state for merged, replaced, overridden, deleted
+            # Handle merged/replaced/overridden/deleted states via the state machine
+            nd_state_machine = NDStateMachine(
+                module=module,
+                model_orchestrator=ManageFabricGroupVxlanOrchestrator,
+            )
             nd_state_machine.manage_state()
             module.exit_json(**nd_state_machine.output.format())
 
     except NDStateMachineError as e:
         module.fail_json(msg=str(e))
     except Exception as e:
-        module.fail_json(msg=f"Module execution failed: {str(e)}")
+        module.fail_json(msg="Module execution failed: {0}".format(str(e)))
 
 
 if __name__ == "__main__":
