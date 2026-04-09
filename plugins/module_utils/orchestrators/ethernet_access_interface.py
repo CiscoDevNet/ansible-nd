@@ -15,8 +15,8 @@ from __future__ import annotations
 from typing import ClassVar, Type
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import AccessHostPolicyTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
-    ACCESS_HOST_POLICY_TYPE_MAPPING,
     EthernetAccessInterfaceModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
@@ -50,4 +50,4 @@ class EthernetAccessInterfaceOrchestrator(EthernetBaseOrchestrator):
 
         None
         """
-        return set(ACCESS_HOST_POLICY_TYPE_MAPPING.data.values())
+        return {e.value for e in AccessHostPolicyTypeEnum}
