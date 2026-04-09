@@ -1666,7 +1666,39 @@ class NDResourceManagerModule:
                 item,
             )
         self.log.debug(
-            "translate_gathered_results: completed — %s item(s) translated",
+            "translate_gathered_results: completed — %s item(s) translated (before switch merge)",
+            len(translated),
+        )
+
+        # Merge entries that share the same (entity_name, pool_name, pool_type,
+        # scope_type, resource) key — only their switch IPs differ.  Fabric-scoped
+        # resources (no 'switch' key) are passed through unchanged.
+        merged: dict = {}
+        for item in translated:
+            key = (
+                item.get("entity_name"),
+                item.get("pool_name"),
+                item.get("pool_type"),
+                item.get("scope_type"),
+                item.get("resource"),
+            )
+            if key in merged:
+                # Accumulate switch IPs for matching entries (deduplicate, preserve order)
+                sw_list = item.get("switch") or []
+                for sw in sw_list:
+                    if sw not in merged[key].get("switch", []):
+                        merged[key]["switch"].append(sw)
+                        self.log.debug(
+                            "translate_gathered_results: merged switch ip='%s' into existing entry for key=%s",
+                            sw,
+                            key,
+                        )
+            else:
+                merged[key] = item
+
+        translated = list(merged.values())
+        self.log.debug(
+            "translate_gathered_results: after switch merge — %s item(s) returned",
             len(translated),
         )
         return translated
