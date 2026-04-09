@@ -343,7 +343,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.1 or higher.
 - Only VXLAN fabric group type (C(vxlan)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
 - Fabric group member management (add/remove members) is not handled by this module. Use a dedicated member module.
