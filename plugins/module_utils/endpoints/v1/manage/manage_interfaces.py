@@ -251,9 +251,11 @@ class EpManageInterfacesDelete(_EpManageInterfacesBase):
     - Path: `/api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name}`
     - Verb: DELETE
 
-    This endpoint works for virtual interfaces (loopback, SVI) only. For physical ethernet interfaces,
-    the API returns HTTP 500 ("Interface cannot be deleted!!!"). Use `EpManageInterfacesNormalize` instead
-    to reset physical interfaces to their default state.
+    This endpoint works for virtual interfaces (loopback, SVI) only. For physical ethernet interfaces, the API returns
+    HTTP 500 ("Interface cannot be deleted!!!").
+    
+    To reset physical interfaces to their default state, see `EpManageInterfacesNormalize` and set the payload to an
+    appropriate default config (for example `module_utils/models/interfaces/interface_default_config.py`).
 
     ## Raises
 
