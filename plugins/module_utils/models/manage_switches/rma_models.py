@@ -59,20 +59,20 @@ class RMASwitchModel(NDBaseModel):
     switch_role: Optional[SwitchRole] = Field(default=None, alias="switchRole")
 
     # From bootstrapCredential
-    password: str = Field(..., description="Switch password to be set during bootstrap for admin user")
-    discovery_auth_protocol: SnmpV3AuthProtocol = Field(..., alias="discoveryAuthProtocol")
+    password: str = Field(description="Switch password to be set during bootstrap for admin user")
+    discovery_auth_protocol: SnmpV3AuthProtocol = Field(alias="discoveryAuthProtocol")
     discovery_username: Optional[str] = Field(default=None, alias="discoveryUsername")
     discovery_password: Optional[str] = Field(default=None, alias="discoveryPassword")
     remote_credential_store: RemoteCredentialStore = Field(default=RemoteCredentialStore.LOCAL, alias="remoteCredentialStore")
     remote_credential_store_key: Optional[str] = Field(default=None, alias="remoteCredentialStoreKey")
 
     # From RMASpecific
-    hostname: str = Field(..., description="Hostname of the switch")
-    ip: str = Field(..., description="IP address of the switch")
-    new_switch_id: str = Field(..., alias="newSwitchId", description="SwitchId (serial number) of the replacement switch")
-    old_switch_id: str = Field(..., alias="oldSwitchId", description="SwitchId (serial number) of the switch being replaced")
-    public_key: str = Field(..., alias="publicKey", description="Public Key")
-    finger_print: str = Field(..., alias="fingerPrint", description="Fingerprint")
+    hostname: str = Field(description="Hostname of the switch")
+    ip: str = Field(description="IP address of the switch")
+    new_switch_id: str = Field(alias="newSwitchId", description="SwitchId (serial number) of the replacement switch")
+    old_switch_id: str = Field(alias="oldSwitchId", description="SwitchId (serial number) of the switch being replaced")
+    public_key: str = Field(alias="publicKey", description="Public Key")
+    finger_print: str = Field(alias="fingerPrint", description="Fingerprint")
     dhcp_bootstrap_ip: Optional[str] = Field(default=None, alias="dhcpBootstrapIp")
     seed_switch: bool = Field(default=False, alias="seedSwitch")
     data: Optional[Dict[str, Any]] = Field(

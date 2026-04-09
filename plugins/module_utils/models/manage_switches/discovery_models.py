@@ -44,7 +44,6 @@ class ShallowDiscoveryRequestModel(NDBaseModel):
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
     exclude_from_diff: ClassVar[List[str]] = ["password"]
     seed_ip_collection: List[str] = Field(
-        ...,
         alias="seedIpCollection",
         min_length=1,
         description="Seed switch IP collection",
@@ -110,10 +109,10 @@ class SwitchDiscoveryModel(NDBaseModel):
 
     identifiers: ClassVar[List[str]] = ["serial_number"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
-    hostname: str = Field(..., description="Switch host name")
-    ip: str = Field(..., description="Switch IPv4/v6 address")
-    serial_number: str = Field(..., alias="serialNumber", description="Switch serial number")
-    model: str = Field(..., description="Switch model")
+    hostname: str = Field(description="Switch host name")
+    ip: str = Field(description="Switch IPv4/v6 address")
+    serial_number: str = Field(alias="serialNumber", description="Switch serial number")
+    model: str = Field(description="Switch model")
     software_version: Optional[str] = Field(default=None, alias="softwareVersion", description="Switch software version")
     vdc_id: Optional[int] = Field(
         default=None,
@@ -159,7 +158,7 @@ class AddSwitchesRequestModel(NDBaseModel):
     identifiers: ClassVar[List[str]] = []
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
     exclude_from_diff: ClassVar[List[str]] = ["password"]
-    switches: List[SwitchDiscoveryModel] = Field(..., min_length=1, description="The list of switches to be imported")
+    switches: List[SwitchDiscoveryModel] = Field(min_length=1, description="The list of switches to be imported")
     platform_type: PlatformType = Field(
         default=PlatformType.NX_OS,
         alias="platformType",

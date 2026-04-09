@@ -39,7 +39,6 @@ class SwitchCredentialsRequestModel(NDBaseModel):
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
 
     switch_ids: List[str] = Field(
-        ...,
         alias="switchIds",
         min_length=1,
         description="List of switch serial numbers",
@@ -94,7 +93,7 @@ class ChangeSwitchSerialNumberRequestModel(NDBaseModel):
 
     identifiers: ClassVar[List[str]] = ["new_switch_id"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
-    new_switch_id: str = Field(..., alias="newSwitchId", description="New switchId")
+    new_switch_id: str = Field(alias="newSwitchId", description="New switchId")
 
     @field_validator("new_switch_id", mode="before")
     @classmethod

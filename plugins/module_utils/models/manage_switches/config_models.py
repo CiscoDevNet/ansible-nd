@@ -51,12 +51,11 @@ class ConfigDataModel(NDNestedModel):
     identifiers: ClassVar[List[str]] = []
 
     models: List[str] = Field(
-        ...,
         alias="models",
         min_length=1,
         description="List of model of modules in switch to Bootstrap/Pre-provision/RMA",
     )
-    gateway: str = Field(..., description="Gateway IP with mask for the switch (e.g., 192.168.0.1/24)")
+    gateway: str = Field(description="Gateway IP with mask for the switch (e.g., 192.168.0.1/24)")
 
     @field_validator("models", mode="before")
     @classmethod
@@ -93,12 +92,11 @@ class POAPConfigModel(NDNestedModel):
 
     # Mandatory
     serial_number: str = Field(
-        ...,
         alias="serialNumber",
         min_length=1,
         description="Serial number of the physical switch to Bootstrap",
     )
-    hostname: str = Field(..., description="Hostname for the switch during bootstrap")
+    hostname: str = Field(description="Hostname for the switch during bootstrap")
 
     # Optional
     discovery_username: Optional[str] = Field(
@@ -149,16 +147,14 @@ class PreprovisionConfigModel(NDNestedModel):
 
     # Mandatory
     serial_number: str = Field(
-        ...,
         alias="serialNumber",
         min_length=1,
         description="Serial number of switch to Pre-provision",
     )
-    model: str = Field(..., min_length=1, description="Model of switch to Pre-provision")
-    version: str = Field(..., min_length=1, description="Software version of switch to Pre-provision")
-    hostname: str = Field(..., description="Hostname for the switch during pre-provision")
+    model: str = Field(min_length=1, description="Model of switch to Pre-provision")
+    version: str = Field(min_length=1, description="Software version of switch to Pre-provision")
+    hostname: str = Field(description="Hostname for the switch during pre-provision")
     config_data: ConfigDataModel = Field(
-        ...,
         alias="configData",
         description=("Basic config data of switch to Pre-provision. " "'models' (list of module models) and 'gateway' (IP with mask) are mandatory."),
     )
@@ -215,7 +211,6 @@ class RMAConfigModel(NDNestedModel):
 
     # Required
     new_serial_number: str = Field(
-        ...,
         alias="newSerialNumber",
         min_length=1,
         description="Serial number of the replacement switch to bootstrap for RMA",
@@ -278,7 +273,6 @@ class SwitchConfigModel(NDBaseModel):
 
     # Required fields
     seed_ip: str = Field(
-        ...,
         alias="seedIp",
         min_length=1,
         description="Seed IP address or DNS name of the switch",

@@ -45,16 +45,13 @@ class PreProvisionSwitchModel(NDBaseModel):
 
     # --- preProvisionSpecific fields (required) ---
     serial_number: str = Field(
-        ...,
         alias="serialNumber",
         description="Serial number of the switch to pre-provision",
     )
     hostname: str = Field(
-        ...,
         description="Hostname of the switch to pre-provision",
     )
     ip: str = Field(
-        ...,
         description="IP address of the switch to pre-provision",
     )
 
@@ -72,16 +69,13 @@ class PreProvisionSwitchModel(NDBaseModel):
 
     # --- bootstrapBase fields (required) ---
     model: str = Field(
-        ...,
         description="Model of the switch to pre-provision",
     )
     software_version: str = Field(
-        ...,
         alias="softwareVersion",
         description="Software version of the switch to pre-provision",
     )
     gateway_ip_mask: str = Field(
-        ...,
         alias="gatewayIpMask",
         description="Gateway IP address with mask (e.g., 10.23.244.1/24)",
     )
@@ -104,11 +98,9 @@ class PreProvisionSwitchModel(NDBaseModel):
 
     # --- bootstrapCredential fields (required) ---
     password: str = Field(
-        ...,
         description="Switch password to be set during pre-provision for admin user",
     )
     discovery_auth_protocol: SnmpV3AuthProtocol = Field(
-        ...,
         alias="discoveryAuthProtocol",
         description="SNMP authentication protocol for discovery",
     )
@@ -186,7 +178,6 @@ class PreProvisionSwitchesRequestModel(NDBaseModel):
     identifiers: ClassVar[List[str]] = []
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
     switches: List[PreProvisionSwitchModel] = Field(
-        ...,
         description="PowerOn Auto Provisioning switches",
     )
 

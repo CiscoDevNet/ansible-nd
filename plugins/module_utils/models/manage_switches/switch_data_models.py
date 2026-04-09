@@ -64,8 +64,8 @@ class VpcData(NDNestedModel):
     """
 
     identifiers: ClassVar[List[str]] = []
-    vpc_domain: int = Field(..., alias="vpcDomain", ge=1, le=1000, description="vPC domain ID")
-    peer_switch_id: str = Field(..., alias="peerSwitchId", description="vPC peer switch serial number")
+    vpc_domain: int = Field(alias="vpcDomain", ge=1, le=1000, description="vPC domain ID")
+    peer_switch_id: str = Field(alias="peerSwitchId", description="vPC peer switch serial number")
     consistent_status: Optional[bool] = Field(
         default=None,
         alias="consistentStatus",
@@ -202,7 +202,6 @@ class SwitchDataModel(NDBaseModel):
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
     exclude_from_diff: ClassVar[set] = {"system_up_time", "anomaly_level", "advisory_level", "alert_suspend"}
     switch_id: str = Field(
-        ...,
         alias="switchId",
         description="Serial number of Switch or Node Id of ACI switch",
     )

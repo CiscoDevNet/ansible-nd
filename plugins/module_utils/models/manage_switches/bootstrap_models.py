@@ -90,8 +90,8 @@ class BootstrapCredentialModel(NDBaseModel):
     identifiers: ClassVar[List[str]] = []
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
     exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
-    password: str = Field(..., description="Switch password to be set during bootstrap for admin user")
-    discovery_auth_protocol: SnmpV3AuthProtocol = Field(..., alias="discoveryAuthProtocol")
+    password: str = Field(description="Switch password to be set during bootstrap for admin user")
+    discovery_auth_protocol: SnmpV3AuthProtocol = Field(alias="discoveryAuthProtocol")
     use_new_credentials: bool = Field(
         default=False,
         alias="useNewCredentials",
@@ -140,16 +140,15 @@ class BootstrapImportSpecificModel(NDBaseModel):
 
     identifiers: ClassVar[List[str]] = ["serial_number"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
-    hostname: str = Field(..., description="Hostname of the bootstrap switch")
-    ip: str = Field(..., description="IP address of the bootstrap switch")
-    serial_number: str = Field(..., alias="serialNumber", description="Serial number of the bootstrap switch")
+    hostname: str = Field(description="Hostname of the bootstrap switch")
+    ip: str = Field(description="IP address of the bootstrap switch")
+    serial_number: str = Field(alias="serialNumber", description="Serial number of the bootstrap switch")
     in_inventory: bool = Field(
-        ...,
         alias="inInventory",
         description="True if the bootstrap switch is in inventory",
     )
-    public_key: str = Field(..., alias="publicKey", description="Public Key")
-    finger_print: str = Field(..., alias="fingerPrint", description="Fingerprint")
+    public_key: str = Field(alias="publicKey", description="Public Key")
+    finger_print: str = Field(alias="fingerPrint", description="Fingerprint")
     dhcp_bootstrap_ip: Optional[str] = Field(
         default=None,
         alias="dhcpBootstrapIp",
@@ -184,17 +183,17 @@ class BootstrapImportSwitchModel(NDBaseModel):
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
     exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
 
-    serial_number: str = Field(..., alias="serialNumber", description="Serial number of the bootstrap switch")
+    serial_number: str = Field(alias="serialNumber", description="Serial number of the bootstrap switch")
     model: Optional[str] = Field(default=None, description="Model of the bootstrap switch")
     software_version: Optional[str] = Field(
         default=None,
         alias="softwareVersion",
         description="Software version of the bootstrap switch",
     )
-    hostname: str = Field(..., description="Hostname of the bootstrap switch")
-    ip: str = Field(..., description="IP address of the bootstrap switch")
-    password: str = Field(..., description="Switch password to be set during bootstrap for admin user")
-    discovery_auth_protocol: SnmpV3AuthProtocol = Field(..., alias="discoveryAuthProtocol")
+    hostname: str = Field(description="Hostname of the bootstrap switch")
+    ip: str = Field(description="IP address of the bootstrap switch")
+    password: str = Field(description="Switch password to be set during bootstrap for admin user")
+    discovery_auth_protocol: SnmpV3AuthProtocol = Field(alias="discoveryAuthProtocol")
     discovery_username: Optional[str] = Field(default=None, alias="discoveryUsername")
     discovery_password: Optional[str] = Field(default=None, alias="discoveryPassword")
     remote_credential_store: RemoteCredentialStore = Field(
@@ -275,7 +274,7 @@ class ImportBootstrapSwitchesRequestModel(NDBaseModel):
 
     identifiers: ClassVar[List[str]] = []
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
-    switches: List[BootstrapImportSwitchModel] = Field(..., description="PowerOn Auto Provisioning switches")
+    switches: List[BootstrapImportSwitchModel] = Field(description="PowerOn Auto Provisioning switches")
 
     def to_payload(self) -> Dict[str, Any]:
         """Convert to API payload format."""
