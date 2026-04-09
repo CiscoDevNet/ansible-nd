@@ -2,3 +2,4 @@ packaging  # needed for update-bundled and changelog
 sphinx
 sphinx-notfound-page
 straight.plugin
+pydantic==2.12.5
