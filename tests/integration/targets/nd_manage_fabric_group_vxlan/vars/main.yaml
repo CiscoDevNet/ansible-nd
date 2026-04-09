@@ -1,0 +1,51 @@
+---
+
+fg_vxlan_test_merged: "fg_vxlan_test_merged"
+fg_vxlan_test_replaced: "fg_vxlan_test_replaced"
+fg_vxlan_test_deleted: "fg_vxlan_test_deleted"
+
+# Common VXLAN Fabric Group (MSD) configuration for all fabric group tests
+fabric_config_fg_vxlan:
+  category: fabricGroup
+  management:
+    type: vxlan
+    l2_vni_range: "30000-49000"
+    l3_vni_range: "50000-59000"
+    downstream_vni: false
+    downstream_l2_vni_range: "60000-69000"
+    downstream_l3_vni_range: "80000-89000"
+    underlay_ipv6: false
+    vrf_template: Default_VRF_Universal
+    network_template: Default_Network_Universal
+    vrf_extension_template: Default_VRF_Extension_Universal
+    network_extension_template: Default_Network_Extension_Universal
+    private_vlan: false
+    anycast_gateway_mac: "2020.0000.00aa"
+    multisite_overlay_inter_connect_type: manual
+    route_server_redistribute_direct_route_map: false
+    route_server_routing_tag: 54321
+    enable_ms_overlay_ifc_bgp_desc: true
+    auto_multisite_underlay_inter_connect: false
+    bgp_send_community: false
+    bgp_log_neighbor_change: false
+    bgp_bfd: false
+    multisite_delay_restore: 300
+    multisite_inter_connect_bgp_authentication: false
+    multisite_loopback_id: 100
+    border_gateway_routing_tag: 54321
+    multisite_loopback_ip_range: "10.10.0.0/24"
+    multisite_underlay_subnet_range: "10.10.1.0/24"
+    multisite_underlay_subnet_target_mask: 30
+    multisite_loopback_ipv6_range: "fd00::a10:0/120"
+    multisite_underlay_ipv6_subnet_range: "fd00::a11:0/120"
+    multisite_underlay_ipv6_subnet_target_mask: 126
+    tenant_routed_multicast_v4_v6: false
+    security_group_tag: "off"
+    security_group_tag_prefix: SG_
+    security_group_tag_mac_segmentation: false
+    security_group_tag_id_range: "10000-14000"
+    security_group_tag_preprovision: false
+    auto_configure_cloud_sec: false
+    cloud_sec_algorithm: AES_128_CMAC
+    cloud_sec_enforcement: strict
+    cloud_sec_report_timer: 5

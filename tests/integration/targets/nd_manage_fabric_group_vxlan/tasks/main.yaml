@@ -1,0 +1,511 @@
+---
+# Test code for the nd_manage_fabric_group_vxlan module
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+#############################################################################
+# CLEANUP - Ensure clean state before tests
+#############################################################################
+- name: Clean up any existing test fabric groups before starting tests
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ fg_vxlan_test_merged }}"
+      - fabric_name: "{{ fg_vxlan_test_replaced }}"
+  tags: always
+  ignore_errors: true
+
+#############################################################################
+# TEST 1: STATE MERGED - Create fabric group using merged state
+#############################################################################
+- name: "TEST 1a: Create fabric group using state merged (first run)"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': fg_vxlan_test_merged} | combine(fabric_config_fg_vxlan) }}"
+  register: fg_merged_result_1
+  tags: [test_fg_merged, test_fg_merged_create]
+
+- name: "TEST 1a: Verify fabric group was created using merged state"
+  assert:
+    that:
+      - fg_merged_result_1 is changed
+      - fg_merged_result_1 is not failed
+    fail_msg: "Fabric group creation with state merged failed"
+    success_msg: "Fabric group successfully created with state merged"
+  tags: [test_fg_merged, test_fg_merged_create]
+
+- name: "TEST 1b: Create fabric group using state merged (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': fg_vxlan_test_merged} | combine(fabric_config_fg_vxlan) }}"
+  register: fg_merged_result_2
+  tags: [test_fg_merged, test_fg_merged_idempotent]
+
+- name: "TEST 1b: Verify merged state is idempotent"
+  assert:
+    that:
+      - fg_merged_result_2 is not changed
+      - fg_merged_result_2 is not failed
+    fail_msg: "Merged state is not idempotent - should not change when run twice with same config"
+    success_msg: "Merged state is idempotent - no changes on second run"
+  tags: [test_fg_merged, test_fg_merged_idempotent]
+
+- name: "TEST 1c: Update fabric group using state merged (modify existing)"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ fg_vxlan_test_merged }}"
+        category: fabricGroup
+        management:
+          type: vxlan
+          anycast_gateway_mac: "2020.0000.00bb"
+          multisite_delay_restore: 600
+          auto_multisite_underlay_inter_connect: true
+          bgp_bfd: true
+          downstream_vni: true
+          downstream_l2_vni_range: "70000-79000"
+          downstream_l3_vni_range: "90000-99000"
+  register: fg_merged_result_3
+  tags: [test_fg_merged, test_fg_merged_update]
+
+- name: "TEST 1c: Verify fabric group was updated using merged state"
+  assert:
+    that:
+      - fg_merged_result_3 is changed
+      - fg_merged_result_3 is not failed
+    fail_msg: "Fabric group update with state merged failed"
+    success_msg: "Fabric group successfully updated with state merged"
+  tags: [test_fg_merged, test_fg_merged_update]
+
+#############################################################################
+# VALIDATION: Query fg_vxlan_test_merged and validate expected changes
+#############################################################################
+- name: "VALIDATION 1: Authenticate with ND to get token"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_auth_response
+  tags: [test_fg_merged, test_fg_merged_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 1: Query fg_vxlan_test_merged configuration from ND"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ fg_vxlan_test_merged }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: fg_merged_query
+  tags: [test_fg_merged, test_fg_merged_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 1: Parse fabric group configuration response"
+  set_fact:
+    fg_merged_config: "{{ fg_merged_query.json }}"
+  tags: [test_fg_merged, test_fg_merged_validation]
+
+#
+# Category 1: Properties CHANGED by TEST 1c merge
+#
+- name: "VALIDATION 1a: Verify changed properties after merge"
+  assert:
+    that:
+      - fg_merged_config.management.anycastGatewayMac == "2020.0000.00bb"
+      - fg_merged_config.management.multisiteDelayRestore == 600
+      - fg_merged_config.management.autoMultisiteUnderlayInterConnect == true
+      - fg_merged_config.management.bgpBfd == true
+      - fg_merged_config.management.downstreamVni == true
+      - fg_merged_config.management.downstreamL2VniRange == "70000-79000"
+      - fg_merged_config.management.downstreamL3VniRange == "90000-99000"
+    fail_msg: >-
+      Changed properties validation failed.
+    success_msg: "All 7 changed properties updated correctly"
+  tags: [test_fg_merged, test_fg_merged_validation]
+
+#
+# Category 2: Properties NOT in TEST 1c - MUST be preserved from original create
+#
+- name: "VALIDATION 1b: Verify preserved VNI ranges (not in merge task)"
+  assert:
+    that:
+      - fg_merged_config.management.l2VniRange == "30000-49000"
+      - fg_merged_config.management.l3VniRange == "50000-59000"
+    fail_msg: "Preserved VNI ranges validation failed"
+    success_msg: "Preserved VNI ranges retained correctly"
+  tags: [test_fg_merged, test_fg_merged_validation]
+
+- name: "VALIDATION 1b: Verify preserved templates (not in merge task)"
+  assert:
+    that:
+      - fg_merged_config.management.vrfTemplate == "Default_VRF_Universal"
+      - fg_merged_config.management.networkTemplate == "Default_Network_Universal"
+      - fg_merged_config.management.vrfExtensionTemplate == "Default_VRF_Extension_Universal"
+      - fg_merged_config.management.networkExtensionTemplate == "Default_Network_Extension_Universal"
+    fail_msg: "Preserved template settings validation failed"
+    success_msg: "Preserved template settings retained correctly"
+  tags: [test_fg_merged, test_fg_merged_validation]
+
+- name: "VALIDATION 1b: Verify preserved multi-site overlay settings (not in merge task)"
+  assert:
+    that:
+      - fg_merged_config.management.multisiteOverlayInterConnectType == "manual"
+      - fg_merged_config.management.enableMsOverlayIfcBgpDesc == true
+      - fg_merged_config.management.multisiteLoopbackId == 100
+      - fg_merged_config.management.borderGatewayRoutingTag == 54321
+      - fg_merged_config.management.multisiteLoopbackIpRange == "10.10.0.0/24"
+      - fg_merged_config.management.multisiteUnderlaySubnetRange == "10.10.1.0/24"
+      - fg_merged_config.management.multisiteUnderlaySubnetTargetMask == 30
+    fail_msg: "Preserved multi-site settings validation failed"
+    success_msg: "Preserved multi-site settings retained correctly"
+  tags: [test_fg_merged, test_fg_merged_validation]
+
+- name: "VALIDATION 1b: Verify preserved security/CloudSec settings (not in merge task)"
+  assert:
+    that:
+      - fg_merged_config.management.securityGroupTag == "off"
+      - fg_merged_config.management.autoConfigureCloudSec == false
+      - fg_merged_config.management.tenantRoutedMulticastV4V6 == false
+    fail_msg: "Preserved security/CloudSec settings validation failed"
+    success_msg: "Preserved security/CloudSec settings retained correctly"
+  tags: [test_fg_merged, test_fg_merged_validation]
+
+#############################################################################
+# TEST 2: STATE REPLACED - Create and manage fabric group using replaced state
+#############################################################################
+- name: "TEST 2a: Create fabric group using state replaced (first run)"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ fg_vxlan_test_replaced }}"
+        category: fabricGroup
+        management:
+          type: vxlan
+          l2_vni_range: "40000-59000"
+          l3_vni_range: "60000-69000"
+          anycast_gateway_mac: "2020.0000.00cc"
+          multisite_overlay_inter_connect_type: directPeering
+          auto_multisite_underlay_inter_connect: true
+          multisite_delay_restore: 500
+          multisite_loopback_ip_range: "10.20.0.0/24"
+          multisite_underlay_subnet_range: "10.20.1.0/24"
+          multisite_underlay_subnet_target_mask: 28
+          border_gateway_routing_tag: 12345
+          security_group_tag: strict
+  register: fg_replaced_result_1
+  tags: [test_fg_replaced, test_fg_replaced_create]
+
+- name: "TEST 2a: Verify fabric group was created using replaced state"
+  assert:
+    that:
+      - fg_replaced_result_1 is changed
+      - fg_replaced_result_1 is not failed
+    fail_msg: "Fabric group creation with state replaced failed"
+    success_msg: "Fabric group successfully created with state replaced"
+  tags: [test_fg_replaced, test_fg_replaced_create]
+
+- name: "TEST 2b: Create fabric group using state replaced (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ fg_vxlan_test_replaced }}"
+        category: fabricGroup
+        management:
+          type: vxlan
+          l2_vni_range: "40000-59000"
+          l3_vni_range: "60000-69000"
+          anycast_gateway_mac: "2020.0000.00cc"
+          multisite_overlay_inter_connect_type: directPeering
+          auto_multisite_underlay_inter_connect: true
+          multisite_delay_restore: 500
+          multisite_loopback_ip_range: "10.20.0.0/24"
+          multisite_underlay_subnet_range: "10.20.1.0/24"
+          multisite_underlay_subnet_target_mask: 28
+          border_gateway_routing_tag: 12345
+          security_group_tag: strict
+  register: fg_replaced_result_2
+  tags: [test_fg_replaced, test_fg_replaced_idempotent]
+
+- name: "TEST 2b: Verify replaced state is idempotent"
+  assert:
+    that:
+      - fg_replaced_result_2 is not changed
+      - fg_replaced_result_2 is not failed
+    fail_msg: "Replaced state is not idempotent - should not change when run twice with same config"
+    success_msg: "Replaced state is idempotent - no changes on second run"
+  tags: [test_fg_replaced, test_fg_replaced_idempotent]
+
+- name: "TEST 2c: Update fabric group using state replaced (complete replacement with minimal fields)"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ fg_vxlan_test_replaced }}"
+        category: fabricGroup
+        management:
+          type: vxlan
+  register: fg_replaced_result_3
+  tags: [test_fg_replaced, test_fg_replaced_update]
+
+- name: "TEST 2c: Verify fabric group was completely replaced"
+  assert:
+    that:
+      - fg_replaced_result_3 is changed
+      - fg_replaced_result_3 is not failed
+    fail_msg: "Fabric group replace with minimal fields failed"
+    success_msg: "Fabric group successfully replaced with minimal fields"
+  tags: [test_fg_replaced, test_fg_replaced_update]
+
+#############################################################################
+# VALIDATION: Query fg_vxlan_test_replaced and validate defaults
+#############################################################################
+- name: "VALIDATION 2: Authenticate with ND to get token"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_auth_response_2
+  tags: [test_fg_replaced, test_fg_replaced_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 2: Query fg_vxlan_test_replaced configuration from ND"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ fg_vxlan_test_replaced }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response_2.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: fg_replaced_query
+  tags: [test_fg_replaced, test_fg_replaced_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 2: Parse fabric group configuration response"
+  set_fact:
+    fg_replaced_config: "{{ fg_replaced_query.json }}"
+  tags: [test_fg_replaced, test_fg_replaced_validation]
+
+#
+# After replacing with minimal fields, all optional settings should revert to defaults
+#
+- name: "VALIDATION 2a: Verify VNI ranges reverted to defaults after replace"
+  assert:
+    that:
+      - fg_replaced_config.management.l2VniRange == "30000-49000"
+      - fg_replaced_config.management.l3VniRange == "50000-59000"
+    fail_msg: "VNI ranges did not revert to defaults after replace"
+    success_msg: "VNI ranges reverted to defaults correctly"
+  tags: [test_fg_replaced, test_fg_replaced_validation]
+
+- name: "VALIDATION 2a: Verify multi-site settings reverted to defaults after replace"
+  assert:
+    that:
+      - fg_replaced_config.management.multisiteOverlayInterConnectType == "manual"
+      - fg_replaced_config.management.autoMultisiteUnderlayInterConnect == false
+      - fg_replaced_config.management.multisiteDelayRestore == 300
+      - fg_replaced_config.management.multisiteLoopbackIpRange == "10.10.0.0/24"
+      - fg_replaced_config.management.multisiteUnderlaySubnetRange == "10.10.1.0/24"
+      - fg_replaced_config.management.multisiteUnderlaySubnetTargetMask == 30
+      - fg_replaced_config.management.borderGatewayRoutingTag == 54321
+    fail_msg: "Multi-site settings did not revert to defaults after replace"
+    success_msg: "Multi-site settings reverted to defaults correctly"
+  tags: [test_fg_replaced, test_fg_replaced_validation]
+
+- name: "VALIDATION 2a: Verify security settings reverted to defaults after replace"
+  assert:
+    that:
+      - fg_replaced_config.management.securityGroupTag == "off"
+      - fg_replaced_config.management.anycastGatewayMac == "2020.0000.00aa"
+    fail_msg: "Security settings did not revert to defaults after replace"
+    success_msg: "Security settings reverted to defaults correctly"
+  tags: [test_fg_replaced, test_fg_replaced_validation]
+
+#############################################################################
+# TEST 3: STATE DELETED - Delete fabric groups
+#############################################################################
+- name: "TEST 3a: Delete fabric group using state deleted"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ fg_vxlan_test_replaced }}"
+  register: fg_deleted_result_1
+  tags: [test_fg_deleted, test_fg_deleted_delete]
+
+- name: "TEST 3a: Verify fabric group was deleted"
+  assert:
+    that:
+      - fg_deleted_result_1 is changed
+      - fg_deleted_result_1 is not failed
+    fail_msg: "Fabric group deletion with state deleted failed"
+    success_msg: "Fabric group successfully deleted with state deleted"
+  tags: [test_fg_deleted, test_fg_deleted_delete]
+
+- name: "TEST 3b: Delete fabric group using state deleted (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ fg_vxlan_test_replaced }}"
+  register: fg_deleted_result_2
+  tags: [test_fg_deleted, test_fg_deleted_idempotent]
+
+- name: "TEST 3b: Verify deleted state is idempotent"
+  assert:
+    that:
+      - fg_deleted_result_2 is not changed
+      - fg_deleted_result_2 is not failed
+    fail_msg: "Deleted state is not idempotent - should not change when deleting non-existent fabric group"
+    success_msg: "Deleted state is idempotent - no changes when deleting non-existent fabric group"
+  tags: [test_fg_deleted, test_fg_deleted_idempotent]
+
+#############################################################################
+# TEST 4: STATE GATHERED - Gather current fabric group configuration
+#############################################################################
+- name: "TEST 4a: Gather all VXLAN fabric groups"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: gathered
+  register: fg_gathered_result_1
+  tags: [test_fg_gathered]
+
+- name: "TEST 4a: Verify gathered state returns without changes"
+  assert:
+    that:
+      - fg_gathered_result_1 is not changed
+      - fg_gathered_result_1 is not failed
+    fail_msg: "Gathered state should not report changes"
+    success_msg: "Gathered state returned successfully without changes"
+  tags: [test_fg_gathered]
+
+#############################################################################
+# TEST 5: Multiple fabric group operations in single task
+#############################################################################
+- name: "TEST 5: Create multiple fabric groups in single task"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "multi_fg_1"
+        category: fabricGroup
+        management:
+          type: vxlan
+          l2_vni_range: "30000-49000"
+          l3_vni_range: "50000-59000"
+          anycast_gateway_mac: "2020.0000.0001"
+          multisite_loopback_ip_range: "10.10.0.0/24"
+          multisite_underlay_subnet_range: "10.10.1.0/24"
+      - fabric_name: "multi_fg_2"
+        category: fabricGroup
+        management:
+          type: vxlan
+          l2_vni_range: "30000-49000"
+          l3_vni_range: "50000-59000"
+          anycast_gateway_mac: "2020.0000.0002"
+          multisite_loopback_ip_range: "10.20.0.0/24"
+          multisite_underlay_subnet_range: "10.20.1.0/24"
+  register: fg_multi_result
+  tags: [test_fg_multi]
+
+- name: "TEST 5: Verify multiple fabric groups were created"
+  assert:
+    that:
+      - fg_multi_result is changed
+      - fg_multi_result is not failed
+    fail_msg: "Multiple fabric group creation failed"
+    success_msg: "Multiple fabric groups successfully created"
+  tags: [test_fg_multi]
+
+#############################################################################
+# FINAL CLEANUP - Clean up all test fabric groups
+#############################################################################
+- name: "CLEANUP: Delete all test fabric groups"
+  cisco.nd.nd_manage_fabric_group_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ fg_vxlan_test_merged }}"
+      - fabric_name: "{{ fg_vxlan_test_replaced }}"
+      - fabric_name: "multi_fg_1"
+      - fabric_name: "multi_fg_2"
+  ignore_errors: true
+  tags: [cleanup, always]
+
+#############################################################################
+# TEST SUMMARY
+#############################################################################
+- name: "TEST SUMMARY: Display test results"
+  debug:
+    msg: |
+      ========================================================
+      TEST SUMMARY for cisco.nd.nd_manage_fabric_group_vxlan module:
+      ========================================================
+      TEST 1: STATE MERGED
+        - Create fabric group: {{ 'PASSED' if fg_merged_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if fg_merged_result_2 is not changed else 'FAILED' }}
+        - Update fabric group: {{ 'PASSED' if fg_merged_result_3 is changed else 'FAILED' }}
+
+      TEST 2: STATE REPLACED
+        - Create fabric group: {{ 'PASSED' if fg_replaced_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if fg_replaced_result_2 is not changed else 'FAILED' }}
+        - Replace fabric group: {{ 'PASSED' if fg_replaced_result_3 is changed else 'FAILED' }}
+
+      TEST 3: STATE DELETED
+        - Delete fabric group: {{ 'PASSED' if fg_deleted_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if fg_deleted_result_2 is not changed else 'FAILED' }}
+
+      TEST 4: STATE GATHERED
+        - Gather all: {{ 'PASSED' if fg_gathered_result_1 is not changed else 'FAILED' }}
+
+      TEST 5: MULTI-CREATE
+        - Multiple fabric groups: {{ 'PASSED' if fg_multi_result is changed else 'FAILED' }}
+      ========================================================
+  tags: [test_summary, always]
