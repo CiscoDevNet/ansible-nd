@@ -1,0 +1,244 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_rest_send.py tests",
+        "Provides mock controller responses for REST operations"
+    ],
+    "test_rest_send_00100a": {
+        "TEST_NOTES": ["Successful GET request response"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/endpoint",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "success",
+            "result": "test data"
+        }
+    },
+    "test_rest_send_00110a": {
+        "TEST_NOTES": ["Successful POST request response"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/create",
+        "MESSAGE": "Created",
+        "DATA": {
+            "id": "12345",
+            "status": "created"
+        }
+    },
+    "test_rest_send_00120a": {
+        "TEST_NOTES": ["Successful PUT request response"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/test/update/12345",
+        "MESSAGE": "Updated",
+        "DATA": {
+            "id": "12345",
+            "status": "updated"
+        }
+    },
+    "test_rest_send_00130a": {
+        "TEST_NOTES": ["Successful DELETE request response"],
+        "RETURN_CODE": 200,
+        "METHOD": "DELETE",
+        "REQUEST_PATH": "/api/v1/test/delete/12345",
+        "MESSAGE": "Deleted",
+        "DATA": {
+            "id": "12345",
+            "status": "deleted"
+        }
+    },
+    "test_rest_send_00200a": {
+        "TEST_NOTES": ["Failed request - 404 Not Found"],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/notfound",
+        "MESSAGE": "Not Found",
+        "DATA": {
+            "error": "Resource not found"
+        }
+    },
+    "test_rest_send_00210a": {
+        "TEST_NOTES": ["Failed request - 400 Bad Request"],
+        "RETURN_CODE": 400,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/badrequest",
+        "MESSAGE": "Bad Request",
+        "DATA": {
+            "error": "Invalid payload"
+        }
+    },
+    "test_rest_send_00220a": {
+        "TEST_NOTES": ["Failed request - 500 Internal Server Error"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/servererror",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "error": "Server error occurred"
+        }
+    },
+    "test_rest_send_00300a": {
+        "TEST_NOTES": ["First response in retry sequence - failure"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/retry",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "error": "Temporary error"
+        }
+    },
+    "test_rest_send_00300b": {
+        "TEST_NOTES": ["Second response in retry sequence - success"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/retry",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "success",
+            "result": "data after retry"
+        }
+    },
+    "test_rest_send_00400a": {
+        "TEST_NOTES": ["GET request successful response"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/endpoint",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "success"
+        }
+    },
+    "test_rest_send_00410a": {
+        "TEST_NOTES": ["POST request successful response"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/create",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "created"
+        }
+    },
+    "test_rest_send_00420a": {
+        "TEST_NOTES": ["PUT request successful response"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/test/update/12345",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "updated"
+        }
+    },
+    "test_rest_send_00430a": {
+        "TEST_NOTES": ["DELETE request successful response"],
+        "RETURN_CODE": 200,
+        "METHOD": "DELETE",
+        "REQUEST_PATH": "/api/v1/test/delete/12345",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "deleted"
+        }
+    },
+    "test_rest_send_00500a": {
+        "TEST_NOTES": ["404 Not Found response"],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/notfound",
+        "MESSAGE": "Not Found",
+        "DATA": {
+            "error": "Resource not found"
+        }
+    },
+    "test_rest_send_00510a": {
+        "TEST_NOTES": ["400 Bad Request response"],
+        "RETURN_CODE": 400,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/badrequest",
+        "MESSAGE": "Bad Request",
+        "DATA": {
+            "error": "Invalid request data"
+        }
+    },
+    "test_rest_send_00520a": {
+        "TEST_NOTES": ["500 Internal Server Error response"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/servererror",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "error": "Server error occurred"
+        }
+    },
+    "test_rest_send_00600a": {
+        "TEST_NOTES": ["First response - 500 error for retry test"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/retry",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {
+            "error": "Temporary error"
+        }
+    },
+    "test_rest_send_00600b": {
+        "TEST_NOTES": ["Second response - success after retry"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/retry",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "success"
+        }
+    },
+    "test_rest_send_00600c": {
+        "TEST_NOTES": ["Multiple sequential requests - third"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/multi/create",
+        "MESSAGE": "Created",
+        "DATA": {
+            "id": 3,
+            "name": "third",
+            "status": "created"
+        }
+    },
+    "test_rest_send_00700a": {
+        "TEST_NOTES": ["First sequential GET"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/multi/1",
+        "MESSAGE": "OK",
+        "DATA": {
+            "id": 1
+        }
+    },
+    "test_rest_send_00700b": {
+        "TEST_NOTES": ["Second sequential GET"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/multi/2",
+        "MESSAGE": "OK",
+        "DATA": {
+            "id": 2
+        }
+    },
+    "test_rest_send_00700c": {
+        "TEST_NOTES": ["Third sequential POST"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/test/multi/create",
+        "MESSAGE": "OK",
+        "DATA": {
+            "id": 3,
+            "status": "created"
+        }
+    },
+    "test_rest_send_00900a": {
+        "TEST_NOTES": ["Response for deepcopy test"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/test/endpoint",
+        "MESSAGE": "OK",
+        "DATA": {
+            "status": "success"
+        }
+    }
+}

@@ -199,7 +199,6 @@ jobs:
 
   units:
     name: Unit Tests
-    if: false # No unit tests yet
     needs:
       - ansible-galaxy-importer
     runs-on: ubuntu-latest
@@ -242,7 +241,7 @@ jobs:
     name: Integration Tests
     if: false # No integration tests for now
     needs:
-      # - units
+      - units
       - ansible-test
     runs-on: ubuntu-latest
     strategy: *ansible_strategy

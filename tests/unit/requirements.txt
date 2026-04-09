@@ -1,0 +1,4 @@
+requests_toolbelt
+jsonpath-ng
+lxml
+pydantic==2.12.5
