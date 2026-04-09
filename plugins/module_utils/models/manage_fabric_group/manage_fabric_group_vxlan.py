@@ -21,13 +21,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.enums import (
     FabricGroupTypeEnum,
-    BgpAuthenticationKeyTypeEnum,
     CloudSecAlgorithmEnum,
     CloudSecEnforcementEnum,
     MultisiteOverlayInterConnectTypeEnum,
     SecurityGroupTagEnum,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.common import (
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
+    BgpAuthenticationKeyTypeEnum,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BGP_ASN_RE,
 )
 

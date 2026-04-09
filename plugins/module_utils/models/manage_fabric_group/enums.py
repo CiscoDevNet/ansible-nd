@@ -11,7 +11,6 @@ Enum definitions for VXLAN Fabric Group (MSD) modules.
 ## Enums
 
 - FabricGroupTypeEnum: Fabric group type discriminator.
-- BgpAuthenticationKeyTypeEnum: BGP authentication key encryption types.
 - MultisiteOverlayInterConnectTypeEnum: Multi-Site Overlay Interconnect type options.
 - CloudSecAlgorithmEnum: CloudSec encryption algorithm options.
 - CloudSecEnforcementEnum: CloudSec enforcement type options.
@@ -37,18 +36,6 @@ class FabricGroupTypeEnum(str, Enum):
     """
 
     VXLAN = "vxlan"
-
-
-class BgpAuthenticationKeyTypeEnum(str, Enum):
-    """
-    # Summary
-
-    Enumeration for BGP authentication key encryption types.
-    """
-
-    THREE_DES = "3des"
-    TYPE6 = "type6"
-    TYPE7 = "type7"
 
 
 class MultisiteOverlayInterConnectTypeEnum(str, Enum):
