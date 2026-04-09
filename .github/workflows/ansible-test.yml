@@ -201,7 +201,7 @@ jobs:
   units:
     name: Unit Tests
     needs:
-      - ansible-test
+      - ansible-galaxy-importer
     runs-on: ubuntu-latest
     strategy: *ansible_strategy
 
