@@ -85,8 +85,7 @@ class ResourceManagerConfigModel(NDBaseModel):
     pool_type: Optional[PoolType] = Field(
         default=None,
         description=(
-            "Type of resource pool. One of: ID (integer ID), IP (IP address), SUBNET (CIDR block). "
-            "Determines the expected format for the 'resource' field."
+            "Type of resource pool. One of: ID (integer ID), IP (IP address), SUBNET (CIDR block). Determines the expected format for the 'resource' field."
         ),
     )
     pool_name: Optional[str] = Field(
@@ -99,10 +98,7 @@ class ResourceManagerConfigModel(NDBaseModel):
     )
     scope_type: Optional[ScopeType] = Field(
         default=None,
-        description=(
-            "Scope level for the resource allocation. "
-            "One of: fabric, device, device_interface, device_pair, link."
-        ),
+        description=("Scope level for the resource allocation. One of: fabric, device, device_interface, device_pair, link."),
     )
     resource: Optional[str] = Field(
         default=None,
@@ -126,16 +122,13 @@ class ResourceManagerConfigModel(NDBaseModel):
     vrf_name: Optional[str] = Field(
         default=None,
         description=(
-            "VRF name associated with the resource allocation. "
-            "Use 'default' for the global default VRF. "
-            "When omitted, the default VRF is assumed."
+            "VRF name associated with the resource allocation. Use 'default' for the global default VRF. When omitted, the default VRF is assumed."
         ),
     )
     switch: Optional[List[str]] = Field(
         default=None,
         description=(
-            "List of switch management IP addresses or serial numbers to which the resource "
-            "is assigned. Required when scope_type is not 'fabric'."
+            "List of switch management IP addresses or serial numbers to which the resource is assigned. Required when scope_type is not 'fabric'."
         ),
     )
 
@@ -163,9 +156,7 @@ class ResourceManagerConfigModel(NDBaseModel):
             normalized = v.strip().upper()
             valid_values = [pt.value for pt in PoolType]
             if normalized not in valid_values:
-                raise ValueError(
-                    "pool_type '{0}' is invalid. Valid choices: {1}".format(v, valid_values)
-                )
+                raise ValueError("pool_type '{0}' is invalid. Valid choices: {1}".format(v, valid_values))
             return normalized
         return v
 
@@ -189,9 +180,7 @@ class ResourceManagerConfigModel(NDBaseModel):
             normalized = v.strip().lower()
             valid_values = [st.value for st in ScopeType]
             if normalized not in valid_values:
-                raise ValueError(
-                    "scope_type '{0}' is invalid. Valid choices: {1}".format(v, valid_values)
-                )
+                raise ValueError("scope_type '{0}' is invalid. Valid choices: {1}".format(v, valid_values))
             return normalized
         return v
 
@@ -221,9 +210,7 @@ class ResourceManagerConfigModel(NDBaseModel):
                 return False
         if isinstance(v, int) and v in (0, 1):
             return bool(v)
-        raise ValueError(
-            "is_pre_allocated must be a boolean (true/false), got: {0!r}".format(v)
-        )
+        raise ValueError("is_pre_allocated must be a boolean (true/false), got: {0!r}".format(v))
 
     @field_validator("vrf_name", mode="before")
     @classmethod
@@ -275,30 +262,19 @@ class ResourceManagerConfigModel(NDBaseModel):
         pool_type = self.pool_type
         if pool_type == PoolType.ID:
             if not re.match(r"^\d+$", resource):
-                raise ValueError(
-                    "resource must be an integer string when pool_type is 'ID', "
-                    "got: '{0}'".format(resource)
-                )
+               raise ValueError("resource must be an integer string when pool_type is 'ID', got: '{0}'".format(resource))
         elif pool_type == PoolType.IP:
             try:
                 ip_address(resource)
             except ValueError:
-                raise ValueError(
-                    "resource must be a valid IPv4 or IPv6 address when pool_type is 'IP', "
-                    "got: '{0}'".format(resource)
-                )
+                raise ValueError("resource must be a valid IPv4 or IPv6 address when pool_type is 'IP', got: '{0}'".format(resource))
         elif pool_type == PoolType.SUBNET:
             if "/" not in resource:
-                raise ValueError(
-                    "resource must be CIDR notation (IP/prefix) when pool_type is 'SUBNET', "
-                    "got: '{0}'".format(resource)
-                )
+                raise ValueError("resource must be CIDR notation (IP/prefix) when pool_type is 'SUBNET', got: '{0}'".format(resource))
             try:
                 ip_network(resource, strict=False)
             except ValueError:
-                raise ValueError(
-                    "resource '{0}' is not a valid CIDR network".format(resource)
-                )
+                raise ValueError("resource '{0}' is not a valid CIDR network".format(resource))
         return self
 
     @model_validator(mode="after")
@@ -320,25 +296,19 @@ class ResourceManagerConfigModel(NDBaseModel):
             if tilde_count not in (1, 2):
                 raise ValueError(
                     "entity_name for scope_type 'device_pair' must contain 1 or 2 tildes (~), "
-                    "e.g. 'SER1~SER2' or 'SER1~SER2~label', got: '{0}' ({1} tilde(s))".format(
-                        entity_name, tilde_count
-                    )
+                    "e.g. 'SER1~SER2' or 'SER1~SER2~label', got: '{0}' ({1} tilde(s))".format(entity_name, tilde_count)
                 )
         elif scope_type == ScopeType.DEVICE_INTERFACE:
             if tilde_count != 1:
                 raise ValueError(
                     "entity_name for scope_type 'device_interface' must contain exactly 1 tilde (~), "
-                    "e.g. 'SER~Ethernet1/13', got: '{0}' ({1} tilde(s))".format(
-                        entity_name, tilde_count
-                    )
+                    "e.g. 'SER~Ethernet1/13', got: '{0}' ({1} tilde(s))".format(entity_name, tilde_count)
                 )
         elif scope_type == ScopeType.LINK:
             if tilde_count != 3:
                 raise ValueError(
                     "entity_name for scope_type 'link' must contain exactly 3 tildes (~), "
-                    "e.g. 'SER1~Eth1/3~SER2~Eth1/3', got: '{0}' ({1} tilde(s))".format(
-                        entity_name, tilde_count
-                    )
+                    "e.g. 'SER1~Eth1/3~SER2~Eth1/3', got: '{0}' ({1} tilde(s))".format(entity_name, tilde_count)
                 )
         return self
 
@@ -365,19 +335,14 @@ class ResourceManagerConfigModel(NDBaseModel):
             check_key = pool_name
         allowed_scopes = POOL_SCOPE_MAP.get(check_key)
         if allowed_scopes is not None and scope_type not in allowed_scopes:
-            raise ValueError(
-                "scope_type '{0}' is not valid for pool_name '{1}'. "
-                "Allowed scope_types: {2}".format(scope_type, pool_name, allowed_scopes)
-            )
+            raise ValueError("scope_type '{0}' is not valid for pool_name '{1}'. Allowed scope_types: {2}".format(scope_type, pool_name, allowed_scopes))
         return self
 
     @model_validator(mode="after")
     def validate_pre_allocated_requires_resource(self) -> "ResourceManagerConfigModel":
         """Require 'resource' when 'is_pre_allocated' is True."""
         if self.is_pre_allocated is True and self.resource is None:
-            raise ValueError(
-                "'resource' must be provided when 'is_pre_allocated' is True"
-            )
+            raise ValueError("'resource' must be provided when 'is_pre_allocated' is True")
         return self
 
     @model_validator(mode="after")
@@ -390,10 +355,7 @@ class ResourceManagerConfigModel(NDBaseModel):
         """
         if self.scope_type is not None and self.scope_type != ScopeType.FABRIC:
             if not self.switch:
-                raise ValueError(
-                    "'switch' is required when scope_type is '{0}' "
-                    "(entity_name: '{1}')".format(self.scope_type, self.entity_name)
-                )
+                raise ValueError("'switch' is required when scope_type is '{0}' (entity_name: '{1}')".format(self.scope_type, self.entity_name))
         return self
 
     @model_validator(mode="after")

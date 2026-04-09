@@ -180,10 +180,8 @@ class ResourceManagerDiffEngine:
         Returns:
             Tuple used as a dict key for matching proposed vs existing.
         """
-        norm_entity = (
-            ResourceManagerDiffEngine._normalize_entity_key(entity_name)
-            if entity_name else None
-        )
+        norm_entity = ResourceManagerDiffEngine._normalize_entity_key(entity_name) if entity_name else None
+
         # device_pair and link encode both endpoints in entity_name;
         # normalize switch to None so existing_index and proposed lookups align.
         norm_switch = None if scope_type in ("device_pair", "link") else switch_ip
@@ -215,26 +213,18 @@ class ResourceManagerDiffEngine:
         validated_configs: List[ResourceManagerConfigModel] = []
         for idx, cfg in enumerate(configs_list):
             try:
-                validated = ResourceManagerConfigModel.model_validate(
-                    cfg, context={"state": state}
-                )
+                validated = ResourceManagerConfigModel.model_validate(cfg, context={"state": state})
                 validated_configs.append(validated)
             except ValidationError as e:
                 error_detail = e.errors() if hasattr(e, "errors") else str(e)
-                error_msg = (
-                    f"Configuration validation failed for "
-                    f"config index {idx}: {error_detail}"
-                )
+                error_msg = f"Configuration validation failed for config index {idx}: {error_detail}"
                 log.error(error_msg)
                 if hasattr(nd, "module"):
                     nd.module.fail_json(msg=error_msg)
                 else:
                     raise ValueError(error_msg) from e
             except Exception as e:
-                error_msg = (
-                    f"Configuration validation failed for "
-                    f"config index {idx}: {str(e)}"
-                )
+                error_msg = f"Configuration validation failed for config index {idx}: {str(e)}"
                 log.error(error_msg)
                 if hasattr(nd, "module"):
                     nd.module.fail_json(msg=error_msg)
@@ -286,11 +276,7 @@ class ResourceManagerDiffEngine:
             seen_keys.add(key)
 
         if duplicate_keys:
-            error_msg = (
-                f"Duplicate config entries found: "
-                f"{[str(k) for k in duplicate_keys]}. "
-                f"Each resource must appear only once."
-            )
+            error_msg = f"Duplicate config entries found: {[str(k) for k in duplicate_keys]}. Each resource must appear only once."
             log.error(error_msg)
             if hasattr(nd, "module"):
                 nd.module.fail_json(msg=error_msg)
@@ -423,9 +409,7 @@ class ResourceManagerDiffEngine:
                 )
 
             for sw in switches:
-                key = ResourceManagerDiffEngine._make_resource_key(
-                    entity_name, pool_name, scope_type, sw
-                )
+                key = ResourceManagerDiffEngine._make_resource_key(entity_name, pool_name, scope_type, sw)
                 log.debug(
                     "Lookup key=%s for entity='%s', pool='%s', scope='%s', switch=%s",
                     key,
@@ -459,9 +443,7 @@ class ResourceManagerDiffEngine:
                     )
                     for partial in partials:
                         partial_pool = partial.pool_name
-                        partial_scope = ResourceManagerDiffEngine._extract_scope_type(
-                            partial.scope_details
-                        )
+                        partial_scope = ResourceManagerDiffEngine._extract_scope_type(partial.scope_details)
                         partial_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(
                             partial.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip"
                         )
@@ -477,9 +459,7 @@ class ResourceManagerDiffEngine:
                             entity_name,
                             mismatch,
                         )
-                        changes["debugs"].append(
-                            {"Entity Name": entity_name, "MISMATCHED_VALUES": mismatch}
-                        )
+                        changes["debugs"].append({"Entity Name": entity_name, "MISMATCHED_VALUES": mismatch})
                 else:
                     log.debug(
                         "Resource (entity=%s, pool=%s, scope=%s, switch=%s) found in existing — resource_id=%s, existing_value='%s'",
@@ -487,15 +467,13 @@ class ResourceManagerDiffEngine:
                         pool_name,
                         scope_type,
                         sw,
-                        getattr(existing_res, 'resource_id', None),
+                        getattr(existing_res, "resource_id", None),
                         existing_res.resource_value,
                     )
                     matched_existing_keys.add(key)
                     existing_value = existing_res.resource_value
 
-                    if ResourceManagerDiffEngine._compare_resource_values(
-                        existing_value, resource_value
-                    ):
+                    if ResourceManagerDiffEngine._compare_resource_values(existing_value, resource_value):
                         log.debug(
                             "Resource (entity=%s, pool=%s, scope=%s, switch=%s) is idempotent (value=%s)",
                             entity_name,
@@ -542,11 +520,11 @@ class ResourceManagerDiffEngine:
 
         log.info(
             "Compute changes summary: to_add=%s, to_update=%s, to_delete=%s, idempotent=%s, debugs=%s",
-            len(changes['to_add']),
-            len(changes['to_update']),
-            len(changes['to_delete']),
-            len(changes['idempotent']),
-            len(changes['debugs']),
+            len(changes["to_add"]),
+            len(changes["to_update"]),
+            len(changes["to_delete"]),
+            len(changes["idempotent"]),
+            len(changes["debugs"]),
         )
         log.debug("EXIT: compute_changes()")
         return changes
@@ -581,13 +559,9 @@ class ResourceManagerDiffEngine:
 
         # entity_name: tilde-order-insensitive comparison
         if resource_cfg.entity_name is not None:
-            cfg_norm = ResourceManagerDiffEngine._normalize_entity_key(
-                resource_cfg.entity_name
-            )
-            api_norm = (
-                ResourceManagerDiffEngine._normalize_entity_key(api_resource.entity_name)
-                if api_resource.entity_name else None
-            )
+            cfg_norm = ResourceManagerDiffEngine._normalize_entity_key(resource_cfg.entity_name)
+            api_norm = ResourceManagerDiffEngine._normalize_entity_key(api_resource.entity_name) if api_resource.entity_name else None
+
             log.debug(
                 "validate_resource_api_fields: checking entity_name — cfg_norm='%s', api_norm='%s'",
                 cfg_norm,
@@ -599,10 +573,7 @@ class ResourceManagerDiffEngine:
                     resource_cfg.entity_name,
                     api_resource.entity_name,
                 )
-                mismatches.append(
-                    f"entity_name: provided '{resource_cfg.entity_name}', "
-                    f"API reports '{api_resource.entity_name}'"
-                )
+                mismatches.append(f"entity_name: provided '{resource_cfg.entity_name}', API reports '{api_resource.entity_name}'")
             else:
                 log.debug(
                     "validate_resource_api_fields: entity_name OK — '%s' matches API",
@@ -627,10 +598,7 @@ class ResourceManagerDiffEngine:
                     resource_cfg.pool_name,
                     api_resource.pool_name,
                 )
-                mismatches.append(
-                    f"pool_name: provided '{resource_cfg.pool_name}', "
-                    f"API reports '{api_resource.pool_name}'"
-                )
+                mismatches.append(f"pool_name: provided '{resource_cfg.pool_name}', API reports '{api_resource.pool_name}'")
             else:
                 log.debug(
                     "validate_resource_api_fields: pool_name OK — '%s' matches API",
@@ -649,18 +617,13 @@ class ResourceManagerDiffEngine:
                 resource_cfg.resource,
                 api_resource.resource_value,
             )
-            if not ResourceManagerDiffEngine._compare_resource_values(
-                api_resource.resource_value, resource_cfg.resource
-            ):
+            if not ResourceManagerDiffEngine._compare_resource_values(api_resource.resource_value, resource_cfg.resource):
                 log.debug(
                     "validate_resource_api_fields: resource value MISMATCH — provided='%s', API='%s'",
                     resource_cfg.resource,
                     api_resource.resource_value,
                 )
-                mismatches.append(
-                    f"resource: provided '{resource_cfg.resource}', "
-                    f"API reports '{api_resource.resource_value}'"
-                )
+                mismatches.append(f"resource: provided '{resource_cfg.resource}', API reports '{api_resource.resource_value}'")
             else:
                 log.debug(
                     "validate_resource_api_fields: resource value OK — '%s' matches API '%s'",
@@ -677,8 +640,7 @@ class ResourceManagerDiffEngine:
             nd.module.fail_json(
                 msg=(
                     f"{context} field mismatch for entity '{resource_cfg.entity_name}'. "
-                    f"The following provided values do not match the API data:\n"
-                    + "\n".join(f"  - {m}" for m in mismatches)
+                    f"The following provided values do not match the API data:\n".join(f"  - {m}" for m in mismatches)
                 )
             )
 
@@ -803,10 +765,7 @@ class NDResourceManagerModule:
             self.log.debug("pool_type is 'SUBNET', using check_key='SUBNET'")
             check_key = "SUBNET"
         else:
-            msg = (
-                "Given pool type = '{0}' is invalid,"
-                " Allowed pool types = ['ID', 'IP', 'SUBNET']".format(pool_type)
-            )
+            msg = "Given pool type = '{0}' is invalid, Allowed pool types = ['ID', 'IP', 'SUBNET']".format(pool_type)
             self.log.warning("Validation failed: %s", msg)
             return False, msg
 
@@ -817,12 +776,7 @@ class NDResourceManagerModule:
             return False, msg
 
         if scope_type not in allowed_scopes:
-            msg = (
-                "Given scope type '{0}' is not valid for pool name = '{1}',"
-                " Allowed scope_types = {2}".format(
-                    scope_type, pool_name, allowed_scopes
-                )
-            )
+            msg = "Given scope type '{0}' is not valid for pool name = '{1}', Allowed scope_types = {2}".format(scope_type, pool_name, allowed_scopes)
             self.log.warning("Validation failed: %s", msg)
             return False, msg
 
@@ -861,20 +815,16 @@ class NDResourceManagerModule:
                     "'config' is mandatory for state '%s' but was not provided",
                     self.state,
                 )
-                self.nd.module.fail_json(
-                    msg="'config' element is mandatory for state '{0}'".format(
-                        self.state
-                    )
-                )
+                self.nd.module.fail_json(msg="'config' element is mandatory for state '{0}'".format(self.state))
             return
 
         for item in self.config:
             self.log.debug(
                 "Validating config item: entity_name=%s, pool_name=%s, scope_type=%s, pool_type=%s",
-                item.get('entity_name'),
-                item.get('pool_name'),
-                item.get('scope_type'),
-                item.get('pool_type'),
+                item.get("entity_name"),
+                item.get("pool_name"),
+                item.get("scope_type"),
+                item.get("pool_type"),
             )
             if self.state != "gathered":
                 # Mandatory parameter checks
@@ -885,9 +835,7 @@ class NDResourceManagerModule:
                             field,
                             item,
                         )
-                        self.nd.module.fail_json(
-                            msg="Mandatory parameter '{0}' missing".format(field)
-                        )
+                        self.nd.module.fail_json(msg="Mandatory parameter '{0}' missing".format(field))
                     else:
                         self.log.debug("Mandatory parameter '%s' present: %s", field, item.get(field))
 
@@ -895,24 +843,24 @@ class NDResourceManagerModule:
                 if item.get("scope_type") != "fabric" and not item.get("switch"):
                     self.log.error(
                         "'switch' is required for scope_type='%s' but is missing in config item: %s",
-                        item.get('scope_type'),
+                        item.get("scope_type"),
                         item,
                     )
                     self.nd.module.fail_json(msg="switch : Required parameter not found")
                 elif item.get("scope_type") != "fabric":
                     self.log.debug(
                         "'switch' provided for scope_type='%s': %s",
-                        item.get('scope_type'),
-                        item.get('switch'),
+                        item.get("scope_type"),
+                        item.get("switch"),
                     )
 
             # Validate pool_name / scope_type combination (only when pool_type is provided)
             if item.get("pool_type") is not None:
                 self.log.debug(
                     "Running pool_type/pool_name/scope_type compatibility check for: pool_type=%s, pool_name=%s, scope_type=%s",
-                    item.get('pool_type'),
-                    item.get('pool_name'),
-                    item.get('scope_type'),
+                    item.get("pool_type"),
+                    item.get("pool_name"),
+                    item.get("scope_type"),
                 )
                 rc, mesg = self._validate_resource_params(item)
                 if not rc:
@@ -927,17 +875,15 @@ class NDResourceManagerModule:
                     ResourceManagerConfigModel.from_config(item)
                     self.log.debug(
                         "Pydantic validation passed for entity_name=%s",
-                        item.get('entity_name'),
+                        item.get("entity_name"),
                     )
                 except Exception as exc:
                     self.log.error(
                         "Pydantic validation failed for entity_name=%s: %s",
-                        item.get('entity_name'),
+                        item.get("entity_name"),
                         exc,
                     )
-                    self.nd.module.fail_json(
-                        msg="Invalid parameters in playbook: {0}".format(str(exc))
-                    )
+                    self.nd.module.fail_json(msg="Invalid parameters in playbook: {0}".format(str(exc)))
 
     # ------------------------------------------------------------------
     # ND API interaction helpers
@@ -986,7 +932,7 @@ class NDResourceManagerModule:
         elif isinstance(data, dict) and "resources" in data:
             self.log.debug(
                 "API returned dict with 'resources' key, %s resource(s)",
-                len(data['resources']),
+                len(data["resources"]),
             )
             raw_list = data["resources"]
         elif isinstance(data, dict) and data:
@@ -1001,8 +947,8 @@ class NDResourceManagerModule:
                 resource_model = ResourceManagerResponse.from_response(raw)
                 self.log.debug(
                     "Parsed resource: entity_name=%s, pool_name=%s",
-                    getattr(resource_model, 'entity_name', None),
-                    getattr(resource_model, 'pool_name', None),
+                    getattr(resource_model, "entity_name", None),
+                    getattr(resource_model, "pool_name", None),
                 )
                 self._all_resources.append(resource_model)
             except Exception as exc:
@@ -1353,8 +1299,8 @@ class NDResourceManagerModule:
             "_entity_names_match: e1='%s', e2='%s', sorted_e1=%s, sorted_e2=%s, match=%s",
             e1,
             e2,
-            sorted(e1.split('~')),
-            sorted(e2.split('~')),
+            sorted(e1.split("~")),
+            sorted(e2.split("~")),
             result,
         )
         return result
@@ -1527,9 +1473,7 @@ class NDResourceManagerModule:
                 resource_value,
             )
         else:
-            self.log.debug(
-                "_build_create_payload: no resource value provided, omitting resourceValue field"
-            )
+            self.log.debug("_build_create_payload: no resource value provided, omitting resourceValue field")
 
         payload = request.to_payload()
         self.log.debug("_build_create_payload: final payload=%s", payload)
@@ -1559,9 +1503,7 @@ class NDResourceManagerModule:
             resource_value,
         )
         if not resource_value:
-            self.log.debug(
-                "_determine_pool_type: resource_value is None/empty — returning 'ID'"
-            )
+            self.log.debug("_determine_pool_type: resource_value is None/empty — returning 'ID'")
             return "ID"
         val = str(resource_value).strip()
         if "/" in val:
@@ -1723,10 +1665,8 @@ class NDResourceManagerModule:
             self.fabric,
         )
 
-        # Use compute_changes as the canonical diff engine (GAP-4).
-        changes = ResourceManagerDiffEngine.compute_changes(
-            self.proposed, self.existing, self.log
-        )
+        # Use compute_changes as the canonical diff engine.
+        changes = ResourceManagerDiffEngine.compute_changes(self.proposed, self.existing, self.log)
 
         # Propagate partial-match mismatch diagnostics to the output diff (GAP-7).
         self.changed_dict[0]["debugs"].extend(changes["debugs"])
@@ -1784,22 +1724,17 @@ class NDResourceManagerModule:
         # If two items share a normalised name (unusual), the last one wins; that is
         # acceptable because validate_resource_api_fields uses order-insensitive comparison.
         cfg_by_entity: Dict[str, ResourceManagerConfigModel] = {
-            ResourceManagerDiffEngine._normalize_entity_key(cfg.entity_name): cfg
-            for cfg, _payload in pending_payloads
+            ResourceManagerDiffEngine._normalize_entity_key(cfg.entity_name): cfg for cfg, _payload in pending_payloads
         }
 
         for resp_item in batch_response.resources:
-            self.api_responses.append(
-                {"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)}
-            )
+            self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)})
             # GAP-5: Validate that the API response fields match what we sent.
             if resp_item.entity_name is not None:
                 norm_key = ResourceManagerDiffEngine._normalize_entity_key(resp_item.entity_name)
                 matched_cfg = cfg_by_entity.get(norm_key)
                 if matched_cfg is not None:
-                    ResourceManagerDiffEngine.validate_resource_api_fields(
-                        self.nd, matched_cfg, resp_item, self.log, "Resource"
-                    )
+                    ResourceManagerDiffEngine.validate_resource_api_fields(self.nd, matched_cfg, resp_item, self.log, "Resource")
 
         self.log.info(
             "manage_merged: Batch create successful — %s resource(s) created for fabric=%s",
@@ -1828,10 +1763,8 @@ class NDResourceManagerModule:
             self.fabric,
         )
 
-        # Use compute_changes as the canonical diff engine (GAP-4).
-        changes = ResourceManagerDiffEngine.compute_changes(
-            self.proposed, self.existing, self.log
-        )
+        # Use compute_changes as the canonical diff engine.
+        changes = ResourceManagerDiffEngine.compute_changes(self.proposed, self.existing, self.log)
 
         # Propagate partial-match mismatch diagnostics to the output diff (GAP-7).
         self.changed_dict[0]["debugs"].extend(changes["debugs"])
@@ -1844,7 +1777,7 @@ class NDResourceManagerModule:
         #               only removes what is explicitly listed in the playbook config,
         #               matching ND's nd_rm_get_diff_deleted() behaviour.
         resource_ids = []
-        for _cfg, _sw, existing_res in (changes["idempotent"] + changes["to_update"]):
+        for _cfg, _sw, existing_res in changes["idempotent"] + changes["to_update"]:
             rid = self._get_resource_id(existing_res)
             if rid is not None and rid not in resource_ids:
                 self.log.debug(
@@ -1888,9 +1821,7 @@ class NDResourceManagerModule:
                 len(resource_ids),
                 resource_ids,
             )
-            self.api_responses.append(
-                {"RETURN_CODE": 200, "DATA": {"resourceIds": resource_ids}}
-            )
+            self.api_responses.append({"RETURN_CODE": 200, "DATA": {"resourceIds": resource_ids}})
             return
 
         ep = EpManageFabricResourcesActionsRemovePost(fabric_name=self.fabric)
@@ -1905,9 +1836,7 @@ class NDResourceManagerModule:
         )
 
         for resp_item in remove_response.resources:
-            self.api_responses.append(
-                {"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)}
-            )
+            self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)})
 
         self.log.info(
             "manage_deleted: Successfully deleted %s resource(s): %s",
@@ -1957,8 +1886,7 @@ class NDResourceManagerModule:
             # Skip filter items with no active criteria to avoid matching all resources
             if not filter_entity and not filter_pool and not filter_switches:
                 self.log.debug(
-                    "manage_query: Skipping filter item with no active criteria "
-                    "(entity_name=%s, pool_name=%s, switches=%s)",
+                    "manage_query: Skipping filter item with no active criteria (entity_name=%s, pool_name=%s, switches=%s)",
                     filter_entity,
                     filter_pool,
                     filter_switches,
@@ -1987,9 +1915,7 @@ class NDResourceManagerModule:
                 res_pool = self._get_pool_name(res)
                 # Use switchId (serial number) from scopeDetails to match playbook switch config values
                 if hasattr(res, "scope_details") and res.scope_details:
-                    res_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(
-                        res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id"
-                    )
+                    res_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id")
                 elif isinstance(res, dict):
                     sd = res.get("scopeDetails") or {}
                     res_sw = sd.get("switchId") or sd.get("srcSwitchId")
@@ -1997,9 +1923,7 @@ class NDResourceManagerModule:
                     res_sw = None
 
                 # Apply entity_name filter
-                if filter_entity and not self._entity_names_match(
-                    res_entity, filter_entity
-                ):
+                if filter_entity and not self._entity_names_match(res_entity, filter_entity):
                     self.log.debug(
                         "manage_query: Skipping resource id='%s', entity_name mismatch: resource='%s' vs filter='%s'",
                         rid,
@@ -2084,29 +2008,22 @@ class NDResourceManagerModule:
         )
 
         # Compute the full diff in one pass
-        changes = ResourceManagerDiffEngine.compute_changes(
-            self.proposed, self.existing, self.log
-        )
+        changes = ResourceManagerDiffEngine.compute_changes(self.proposed, self.existing, self.log)
 
         # Propagate partial-match diagnostics
         self.changed_dict[0]["debugs"].extend(changes["debugs"])
         self.log.debug(
             "manage_overridden: compute_changes result — to_add=%s, to_update=%s, to_delete=%s, idempotent=%s, debugs=%s",
-            len(changes['to_add']),
-            len(changes['to_update']),
-            len(changes['to_delete']),
-            len(changes['idempotent']),
-            len(changes['debugs']),
+            len(changes["to_add"]),
+            len(changes["to_update"]),
+            len(changes["to_delete"]),
+            len(changes["idempotent"]),
+            len(changes["debugs"]),
         )
 
-        has_work = bool(
-            changes["to_add"] or changes["to_update"] or changes["to_delete"]
-        )
+        has_work = bool(changes["to_add"] or changes["to_update"] or changes["to_delete"])
         if not has_work:
-            self.log.info(
-                "manage_overridden: nothing to do — "
-                "all existing resources match desired config (fully idempotent)"
-            )
+            self.log.info("manage_overridden: nothing to do — all existing resources match desired config (fully idempotent)")
             self.log.debug("EXIT: manage_overridden()")
             return
 
@@ -2116,14 +2033,12 @@ class NDResourceManagerModule:
         if self.nd.module.check_mode:
             self.log.info(
                 "manage_overridden: check mode — would_delete=%s, would_create=%s",
-                len(changes['to_delete']) + len(changes['to_update']),
-                len(changes['to_add']) + len(changes['to_update']),
+                len(changes["to_delete"]) + len(changes["to_update"]),
+                len(changes["to_add"]) + len(changes["to_update"]),
             )
 
             if changes["to_delete"]:
-                self.log.info(
-                    "manage_overridden: check mode — orphan resources that would be deleted:"
-                )
+                self.log.info("manage_overridden: check mode — orphan resources that would be deleted:")
                 for res in changes["to_delete"]:
                     rid = self._get_resource_id(res)
                     entity = self._get_entity_name(res)
@@ -2139,10 +2054,7 @@ class NDResourceManagerModule:
                 self.log.info("manage_overridden: check mode — no orphan resources to delete")
 
             if changes["to_update"]:
-                self.log.info(
-                    "manage_overridden: check mode — resources with changed values "
-                    "(would delete-old then create-new):"
-                )
+                self.log.info("manage_overridden: check mode — resources with changed values (would delete-old then create-new):")
                 for cfg, sw, existing_res in changes["to_update"]:
                     rid = self._get_resource_id(existing_res)
                     self.log.info(
@@ -2158,9 +2070,7 @@ class NDResourceManagerModule:
                 self.log.info("manage_overridden: check mode — no value-changed resources")
 
             if changes["to_add"]:
-                self.log.info(
-                    "manage_overridden: check mode — new resources that would be created:"
-                )
+                self.log.info("manage_overridden: check mode — new resources that would be created:")
                 for cfg, sw, _existing in changes["to_add"]:
                     self.log.info(
                         "  [check-mode add] entity='%s', pool='%s', switch=%s",
@@ -2182,15 +2092,15 @@ class NDResourceManagerModule:
 
         self.log.info(
             "manage_overridden: Phase 1 — collecting resource IDs to delete: %s orphan(s), %s to-update (old value) resource(s)",
-            len(changes['to_delete']),
-            len(changes['to_update']),
+            len(changes["to_delete"]),
+            len(changes["to_update"]),
         )
 
         # Orphans: exist in fabric, not in desired config
         if changes["to_delete"]:
             self.log.info(
                 "manage_overridden: Phase 1 — processing %s orphan resource(s)",
-                len(changes['to_delete']),
+                len(changes["to_delete"]),
             )
             for res_idx, res in enumerate(changes["to_delete"]):
                 rid = self._get_resource_id(res)
@@ -2234,7 +2144,7 @@ class NDResourceManagerModule:
         if changes["to_update"]:
             self.log.info(
                 "manage_overridden: Phase 1 — processing %s value-changed resource(s) for old-value deletion",
-                len(changes['to_update']),
+                len(changes["to_update"]),
             )
             for upd_idx, (cfg, sw, existing_res) in enumerate(changes["to_update"]):
                 rid = self._get_resource_id(existing_res)
@@ -2270,9 +2180,7 @@ class NDResourceManagerModule:
                         cfg.entity_name,
                     )
         else:
-            self.log.info(
-                "manage_overridden: Phase 1 — no value-changed resources to delete"
-            )
+            self.log.info("manage_overridden: Phase 1 — no value-changed resources to delete")
 
         if delete_ids:
             self.log.info(
@@ -2289,14 +2197,9 @@ class NDResourceManagerModule:
                 len(remove_response.resources),
             )
             for resp_item in remove_response.resources:
-                self.api_responses.append(
-                    {"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)}
-                )
+                self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)})
         else:
-            self.log.info(
-                "manage_overridden: Phase 1 — delete_ids list is empty, "
-                "skipping bulk delete API call"
-            )
+            self.log.info("manage_overridden: Phase 1 — delete_ids list is empty, skipping bulk delete API call")
 
         # ------------------------------------------------------------------
         # Phase 2: Create — new resources + reissued resources with new values
@@ -2306,14 +2209,12 @@ class NDResourceManagerModule:
         self.log.info(
             "manage_overridden: Phase 2 — preparing to create %s resource(s): %s new, %s value-changed",
             len(pending_items),
-            len(changes['to_add']),
-            len(changes['to_update']),
+            len(changes["to_add"]),
+            len(changes["to_update"]),
         )
 
         if not pending_items:
-            self.log.info(
-                "manage_overridden: Phase 2 — no resources to create (nothing to add or update)"
-            )
+            self.log.info("manage_overridden: Phase 2 — no resources to create (nothing to add or update)")
             self.log.debug("EXIT: manage_overridden()")
             return
 
@@ -2351,8 +2252,7 @@ class NDResourceManagerModule:
 
         # Build cfg lookup for post-create field validation
         cfg_by_entity: Dict[str, ResourceManagerConfigModel] = {
-            ResourceManagerDiffEngine._normalize_entity_key(cfg.entity_name): cfg
-            for cfg, _payload in pending_payloads
+            ResourceManagerDiffEngine._normalize_entity_key(cfg.entity_name): cfg for cfg, _payload in pending_payloads
         }
 
         for resp_idx, resp_item in enumerate(batch_response.resources):
@@ -2361,9 +2261,7 @@ class NDResourceManagerModule:
                 resp_idx,
                 resp_item.entity_name,
             )
-            self.api_responses.append(
-                {"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)}
-            )
+            self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)})
             if resp_item.entity_name is not None:
                 norm_key = ResourceManagerDiffEngine._normalize_entity_key(resp_item.entity_name)
                 matched_cfg = cfg_by_entity.get(norm_key)
@@ -2373,9 +2271,7 @@ class NDResourceManagerModule:
                         resp_idx,
                         resp_item.entity_name,
                     )
-                    ResourceManagerDiffEngine.validate_resource_api_fields(
-                        self.nd, matched_cfg, resp_item, self.log, "Resource"
-                    )
+                    ResourceManagerDiffEngine.validate_resource_api_fields(self.nd, matched_cfg, resp_item, self.log, "Resource")
                 else:
                     self.log.debug(
                         "  [Phase2-validate idx=%s] no cfg match for entity='%s' — skipping field validation",
@@ -2403,16 +2299,8 @@ class NDResourceManagerModule:
         self._validate_input()
 
         if self.config and self.state != "gathered":
-            self.proposed = ResourceManagerDiffEngine.validate_configs(
-                self.config, self.state, self.nd, self.log
-            )
-            self.output.assign(
-                proposed_configs=[
-                    cfg.model_dump(by_alias=True, exclude_none=True)
-                    for cfg in self.proposed
-                ]
-            )
-
+            self.proposed = ResourceManagerDiffEngine.validate_configs(self.config, self.state, self.nd, self.log)
+            self.output.assign(proposed_configs=[cfg.model_dump(by_alias=True, exclude_none=True) for cfg in self.proposed])
         if self.state == "merged":
             self.log.info("manage_state: Dispatching to manage_merged()")
             self.manage_merged()
@@ -2443,11 +2331,9 @@ class NDResourceManagerModule:
         if self.state == "gathered":
             self.log.info(
                 "exit_module: gathered state, returning %s resource(s)",
-                len(self.changed_dict[0]['gathered']),
+                len(self.changed_dict[0]["gathered"]),
             )
-            self.output.assign(
-                current=self.translate_gathered_results(self.existing)
-            )
+            self.output.assign(current=self.translate_gathered_results(self.existing))
             result = self.output.format(
                 changed=False,
                 gathered=self.changed_dict[0]["gathered"],
@@ -2455,23 +2341,19 @@ class NDResourceManagerModule:
             self.nd.module.exit_json(**result)
             return
 
-        changed = (
-            len(self.changed_dict[0]["merged"]) > 0
-            or len(self.changed_dict[0]["deleted"]) > 0
-        )
+        changed = len(self.changed_dict[0]["merged"]) > 0 or len(self.changed_dict[0]["deleted"]) > 0
         if self.nd.module.check_mode:
             self.log.info(
-                "exit_module: check_mode is enabled, overriding changed=False "
-                "(would have been changed=%s)",
+                "exit_module: check_mode is enabled, overriding changed=False (would have been changed=%s)",
                 changed,
             )
             changed = False
 
         self.log.info(
             "exit_module: merged=%s, deleted=%s, gathered=%s, changed=%s, check_mode=%s",
-            len(self.changed_dict[0]['merged']),
-            len(self.changed_dict[0]['deleted']),
-            len(self.changed_dict[0]['gathered']),
+            len(self.changed_dict[0]["merged"]),
+            len(self.changed_dict[0]["deleted"]),
+            len(self.changed_dict[0]["gathered"]),
             changed,
             self.nd.module.check_mode,
         )

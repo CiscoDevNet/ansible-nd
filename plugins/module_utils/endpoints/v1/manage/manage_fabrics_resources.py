@@ -61,15 +61,9 @@ class ResourcesQueryParams(EndpointQueryParams):
     ```
     """
 
-    switch_id: Optional[str] = Field(
-        default=None, min_length=1, description="Serial Number or Id of the switch/leaf"
-    )
-    pool_name: Optional[str] = Field(
-        default=None, min_length=1, description="Name of the Pool"
-    )
-    tenant_name: Optional[str] = Field(
-        default=None, min_length=1, description="Name of the tenant"
-    )
+    switch_id: Optional[str] = Field(default=None, min_length=1, description="Serial Number or Id of the switch/leaf")
+    pool_name: Optional[str] = Field(default=None, min_length=1, description="Name of the Pool")
+    tenant_name: Optional[str] = Field(default=None, min_length=1, description="Name of the tenant")
 
 
 # =============================================================================
@@ -306,9 +300,7 @@ class EpManageFabricResourcesActionsRemovePost(BaseModel):
 
     model_config = COMMON_CONFIG
 
-    fabric_name: str = Field(
-        min_length=1, max_length=64, description="Name of the fabric"
-    )
+    fabric_name: str = Field(min_length=1, max_length=64, description="Name of the fabric")
 
     @property
     def path(self) -> str:
@@ -325,10 +317,8 @@ class EpManageFabricResourcesActionsRemovePost(BaseModel):
             "Building path for EpManageFabricResourcesActionsRemovePost: fabric_name=%s",
             self.fabric_name,
         )
-        return BasePath.path(
-            "fabrics", self.fabric_name, "resources", "actions", "remove"
-        )
-
+        return BasePath.path("fabrics", self.fabric_name, "resources", "actions", "remove")
+        
     @property
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""

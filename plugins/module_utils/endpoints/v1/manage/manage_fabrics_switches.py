@@ -69,12 +69,8 @@ class EpManageFabricSwitchesGet(BaseModel):
 
     model_config = COMMON_CONFIG
 
-    fabric_name: str = Field(
-        min_length=1, max_length=64, description="Name of the fabric"
-    )
-    max: int = Field(
-        default=10000, ge=1, description="Maximum number of switches to return"
-    )
+    fabric_name: str = Field(min_length=1, max_length=64, description="Name of the fabric")
+    max: int = Field(default=10000, ge=1, description="Maximum number of switches to return")
 
     @property
     def path(self) -> str:

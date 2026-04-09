@@ -45,11 +45,7 @@ class ResourceManagerResponse(NDNestedModel):  # noqa: F811
         alias="poolName",
         description="Pool under which the resource is allocated",
     )
-    scope_details: Optional[
-        Union[
-            FabricScope, DeviceScope, DeviceInterfaceScope, LinkScope, DevicePairScope
-        ]
-    ] = Field(
+    scope_details: Optional[Union[FabricScope, DeviceScope, DeviceInterfaceScope, LinkScope, DevicePairScope]] = Field(
         default=None,
         alias="scopeDetails",
         description="Scope details; discriminated by scopeType",
@@ -103,12 +99,8 @@ class ResourcesManagerBatchResponse(NDBaseModel):
 
     identifiers: ClassVar[List[str]] = []
 
-    resources: List[ResourceManagerResponse] = Field(
-        default_factory=list, description="List of resource data"
-    )
-    meta: Optional[Dict[str, Any]] = Field(
-        default=None, description="Response metadata"
-    )
+    resources: List[ResourceManagerResponse] = Field(default_factory=list, description="List of resource data")
+    meta: Optional[Dict[str, Any]] = Field(default=None, description="Response metadata")
 
     @classmethod
     def from_response(cls, response: Any) -> "ResourcesManagerBatchResponse":

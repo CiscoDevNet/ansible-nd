@@ -67,9 +67,7 @@ class ResourceValidators:
                     start = int(parts[0].strip())
                     end = int(parts[1].strip())
                     if start >= end:
-                        raise ValueError(
-                            f"Invalid range: start ({start}) must be less than end ({end})"
-                        )
+                        raise ValueError(f"Invalid range: start ({start}) must be less than end ({end})")
                     return v
                 except ValueError as e:
                     raise ValueError(f"Invalid range format: {v}. Error: {str(e)}")

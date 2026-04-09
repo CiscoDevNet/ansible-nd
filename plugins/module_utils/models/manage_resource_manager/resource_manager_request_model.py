@@ -377,11 +377,7 @@ class ResourceManagerRequest(NDNestedModel):
         alias="poolType",
         description="Type of pool: ID, IP, or SUBNET",
     )
-    scope_details: Optional[
-        Union[
-            FabricScope, DeviceScope, DeviceInterfaceScope, LinkScope, DevicePairScope
-        ]
-    ] = Field(
+    scope_details: Optional[Union[FabricScope, DeviceScope, DeviceInterfaceScope, LinkScope, DevicePairScope]] = Field(
         default=None,
         alias="scopeDetails",
         description="Scope details; discriminated by scopeType",
@@ -533,10 +529,7 @@ class ResourceManagerRequest(NDNestedModel):
         }
         target_cls = model_map.get(scope_type)
         if target_cls is None:
-            raise ValueError(
-                f"Unknown scopeType: {scope_type!r}. "
-                f"Allowed values: {list(model_map.keys())}"
-            )
+            raise ValueError(f"Unknown scopeType: {scope_type!r}. " f"Allowed values: {list(model_map.keys())}")
         return target_cls.model_validate(v)
 
     def to_payload(self) -> Dict[str, Any]:
@@ -624,9 +617,7 @@ class ResourceManagerBatchRequest(NDBaseModel):
 
     identifiers: ClassVar[List[str]] = []
 
-    resources: List[ResourceManagerRequest] = Field(
-        description="Array of resource configs to allocate"
-    )
+    resources: List[ResourceManagerRequest] = Field(description="Array of resource configs to allocate")
 
     def to_payload(self) -> Dict[str, Any]:
         """Convert to API payload format."""

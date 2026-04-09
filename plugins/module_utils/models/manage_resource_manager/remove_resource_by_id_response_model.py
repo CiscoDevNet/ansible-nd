@@ -53,9 +53,7 @@ class RemoveResourcesByIdsResponse(NDBaseModel):
 
     identifiers: ClassVar[List[str]] = []
 
-    resources: List[RemoveResourcesByIdResponse] = Field(
-        default_factory=list, description="List of resource data"
-    )
+    resources: List[RemoveResourcesByIdResponse] = Field(default_factory=list, description="List of resource data")
 
     @classmethod
     def from_response(cls, response: Any) -> "RemoveResourcesByIdsResponse":

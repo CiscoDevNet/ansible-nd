@@ -429,17 +429,14 @@ def main():
         nd = NDModule(module)
         log.debug(
             "main: NDModule initialised — host='%s', username='%s'",
-            module.params.get('host'),
-            module.params.get('username'),
+            module.params.get("host"),
+            module.params.get("username"),
         )
 
         # Create NDResourceManagerModule — switch IP→ID resolution and config translation
         # happen automatically inside __init__ via _get_all_switches / _resolve_switch_ids_in_config
-        rm_module = NDResourceManagerModule(
-            nd=nd,
-            results=results,
-            logger=log
-        )
+        rm_module = NDResourceManagerModule(nd=nd, results=results, logger=log)
+
         log.debug(
             "main: NDResourceManagerModule created — fabric='%s', state='%s', config_count=%s",
             fabric,
@@ -464,7 +461,7 @@ def main():
         # NDModule-specific errors (API failures, authentication issues, etc.)
         log.error(
             "main: NDModuleError caught — error_type=NDModuleError, status=%s, msg='%s', fabric='%s', state='%s'",
-            getattr(error, 'status', None),
+            getattr(error, "status", None),
             error.msg,
             fabric,
             state,
@@ -476,7 +473,7 @@ def main():
             results.result_current = nd.rest_send.result_current
             log.debug(
                 "main: RestSend response captured — RETURN_CODE=%s",
-                getattr(nd.rest_send.response_current, 'RETURN_CODE', 'N/A'),
+                getattr(nd.rest_send.response_current, "RETURN_CODE", "N/A"),
             )
         except (AttributeError, ValueError) as rest_exc:
             # Fallback if RestSend wasn't initialized or no response available
