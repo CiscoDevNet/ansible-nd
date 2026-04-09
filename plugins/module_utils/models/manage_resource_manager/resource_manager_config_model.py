@@ -451,8 +451,6 @@ class ResourceManagerConfigModel(NDBaseModel):
                 default="merged",
                 choices=["merged", "overridden", "deleted", "gathered"],
             ),
-            save=dict(type="bool", default=True),
-            deploy=dict(type="bool", default=True),
             config=dict(type="list", elements="dict"),
         )
 
