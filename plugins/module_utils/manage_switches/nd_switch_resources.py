@@ -2444,7 +2444,7 @@ class NDSwitchResourceModule:
 
         # Set retry count for Rest Send API calls.
         self.request_retry_count: int = 1
-        nd._get_rest_send().timeout = self.request_retry_count
+        self.nd._get_rest_send().timeout = self.request_retry_count
 
         self.ctx = SwitchServiceContext(
             nd=nd,
@@ -3545,7 +3545,7 @@ class NDSwitchResourceModule:
         # GETs must run against the real API even in check_mode so that the
         # before/after diff reflects actual controller state.
         in_check_mode = self.nd.module.check_mode
-        rest_send = self.nd._get_rest_send()
+        rest_send = self.nd.rest_send
         if in_check_mode:
             rest_send.save_settings()
             rest_send.check_mode = False
