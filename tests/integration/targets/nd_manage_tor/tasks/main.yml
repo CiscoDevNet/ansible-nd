@@ -42,6 +42,8 @@
   cisco.nd.nd_manage_tor:
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
+    config:
+      - aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
     state: gathered
   register: gathered_tor_associations
 
@@ -141,6 +143,8 @@
   cisco.nd.nd_manage_tor:
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
+    config:
+      - aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
     state: gathered
   register: gathered_after_create
 
@@ -245,6 +249,8 @@
   cisco.nd.nd_manage_tor:
     <<: *nd_info
     fabric_name: "{{ test_fabric_name }}"
+    config:
+      - aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
     state: gathered
   register: gathered_after_delete
 

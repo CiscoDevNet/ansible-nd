@@ -33,8 +33,10 @@ options:
       access_or_tor_switch_id:
         description:
         - The serial number of the access or ToR switch.
+        - Required when O(state=merged) or O(state=deleted).
+        - Optional when O(state=gathered); if omitted, all associations for the
+          specified O(config[].aggregation_or_leaf_switch_id) are returned.
         type: str
-        required: true
       aggregation_or_leaf_switch_id:
         description:
         - The serial number of the aggregation or leaf switch.
@@ -89,6 +91,7 @@ options:
       Existing associations not specified in the configuration will be left unchanged.
     - Use O(state=deleted) to disassociate the access or ToR switches specified in the configuration.
     - Use O(state=gathered) to retrieve current access or ToR switch associations from the fabric without making changes.
+      O(config) is required with at least one O(config[].aggregation_or_leaf_switch_id) to satisfy the ND API.
     type: str
     default: merged
     choices: [ merged, deleted, gathered ]
@@ -138,6 +141,8 @@ EXAMPLES = r"""
 - name: Gather all ToR associations for a fabric
   cisco.nd.nd_manage_tor:
     fabric_name: my-fabric
+    config:
+      - aggregation_or_leaf_switch_id: "98AM4FFFFV0"
     state: gathered
 """
 
@@ -165,6 +170,7 @@ def main():
         required_if=[
             ["state", "merged", ["config"]],
             ["state", "deleted", ["config"]],
+            ["state", "gathered", ["config"]],
         ],
     )
     require_pydantic(module)
@@ -176,6 +182,8 @@ def main():
     config = module.params.get("config") or []
     for item in config:
         item["fabric_name"] = fabric_name
+        if state in ("merged", "deleted") and not item.get("access_or_tor_switch_id"):
+            module.fail_json(msg="config[].access_or_tor_switch_id is required when state is '{0}'.".format(state))
 
     try:
         if state == "gathered":

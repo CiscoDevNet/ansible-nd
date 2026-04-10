@@ -113,7 +113,7 @@ class ManageTorModel(NDBaseModel):
                 type="list",
                 elements="dict",
                 options=dict(
-                    access_or_tor_switch_id=dict(type="str", required=True),
+                    access_or_tor_switch_id=dict(type="str"),
                     aggregation_or_leaf_switch_id=dict(type="str", required=True),
                     access_or_tor_peer_switch_id=dict(type="str"),
                     aggregation_or_leaf_peer_switch_id=dict(type="str"),
@@ -130,4 +130,6 @@ class ManageTorModel(NDBaseModel):
                 default="merged",
                 choices=["merged", "deleted", "gathered"],
             ),
+            # gathered also requires config to provide aggregation_or_leaf_switch_id
+            # for the ND API query parameter (enforced via required_if in the module).
         )

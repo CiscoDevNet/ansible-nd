@@ -95,16 +95,40 @@ class ManageTorOrchestrator(NDBaseOrchestrator[ManageTorModel]):
         """
         List all access/ToR associations for the fabric.
 
-        Extracts fabric_name from module parameters and injects it into
-        each returned association so the model can be constructed properly.
+        The ND API requires aggregationOrLeafSwitchId as a query parameter
+        despite the spec marking it optional — omitting it returns HTTP 400.
+        In practice ND returns ALL associations for the fabric regardless of
+        which leaf ID is supplied, so a single request with the first leaf ID
+        from the module config is sufficient.
+
+        fabric_name is injected into each returned association so the model
+        can be constructed properly.
         """
         try:
             fabric_name = self._get_fabric_name()
             api_endpoint = self.query_all_endpoint()
             api_endpoint.fabric_name = fabric_name
-            result = self.sender.query_obj(api_endpoint.path)
-            associations = result.get("associations", []) or []
-            # Inject fabric_name into each association for model construction
+
+            # Pick the first leaf switch ID from config to satisfy the API's
+            # required-in-practice query parameter.
+            config = self.sender.params.get("config") or []
+            leaf_switch_id = None
+            for item in config:
+                leaf_switch_id = item.get("aggregation_or_leaf_switch_id") or item.get("aggregation_or_leaf_peer_switch_id")
+                if leaf_switch_id:
+                    break
+
+            if not leaf_switch_id:
+                raise Exception(
+                    "aggregation_or_leaf_switch_id is required in config to query ToR associations."
+                )
+
+            result = self.sender.request(
+                path=api_endpoint.path,
+                method="GET",
+                qs={"aggregationOrLeafSwitchId": leaf_switch_id},
+            )
+            associations = (result or {}).get("associations", []) or []
             for assoc in associations:
                 assoc["fabricName"] = fabric_name
             return associations
