@@ -2442,9 +2442,12 @@ class NDSwitchResourceModule:
         # Shared context for service classes
         config_actions = self.module.params.get("config_actions") or {}
 
-        # Set retry count for Rest Send API calls.
+        # Configure RestSend once: fix timeout to request_retry_count so all
+        # API calls use a single retry iteration instead of the default 300s loop.
+        # check_mode is NOT overridden globally — read-only calls that must reach
+        # the controller override it locally via save_settings()/restore_settings().
         self.request_retry_count: int = 1
-        self.nd._get_rest_send().timeout = self.request_retry_count
+        self.nd.rest_send_timeout = self.request_retry_count
 
         self.ctx = SwitchServiceContext(
             nd=nd,
@@ -3542,13 +3545,12 @@ class NDSwitchResourceModule:
         self.log.debug("Querying all switches with endpoint: %s", endpoint.path)
         self.log.debug("Query verb: %s", endpoint.verb)
 
-        # GETs must run against the real API even in check_mode so that the
-        # before/after diff reflects actual controller state.
+        # GETs must reach the real controller even when Ansible runs with --check.
+        # Temporarily override check_mode to False so RestSend sends the real
+        # request instead of returning a simulated response, then restore it.
         in_check_mode = self.nd.module.check_mode
-        rest_send = self.nd.rest_send
         if in_check_mode:
-            rest_send.save_settings()
-            rest_send.check_mode = False
+            self.nd.rest_send_check_mode = False
         try:
             result = self.nd.request(path=endpoint.path, verb=endpoint.verb)
         except Exception as e:
@@ -3557,7 +3559,7 @@ class NDSwitchResourceModule:
             self.nd.module.fail_json(msg=msg)
         finally:
             if in_check_mode:
-                rest_send.restore_settings()
+                self.nd.rest_send_check_mode = True
 
         # nd.request() returns response["DATA"] directly. For a 404, the
         # controller embeds the error as {"code": 404, "message": "Fabric not found"}
