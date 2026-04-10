@@ -20,7 +20,8 @@ orchestrator only needs to inject `switchId` and filter `query_all` results by i
 
 from __future__ import annotations
 
-from typing import ClassVar, Optional, Type
+from collections import defaultdict
+from typing import ClassVar, List, Optional, Type
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -76,12 +77,16 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
     """
 
     model_class: ClassVar[Type[NDBaseModel]] = LoopbackInterfaceModel
+    supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_delete: ClassVar[bool] = True
 
     create_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPut
     delete_endpoint: Type[NDEndpointBaseModel] = NDEndpointBaseModel  # unused; delete() uses bulk remove
     query_one_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesGet
     query_all_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesListGet
+    create_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPost
+    delete_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesRemove
 
     deploy: bool = True
 
@@ -337,6 +342,57 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
         switch_id = self._resolve_switch_id(model_instance.switch_ip)
         self._queue_remove(model_instance.interface_name, switch_id)
         self._queue_deploy(model_instance.interface_name, switch_id)
+
+    def create_bulk(self, model_instances: List[LoopbackInterfaceModel], **kwargs) -> ResponseType:
+        """
+        # Summary
+
+        Create multiple loopback interfaces in bulk. Groups interfaces by switch and sends one POST per switch with all
+        interfaces in the `interfaces` array, reducing API calls from N to one-per-switch. Queues deploys for all created
+        interfaces for later bulk execution via `deploy_pending`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If any create API request fails.
+        """
+        try:
+            groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+            for model_instance in model_instances:
+                switch_id = self._resolve_switch_id(model_instance.switch_ip)
+                payload = model_instance.to_payload()
+                payload["switchId"] = switch_id
+                groups[switch_id].append((model_instance.interface_name, payload))
+
+            results = []
+            for switch_id, items in groups.items():
+                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)
+                request_body = {"interfaces": [payload for _, payload in items]}
+                result = self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=request_body)
+                results.append(result)
+                for interface_name, _ in items:
+                    self._queue_deploy(interface_name, switch_id)
+            return results
+        except Exception as e:
+            raise RuntimeError(f"Bulk create failed: {e}") from e
+
+    def delete_bulk(self, model_instances: List[LoopbackInterfaceModel], **kwargs) -> None:
+        """
+        # Summary
+
+        Queue multiple loopback interfaces for deferred bulk removal and deployment. Each interface is queued for removal
+        via `remove_pending` and deployment via `deploy_pending`. No API calls are made until those methods are called
+        after `manage_state` completes.
+
+        ## Raises
+
+        None
+        """
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            self._queue_remove(model_instance.interface_name, switch_id)
+            self._queue_deploy(model_instance.interface_name, switch_id)
 
     def query_one(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
