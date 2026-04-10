@@ -20,7 +20,8 @@ Shared functionality includes:
 
 from __future__ import annotations
 
-from typing import ClassVar, Optional, Set, Type
+from collections import defaultdict
+from typing import ClassVar, List, Optional, Set, Type
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -70,11 +71,16 @@ class EthernetBaseOrchestrator(NDBaseOrchestrator[ModelType]):
     - Via `query_all` if the query API request fails.
     """
 
+    supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_delete: ClassVar[bool] = True
+
     create_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPut
     delete_endpoint: Type[NDEndpointBaseModel] = NDEndpointBaseModel  # unused; delete() uses bulk normalize
     query_one_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesGet
     query_all_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesListGet
+    create_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPost
+    delete_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesNormalize
 
     deploy: bool = True
 
@@ -410,6 +416,60 @@ class EthernetBaseOrchestrator(NDBaseOrchestrator[ModelType]):
             return {}
         except Exception as e:
             raise RuntimeError(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def create_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
+        """
+        # Summary
+
+        Create multiple ethernet interfaces in bulk. Groups interfaces by switch and sends one POST per switch with all
+        interfaces in the `interfaces` array, reducing API calls from N to one-per-switch. Port-channel membership
+        restrictions are checked for each interface. Queues deploys for all created interfaces for later bulk execution
+        via `deploy_pending`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If any interface is a port-channel member and non-whitelisted fields are being modified.
+        - If any create API request fails.
+        """
+        try:
+            groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+            for model_instance in model_instances:
+                switch_id = self._resolve_switch_id(model_instance.switch_ip)
+                self._check_port_channel_restrictions(model_instance, kwargs.get("existing_data"))
+                payload = model_instance.to_payload()
+                payload["switchId"] = switch_id
+                groups[switch_id].append((model_instance.interface_name, payload))
+
+            results = []
+            for switch_id, items in groups.items():
+                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)
+                request_body = {"interfaces": [payload for _, payload in items]}
+                result = self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=request_body)
+                results.append(result)
+                for interface_name, _ in items:
+                    self._queue_deploy(interface_name, switch_id)
+            return results
+        except Exception as e:
+            raise RuntimeError(f"Bulk create failed: {e}") from e
+
+    def delete_bulk(self, model_instances: List[ModelType], **kwargs) -> None:
+        """
+        # Summary
+
+        Queue multiple ethernet interfaces for deferred bulk normalization and deployment. Each interface is queued
+        for normalization via `remove_pending` (which resets it to the `int_trunk_host` template) and deployment via
+        `deploy_pending`. No API calls are made until those methods are called after `manage_state` completes.
+
+        ## Raises
+
+        None
+        """
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            self._queue_normalize(model_instance.interface_name, switch_id)
+            self._queue_deploy(model_instance.interface_name, switch_id)
 
     def query_one(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """
