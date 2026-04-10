@@ -121,15 +121,11 @@ class ResourceManagerConfigModel(NDBaseModel):
     )
     vrf_name: Optional[str] = Field(
         default=None,
-        description=(
-            "VRF name associated with the resource allocation. Use 'default' for the global default VRF. When omitted, the default VRF is assumed."
-        ),
+        description=("VRF name associated with the resource allocation. Use 'default' for the global default VRF. When omitted, the default VRF is assumed."),
     )
     switch: Optional[List[str]] = Field(
         default=None,
-        description=(
-            "List of switch management IP addresses or serial numbers to which the resource is assigned. Required when scope_type is not 'fabric'."
-        ),
+        description=("List of switch management IP addresses or serial numbers to which the resource is assigned. Required when scope_type is not 'fabric'."),
     )
 
     # -------------------------------------------------------------------------
@@ -262,7 +258,7 @@ class ResourceManagerConfigModel(NDBaseModel):
         pool_type = self.pool_type
         if pool_type == PoolType.ID:
             if not re.match(r"^\d+$", resource):
-               raise ValueError("resource must be an integer string when pool_type is 'ID', got: '{0}'".format(resource))
+                raise ValueError("resource must be an integer string when pool_type is 'ID', got: '{0}'".format(resource))
         elif pool_type == PoolType.IP:
             try:
                 ip_address(resource)
