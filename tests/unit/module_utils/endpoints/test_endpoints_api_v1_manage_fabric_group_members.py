@@ -75,7 +75,7 @@ def test_endpoints_manage_fabric_group_members_00030():
     """
     with pytest.raises(ValueError):
         instance = EpManageFabricGroupMembersGet()
-        _ = instance.path
+        result = instance.path
 
 
 def test_endpoints_manage_fabric_group_members_00040():
@@ -148,7 +148,7 @@ def test_endpoints_manage_fabric_group_members_00120():
     """
     with pytest.raises(ValueError):
         instance = EpManageFabricGroupMembersAddPost()
-        _ = instance.path
+        result = instance.path
 
 
 def test_endpoints_manage_fabric_group_members_00130():
@@ -221,7 +221,7 @@ def test_endpoints_manage_fabric_group_members_00220():
     """
     with pytest.raises(ValueError):
         instance = EpManageFabricGroupMembersRemovePost()
-        _ = instance.path
+        result = instance.path
 
 
 def test_endpoints_manage_fabric_group_members_00230():
