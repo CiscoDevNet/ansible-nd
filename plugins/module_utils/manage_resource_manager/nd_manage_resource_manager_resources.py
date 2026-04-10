@@ -56,10 +56,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_ma
     POOL_SCOPE_MAP,
 )
 
-
 # =========================================================================
 # Validation & Diff
 # =========================================================================
+
 
 class ResourceManagerDiffEngine:
     """Provide stateless validation and diff computation helpers."""
