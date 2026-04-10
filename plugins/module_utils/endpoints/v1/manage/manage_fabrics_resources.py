@@ -127,9 +127,7 @@ class EpManageFabricResourcesGet(BaseModel):
 
     model_config = COMMON_CONFIG
 
-    fabric_name: str = Field(
-        min_length=1, max_length=64, description="Name of the fabric"
-    )
+    fabric_name: str = Field(min_length=1, max_length=64, description="Name of the fabric")
     endpoint_params: ResourcesQueryParams = Field(
         default_factory=ResourcesQueryParams,
         description="Endpoint-specific query parameters",
@@ -222,9 +220,7 @@ class EpManageFabricResourcesPost(BaseModel):
 
     model_config = COMMON_CONFIG
 
-    fabric_name: str = Field(
-        min_length=1, max_length=64, description="Name of the fabric"
-    )
+    fabric_name: str = Field(min_length=1, max_length=64, description="Name of the fabric")
     endpoint_params: ResourcesQueryParams = Field(
         default_factory=ResourcesQueryParams,
         description="Endpoint-specific query parameters",
@@ -318,7 +314,7 @@ class EpManageFabricResourcesActionsRemovePost(BaseModel):
             self.fabric_name,
         )
         return BasePath.path("fabrics", self.fabric_name, "resources", "actions", "remove")
-        
+
     @property
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
