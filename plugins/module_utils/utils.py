@@ -112,6 +112,53 @@ class SwitchOperationError(Exception):
 
 
 # =========================================================================
+# API Response Validation
+# =========================================================================
+
+
+class ApiDataChecker:
+    """Detect controller-embedded errors in API response DATA payloads.
+
+    The Nexus Dashboard API signals certain errors by embedding an error
+    object inside ``DATA`` as ``{"code": <N>, "message": "<reason>"}`` even
+    when the transport-level result is marked successful.  Any payload dict
+    that contains a ``"code"`` key is treated as an error; the absence of
+    ``"code"`` means the payload is a genuine data body.
+    """
+
+    @staticmethod
+    def check(
+        data: Any,
+        context: str,
+        log: logging.Logger,
+        fail_callback=None,
+    ) -> None:
+        """Fail or raise if the response DATA contains an embedded error code.
+
+        Args:
+            data: Value returned by ``nd.request()`` or extracted from
+                  ``response_current["DATA"]``.
+            context: Human-readable description of the operation.
+            log: Logger instance.
+            fail_callback: Optional callable (e.g. ``module.fail_json``) that
+                           accepts a ``msg`` keyword argument.  When provided
+                           it is called on error instead of raising
+                           ``SwitchOperationError``.
+        """
+        if isinstance(data, dict) and "code" in data:
+            error_msg = data.get("message", "Unknown error")
+            msg = (
+                f"{context} failed — controller returned error: "
+                f"{error_msg} (code={data['code']})"
+            )
+            log.error(msg)
+            if fail_callback is not None:
+                fail_callback(msg=msg)
+            else:
+                raise SwitchOperationError(msg)
+
+
+# =========================================================================
 # Fabric Utilities
 # =========================================================================
 
@@ -244,8 +291,11 @@ class FabricUtils:
                 verb=self.ep_switch_deploy.verb,
                 data={"switchIds": serial_numbers},
             )
+            ApiDataChecker.check(response, f"Switch-level deploy for fabric '{self.fabric}'", self.log)
             self.log.info("Switch-level deploy completed for fabric: %s", self.fabric)
             return response
+        except SwitchOperationError:
+            raise
         except Exception as e:
             self.log.error("Switch-level deploy failed for fabric %s: %s", self.fabric, e)
             raise SwitchOperationError(f"Switch-level deploy failed for fabric {self.fabric}: {e}") from e
@@ -281,8 +331,11 @@ class FabricUtils:
         self.log.info("%s for fabric: %s", action, self.fabric)
         try:
             response = self.nd.request(endpoint.path, verb=endpoint.verb)
+            ApiDataChecker.check(response, f"{action} for fabric '{self.fabric}'", self.log)
             self.log.info("%s completed for fabric: %s", action, self.fabric)
             return response
+        except SwitchOperationError:
+            raise
         except Exception as e:
             self.log.error("%s failed for fabric %s: %s", action, self.fabric, e)
             raise SwitchOperationError(f"{action} failed for fabric {self.fabric}: {e}") from e

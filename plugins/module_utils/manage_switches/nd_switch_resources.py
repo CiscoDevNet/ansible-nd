@@ -67,6 +67,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.co
     RMAConfigModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.utils import (
+    ApiDataChecker,
     FabricUtils,
     SwitchOperationError,
 )
@@ -743,15 +744,30 @@ class SwitchDiscoveryService:
 
             # Extract discovered switches from response
             switches_data = []
+            response_data: Dict[str, Any] = {}
             if response and isinstance(response, dict):
                 if "DATA" in response and isinstance(response["DATA"], dict):
-                    switches_data = response["DATA"].get("switches", [])
+                    response_data = response["DATA"]
+                    switches_data = response_data.get("switches", [])
                 elif "body" in response and isinstance(response["body"], dict):
-                    switches_data = response["body"].get("switches", [])
+                    response_data = response["body"]
+                    switches_data = response_data.get("switches", [])
                 elif "switches" in response:
                     switches_data = response.get("switches", [])
 
             log.debug("Extracted %s switches from discovery response", len(switches_data))
+
+            ApiDataChecker.check(response_data, f"Switch discovery for {seed_ips}", log, nd.module.fail_json)
+
+            # Fail early for any unreachable switches — before data touches models.
+            # The API returns status="notReachable" with an empty serialNumber and
+            # a top-level "warning" string explaining reachability requirements.
+            unreachable = [sw for sw in switches_data if isinstance(sw, dict) and sw.get("status", "").lower() == "notreachable"]
+            if unreachable:
+                api_warning = response_data.get("warning", "").strip()
+                msg = f"Switch discovery failed: {api_warning}"
+                log.error(msg)
+                nd.module.fail_json(msg=msg)
 
             discovered_results: Dict[str, Dict[str, Any]] = {}
             for discovered in switches_data:
@@ -977,6 +993,9 @@ class SwitchFabricOps:
 
         response = nd.rest_send.response_current
         result = nd.rest_send.result_current
+        ApiDataChecker.check(
+            response.get("DATA", {}), f"Bulk add switches to fabric '{self.ctx.fabric}' ({', '.join(serial_numbers)})", log, nd.module.fail_json
+        )
 
         results.action = "create"
         results.operation_type = OperationType.CREATE
@@ -1054,6 +1073,9 @@ class SwitchFabricOps:
 
             response = nd.rest_send.response_current
             result = nd.rest_send.result_current
+            ApiDataChecker.check(
+                response.get("DATA", {}), f"Bulk delete switches from fabric '{self.ctx.fabric}' ({serial_numbers})", log, nd.module.fail_json
+            )
 
             results.action = "delete"
             results.operation_type = OperationType.DELETE
@@ -1123,6 +1145,7 @@ class SwitchFabricOps:
 
                 response = nd.rest_send.response_current
                 result = nd.rest_send.result_current
+                ApiDataChecker.check(response.get("DATA", {}), f"Save credentials for switches {serial_numbers}", log, nd.module.fail_json)
 
                 results.action = "save_credentials"
                 results.operation_type = OperationType.UPDATE
@@ -1184,6 +1207,7 @@ class SwitchFabricOps:
 
             response = nd.rest_send.response_current
             result = nd.rest_send.result_current
+            ApiDataChecker.check(response.get("DATA", {}), f"Update switch roles in fabric '{self.ctx.fabric}'", log, nd.module.fail_json)
 
             results.action = "update_role"
             results.operation_type = OperationType.UPDATE
@@ -1687,6 +1711,7 @@ class POAPHandler:
 
         response = nd.rest_send.response_current
         result = nd.rest_send.result_current
+        ApiDataChecker.check(response.get("DATA", {}), f"importBootstrap for {[m.serial_number for m in models]}", log, nd.module.fail_json)
 
         results.action = "bootstrap"
         results.operation_type = OperationType.CREATE
@@ -1797,6 +1822,7 @@ class POAPHandler:
 
         response = nd.rest_send.response_current
         result = nd.rest_send.result_current
+        ApiDataChecker.check(response.get("DATA", {}), f"preProvision for {[m.serial_number for m in models]}", log, nd.module.fail_json)
 
         results.action = "preprovision"
         results.operation_type = OperationType.CREATE
@@ -1918,6 +1944,7 @@ class POAPHandler:
 
             response = nd.rest_send.response_current
             result = nd.rest_send.result_current
+            ApiDataChecker.check(response.get("DATA", {}), f"changeSwitchSerialNumber {old_serial} → {new_serial}", log, nd.module.fail_json)
 
             results.action = "swap_serial"
             results.operation_type = OperationType.UPDATE
@@ -2352,6 +2379,7 @@ class RMAHandler:
 
         response = nd.rest_send.response_current
         result = nd.rest_send.result_current
+        ApiDataChecker.check(response.get("DATA", {}), f"RMA provision {rma_model.old_switch_id} → {rma_model.new_switch_id}", log, nd.module.fail_json)
 
         results.action = "rma"
         results.operation_type = OperationType.CREATE
@@ -2413,6 +2441,11 @@ class NDSwitchResourceModule:
 
         # Shared context for service classes
         config_actions = self.module.params.get("config_actions") or {}
+
+        # Set retry count for Rest Send API calls.
+        self.request_retry_count: int = 1
+        nd._get_rest_send().timeout = self.request_retry_count
+
         self.ctx = SwitchServiceContext(
             nd=nd,
             results=results,
@@ -3511,20 +3544,26 @@ class NDSwitchResourceModule:
 
         # GETs must run against the real API even in check_mode so that the
         # before/after diff reflects actual controller state.
-        rest_send = self.nd.rest_send
-        in_check_mode = rest_send.check_mode
+        in_check_mode = self.nd.module.check_mode
+        rest_send = self.nd._get_rest_send()
         if in_check_mode:
             rest_send.save_settings()
             rest_send.check_mode = False
         try:
             result = self.nd.request(path=endpoint.path, verb=endpoint.verb)
         except Exception as e:
-            msg = f"Failed to query switches from " f"fabric '{self.fabric}': {e}"
+            msg = f"Failed to query switches from fabric '{self.fabric}': {e}"
             self.log.error(msg)
             self.nd.module.fail_json(msg=msg)
         finally:
             if in_check_mode:
                 rest_send.restore_settings()
+
+        # nd.request() returns response["DATA"] directly. For a 404, the
+        # controller embeds the error as {"code": 404, "message": "Fabric not found"}
+        # inside DATA.  RestSend treats GET 404 as success=True/found=False so no
+        # exception is raised — detect it here from the returned data itself.
+        ApiDataChecker.check(result, f"Query switches from fabric '{self.fabric}'", self.log, self.nd.module.fail_json)
 
         if isinstance(result, list):
             switches = result
