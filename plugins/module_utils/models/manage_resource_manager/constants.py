@@ -44,7 +44,6 @@ POOL_SCOPE_MAP: Dict[str, List[str]] = {
     "TOP_DOWN_L3_DOT1Q": ["device_interface"],
     "IP_POOL": ["fabric", "device_interface"],
     "SUBNET": ["link"],
-    "loopbackId": ["device"],
 }
 
 # =============================================================================
