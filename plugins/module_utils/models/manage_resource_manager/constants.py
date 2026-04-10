@@ -17,7 +17,6 @@ __metaclass__ = type
 from enum import Enum
 from typing import Dict, List
 
-
 # =============================================================================
 # POOL_SCOPE_MAP - Derived from dcnm_rm_check_resource_params()
 # Maps known pool names to the scope types they are valid for.
@@ -48,7 +47,6 @@ POOL_SCOPE_MAP: Dict[str, List[str]] = {
     "loopbackId": ["device"],
 }
 
-
 # =============================================================================
 # SCOPE_TYPE_TO_API / API_SCOPE_TYPE_TO_PLAYBOOK
 # Maps between playbook scope_type values (underscore) and ND API scopeType
@@ -64,7 +62,6 @@ SCOPE_TYPE_TO_API: Dict[str, str] = {
 }
 
 API_SCOPE_TYPE_TO_PLAYBOOK: Dict[str, str] = {v: k for k, v in SCOPE_TYPE_TO_API.items()}
-
 
 # =============================================================================
 # ENUMS - Ansible/DCNM-style values

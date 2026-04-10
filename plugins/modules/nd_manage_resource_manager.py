@@ -547,6 +547,7 @@ def main():
 
         if output_level == "debug":
             import traceback
+            
             tb_str = traceback.format_exc()
             results.final_result["traceback"] = tb_str
             log.debug(
