@@ -4,7 +4,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Type, ClassVar
+from typing import Type, ClassVar, List
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_tor.manage_tor import ManageTorModel
@@ -41,19 +41,25 @@ class ManageTorOrchestrator(NDBaseOrchestrator[ManageTorModel]):
     query_one_endpoint: Type[NDEndpointBaseModel] = EpManageTorAssociationsGet
     query_all_endpoint: Type[NDEndpointBaseModel] = EpManageTorAssociationsGet
 
+    # Bulk operation support
+    supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_delete: ClassVar[bool] = True
+    create_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageTorAssociatePost
+    delete_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageTorDisassociatePost
+
     def _get_fabric_name(self) -> str:
         """Extract fabric_name from module parameters."""
         return self.sender.params.get("fabric_name", "")
 
-    def create(self, model_instance: ManageTorModel, **kwargs) -> ResponseType:
-        """Associate an access/ToR switch pair. Wraps payload in array for bulk API."""
+    def create_bulk(self, model_instances: List[ManageTorModel], **kwargs) -> ResponseType:
+        """Associate multiple access/ToR switch pairs in a single API call."""
         try:
-            api_endpoint = self.create_endpoint()
-            api_endpoint.fabric_name = model_instance.fabric_name
-            data = [model_instance.to_payload()]
+            api_endpoint = self.create_bulk_endpoint()
+            api_endpoint.fabric_name = model_instances[0].fabric_name
+            data = [instance.to_payload() for instance in model_instances]
             return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=data)
         except Exception as e:
-            raise Exception(f"Associate failed for {model_instance.get_identifier_value()}: {e}") from e
+            raise Exception(f"Bulk associate failed: {e}") from e
 
     def update(self, model_instance: ManageTorModel, **kwargs) -> ResponseType:
         """Re-associate an access/ToR switch pair (same as create for this API)."""
@@ -65,24 +71,25 @@ class ManageTorOrchestrator(NDBaseOrchestrator[ManageTorModel]):
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def delete(self, model_instance: ManageTorModel, **kwargs) -> ResponseType:
-        """Disassociate an access/ToR switch pair. Sends only switch IDs (no resources)."""
+    def delete_bulk(self, model_instances: List[ManageTorModel], **kwargs) -> ResponseType:
+        """Disassociate multiple access/ToR switch pairs in a single API call."""
         try:
-            api_endpoint = self.delete_endpoint()
-            api_endpoint.fabric_name = model_instance.fabric_name
-            # Disassociate only needs switch serial numbers, not resources
-            disassociate_payload = {
-                "accessOrTorSwitchId": model_instance.access_or_tor_switch_id,
-                "aggregationOrLeafSwitchId": model_instance.aggregation_or_leaf_switch_id,
-            }
-            if model_instance.access_or_tor_peer_switch_id is not None:
-                disassociate_payload["accessOrTorPeerSwitchId"] = model_instance.access_or_tor_peer_switch_id
-            if model_instance.aggregation_or_leaf_peer_switch_id is not None:
-                disassociate_payload["aggregationOrLeafPeerSwitchId"] = model_instance.aggregation_or_leaf_peer_switch_id
-            data = [disassociate_payload]
+            api_endpoint = self.delete_bulk_endpoint()
+            api_endpoint.fabric_name = model_instances[0].fabric_name
+            data = []
+            for instance in model_instances:
+                disassociate_payload = {
+                    "accessOrTorSwitchId": instance.access_or_tor_switch_id,
+                    "aggregationOrLeafSwitchId": instance.aggregation_or_leaf_switch_id,
+                }
+                if instance.access_or_tor_peer_switch_id is not None:
+                    disassociate_payload["accessOrTorPeerSwitchId"] = instance.access_or_tor_peer_switch_id
+                if instance.aggregation_or_leaf_peer_switch_id is not None:
+                    disassociate_payload["aggregationOrLeafPeerSwitchId"] = instance.aggregation_or_leaf_peer_switch_id
+                data.append(disassociate_payload)
             return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=data)
         except Exception as e:
-            raise Exception(f"Disassociate failed for {model_instance.get_identifier_value()}: {e}") from e
+            raise Exception(f"Bulk disassociate failed: {e}") from e
 
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
         """
