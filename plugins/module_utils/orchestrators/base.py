@@ -4,14 +4,30 @@
 
 from __future__ import absolute_import, division, print_function
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
-from typing import ClassVar, Type, Optional, Generic, TypeVar
+from functools import wraps
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
+from typing import ClassVar, Type, Optional, Generic, TypeVar, List
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 ModelType = TypeVar("ModelType", bound=NDBaseModel)
+
+
+def requires_bulk_support(flag_name: str):
+    """Decorator that restricts method access based on a ClassVar boolean flag."""
+
+    def decorator(method):
+        @wraps(method)
+        def wrapper(self, *args, **kwargs):
+            if not getattr(self, flag_name, False):
+                raise AttributeError(f"'{method.__name__}' is not available when '{flag_name}' is disabled on '{self.__class__.__name__}'.")
+            return method(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
@@ -23,6 +39,8 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     )
 
     model_class: ClassVar[Type[NDBaseModel]] = NDBaseModel
+    supports_bulk_create: ClassVar[bool] = False
+    supports_bulk_delete: ClassVar[bool] = False
 
     # NOTE: if not defined by subclasses, return an error as they are required
     create_endpoint: Type[NDEndpointBaseModel]
@@ -30,6 +48,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     delete_endpoint: Type[NDEndpointBaseModel]
     query_one_endpoint: Type[NDEndpointBaseModel]
     query_all_endpoint: Type[NDEndpointBaseModel]
+
+    # NOTE: Conditionally required
+    create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = None
+    delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = None
 
     # NOTE: Module Field is always required
     sender: NDModule
@@ -73,3 +95,19 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
+
+    @model_validator(mode="after")
+    def validate_bulk_endpoints(self):
+        if self.supports_bulk_create and self.create_bulk_endpoint is None:
+            raise ValueError(f"'{self.__class__.__name__}' has 'supports_bulk_create=True' but 'create_bulk_endpoint' is not defined.")
+        if self.supports_bulk_delete and self.delete_bulk_endpoint is None:
+            raise ValueError(f"'{self.__class__.__name__}' has 'supports_bulk_delete=True' but 'delete_bulk_endpoint' is not defined.")
+        return self
+
+    @requires_bulk_support("supports_bulk_create")
+    def create_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
+        raise NotImplementedError
+
+    @requires_bulk_support("supports_bulk_delete")
+    def delete_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
+        raise NotImplementedError
