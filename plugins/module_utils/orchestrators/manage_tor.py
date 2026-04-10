@@ -131,11 +131,13 @@ class ManageTorOrchestrator(NDBaseOrchestrator[ManageTorModel]):
             associations = (result or {}).get("associations", []) or []
 
             # The API returns all ToR switches for the leaf — both paired
-            # and unpaired candidates.  Only associations with a non-empty
-            # "resources" dict are actually configured on the controller.
+            # and unpaired candidates.  Only associations marked as
+            # isRecommended=true are actually configured with this leaf.
+            # Entries with isRecommended=false may have populated resources
+            # from a pairing with a different leaf switch.
             configured = []
             for assoc in associations:
-                if assoc.get("resources"):
+                if assoc.get("isRecommended") is True:
                     assoc["fabricName"] = fabric_name
                     configured.append(assoc)
             return configured
