@@ -4,7 +4,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Type, ClassVar
+from typing import Type, ClassVar, List, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.manage_fabric_group_members import FabricGroupMemberModel
@@ -19,53 +19,52 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 
 class ManageFabricGroupMembersOrchestrator(NDBaseOrchestrator[FabricGroupMemberModel]):
     model_class: ClassVar[Type[NDBaseModel]] = FabricGroupMemberModel
+    supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_delete: ClassVar[bool] = True
 
     create_endpoint: Type[NDEndpointBaseModel] = EpManageFabricGroupMembersAddPost
     update_endpoint: Type[NDEndpointBaseModel] = EpManageFabricGroupMembersAddPost
     delete_endpoint: Type[NDEndpointBaseModel] = EpManageFabricGroupMembersRemovePost
     query_one_endpoint: Type[NDEndpointBaseModel] = EpManageFabricGroupMembersGet
     query_all_endpoint: Type[NDEndpointBaseModel] = EpManageFabricGroupMembersGet
+    create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageFabricGroupMembersAddPost
+    delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageFabricGroupMembersRemovePost
 
     def _get_fabric_group_name(self) -> str:
         """Extract fabric_name from module params."""
         return self.sender.params.get("fabric_name")
 
-    def create(self, model_instance: FabricGroupMemberModel, **kwargs) -> ResponseType:
+    def create_bulk(self, model_instances: List[FabricGroupMemberModel], **kwargs) -> ResponseType:
         """
-        Add a member to the fabric group.
+        Add members to the fabric group in a single API call.
 
-        Wraps the member name in the required API payload format:
-        {"members": [{"name": "..."}]}
+        Wraps all member names in the required API payload format:
+        {"members": [{"name": "m1"}, {"name": "m2"}, ...]}
         """
         try:
-            api_endpoint = self.create_endpoint()
+            api_endpoint = self.create_bulk_endpoint()
             api_endpoint.fabric_name = self._get_fabric_group_name()
-            payload = {"members": [{"name": model_instance.name}]}
+            payload = {"members": [{"name": instance.name} for instance in model_instances]}
             return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
         except Exception as e:
-            raise Exception(f"Add member failed for {model_instance.name}: {e}") from e
+            names = [instance.name for instance in model_instances]
+            raise Exception(f"Add members failed for {names}: {e}") from e
 
-    def update(self, model_instance: FabricGroupMemberModel, **kwargs) -> ResponseType:
+    def delete_bulk(self, model_instances: List[FabricGroupMemberModel], **kwargs) -> ResponseType:
         """
-        Update is not applicable for fabric group members.
-        Members are either present or absent — redirect to create (add).
-        """
-        return self.create(model_instance, **kwargs)
+        Remove members from the fabric group in a single API call.
 
-    def delete(self, model_instance: FabricGroupMemberModel, **kwargs) -> ResponseType:
-        """
-        Remove a member from the fabric group.
-
-        Wraps the member name in the required API payload format:
-        {"members": [{"name": "..."}]}
+        Wraps all member names in the required API payload format:
+        {"members": [{"name": "m1"}, {"name": "m2"}, ...]}
         """
         try:
-            api_endpoint = self.delete_endpoint()
+            api_endpoint = self.delete_bulk_endpoint()
             api_endpoint.fabric_name = self._get_fabric_group_name()
-            payload = {"members": [{"name": model_instance.name}]}
+            payload = {"members": [{"name": instance.name} for instance in model_instances]}
             return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
         except Exception as e:
-            raise Exception(f"Remove member failed for {model_instance.name}: {e}") from e
+            names = [instance.name for instance in model_instances]
+            raise Exception(f"Remove members failed for {names}: {e}") from e
 
     def query_one(self, model_instance: FabricGroupMemberModel, **kwargs) -> ResponseType:
         """
