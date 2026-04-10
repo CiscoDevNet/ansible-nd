@@ -129,8 +129,15 @@ class ManageTorOrchestrator(NDBaseOrchestrator[ManageTorModel]):
                 qs={"aggregationOrLeafSwitchId": leaf_switch_id},
             )
             associations = (result or {}).get("associations", []) or []
+
+            # The API returns all ToR switches for the leaf — both paired
+            # and unpaired candidates.  Only associations with a non-empty
+            # "resources" dict are actually configured on the controller.
+            configured = []
             for assoc in associations:
-                assoc["fabricName"] = fabric_name
-            return associations
+                if assoc.get("resources"):
+                    assoc["fabricName"] = fabric_name
+                    configured.append(assoc)
+            return configured
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
