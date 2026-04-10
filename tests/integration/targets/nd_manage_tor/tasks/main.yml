@@ -18,40 +18,42 @@
     test_tor_peer_switch_id: '{{ test_tor_peer_serial | default("FDO789TOR02") }}'
     test_leaf_peer_switch_id: '{{ test_leaf_peer_serial | default("FDO111LEAF02") }}'
 
-# # =============================================================================
-# # CLEANUP — Remove any existing test associations
-# # =============================================================================
+# =============================================================================
+# CLEANUP — Remove any existing test associations
+# =============================================================================
 
-# - name: Ensure test ToR associations do not exist before test starts
-#   cisco.nd.nd_manage_tor: &clean_tor_associations
-#     <<: *nd_info
-#     fabric_name: "{{ test_fabric_name }}"
-#     config:
-#       - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
-#         aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
-#       - access_or_tor_switch_id: "{{ test_tor_peer_switch_id }}"
-#         aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
-#     state: deleted
-#   ignore_errors: true
+- name: Ensure test ToR associations do not exist before test starts
+  cisco.nd.nd_manage_tor: &clean_tor_associations
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+      - access_or_tor_switch_id: "{{ test_tor_peer_switch_id }}"
+        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+    state: deleted
+  ignore_errors: true
 
-# # =============================================================================
-# # GATHERED STATE TESTS
-# # =============================================================================
+# =============================================================================
+# GATHERED STATE TESTS
+# =============================================================================
 
-# - name: Gather all ToR associations for the fabric (gathered state)
-#   cisco.nd.nd_manage_tor:
-#     <<: *nd_info
-#     fabric_name: "{{ test_fabric_name }}"
-#     state: gathered
-#   register: gathered_tor_associations
+- name: Gather all ToR associations for the fabric (gathered state)
+  cisco.nd.nd_manage_tor:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+    state: gathered
+  register: gathered_tor_associations
 
-# - name: Asserts for gathered state
-#   ansible.builtin.assert:
-#     that:
-#       - gathered_tor_associations is not changed
-#       - gathered_tor_associations.before is defined
-#       - gathered_tor_associations.after is defined
-#       - gathered_tor_associations.before == gathered_tor_associations.after
+- name: Asserts for gathered state
+  ansible.builtin.assert:
+    that:
+      - gathered_tor_associations is not changed
+      - gathered_tor_associations.before is defined
+      - gathered_tor_associations.after is defined
+      - gathered_tor_associations.before == gathered_tor_associations.after
 
 # =============================================================================
 # MERGED STATE TESTS: CREATE
@@ -60,207 +62,208 @@
 - name: Associate a ToR switch with a leaf switch (merged state - check mode)
   cisco.nd.nd_manage_tor: &create_tor_association_merged
     <<: *nd_info
-    # fabric_name: "{{ test_fabric_name }}"
-    fabric_name: nac-ibgp-fabric1
+    fabric_name: "{{ test_fabric_name }}"
     config:
-      # - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
-      #   aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
-      #   access_or_tor_port_channel_id: 501
-      #   aggregation_or_leaf_port_channel_id: 502
-      - access_or_tor_switch_id: 9G7TCEORRD3
-        aggregation_or_leaf_switch_id: 9DMPYCONM0V
+      - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+        access_or_tor_port_channel_id: 501
+        aggregation_or_leaf_port_channel_id: 502
     state: merged
   check_mode: true
   register: cm_merged_create_tor
 
-# - name: Associate a ToR switch with a leaf switch (merged state - normal mode)
-#   cisco.nd.nd_manage_tor:
-#     <<: *create_tor_association_merged
-#   register: nm_merged_create_tor
+- name: Associate a ToR switch with a leaf switch (merged state - normal mode)
+  cisco.nd.nd_manage_tor:
+    <<: *create_tor_association_merged
+  register: nm_merged_create_tor
 
-# - name: Associate a ToR switch with a leaf switch (merged state - idempotency)
-#   cisco.nd.nd_manage_tor:
-#     <<: *create_tor_association_merged
-#   register: nm_merged_create_tor_again
+- name: Associate a ToR switch with a leaf switch (merged state - idempotency)
+  cisco.nd.nd_manage_tor:
+    <<: *create_tor_association_merged
+  register: nm_merged_create_tor_again
 
-# - name: Asserts for ToR association merged state creation tasks
-#   ansible.builtin.assert:
-#     that:
-#       # Check mode
-#       - cm_merged_create_tor is changed
-#       # Normal mode
-#       - nm_merged_create_tor is changed
-#       # Idempotency
-#       - nm_merged_create_tor_again is not changed
+- name: Asserts for ToR association merged state creation tasks
+  ansible.builtin.assert:
+    that:
+      # Check mode
+      - cm_merged_create_tor is changed
+      # Normal mode
+      - nm_merged_create_tor is changed
+      # Idempotency
+      - nm_merged_create_tor_again is not changed
 
-# # =============================================================================
-# # MERGED STATE TESTS: CREATE VPC back-to-back
-# # =============================================================================
+# =============================================================================
+# MERGED STATE TESTS: CREATE VPC back-to-back
+# =============================================================================
 
-# - name: Associate ToR VPC pair with leaf VPC pair (merged state - check mode)
-#   cisco.nd.nd_manage_tor: &create_vpc_tor_association_merged
-#     <<: *nd_info
-#     fabric_name: "{{ test_fabric_name }}"
-#     config:
-#       - access_or_tor_switch_id: "{{ test_tor_peer_switch_id }}"
-#         aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
-#         access_or_tor_peer_switch_id: "{{ test_tor_switch_id }}"
-#         aggregation_or_leaf_peer_switch_id: "{{ test_leaf_peer_switch_id }}"
-#         access_or_tor_port_channel_id: 601
-#         aggregation_or_leaf_port_channel_id: 602
-#         access_or_tor_peer_port_channel_id: 603
-#         aggregation_or_leaf_peer_port_channel_id: 604
-#         access_or_tor_vpc_id: 10
-#         aggregation_or_leaf_vpc_id: 20
-#     state: merged
-#   check_mode: true
-#   register: cm_merged_create_vpc_tor
+- name: Associate ToR VPC pair with leaf VPC pair (merged state - check mode)
+  cisco.nd.nd_manage_tor: &create_vpc_tor_association_merged
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - access_or_tor_switch_id: "{{ test_tor_peer_switch_id }}"
+        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+        access_or_tor_peer_switch_id: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_peer_switch_id: "{{ test_leaf_peer_switch_id }}"
+        access_or_tor_port_channel_id: 601
+        aggregation_or_leaf_port_channel_id: 602
+        access_or_tor_peer_port_channel_id: 603
+        aggregation_or_leaf_peer_port_channel_id: 604
+        access_or_tor_vpc_id: 10
+        aggregation_or_leaf_vpc_id: 20
+    state: merged
+  check_mode: true
+  register: cm_merged_create_vpc_tor
 
-# - name: Associate ToR VPC pair with leaf VPC pair (merged state - normal mode)
-#   cisco.nd.nd_manage_tor:
-#     <<: *create_vpc_tor_association_merged
-#   register: nm_merged_create_vpc_tor
+- name: Associate ToR VPC pair with leaf VPC pair (merged state - normal mode)
+  cisco.nd.nd_manage_tor:
+    <<: *create_vpc_tor_association_merged
+  register: nm_merged_create_vpc_tor
 
-# - name: Associate ToR VPC pair with leaf VPC pair (merged state - idempotency)
-#   cisco.nd.nd_manage_tor:
-#     <<: *create_vpc_tor_association_merged
-#   register: nm_merged_create_vpc_tor_again
+- name: Associate ToR VPC pair with leaf VPC pair (merged state - idempotency)
+  cisco.nd.nd_manage_tor:
+    <<: *create_vpc_tor_association_merged
+  register: nm_merged_create_vpc_tor_again
 
-# - name: Asserts for VPC ToR association merged state creation tasks
-#   ansible.builtin.assert:
-#     that:
-#       # Check mode
-#       - cm_merged_create_vpc_tor is changed
-#       # Normal mode
-#       - nm_merged_create_vpc_tor is changed
-#       # Idempotency
-#       - nm_merged_create_vpc_tor_again is not changed
+- name: Asserts for VPC ToR association merged state creation tasks
+  ansible.builtin.assert:
+    that:
+      # Check mode
+      - cm_merged_create_vpc_tor is changed
+      # Normal mode
+      - nm_merged_create_vpc_tor is changed
+      # Idempotency
+      - nm_merged_create_vpc_tor_again is not changed
 
-# # =============================================================================
-# # GATHERED STATE TESTS: After associations created
-# # =============================================================================
+# =============================================================================
+# GATHERED STATE TESTS: After associations created
+# =============================================================================
 
-# - name: Gather ToR associations after creation (gathered state)
-#   cisco.nd.nd_manage_tor:
-#     <<: *nd_info
-#     fabric_name: "{{ test_fabric_name }}"
-#     state: gathered
-#   register: gathered_after_create
+- name: Gather ToR associations after creation (gathered state)
+  cisco.nd.nd_manage_tor:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+    state: gathered
+  register: gathered_after_create
 
-# - name: Asserts for gathered state after creation
-#   ansible.builtin.assert:
-#     that:
-#       - gathered_after_create is not changed
-#       - gathered_after_create.before | length >= 2
+- name: Asserts for gathered state after creation
+  ansible.builtin.assert:
+    that:
+      - gathered_after_create is not changed
+      - gathered_after_create.before | length >= 2
 
-# # =============================================================================
-# # MERGED STATE TESTS: UPDATE
-# # =============================================================================
+# =============================================================================
+# MERGED STATE TESTS: UPDATE
+# =============================================================================
 
-# - name: Update ToR association port channels (merged state - check mode)
-#   cisco.nd.nd_manage_tor: &update_tor_association_merged
-#     <<: *nd_info
-#     fabric_name: "{{ test_fabric_name }}"
-#     config:
-#       - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
-#         aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
-#         access_or_tor_port_channel_id: 511
-#         aggregation_or_leaf_port_channel_id: 512
-#     state: merged
-#   check_mode: true
-#   register: cm_merged_update_tor
+- name: Update ToR association port channels (merged state - check mode)
+  cisco.nd.nd_manage_tor: &update_tor_association_merged
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+        access_or_tor_port_channel_id: 511
+        aggregation_or_leaf_port_channel_id: 512
+    state: merged
+  check_mode: true
+  register: cm_merged_update_tor
 
-# - name: Update ToR association port channels (merged state - normal mode)
-#   cisco.nd.nd_manage_tor:
-#     <<: *update_tor_association_merged
-#   register: nm_merged_update_tor
+- name: Update ToR association port channels (merged state - normal mode)
+  cisco.nd.nd_manage_tor:
+    <<: *update_tor_association_merged
+  register: nm_merged_update_tor
 
-# - name: Update ToR association port channels (merged state - idempotency)
-#   cisco.nd.nd_manage_tor:
-#     <<: *update_tor_association_merged
-#   register: nm_merged_update_tor_again
+- name: Update ToR association port channels (merged state - idempotency)
+  cisco.nd.nd_manage_tor:
+    <<: *update_tor_association_merged
+  register: nm_merged_update_tor_again
 
-# - name: Asserts for ToR association merged state update tasks
-#   ansible.builtin.assert:
-#     that:
-#       # Check mode
-#       - cm_merged_update_tor is changed
-#       # Normal mode
-#       - nm_merged_update_tor is changed
-#       # Idempotency
-#       - nm_merged_update_tor_again is not changed
+- name: Asserts for ToR association merged state update tasks
+  ansible.builtin.assert:
+    that:
+      # Check mode
+      - cm_merged_update_tor is changed
+      # Normal mode
+      - nm_merged_update_tor is changed
+      # Idempotency
+      - nm_merged_update_tor_again is not changed
 
-# # =============================================================================
-# # DELETED STATE TESTS
-# # =============================================================================
+# =============================================================================
+# DELETED STATE TESTS
+# =============================================================================
 
-# - name: Disassociate the single ToR switch (deleted state - check mode)
-#   cisco.nd.nd_manage_tor: &delete_single_tor
-#     <<: *nd_info
-#     fabric_name: "{{ test_fabric_name }}"
-#     config:
-#       - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
-#         aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
-#     state: deleted
-#   check_mode: true
-#   register: cm_deleted_single_tor
+- name: Disassociate the single ToR switch (deleted state - check mode)
+  cisco.nd.nd_manage_tor: &delete_single_tor
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - access_or_tor_switch_id: "{{ test_tor_switch_id }}"
+        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+    state: deleted
+  check_mode: true
+  register: cm_deleted_single_tor
 
-# - name: Disassociate the single ToR switch (deleted state - normal mode)
-#   cisco.nd.nd_manage_tor:
-#     <<: *delete_single_tor
-#   register: nm_deleted_single_tor
+- name: Disassociate the single ToR switch (deleted state - normal mode)
+  cisco.nd.nd_manage_tor:
+    <<: *delete_single_tor
+  register: nm_deleted_single_tor
 
-# - name: Disassociate the single ToR switch (deleted state - idempotency)
-#   cisco.nd.nd_manage_tor:
-#     <<: *delete_single_tor
-#   register: nm_deleted_single_tor_again
+- name: Disassociate the single ToR switch (deleted state - idempotency)
+  cisco.nd.nd_manage_tor:
+    <<: *delete_single_tor
+  register: nm_deleted_single_tor_again
 
-# - name: Asserts for single ToR disassociation
-#   ansible.builtin.assert:
-#     that:
-#       # Check mode
-#       - cm_deleted_single_tor is changed
-#       # Normal mode
-#       - nm_deleted_single_tor is changed
-#       # Idempotency — already deleted, should not change
-#       - nm_deleted_single_tor_again is not changed
+- name: Asserts for single ToR disassociation
+  ansible.builtin.assert:
+    that:
+      # Check mode
+      - cm_deleted_single_tor is changed
+      # Normal mode
+      - nm_deleted_single_tor is changed
+      # Idempotency — already deleted, should not change
+      - nm_deleted_single_tor_again is not changed
 
-# - name: Disassociate the VPC ToR pair (deleted state - normal mode)
-#   cisco.nd.nd_manage_tor:
-#     <<: *nd_info
-#     fabric_name: "{{ test_fabric_name }}"
-#     config:
-#       - access_or_tor_switch_id: "{{ test_tor_peer_switch_id }}"
-#         aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
-#     state: deleted
-#   register: nm_deleted_vpc_tor
+- name: Disassociate the VPC ToR pair (deleted state - normal mode)
+  cisco.nd.nd_manage_tor:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - access_or_tor_switch_id: "{{ test_tor_peer_switch_id }}"
+        aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+    state: deleted
+  register: nm_deleted_vpc_tor
 
-# - name: Asserts for VPC ToR disassociation
-#   ansible.builtin.assert:
-#     that:
-#       - nm_deleted_vpc_tor is changed
+- name: Asserts for VPC ToR disassociation
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_vpc_tor is changed
 
-# # =============================================================================
-# # GATHERED STATE TESTS: After all deletions
-# # =============================================================================
+# =============================================================================
+# GATHERED STATE TESTS: After all deletions
+# =============================================================================
 
-# - name: Gather ToR associations after all deletions (gathered state)
-#   cisco.nd.nd_manage_tor:
-#     <<: *nd_info
-#     fabric_name: "{{ test_fabric_name }}"
-#     state: gathered
-#   register: gathered_after_delete
+- name: Gather ToR associations after all deletions (gathered state)
+  cisco.nd.nd_manage_tor:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - aggregation_or_leaf_switch_id: "{{ test_leaf_switch_id }}"
+    state: gathered
+  register: gathered_after_delete
 
-# - name: Asserts for gathered state after all deletions
-#   ansible.builtin.assert:
-#     that:
-#       - gathered_after_delete is not changed
+- name: Asserts for gathered state after all deletions
+  ansible.builtin.assert:
+    that:
+      - gathered_after_delete is not changed
 
-# # =============================================================================
-# # FINAL CLEANUP
-# # =============================================================================
+# =============================================================================
+# FINAL CLEANUP
+# =============================================================================
 
-# - name: Final cleanup — remove any remaining test associations
-#   cisco.nd.nd_manage_tor:
-#     <<: *clean_tor_associations
-#   ignore_errors: true
+- name: Final cleanup — remove any remaining test associations
+  cisco.nd.nd_manage_tor:
+    <<: *clean_tor_associations
+  ignore_errors: true
