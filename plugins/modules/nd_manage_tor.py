@@ -208,7 +208,8 @@ def main():
             module.exit_json(**nd_state_machine.output.format())
 
     except Exception as e:
-        module.fail_json(msg="Module execution failed: {0}".format(str(e)))
+        import traceback
+        module.fail_json(msg="Module execution failed: {0}".format(str(e)), exception=traceback.format_exc())
 
 
 if __name__ == "__main__":
