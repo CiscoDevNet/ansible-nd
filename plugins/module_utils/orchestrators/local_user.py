@@ -4,18 +4,19 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Type, ClassVar
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import LocalUserModel
+from typing import ClassVar, Type
+
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.aaa_local_users import (
-    EpInfraAaaLocalUsersPost,
-    EpInfraAaaLocalUsersPut,
     EpInfraAaaLocalUsersDelete,
     EpInfraAaaLocalUsersGet,
+    EpInfraAaaLocalUsersPost,
+    EpInfraAaaLocalUsersPut,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.local_user.local_user import LocalUserModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
 class LocalUserOrchestrator(NDBaseOrchestrator[LocalUserModel]):
@@ -33,7 +34,7 @@ class LocalUserOrchestrator(NDBaseOrchestrator[LocalUserModel]):
         """
         try:
             api_endpoint = self.query_all_endpoint()
-            result = self.sender.query_obj(api_endpoint.path)
+            result = self._query_obj(api_endpoint.path)
             return result.get("localusers", []) or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e

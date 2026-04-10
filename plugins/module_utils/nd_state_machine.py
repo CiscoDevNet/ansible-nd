@@ -5,15 +5,18 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Type, Union, List, Any, Callable, Optional
+from typing import Any, Callable, List, Optional, Type, Union
+
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
 
 class NDStateMachine:
@@ -26,7 +29,19 @@ class NDStateMachine:
         Initialize the ND State Machine.
         """
         self.module = module
-        self.nd_module = NDModule(self.module)
+
+        # REST infrastructure
+        sender = Sender()
+        sender.ansible_module = self.module
+
+        self.rest_send = RestSend(
+            {
+                "check_mode": self.module.check_mode,
+                "state": self.module.params.get("state"),
+            }
+        )
+        self.rest_send.sender = sender
+        self.rest_send.response_handler = ResponseHandler()
 
         # Operation tracking
         self.output = NDOutput(output_level=module.params.get("output_level", "normal"))
@@ -34,7 +49,7 @@ class NDStateMachine:
         # Configuration
         # Accept either an orchestrator instance or a class.
         if isinstance(model_orchestrator, type) and issubclass(model_orchestrator, NDBaseOrchestrator):
-            self.model_orchestrator = model_orchestrator(sender=self.nd_module)
+            self.model_orchestrator = model_orchestrator(rest_send=self.rest_send)
         elif isinstance(model_orchestrator, NDBaseOrchestrator):
             self.model_orchestrator = model_orchestrator
         else:

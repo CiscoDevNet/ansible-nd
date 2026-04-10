@@ -5,12 +5,14 @@
 from __future__ import absolute_import, division, print_function
 
 from functools import wraps
+from typing import Any, ClassVar, Dict, Generic, List, Optional, Type, TypeVar
+
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
-from typing import ClassVar, Type, Optional, Generic, TypeVar, List
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
 ModelType = TypeVar("ModelType", bound=NDBaseModel)
 
@@ -53,14 +55,68 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = None
     delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = None
 
-    # NOTE: Module Field is always required
-    sender: NDModule
+    # REST infrastructure
+    rest_send: RestSend
+
+    def _request(self, path: str, verb: HttpVerbEnum, data: Optional[Dict[str, Any]] = None) -> ResponseType:
+        """
+        # Summary
+
+        Send a REST request via RestSend and return the response DATA.
+
+        ## Raises
+
+        ### Exception
+
+        - If the request fails (non-success result from the controller).
+        """
+        self.rest_send.path = path
+        self.rest_send.verb = verb
+        if data is not None:
+            self.rest_send.payload = data
+        self.rest_send.commit()
+
+        result = self.rest_send.result_current
+        if not result.get("success", False):
+            response = self.rest_send.response_current
+            msg = response.get("MESSAGE", "Unknown error")
+            code = response.get("RETURN_CODE", -1)
+            raise Exception(f"Request failed ({code}): {msg}")
+
+        return self.rest_send.response_current.get("DATA", {})
+
+    def _query_obj(self, path: str) -> Dict[str, Any]:
+        """
+        # Summary
+
+        GET the given path and return the DATA dict, or empty dict if not found.
+
+        ## Raises
+
+        ### Exception
+
+        - If the request fails with a non-404 error.
+        """
+        self.rest_send.path = path
+        self.rest_send.verb = HttpVerbEnum.GET
+        self.rest_send.commit()
+
+        result = self.rest_send.result_current
+        if not result.get("success", False):
+            response = self.rest_send.response_current
+            if response.get("RETURN_CODE") == 404:
+                return {}
+            msg = response.get("MESSAGE", "Unknown error")
+            code = response.get("RETURN_CODE", -1)
+            raise Exception(f"Query failed ({code}): {msg}")
+
+        return self.rest_send.response_current.get("DATA", {})
 
     # NOTE: Generic CRUD API operations for simple endpoints with single identifier (e.g. "api/v1/infra/aaa/LocalUsers/{loginID}")
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.create_endpoint()
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=model_instance.to_payload())
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload())
         except Exception as e:
             raise Exception(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -68,7 +124,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.update_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=model_instance.to_payload())
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload())
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -76,7 +132,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.delete_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
         except Exception as e:
             raise Exception(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -84,14 +140,14 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.query_one_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
     def query_all(self, model_instance: Optional[ModelType] = None, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.query_all_endpoint()
-            result = self.sender.query_obj(api_endpoint.path)
+            result = self._query_obj(api_endpoint.path)
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
