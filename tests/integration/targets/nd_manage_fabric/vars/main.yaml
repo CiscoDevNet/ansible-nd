@@ -12,6 +12,10 @@ ext_test_fabric_merged: "ext_test_fabric_merged"
 ext_test_fabric_replaced: "ext_test_fabric_replaced"
 ext_test_fabric_deleted: "ext_test_fabric_deleted"
 
+ndb_test_fabric_merged: "ndb_test_fabric_merged"
+ndb_test_fabric_replaced: "ndb_test_fabric_replaced"
+ndb_test_fabric_deleted: "ndb_test_fabric_deleted"
+
 # Common fabric configuration for all tests
 # common_fabric_config:
 fabric_config_ibgp:
@@ -244,6 +248,20 @@ fabric_config_external:
     dhcp_end_address: ""
     management_gateway: ""
     management_ipv4_prefix: 24
+
+# Common Data Broker (NDB) fabric configuration for all NDB tests
+# common_ndb_fabric_config:
+fabric_config_ndb:
+  category: fabric
+  location:
+    latitude: 37.7749
+    longitude: -122.4194
+  license_tier: premier
+  alert_suspend: disabled
+  security_domain: all
+  telemetry_collection: false
+  management:
+    type: dataBroker
 
 # Common eBGP fabric configuration for all eBGP tests
 # common_ebgp_fabric_config:
