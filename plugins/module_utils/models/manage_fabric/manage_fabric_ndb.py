@@ -98,9 +98,7 @@ class FabricDataBrokerModel(NDBaseModel):
     - `TypeError` - If field types don't match expected types
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
@@ -183,9 +181,7 @@ class FabricDataBrokerModel(NDBaseModel):
         - `ValueError` - If name contains invalid characters or format
         """
         if not re.match(r"^[a-zA-Z0-9_-]+$", value):
-            raise ValueError(
-                f"Fabric name can only contain letters, numbers, underscores, and hyphens, got: {value}"
-            )
+            raise ValueError(f"Fabric name can only contain letters, numbers, underscores, and hyphens, got: {value}")
         return value
 
     @model_validator(mode="after")
