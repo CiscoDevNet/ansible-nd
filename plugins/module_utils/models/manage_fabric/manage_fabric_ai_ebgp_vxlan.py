@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Cisco Systems
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -64,9 +64,7 @@ class AimlVxlanEbgpManagementModel(VxlanEbgpManagementModel):
     - `TypeError` - If required string fields are not provided
     """
 
-    type: Literal[FabricTypeEnum.AIML_VXLAN_EBGP] = Field(
-        description="Type of the fabric", default=FabricTypeEnum.AIML_VXLAN_EBGP
-    )
+    type: Literal[FabricTypeEnum.AIML_VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.AIML_VXLAN_EBGP)
 
 
 class FabricAiEbgpVxlanModel(NDBaseModel):
@@ -85,9 +83,7 @@ class FabricAiEbgpVxlanModel(NDBaseModel):
     - `TypeError` - If field types don't match expected types
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"

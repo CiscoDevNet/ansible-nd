@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Cisco Systems
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -23,7 +23,7 @@ description:
 - The AI/ML eBGP VXLAN fabric type (C(aimlVxlanEbgp)) shares the same management properties as the standard eBGP VXLAN
   fabric type (C(vxlanEbgp)), but is specifically designated for AI/ML workloads.
 author:
-- Cisco Systems
+- Matt Tarkington (@mtarking)
 options:
   config:
     description:
