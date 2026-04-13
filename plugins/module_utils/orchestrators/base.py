@@ -76,12 +76,8 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             self.rest_send.payload = data
         self.rest_send.commit()
 
-        result = self.rest_send.result_current
-        if not result.get("success", False):
-            response = self.rest_send.response_current
-            msg = response.get("MESSAGE", "Unknown error")
-            code = response.get("RETURN_CODE", -1)
-            raise Exception(f"Request failed ({code}): {msg}")
+        if not self.rest_send.success:
+            raise Exception(f"Request failed {self.rest_send.error_summary}")
 
         return self.rest_send.response_current.get("DATA", {})
 
@@ -101,14 +97,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         self.rest_send.verb = HttpVerbEnum.GET
         self.rest_send.commit()
 
-        result = self.rest_send.result_current
-        if not result.get("success", False):
-            response = self.rest_send.response_current
-            if response.get("RETURN_CODE") == 404:
+        if not self.rest_send.success:
+            if self.rest_send.return_code == 404:
                 return {}
-            msg = response.get("MESSAGE", "Unknown error")
-            code = response.get("RETURN_CODE", -1)
-            raise Exception(f"Query failed ({code}): {msg}")
+            raise Exception(f"Query failed {self.rest_send.error_summary}")
 
         return self.rest_send.response_current.get("DATA", {})
 

@@ -374,6 +374,47 @@ class RestSend:
         self._payload = None
 
     @property
+    def success(self) -> bool:
+        """
+        # Summary
+
+        Whether the most recent commit was successful.
+
+        ## Raises
+
+        None
+        """
+        return self._result_current.get("success", False)
+
+    @property
+    def return_code(self) -> int:
+        """
+        # Summary
+
+        The HTTP return code from the most recent commit.
+
+        ## Raises
+
+        None
+        """
+        return self._response_current.get("RETURN_CODE", -1)
+
+    @property
+    def error_summary(self) -> str:
+        """
+        # Summary
+
+        A short error string combining the return code and message from the most recent commit.
+
+        ## Raises
+
+        None
+        """
+        code = self._response_current.get("RETURN_CODE", -1)
+        msg = self._response_current.get("MESSAGE", "Unknown error")
+        return f"({code}): {msg}"
+
+    @property
     def check_mode(self) -> bool:
         """
         # Summary
