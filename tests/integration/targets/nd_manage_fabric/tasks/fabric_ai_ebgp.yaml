@@ -1,0 +1,614 @@
+---
+# Test code for the ND modules
+# Copyright: (c) 2026, Cisco Systems
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+#############################################################################
+# CLEANUP - Ensure clean state before tests
+#############################################################################
+- name: Clean up any existing test fabrics before starting tests
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ai_ebgp_test_fabric_merged }}"
+      - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
+  tags: always
+
+#############################################################################
+# TEST 1: STATE MERGED - Create fabric using merged state
+#############################################################################
+- name: "TEST 1a: Create AI eBGP VXLAN fabric using state merged (first run)"
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': ai_ebgp_test_fabric_merged} | combine(fabric_config_ai_ebgp) }}"
+  register: merged_result_1
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1a: Verify fabric was created using merged state"
+  assert:
+    that:
+      - merged_result_1 is changed
+      - merged_result_1 is not failed
+    fail_msg: "AI eBGP VXLAN fabric creation with state merged failed"
+    success_msg: "AI eBGP VXLAN fabric successfully created with state merged"
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1b: Create fabric using state merged (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': ai_ebgp_test_fabric_merged} | combine(fabric_config_ai_ebgp) }}"
+  register: merged_result_2
+  tags: [test_merged, test_merged_idempotent]
+
+- name: "TEST 1b: Verify merged state is idempotent"
+  assert:
+    that:
+      - merged_result_2 is not changed
+      - merged_result_2 is not failed
+    fail_msg: "Merged state is not idempotent - should not change when run twice with same config"
+    success_msg: "Merged state is idempotent - no changes on second run"
+  tags: [test_merged, test_merged_idempotent]
+
+- name: "TEST 1c: Update fabric using state merged (modify existing)"
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ ai_ebgp_test_fabric_merged }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: aimlVxlanEbgp
+          bgp_asn: "65002"
+          bgp_asn_auto_allocation: false
+          site_id: "65002"
+          bgp_as_mode: multiAS
+          bgp_allow_as_in_num: 1
+          bgp_max_path: 4
+          auto_configure_ebgp_evpn_peering: true
+          target_subnet_mask: 30
+          anycast_gateway_mac: "2020.0000.00bb"
+          performance_monitoring: true
+          replication_mode: multicast
+          multicast_group_subnet: "239.1.1.0/25"
+          auto_generate_multicast_group_address: false
+          underlay_multicast_group_address_limit: 128
+          tenant_routed_multicast: false
+          rendezvous_point_count: 2
+          rendezvous_point_loopback_id: 254
+          vpc_peer_link_vlan: "3600"
+          vpc_peer_link_enable_native_vlan: false
+          vpc_peer_keep_alive_option: management
+          vpc_auto_recovery_timer: 360
+          vpc_delay_restore_timer: 150
+          vpc_peer_link_port_channel_id: "500"
+          advertise_physical_ip: false
+          vpc_domain_id_range: "1-1000"
+          bgp_loopback_id: 0
+          nve_loopback_id: 1
+          vrf_template: Default_VRF_Universal
+          network_template: Default_Network_Universal
+          vrf_extension_template: Default_VRF_Extension_Universal
+          network_extension_template: Default_Network_Extension_Universal
+          l3_vni_no_vlan_default_option: false
+          fabric_mtu: 9216
+          l2_host_interface_mtu: 9216
+          tenant_dhcp: true
+          nxapi: false
+          nxapi_https_port: 443
+          nxapi_http: false
+          nxapi_http_port: 80
+          snmp_trap: true
+          anycast_border_gateway_advertise_physical_ip: false
+          greenfield_debug_flag: disable
+          tcam_allocation: true
+          real_time_interface_statistics_collection: false
+          interface_statistics_load_interval: 10
+          bgp_loopback_ip_range: "10.2.0.0/22"
+          nve_loopback_ip_range: "10.3.0.0/22"
+          anycast_rendezvous_point_ip_range: "10.254.254.0/24"
+          intra_fabric_subnet_range: "10.4.0.0/16"
+          l2_vni_range: "30000-49000"
+          l3_vni_range: "50000-59000"
+          network_vlan_range: "2300-2999"
+          vrf_vlan_range: "2000-2299"
+          sub_interface_dot1q_range: "2-511"
+          vrf_lite_auto_config: manual
+          vrf_lite_subnet_range: "10.33.0.0/16"
+          vrf_lite_subnet_target_mask: 30
+          auto_unique_vrf_lite_ip_prefix: false
+          per_vrf_loopback_auto_provision: true
+          per_vrf_loopback_ip_range: "10.5.0.0/22"
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+  register: merged_result_3
+  tags: [test_merged, test_merged_update]
+
+- name: "TEST 1c: Verify fabric was updated using merged state"
+  assert:
+    that:
+      - merged_result_3 is changed
+      - merged_result_3 is not failed
+    fail_msg: "AI eBGP VXLAN fabric update with state merged failed"
+    success_msg: "AI eBGP VXLAN fabric successfully updated with state merged"
+  tags: [test_merged, test_merged_update]
+
+#############################################################################
+# VALIDATION: Query ai_ebgp_test_fabric_merged and validate expected changes
+#############################################################################
+- name: "VALIDATION 1: Authenticate with ND to get token"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_auth_response
+  tags: [test_merged, test_merged_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 1: Query ai_ebgp_test_fabric_merged configuration from ND"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ ai_ebgp_test_fabric_merged }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: merged_fabric_query
+  tags: [test_merged, test_merged_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 1: Parse fabric configuration response"
+  set_fact:
+    merged_fabric_config: "{{ merged_fabric_query.json }}"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1a: Verify fabric type is aimlVxlanEbgp"
+  assert:
+    that:
+      - merged_fabric_config.management.type == "aimlVxlanEbgp"
+    fail_msg: >-
+      Fabric type validation failed - expected aimlVxlanEbgp,
+      got {{ merged_fabric_config.management.type }}
+    success_msg: "Fabric type correctly set to aimlVxlanEbgp"
+  tags: [test_merged, test_merged_validation]
+
+- name: "VALIDATION 1b: Verify changed properties after merge"
+  assert:
+    that:
+      - merged_fabric_config.management.bgpAsn == "65002"
+      - merged_fabric_config.management.siteId == "65002"
+      - merged_fabric_config.management.anycastGatewayMac == "2020.0000.00bb"
+      - merged_fabric_config.management.performanceMonitoring == true
+    fail_msg: >-
+      Changed properties validation failed.
+      bgpAsn: {{ merged_fabric_config.management.bgpAsn }} (expected 65002),
+      siteId: {{ merged_fabric_config.management.siteId }} (expected 65002),
+      anycastGatewayMac: {{ merged_fabric_config.management.anycastGatewayMac }} (expected 2020.0000.00bb),
+      performanceMonitoring: {{ merged_fabric_config.management.performanceMonitoring }} (expected true)
+    success_msg: "All 4 changed properties updated correctly"
+  tags: [test_merged, test_merged_validation]
+
+#############################################################################
+# TEST 2: STATE REPLACED - Create and manage fabric using replaced state
+#############################################################################
+- name: "TEST 2a: Create AI eBGP VXLAN fabric using state replaced (first run)"
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: aimlVxlanEbgp
+          bgp_asn: "65004"
+          bgp_asn_auto_allocation: false
+          site_id: "65004"
+          bgp_as_mode: multiAS
+          target_subnet_mask: 30
+          anycast_gateway_mac: "2020.0000.00dd"
+          performance_monitoring: true
+          replication_mode: multicast
+          multicast_group_subnet: "239.1.3.0/25"
+          auto_generate_multicast_group_address: false
+          underlay_multicast_group_address_limit: 128
+          tenant_routed_multicast: false
+          rendezvous_point_count: 4
+          rendezvous_point_loopback_id: 253
+          vpc_peer_link_vlan: "3700"
+          vpc_peer_link_enable_native_vlan: false
+          vpc_peer_keep_alive_option: management
+          vpc_auto_recovery_timer: 300
+          vpc_delay_restore_timer: 120
+          vpc_peer_link_port_channel_id: "600"
+          advertise_physical_ip: true
+          vpc_domain_id_range: "1-800"
+          bgp_loopback_id: 0
+          nve_loopback_id: 1
+          vrf_template: Default_VRF_Universal
+          network_template: Default_Network_Universal
+          vrf_extension_template: Default_VRF_Extension_Universal
+          network_extension_template: Default_Network_Extension_Universal
+          l3_vni_no_vlan_default_option: false
+          fabric_mtu: 9000
+          l2_host_interface_mtu: 9000
+          tenant_dhcp: false
+          nxapi: false
+          nxapi_https_port: 443
+          nxapi_http: true
+          nxapi_http_port: 80
+          snmp_trap: false
+          anycast_border_gateway_advertise_physical_ip: true
+          greenfield_debug_flag: disable
+          tcam_allocation: false
+          real_time_interface_statistics_collection: true
+          interface_statistics_load_interval: 30
+          bgp_loopback_ip_range: "10.22.0.0/22"
+          nve_loopback_ip_range: "10.23.0.0/22"
+          anycast_rendezvous_point_ip_range: "10.254.252.0/24"
+          intra_fabric_subnet_range: "10.24.0.0/16"
+          l2_vni_range: "40000-59000"
+          l3_vni_range: "60000-69000"
+          network_vlan_range: "2400-3099"
+          vrf_vlan_range: "2100-2399"
+          sub_interface_dot1q_range: "2-511"
+          vrf_lite_auto_config: manual
+          vrf_lite_subnet_range: "10.53.0.0/16"
+          vrf_lite_subnet_target_mask: 30
+          auto_unique_vrf_lite_ip_prefix: false
+          per_vrf_loopback_auto_provision: true
+          per_vrf_loopback_ip_range: "10.25.0.0/22"
+          banner: "^ AI eBGP Updated via replaced state ^"
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+  register: replaced_result_1
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2a: Verify fabric was created using replaced state"
+  assert:
+    that:
+      - replaced_result_1 is changed
+      - replaced_result_1 is not failed
+    fail_msg: "AI eBGP VXLAN fabric creation with state replaced failed"
+    success_msg: "AI eBGP VXLAN fabric successfully created with state replaced"
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2b: Create fabric using state replaced (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: aimlVxlanEbgp
+          bgp_asn: "65004"
+          bgp_asn_auto_allocation: false
+          site_id: "65004"
+          bgp_as_mode: multiAS
+          target_subnet_mask: 30
+          anycast_gateway_mac: "2020.0000.00dd"
+          performance_monitoring: true
+          replication_mode: multicast
+          multicast_group_subnet: "239.1.3.0/25"
+          auto_generate_multicast_group_address: false
+          underlay_multicast_group_address_limit: 128
+          tenant_routed_multicast: false
+          rendezvous_point_count: 4
+          rendezvous_point_loopback_id: 253
+          vpc_peer_link_vlan: "3700"
+          vpc_peer_link_enable_native_vlan: false
+          vpc_peer_keep_alive_option: management
+          vpc_auto_recovery_timer: 300
+          vpc_delay_restore_timer: 120
+          vpc_peer_link_port_channel_id: "600"
+          advertise_physical_ip: true
+          vpc_domain_id_range: "1-800"
+          bgp_loopback_id: 0
+          nve_loopback_id: 1
+          vrf_template: Default_VRF_Universal
+          network_template: Default_Network_Universal
+          vrf_extension_template: Default_VRF_Extension_Universal
+          network_extension_template: Default_Network_Extension_Universal
+          l3_vni_no_vlan_default_option: false
+          fabric_mtu: 9000
+          l2_host_interface_mtu: 9000
+          tenant_dhcp: false
+          nxapi: false
+          nxapi_https_port: 443
+          nxapi_http: true
+          nxapi_http_port: 80
+          snmp_trap: false
+          anycast_border_gateway_advertise_physical_ip: true
+          greenfield_debug_flag: disable
+          tcam_allocation: false
+          real_time_interface_statistics_collection: true
+          interface_statistics_load_interval: 30
+          bgp_loopback_ip_range: "10.22.0.0/22"
+          nve_loopback_ip_range: "10.23.0.0/22"
+          anycast_rendezvous_point_ip_range: "10.254.252.0/24"
+          intra_fabric_subnet_range: "10.24.0.0/16"
+          l2_vni_range: "40000-59000"
+          l3_vni_range: "60000-69000"
+          network_vlan_range: "2400-3099"
+          vrf_vlan_range: "2100-2399"
+          sub_interface_dot1q_range: "2-511"
+          vrf_lite_auto_config: manual
+          vrf_lite_subnet_range: "10.53.0.0/16"
+          vrf_lite_subnet_target_mask: 30
+          auto_unique_vrf_lite_ip_prefix: false
+          per_vrf_loopback_auto_provision: true
+          per_vrf_loopback_ip_range: "10.25.0.0/22"
+          banner: "^ AI eBGP Updated via replaced state ^"
+          day0_bootstrap: false
+          local_dhcp_server: false
+          dhcp_protocol_version: dhcpv4
+          dhcp_start_address: ""
+          dhcp_end_address: ""
+          management_gateway: ""
+          management_ipv4_prefix: 24
+  register: replaced_result_2
+  tags: [test_replaced, test_replaced_idempotent]
+
+- name: "TEST 2b: Verify replaced state is idempotent"
+  assert:
+    that:
+      - replaced_result_2 is not changed
+      - replaced_result_2 is not failed
+    fail_msg: "Replaced state is not idempotent - should not change when run twice with same config"
+    success_msg: "Replaced state is idempotent - no changes on second run"
+  tags: [test_replaced, test_replaced_idempotent]
+
+- name: "TEST 2c: Update fabric using state replaced (complete replacement with minimal config)"
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
+        category: fabric
+        location:
+          latitude: 37.7749
+          longitude: -122.4194
+        license_tier: premier
+        alert_suspend: disabled
+        security_domain: all
+        telemetry_collection: false
+        management:
+          type: aimlVxlanEbgp
+          bgp_asn: "65004"
+          bgp_asn_auto_allocation: false
+          site_id: "65004"
+          banner: "^ AI eBGP Updated via replaced state ^"
+  register: replaced_result_3
+  tags: [test_replaced, test_replaced_update]
+
+- name: "TEST 2c: Verify fabric was completely replaced"
+  assert:
+    that:
+      - replaced_result_3 is changed
+      - replaced_result_3 is not failed
+    fail_msg: "AI eBGP VXLAN fabric replacement with state replaced failed"
+    success_msg: "AI eBGP VXLAN fabric successfully replaced with state replaced"
+  tags: [test_replaced, test_replaced_update]
+
+#############################################################################
+# VALIDATION: Query ai_ebgp_test_fabric_replaced and validate
+#############################################################################
+- name: "VALIDATION 2: Authenticate with ND to get token"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      domain: "{{ ansible_httpapi_login_domain | default('local') }}"
+      userName: "{{ ansible_user }}"
+      userPasswd: "{{ ansible_password }}"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+  register: nd_auth_response_2
+  tags: [test_replaced, test_replaced_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 2: Query ai_ebgp_test_fabric_replaced configuration from ND"
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ ansible_httpapi_port | default(443) }}/api/v1/manage/fabrics/{{ ai_ebgp_test_fabric_replaced }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ nd_auth_response_2.json.jwttoken }}"
+      Content-Type: "application/json"
+    validate_certs: false
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: replaced_fabric_query
+  tags: [test_replaced, test_replaced_validation]
+  delegate_to: localhost
+
+- name: "VALIDATION 2: Parse fabric configuration response"
+  set_fact:
+    replaced_fabric_config: "{{ replaced_fabric_query.json }}"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2a: Verify fabric type is preserved as aimlVxlanEbgp"
+  assert:
+    that:
+      - replaced_fabric_config.management.type == "aimlVxlanEbgp"
+    fail_msg: >-
+      Fabric type validation failed after replace - expected aimlVxlanEbgp,
+      got {{ replaced_fabric_config.management.type }}
+    success_msg: "Fabric type correctly preserved as aimlVxlanEbgp after replace"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2b: Verify explicitly specified properties in replace"
+  assert:
+    that:
+      - replaced_fabric_config.management.bgpAsn == "65004"
+      - replaced_fabric_config.management.siteId == "65004"
+      - replaced_fabric_config.management.banner == "^ AI eBGP Updated via replaced state ^"
+    fail_msg: >-
+      Explicitly specified properties validation failed.
+    success_msg: "All 3 explicitly specified properties set correctly"
+  tags: [test_replaced, test_replaced_validation]
+
+- name: "VALIDATION 2c: Verify properties reverted to defaults after replace"
+  assert:
+    that:
+      - replaced_fabric_config.management.anycastGatewayMac == "2020.0000.00aa"
+      - replaced_fabric_config.management.performanceMonitoring == false
+      - replaced_fabric_config.management.fabricMtu == 9216
+      - replaced_fabric_config.management.l2HostInterfaceMtu == 9216
+      - replaced_fabric_config.management.replicationMode == "multicast"
+      - replaced_fabric_config.management.multicastGroupSubnet == "239.1.1.0/25"
+      - replaced_fabric_config.management.rendezvousPointCount == 2
+      - replaced_fabric_config.management.vpcPeerLinkVlan == "3600"
+      - replaced_fabric_config.management.vpcAutoRecoveryTimer == 360
+      - replaced_fabric_config.management.vpcDelayRestoreTimer == 150
+      - replaced_fabric_config.management.advertisePhysicalIp == false
+      - replaced_fabric_config.management.bgpLoopbackIpRange == "10.2.0.0/22"
+      - replaced_fabric_config.management.nveLoopbackIpRange == "10.3.0.0/22"
+      - replaced_fabric_config.management.l2VniRange == "30000-49000"
+      - replaced_fabric_config.management.l3VniRange == "50000-59000"
+    fail_msg: >-
+      Properties not specified in replace task must revert to defaults.
+    success_msg: "All 15 unspecified properties correctly reverted to defaults"
+  tags: [test_replaced, test_replaced_validation]
+
+#############################################################################
+# TEST 3: STATE DELETED - Delete fabrics
+#############################################################################
+- name: "TEST 3a: Delete AI eBGP VXLAN fabric using state deleted"
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
+  register: deleted_result_1
+  tags: [test_deleted, test_deleted_delete]
+
+- name: "TEST 3a: Verify fabric was deleted"
+  assert:
+    that:
+      - deleted_result_1 is changed
+      - deleted_result_1 is not failed
+    fail_msg: "AI eBGP VXLAN fabric deletion with state deleted failed"
+    success_msg: "AI eBGP VXLAN fabric successfully deleted with state deleted"
+  tags: [test_deleted, test_deleted_delete]
+
+- name: "TEST 3b: Delete fabric using state deleted (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
+  register: deleted_result_2
+  tags: [test_deleted, test_deleted_idempotent]
+
+- name: "TEST 3b: Verify deleted state is idempotent"
+  assert:
+    that:
+      - deleted_result_2 is not changed
+      - deleted_result_2 is not failed
+    fail_msg: "Deleted state is not idempotent - should not change when deleting non-existent fabric"
+    success_msg: "Deleted state is idempotent - no changes when deleting non-existent fabric"
+  tags: [test_deleted, test_deleted_idempotent]
+
+#############################################################################
+# FINAL CLEANUP - Clean up all test fabrics
+#############################################################################
+- name: "CLEANUP: Delete all AI eBGP VXLAN test fabrics"
+  cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ai_ebgp_test_fabric_merged }}"
+      - fabric_name: "{{ ai_ebgp_test_fabric_replaced }}"
+  ignore_errors: true
+  tags: [cleanup, always]
+
+#############################################################################
+# TEST SUMMARY
+#############################################################################
+- name: "TEST SUMMARY: Display test results"
+  debug:
+    msg: |
+      ========================================================
+      TEST SUMMARY for cisco.nd.nd_manage_fabric_ai_ebgp_vxlan:
+      ========================================================
+      TEST 1: STATE MERGED
+        - Create fabric: {{ 'PASSED' if merged_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if merged_result_2 is not changed else 'FAILED' }}
+        - Update fabric: {{ 'PASSED' if merged_result_3 is changed else 'FAILED' }}
+
+      TEST 2: STATE REPLACED
+        - Create fabric: {{ 'PASSED' if replaced_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if replaced_result_2 is not changed else 'FAILED' }}
+        - Replace fabric: {{ 'PASSED' if replaced_result_3 is changed else 'FAILED' }}
+
+      TEST 3: STATE DELETED
+        - Delete fabric: {{ 'PASSED' if deleted_result_1 is changed else 'FAILED' }}
+        - Idempotency: {{ 'PASSED' if deleted_result_2 is not changed else 'FAILED' }}
+      ========================================================
