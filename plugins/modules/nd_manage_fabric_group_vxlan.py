@@ -14,7 +14,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_manage_fabric_group_vxlan
-version_added: "1.5.0"
+version_added: "2.0.0"
 short_description: Manage VXLAN Fabric Groups (MSD) on Cisco Nexus Dashboard
 description:
 - Manage VXLAN Fabric Groups (Multi-Site Domain) on Cisco Nexus Dashboard (ND).
