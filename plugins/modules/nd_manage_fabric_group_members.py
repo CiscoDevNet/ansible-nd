@@ -9,7 +9,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_manage_fabric_group_members
-version_added: "1.6.0"
+version_added: "2.0.0"
 short_description: Manage fabric group members on Cisco Nexus Dashboard
 description:
 - Manage fabric group members on Cisco Nexus Dashboard (ND).
