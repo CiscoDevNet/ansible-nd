@@ -20,9 +20,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric_group.enums import (
-    FabricGroupTypeEnum,
     CloudSecAlgorithmEnum,
     CloudSecEnforcementEnum,
+    FabricGroupTypeEnum,
     MultisiteOverlayInterConnectTypeEnum,
     SecurityGroupTagEnum,
 )
@@ -37,8 +37,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
 # Pydantic models for VXLAN Fabric Group (MSD) management via Nexus Dashboard
 
 This module provides Pydantic models for creating, updating, and deleting
-VXLAN Fabric Groups (MSD - Multi-Site Domain) through the Nexus Dashboard
-Fabric Controller (NDFC) API.
+VXLAN Fabric Groups (MSD - Multi-Site Domain) through the Nexus Dashboard (ND) API.
 
 ## Models Overview
 
@@ -446,12 +445,7 @@ class FabricGroupVxlanModel(NDBaseModel):
 
 # Export all models for external use
 __all__ = [
+    "FabricGroupVxlanModel",
     "RouteServerModel",
     "VxlanFabricGroupManagementModel",
-    "FabricGroupVxlanModel",
-    "FabricGroupTypeEnum",
-    "MultisiteOverlayInterConnectTypeEnum",
-    "CloudSecAlgorithmEnum",
-    "CloudSecEnforcementEnum",
-    "SecurityGroupTagEnum",
 ]
