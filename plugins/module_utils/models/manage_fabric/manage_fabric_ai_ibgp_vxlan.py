@@ -15,28 +15,30 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
-    model_validator,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
-    FabricTypeEnum,
     AlertSuspendEnum,
+    FabricTypeEnum,
     LicenseTierEnum,
+    TelemetryCollectionTypeEnum,
+    TelemetryStreamingProtocolEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp import (
     VxlanIbgpManagementModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
+    ExternalStreamingSettingsModel,
     LocationModel,
     TelemetrySettingsModel,
-    ExternalStreamingSettingsModel,
 )
 
 """
 # Pydantic models for AI iBGP VXLAN fabric management via Nexus Dashboard
 
 This module provides Pydantic models for creating, updating, and deleting
-AI iBGP VXLAN fabrics through the Nexus Dashboard Fabric Controller (NDFC) API.
+AI iBGP VXLAN fabrics through the Nexus Dashboard (ND) API.
 
 The AI iBGP VXLAN fabric type (aimlVxlanIbgp) is structurally identical to
 the standard iBGP VXLAN fabric type (vxlanIbgp) — they share the same
@@ -93,15 +95,27 @@ class FabricAiIbgpVxlanModel(NDBaseModel):
     fabric_name: str = Field(alias="name", description="Fabric name", min_length=1, max_length=64)
     location: Optional[LocationModel] = Field(description="Geographic location of the fabric", default=None)
 
-    # License and Operations
-    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License tier", default=LicenseTierEnum.PREMIER)
-    alert_suspend: AlertSuspendEnum = Field(alias="alertSuspend", description="Alert suspension state", default=AlertSuspendEnum.DISABLED)
-    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection", default=False)
-    telemetry_collection_type: str = Field(alias="telemetryCollectionType", description="Telemetry collection type", default="outOfBand")
-    telemetry_streaming_protocol: str = Field(alias="telemetryStreamingProtocol", description="Telemetry streaming protocol", default="ipv4")
-    telemetry_source_interface: str = Field(alias="telemetrySourceInterface", description="Telemetry source interface", default="")
-    telemetry_source_vrf: str = Field(alias="telemetrySourceVrf", description="Telemetry source VRF", default="")
-    security_domain: str = Field(alias="securityDomain", description="Security domain", default="all")
+    # License, Telemetry, and Operations
+    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License Tier for fabric.", default=LicenseTierEnum.ESSENTIALS)
+    alert_suspend: AlertSuspendEnum = Field(
+        alias="alertSuspend", description="Alert Suspend state configured on the fabric.", default=AlertSuspendEnum.DISABLED
+    )
+    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection.", default=True)
+    telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
+        alias="telemetryCollectionType", description="Telemetry collection method.", default=TelemetryCollectionTypeEnum.IN_BAND
+    )
+    telemetry_streaming_protocol: TelemetryStreamingProtocolEnum = Field(
+        alias="telemetryStreamingProtocol", description="Telemetry Streaming Protocol.", default=TelemetryStreamingProtocolEnum.IPV4
+    )
+    telemetry_source_interface: str = Field(
+        alias="telemetrySourceInterface",
+        description="Telemetry Source Interface Loopback ID, only valid if Telemetry Collection is set to inBand.",
+        default="loopback0",
+    )
+    telemetry_source_vrf: str = Field(
+        alias="telemetrySourceVrf", description="VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.", default="default"
+    )
+    security_domain: str = Field(alias="securityDomain", description="Security Domain associated with the fabric.", default="all")
 
     # Core Management Configuration
     management: Optional[AimlVxlanIbgpManagementModel] = Field(description="AI iBGP VXLAN management configuration", default=None)
