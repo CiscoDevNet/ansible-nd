@@ -65,6 +65,35 @@ class ResourceManagerDiffEngine:
     """Provide stateless validation and diff computation helpers."""
 
     @staticmethod
+    def _normalize_pool_name(pool_name: Optional[str]) -> Optional[str]:
+        """Normalize pool_name to canonical constant form based on ``POOL_SCOPE_MAP`` keys.
+
+        Converts API-style names like ``loopbackId`` to playbook constant names like
+        ``LOOPBACK_ID`` when a token-equivalent key exists in ``POOL_SCOPE_MAP``.
+
+        Args:
+            pool_name: Raw pool name from config or API.
+
+        Returns:
+            Canonical pool constant when recognized, otherwise the stripped input value.
+        """
+        if pool_name is None:
+            return None
+
+        raw = str(pool_name).strip()
+        if not raw:
+            return raw
+
+        token = "".join(ch.lower() for ch in raw if ch.isalnum())
+        if not token:
+            return raw
+
+        canonical_by_token = {
+            "".join(ch.lower() for ch in key if ch.isalnum()): key for key in POOL_SCOPE_MAP
+        }
+        return canonical_by_token.get(token, raw)
+
+    @staticmethod
     def _normalize_entity_key(entity_name: str) -> str:
         """Normalize entity_name for order-insensitive comparison.
 
@@ -181,11 +210,12 @@ class ResourceManagerDiffEngine:
             Tuple used as a dict key for matching proposed vs existing.
         """
         norm_entity = ResourceManagerDiffEngine._normalize_entity_key(entity_name) if entity_name else None
+        norm_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name)
 
         # device_pair and link encode both endpoints in entity_name;
         # normalize switch to None so existing_index and proposed lookups align.
         norm_switch = None if scope_type in ("device_pair", "link") else switch_ip
-        return (norm_entity, pool_name, scope_type, norm_switch)
+        return (norm_entity, norm_pool, scope_type, norm_switch)
 
     @staticmethod
     def validate_configs(
@@ -374,6 +404,8 @@ class ResourceManagerDiffEngine:
 
         # Track which existing keys matched at least one proposed entry
         matched_existing_keys: set = set()
+        # Track partial-match diagnostics already emitted to avoid duplicates.
+        seen_mismatch_keys: set = set()
 
         # Categorise proposed resources
         for cfg in proposed:
@@ -442,24 +474,56 @@ class ResourceManagerDiffEngine:
                         len(partials),
                     )
                     for partial in partials:
-                        partial_pool = partial.pool_name
+                        mismatch_key = (
+                            entity_name,
+                            getattr(partial, "resource_id", None),
+                        )
+                        if mismatch_key in seen_mismatch_keys:
+                            log.debug(
+                                "compute_changes: skipping duplicate partial match for entity='%s', resource_id=%s",
+                                entity_name,
+                                getattr(partial, "resource_id", None),
+                            )
+                            continue
+                        seen_mismatch_keys.add(mismatch_key)
+
+                        partial_pool = ResourceManagerDiffEngine._normalize_pool_name(partial.pool_name)
+                        desired_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name)
                         partial_scope = ResourceManagerDiffEngine._extract_scope_type(partial.scope_details)
                         partial_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(
                             partial.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip"
                         )
+                        partial_resource_value = getattr(partial, "resource_value", None)
+                        existing_values = {
+                            "resource_id": getattr(partial, "resource_id", None),
+                            "pool_name": partial_pool,
+                            "scope_type": partial_scope,
+                            "switch_ip": partial_sw,
+                            "resource_value": partial_resource_value,
+                        }
                         mismatch = {
+                            "resource_id": getattr(partial, "resource_id", None),
                             "have_pool_name": partial_pool,
-                            "want_pool_name": pool_name,
+                            "want_pool_name": desired_pool,
                             "have_scope_type": partial_scope,
                             "want_scope_type": scope_type,
                             "have_switch_ip": partial_sw,
+                            "have_resource_value": partial_resource_value,
+                            "want_resource_value": resource_value,
                         }
                         log.debug(
-                            "compute_changes: partial match for entity='%s': %s",
+                            "compute_changes: partial match for entity='%s': existing=%s mismatch=%s",
                             entity_name,
+                            existing_values,
                             mismatch,
                         )
-                        changes["debugs"].append({"Entity Name": entity_name, "MISMATCHED_VALUES": mismatch})
+                        changes["debugs"].append(
+                            {
+                                "Entity Name": entity_name,
+                                "EXISTING_VALUES": existing_values,
+                                "MISMATCHED_VALUES": mismatch,
+                            }
+                        )
                 else:
                     log.debug(
                         "Resource (entity=%s, pool=%s, scope=%s, switch=%s) found in existing — resource_id=%s, existing_value='%s'",
@@ -587,12 +651,16 @@ class ResourceManagerDiffEngine:
 
         # pool_name: exact match
         if resource_cfg.pool_name is not None:
+            cfg_pool_norm = ResourceManagerDiffEngine._normalize_pool_name(resource_cfg.pool_name)
+            api_pool_norm = ResourceManagerDiffEngine._normalize_pool_name(api_resource.pool_name)
             log.debug(
-                "validate_resource_api_fields: checking pool_name — cfg='%s', api='%s'",
+                "validate_resource_api_fields: checking pool_name — cfg='%s' (norm='%s'), api='%s' (norm='%s')",
                 resource_cfg.pool_name,
+                cfg_pool_norm,
                 api_resource.pool_name,
+                api_pool_norm,
             )
-            if resource_cfg.pool_name != api_resource.pool_name:
+            if cfg_pool_norm != api_pool_norm:
                 log.debug(
                     "validate_resource_api_fields: pool_name MISMATCH — provided='%s', API='%s'",
                     resource_cfg.pool_name,
