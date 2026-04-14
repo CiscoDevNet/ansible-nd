@@ -387,6 +387,7 @@ def main():
         required_if=[
             ("state", "merged", ["config"]),
             ("state", "overridden", ["config"]),
+            ("state", "delete", ["config"]),
         ],
     )
 
