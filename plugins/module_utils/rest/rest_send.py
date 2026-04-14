@@ -234,7 +234,7 @@ class RestSend:
         self.log.debug(msg)
 
         try:
-            if self.check_mode is True:
+            if self.check_mode is True and self.verb != HttpVerbEnum.GET:
                 self._commit_check_mode()
             else:
                 self._commit_normal_mode()
