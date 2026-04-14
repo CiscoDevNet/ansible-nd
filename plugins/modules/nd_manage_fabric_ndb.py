@@ -58,9 +58,9 @@ options:
             required: true
       license_tier:
         description:
-        - License Tier value of a fabric.
+        - License Tier for fabric.
         type: str
-        default: premier
+        default: essentials
         choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
@@ -70,14 +70,14 @@ options:
         choices: [ enabled, disabled ]
       telemetry_collection:
         description:
-        - Enable telemetry collection for the fabric.
+        - Enable telemetry collection.
         type: bool
-        default: false
+        default: true
       telemetry_collection_type:
         description:
         - Telemetry collection method.
         type: str
-        default: outOfBand
+        default: inBand
         choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
@@ -87,14 +87,14 @@ options:
         choices: [ ipv4, ipv6 ]
       telemetry_source_interface:
         description:
-        - Telemetry Source Interface (VLAN id or Loopback id) only valid if Telemetry Collection is set to inBand.
+        - Telemetry Source Interface Loopback ID, only valid if Telemetry Collection is set to inBand.
         type: str
-        default: ""
+        default: loopback0
       telemetry_source_vrf:
         description:
-        - VRF over which telemetry is streamed, valid only if telemetry collection is set to inband.
+        - VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.
         type: str
-        default: ""
+        default: default
       security_domain:
         description:
         - Security Domain associated with the fabric.

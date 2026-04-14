@@ -20,24 +20,23 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
-    FabricTypeEnum,
     AlertSuspendEnum,
+    FabricTypeEnum,
     LicenseTierEnum,
     TelemetryCollectionTypeEnum,
     TelemetryStreamingProtocolEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
+    ExternalStreamingSettingsModel,
     LocationModel,
     TelemetrySettingsModel,
-    ExternalStreamingSettingsModel,
 )
 
 """
 # Pydantic models for Data Broker (NDB) fabric management via Nexus Dashboard
 
 This module provides Pydantic models for creating, updating, and deleting
-Data Broker (Nexus Dashboard Data Broker) fabrics through the Nexus Dashboard
-Fabric Controller (NDFC) API.
+Data Broker (Nexus Dashboard Data Broker) fabrics through the Nexus Dashboard (ND) API.
 
 ## Models Overview
 
@@ -108,47 +107,29 @@ class FabricDataBrokerModel(NDBaseModel):
     fabric_name: str = Field(alias="name", description="Fabric name", min_length=1, max_length=64)
     location: Optional[LocationModel] = Field(description="Geographic location of the fabric", default=None)
 
-    # License and Operations
-    license_tier: LicenseTierEnum = Field(
-        alias="licenseTier",
-        description="License Tier value of a fabric.",
-        default=LicenseTierEnum.PREMIER,
-    )
+    # License, Telemetry, and Operations
+    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License Tier for fabric.", default=LicenseTierEnum.ESSENTIALS)
     alert_suspend: AlertSuspendEnum = Field(
-        alias="alertSuspend",
-        description="Alert Suspend state configured on the fabric",
-        default=AlertSuspendEnum.DISABLED,
+        alias="alertSuspend", description="Alert Suspend state configured on the fabric.", default=AlertSuspendEnum.DISABLED
     )
-    telemetry_collection: bool = Field(
-        alias="telemetryCollection",
-        description="Enable telemetry collection",
-        default=False,
-    )
+    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection.", default=True)
     telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
-        alias="telemetryCollectionType",
-        description="Telemetry collection method.",
-        default=TelemetryCollectionTypeEnum.OUT_OF_BAND,
+        alias="telemetryCollectionType", description="Telemetry collection method.", default=TelemetryCollectionTypeEnum.IN_BAND
     )
     telemetry_streaming_protocol: TelemetryStreamingProtocolEnum = Field(
-        alias="telemetryStreamingProtocol",
-        description="Telemetry Streaming Protocol.",
-        default=TelemetryStreamingProtocolEnum.IPV4,
+        alias="telemetryStreamingProtocol", description="Telemetry Streaming Protocol.", default=TelemetryStreamingProtocolEnum.IPV4
     )
     telemetry_source_interface: str = Field(
         alias="telemetrySourceInterface",
-        description="Telemetry Source Interface (VLAN id or Loopback id) only valid if Telemetry Collection is set to inBand",
-        default="",
+        description="Telemetry Source Interface Loopback ID, only valid if Telemetry Collection is set to inBand.",
+        default="loopback0",
     )
     telemetry_source_vrf: str = Field(
         alias="telemetrySourceVrf",
-        description="VRF over which telemetry is streamed, valid only if telemetry collection is set to inband",
-        default="",
+        description="VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.",
+        default="default",
     )
-    security_domain: str = Field(
-        alias="securityDomain",
-        description="Security Domain associated with the fabric",
-        default="all",
-    )
+    security_domain: str = Field(alias="securityDomain", description="Security Domain associated with the fabric.", default="all")
 
     # Core Management Configuration (minimal for dataBroker)
     management: Optional[DataBrokerManagementModel] = Field(
