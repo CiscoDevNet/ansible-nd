@@ -65,7 +65,7 @@ class ResourceManagerDiffEngine:
     """Provide stateless validation and diff computation helpers."""
 
     @staticmethod
-    def _normalize_pool_name(pool_name: Optional[str]) -> Optional[str]:
+    def _normalize_pool_name(pool_name: Optional[str], log: logging.Logger) -> Optional[str]:
         """Normalize pool_name to canonical constant form based on ``POOL_SCOPE_MAP`` keys.
 
         Converts API-style names like ``loopbackId`` to playbook constant names like
@@ -73,25 +73,46 @@ class ResourceManagerDiffEngine:
 
         Args:
             pool_name: Raw pool name from config or API.
+            log: Logger instance.
 
         Returns:
             Canonical pool constant when recognized, otherwise the stripped input value.
         """
         if pool_name is None:
+            log.debug("_normalize_pool_name: pool_name is None, returning None")
             return None
 
         raw = str(pool_name).strip()
         if not raw:
+            log.debug("_normalize_pool_name: pool_name stripped to empty string, returning ''")
             return raw
 
         token = "".join(ch.lower() for ch in raw if ch.isalnum())
         if not token:
+            log.debug(
+                "_normalize_pool_name: no alphanumeric chars in pool_name='%s', returning raw='%s'",
+                pool_name,
+                raw,
+            )
             return raw
 
-        canonical_by_token = {
-            "".join(ch.lower() for ch in key if ch.isalnum()): key for key in POOL_SCOPE_MAP
-        }
-        return canonical_by_token.get(token, raw)
+        canonical_by_token = {"".join(ch.lower() for ch in key if ch.isalnum()): key for key in POOL_SCOPE_MAP}
+        result = canonical_by_token.get(token, raw)
+        if result != raw:
+            log.debug(
+                "_normalize_pool_name: pool_name='%s' normalized to canonical='%s' (token='%s')",
+                pool_name,
+                result,
+                token,
+            )
+        else:
+            log.debug(
+                "_normalize_pool_name: pool_name='%s' not found in POOL_SCOPE_MAP by token='%s', returning raw='%s'",
+                pool_name,
+                token,
+                raw,
+            )
+        return result
 
     @staticmethod
     def _normalize_entity_key(entity_name: str) -> str:
@@ -197,6 +218,7 @@ class ResourceManagerDiffEngine:
         pool_name: Optional[str],
         scope_type: Optional[str],
         switch_ip: Optional[str],
+        log: Optional[logging.Logger] = None,
     ) -> Tuple:
         """Build a normalized deduplication key for a resource entry.
 
@@ -205,12 +227,13 @@ class ResourceManagerDiffEngine:
             pool_name: Pool name.
             scope_type: Playbook-style scope type.
             switch_ip: Switch IP, or None for fabric-scoped resources.
+            log: Optional logger instance.
 
         Returns:
             Tuple used as a dict key for matching proposed vs existing.
         """
         norm_entity = ResourceManagerDiffEngine._normalize_entity_key(entity_name) if entity_name else None
-        norm_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name)
+        norm_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name, log=log)
 
         # device_pair and link encode both endpoints in entity_name;
         # normalize switch to None so existing_index and proposed lookups align.
@@ -366,7 +389,7 @@ class ResourceManagerDiffEngine:
             pool = res.pool_name
             scope_type = ResourceManagerDiffEngine._extract_scope_type(res.scope_details)
             switch_id = ResourceManagerDiffEngine._extract_scope_switch_key_val(res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id")
-            key = ResourceManagerDiffEngine._make_resource_key(entity, pool, scope_type, switch_id)
+            key = ResourceManagerDiffEngine._make_resource_key(entity, pool, scope_type, switch_id, log=log)
             existing_index[key] = res
             log.debug(
                 "Existing index entry: entity=%s, pool=%s, scope_type=%s, switch_id=%s",
@@ -441,7 +464,7 @@ class ResourceManagerDiffEngine:
                 )
 
             for sw in switches:
-                key = ResourceManagerDiffEngine._make_resource_key(entity_name, pool_name, scope_type, sw)
+                key = ResourceManagerDiffEngine._make_resource_key(entity_name, pool_name, scope_type, sw, log=log)
                 log.debug(
                     "Lookup key=%s for entity='%s', pool='%s', scope='%s', switch=%s",
                     key,
@@ -487,8 +510,8 @@ class ResourceManagerDiffEngine:
                             continue
                         seen_mismatch_keys.add(mismatch_key)
 
-                        partial_pool = ResourceManagerDiffEngine._normalize_pool_name(partial.pool_name)
-                        desired_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name)
+                        partial_pool = ResourceManagerDiffEngine._normalize_pool_name(partial.pool_name, log=log)
+                        desired_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name, log=log)
                         partial_scope = ResourceManagerDiffEngine._extract_scope_type(partial.scope_details)
                         partial_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(
                             partial.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip"
@@ -651,8 +674,8 @@ class ResourceManagerDiffEngine:
 
         # pool_name: exact match
         if resource_cfg.pool_name is not None:
-            cfg_pool_norm = ResourceManagerDiffEngine._normalize_pool_name(resource_cfg.pool_name)
-            api_pool_norm = ResourceManagerDiffEngine._normalize_pool_name(api_resource.pool_name)
+            cfg_pool_norm = ResourceManagerDiffEngine._normalize_pool_name(resource_cfg.pool_name, log=log)
+            api_pool_norm = ResourceManagerDiffEngine._normalize_pool_name(api_resource.pool_name, log=log)
             log.debug(
                 "validate_resource_api_fields: checking pool_name — cfg='%s' (norm='%s'), api='%s' (norm='%s')",
                 resource_cfg.pool_name,
