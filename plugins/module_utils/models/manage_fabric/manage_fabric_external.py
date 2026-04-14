@@ -34,14 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.mana
     BootstrapSubnetModel,
     ExternalStreamingSettingsModel,
     LocationModel,
-    NetflowExporterModel,
-    NetflowMonitorModel,
-    NetflowRecordModel,
     NetflowSettingsModel,
-    TelemetryAnalysisSettingsModel,
-    TelemetryEnergyManagementModel,
-    TelemetryFlowCollectionModel,
-    TelemetryMicroburstModel,
     TelemetrySettingsModel,
 )
 
