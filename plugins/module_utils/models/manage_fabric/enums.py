@@ -29,13 +29,16 @@ class FabricTypeEnum(str, Enum):
 
     ## Values
 
-    - `VXLAN_IBGP` - VXLAN fabric with iBGP overlay
+    - `DATA_BROKER` - Data Broker (NDB) fabric
+    - `EXTERNAL_CONNECTIVITY` - External connectivity fabric
     - `VXLAN_EBGP` - VXLAN fabric with eBGP overlay
+    - `VXLAN_IBGP` - VXLAN fabric with iBGP overlay
     """
 
-    VXLAN_IBGP = "vxlanIbgp"
-    VXLAN_EBGP = "vxlanEbgp"
+    DATA_BROKER = "dataBroker"
     EXTERNAL_CONNECTIVITY = "externalConnectivity"
+    VXLAN_EBGP = "vxlanEbgp"
+    VXLAN_IBGP = "vxlanIbgp"
 
 
 class AlertSuspendEnum(str, Enum):

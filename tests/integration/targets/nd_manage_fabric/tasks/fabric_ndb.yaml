@@ -1,0 +1,300 @@
+---
+# Test code for the nd_manage_fabric_ndb module
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+#############################################################################
+# CLEANUP - Ensure clean state before tests
+#############################################################################
+- name: Clean up any existing test fabrics before starting tests
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ndb_test_fabric_merged }}"
+      - fabric_name: "{{ ndb_test_fabric_replaced }}"
+      - fabric_name: "{{ ndb_test_fabric_deleted }}"
+      - fabric_name: "ndb_multi_fabric_1"
+      - fabric_name: "ndb_multi_fabric_2"
+  tags: always
+
+#############################################################################
+# TEST 1: STATE MERGED - Create fabric using merged state
+#############################################################################
+- name: "TEST 1a: Create NDB fabric using state merged (first run)"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': ndb_test_fabric_merged} | combine(fabric_config_ndb) }}"
+  register: ndb_merged_result_1
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1a: Verify NDB fabric was created using merged state"
+  assert:
+    that:
+      - ndb_merged_result_1 is changed
+      - ndb_merged_result_1 is not failed
+    fail_msg: "NDB fabric creation with state merged failed"
+    success_msg: "NDB fabric successfully created with state merged"
+  tags: [test_merged, test_merged_create]
+
+- name: "TEST 1b: Create NDB fabric using state merged (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: merged
+    config:
+      - "{{ {'fabric_name': ndb_test_fabric_merged} | combine(fabric_config_ndb) }}"
+  register: ndb_merged_result_2
+  tags: [test_merged, test_merged_idempotent]
+
+- name: "TEST 1b: Verify merged state is idempotent"
+  assert:
+    that:
+      - ndb_merged_result_2 is not changed
+      - ndb_merged_result_2 is not failed
+    fail_msg: "Merged state is not idempotent - should not change when run twice with same config"
+    success_msg: "Merged state is idempotent - no changes on second run"
+  tags: [test_merged, test_merged_idempotent]
+
+- name: "TEST 1c: Update NDB fabric using state merged (modify existing)"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ ndb_test_fabric_merged }}"
+        security_domain: admin
+        management:
+          type: dataBroker
+          auto_isl_deploy: false
+  register: ndb_merged_result_3
+  tags: [test_merged, test_merged_update]
+
+- name: "TEST 1c: Verify NDB fabric was updated using merged state"
+  assert:
+    that:
+      - ndb_merged_result_3 is changed
+      - ndb_merged_result_3 is not failed
+    fail_msg: "NDB fabric update with state merged failed"
+    success_msg: "NDB fabric successfully updated with state merged"
+  tags: [test_merged, test_merged_update]
+
+#############################################################################
+# TEST 2: STATE REPLACED - Create and manage fabric using replaced state
+#############################################################################
+- name: "TEST 2a: Create NDB fabric using state replaced (first run)"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ ndb_test_fabric_replaced }}"
+        category: fabric
+        security_domain: admin
+        management:
+          type: dataBroker
+          auto_isl_deploy: false
+  register: ndb_replaced_result_1
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2a: Verify NDB fabric was created using replaced state"
+  assert:
+    that:
+      - ndb_replaced_result_1 is changed
+      - ndb_replaced_result_1 is not failed
+    fail_msg: "NDB fabric creation with state replaced failed"
+    success_msg: "NDB fabric successfully created with state replaced"
+  tags: [test_replaced, test_replaced_create]
+
+- name: "TEST 2b: Create NDB fabric using state replaced (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ ndb_test_fabric_replaced }}"
+        category: fabric
+        security_domain: admin
+        management:
+          type: dataBroker
+          auto_isl_deploy: false
+  register: ndb_replaced_result_2
+  tags: [test_replaced, test_replaced_idempotent]
+
+- name: "TEST 2b: Verify replaced state is idempotent"
+  assert:
+    that:
+      - ndb_replaced_result_2 is not changed
+      - ndb_replaced_result_2 is not failed
+    fail_msg: "Replaced state is not idempotent - should not change when run twice with same config"
+    success_msg: "Replaced state is idempotent - no changes on second run"
+  tags: [test_replaced, test_replaced_idempotent]
+
+- name: "TEST 2c: Update NDB fabric using state replaced (complete replacement with minimal config)"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ ndb_test_fabric_replaced }}"
+        category: fabric
+        management:
+          type: dataBroker
+  register: ndb_replaced_result_3
+  tags: [test_replaced, test_replaced_update]
+
+- name: "TEST 2c: Verify NDB fabric was completely replaced"
+  assert:
+    that:
+      - ndb_replaced_result_3 is changed
+      - ndb_replaced_result_3 is not failed
+    fail_msg: "NDB fabric replacement with state replaced failed"
+    success_msg: "NDB fabric successfully replaced with state replaced"
+  tags: [test_replaced, test_replaced_update]
+
+#############################################################################
+# TEST 3: Demonstrate difference between merged and replaced states
+#############################################################################
+- name: "TEST 3: Create NDB fabric for merged vs replaced comparison"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: replaced
+    config:
+      - "{{ {'fabric_name': ndb_test_fabric_deleted} | combine(fabric_config_ndb) }}"
+  register: ndb_comparison_fabric_creation
+  tags: [test_comparison]
+
+- name: "TEST 3a: Partial update using merged state (should merge changes)"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "{{ ndb_test_fabric_deleted }}"
+        security_domain: admin
+  register: ndb_merged_partial_result
+  tags: [test_comparison, test_merged_partial]
+
+- name: "TEST 3a: Verify merged state preserves existing configuration"
+  assert:
+    that:
+      - ndb_merged_partial_result is changed
+      - ndb_merged_partial_result is not failed
+    fail_msg: "Partial update with merged state failed"
+    success_msg: "Merged state successfully performed partial update"
+  tags: [test_comparison, test_merged_partial]
+
+- name: "TEST 3b: Partial update using replaced state (should replace entire config)"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: replaced
+    config:
+      - fabric_name: "{{ ndb_test_fabric_deleted }}"
+        category: fabric
+        management:
+          type: dataBroker
+  register: ndb_replaced_partial_result
+  tags: [test_comparison, test_replaced_partial]
+
+- name: "TEST 3b: Verify replaced state performs complete replacement"
+  assert:
+    that:
+      - ndb_replaced_partial_result is changed
+      - ndb_replaced_partial_result is not failed
+    fail_msg: "Partial replacement with replaced state failed"
+    success_msg: "Replaced state successfully performed complete replacement"
+  tags: [test_comparison, test_replaced_partial]
+
+#############################################################################
+# TEST 4: STATE DELETED - Delete fabrics
+#############################################################################
+- name: "TEST 4a: Delete NDB fabric using state deleted"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ndb_test_fabric_deleted }}"
+  register: ndb_deleted_result_1
+  tags: [test_deleted, test_deleted_delete]
+
+- name: "TEST 4a: Verify NDB fabric was deleted"
+  assert:
+    that:
+      - ndb_deleted_result_1 is changed
+      - ndb_deleted_result_1 is not failed
+    fail_msg: "NDB fabric deletion with state deleted failed"
+    success_msg: "NDB fabric successfully deleted with state deleted"
+  tags: [test_deleted, test_deleted_delete]
+
+- name: "TEST 4b: Delete NDB fabric using state deleted (second run - idempotency test)"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ndb_test_fabric_deleted }}"
+  register: ndb_deleted_result_2
+  tags: [test_deleted, test_deleted_idempotent]
+
+- name: "TEST 4b: Verify deleted state is idempotent"
+  assert:
+    that:
+      - ndb_deleted_result_2 is not changed
+      - ndb_deleted_result_2 is not failed
+    fail_msg: "Deleted state is not idempotent - should not change when deleting non-existent fabric"
+    success_msg: "Deleted state is idempotent - no changes when deleting non-existent fabric"
+  tags: [test_deleted, test_deleted_idempotent]
+
+#############################################################################
+# TEST 5: Multiple fabric operations in single task
+#############################################################################
+- name: "TEST 5: Multiple NDB fabric operations in single task"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: merged
+    config:
+      - fabric_name: "ndb_multi_fabric_1"
+        category: fabric
+        security_domain: all
+        management:
+          type: dataBroker
+          auto_isl_deploy: true
+      - fabric_name: "ndb_multi_fabric_2"
+        category: fabric
+        security_domain: all
+        management:
+          type: dataBroker
+          auto_isl_deploy: false
+  register: ndb_multi_fabric_result
+  tags: [test_multi, test_multi_create]
+
+- name: "TEST 5: Verify multiple NDB fabrics were created"
+  assert:
+    that:
+      - ndb_multi_fabric_result is changed
+      - ndb_multi_fabric_result is not failed
+    fail_msg: "Multiple NDB fabric creation failed"
+    success_msg: "Multiple NDB fabrics successfully created"
+  tags: [test_multi, test_multi_create]
+
+#############################################################################
+# FINAL CLEANUP - Clean up all test fabrics
+#############################################################################
+- name: "CLEANUP: Delete all NDB test fabrics"
+  cisco.nd.nd_manage_fabric_ndb:
+    <<: *nd_info
+    state: deleted
+    config:
+      - fabric_name: "{{ ndb_test_fabric_merged }}"
+      - fabric_name: "{{ ndb_test_fabric_replaced }}"
+      - fabric_name: "{{ ndb_test_fabric_deleted }}"
+      - fabric_name: "ndb_multi_fabric_1"
+      - fabric_name: "ndb_multi_fabric_2"
+  ignore_errors: true
+  tags: [cleanup, always]
