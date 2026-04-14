@@ -20,36 +20,36 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
-    FabricTypeEnum,
     AlertSuspendEnum,
-    LicenseTierEnum,
     CoppPolicyEnum,
     DhcpProtocolVersionEnum,
+    FabricTypeEnum,
+    LicenseTierEnum,
     PowerRedundancyModeEnum,
     TelemetryCollectionTypeEnum,
     TelemetryStreamingProtocolEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BGP_ASN_RE,
+    BootstrapSubnetModel,
+    ExternalStreamingSettingsModel,
     LocationModel,
     NetflowExporterModel,
-    NetflowRecordModel,
     NetflowMonitorModel,
+    NetflowRecordModel,
     NetflowSettingsModel,
-    BootstrapSubnetModel,
-    TelemetryFlowCollectionModel,
-    TelemetryMicroburstModel,
     TelemetryAnalysisSettingsModel,
     TelemetryEnergyManagementModel,
+    TelemetryFlowCollectionModel,
+    TelemetryMicroburstModel,
     TelemetrySettingsModel,
-    ExternalStreamingSettingsModel,
 )
 
 """
 # Comprehensive Pydantic models for External Connectivity fabric management via Nexus Dashboard
 
 This module provides comprehensive Pydantic models for creating, updating, and deleting
-External Connectivity fabrics through the Nexus Dashboard Fabric Controller (NDFC) API.
+External Connectivity fabrics through the Nexus Dashboard (ND) API.
 
 ## Models Overview
 
@@ -118,14 +118,14 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # Loopback
     allow_same_loopback_ip_on_switches: bool = Field(
         alias="allowSameLoopbackIpOnSwitches",
-        description=("Allow the same loopback IP address to be configured on multiple" " switches (e.g. RP loopback IP)"),
+        description=("Allow the same loopback IP address to be configured on multiple switches (e.g. RP loopback IP)"),
         default=False,
     )
 
     # Smart Switch
     allow_smart_switch_onboarding: bool = Field(
         alias="allowSmartSwitchOnboarding",
-        description=("Enable onboarding of smart switches to Hypershield" " for firewall service"),
+        description=("Enable onboarding of smart switches to Hypershield for firewall service"),
         default=False,
     )
 
@@ -142,7 +142,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # CoPP Policy
     copp_policy: CoppPolicyEnum = Field(
         alias="coppPolicy",
-        description=("Fabric wide CoPP policy. Customized CoPP policy should be" " provided when 'manual' is selected."),
+        description=("Fabric wide CoPP policy. Customized CoPP policy should be provided when 'manual' is selected."),
         default=CoppPolicyEnum.MANUAL,
     )
 
@@ -190,7 +190,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
     dns_vrf_collection: List[str] = Field(
         alias="dnsVrfCollection",
-        description=("DNS Server VRFs. One VRF for all DNS servers or a list of VRFs," " one per DNS server"),
+        description=("DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server"),
         default_factory=list,
     )
 
@@ -204,7 +204,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # DPU Pinning
     enable_dpu_pinning: bool = Field(
         alias="enableDpuPinning",
-        description=("Enable pinning of VRFs and networks to specific DPUs" " on smart switches"),
+        description=("Enable pinning of VRFs and networks to specific DPUs on smart switches"),
         default=False,
     )
 
@@ -221,12 +221,12 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
     extra_config_nxos_bootstrap: str = Field(
         alias="extraConfigNxosBootstrap",
-        description=("Additional CLIs required during device bootup/login" " e.g. AAA/Radius (NX-OS)"),
+        description=("Additional CLIs required during device bootup/login e.g. AAA/Radius (NX-OS)"),
         default="",
     )
     extra_config_xe_bootstrap: str = Field(
         alias="extraConfigXeBootstrap",
-        description=("Additional CLIs required during device bootup/login" " e.g. AAA/Radius (IOS-XE)"),
+        description=("Additional CLIs required during device bootup/login e.g. AAA/Radius (IOS-XE)"),
         default="",
     )
 
@@ -238,7 +238,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
     inband_management: bool = Field(
         alias="inbandManagement",
-        description=("Import switches with reachability over the switch" " front-panel ports"),
+        description=("Import switches with reachability over the switch front-panel ports"),
         default=False,
     )
 
@@ -276,7 +276,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # Monitored Mode
     monitored_mode: bool = Field(
         alias="monitoredMode",
-        description=("If enabled, fabric is only monitored." " No configuration will be deployed"),
+        description=("If enabled, fabric is only monitored. No configuration will be deployed"),
         default=False,
     )
 
@@ -313,7 +313,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # Performance Monitoring
     performance_monitoring: bool = Field(
         alias="performanceMonitoring",
-        description=("If enabled, switch metrics are collected through periodic SNMP" " polling. Alternative to real-time telemetry"),
+        description=("If enabled, switch metrics are collected through periodic SNMP polling. Alternative to real-time telemetry"),
         default=False,
     )
 
@@ -328,7 +328,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     ptp: bool = Field(description="Enable Precision Time Protocol (PTP)", default=False)
     ptp_domain_id: int = Field(
         alias="ptpDomainId",
-        description=("Multiple Independent PTP Clocking Subdomains" " on a Single Network"),
+        description=("Multiple Independent PTP Clocking Subdomains on a Single Network"),
         default=0,
     )
     ptp_loopback_id: int = Field(
@@ -340,14 +340,14 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # Backup / Restore
     real_time_backup: Optional[bool] = Field(
         alias="realTimeBackup",
-        description=("Hourly Fabric Backup only if there is any config deployment" " since last backup"),
+        description=("Hourly Fabric Backup only if there is any config deployment since last backup"),
         default=None,
     )
 
     # Interface Statistics Collection
     real_time_interface_statistics_collection: bool = Field(
         alias="realTimeInterfaceStatisticsCollection",
-        description=("Enable Real Time Interface Statistics Collection." " Valid for NX-OS only"),
+        description=("Enable Real Time Interface Statistics Collection. Valid for NX-OS only"),
         default=False,
     )
 
@@ -359,7 +359,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
     scheduled_backup_time: str = Field(
         alias="scheduledBackupTime",
-        description=("Time (UTC) in 24 hour format to take a daily backup" " if enabled (00:00 to 23:59)"),
+        description=("Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)"),
         default="",
     )
 
@@ -373,7 +373,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # Sub-Interface
     sub_interface_dot1q_range: str = Field(
         alias="subInterfaceDot1qRange",
-        description=("Per aggregation dot1q range for VRF-Lite connectivity" " (minimum: 2, maximum: 4093)"),
+        description=("Per aggregation dot1q range for VRF-Lite connectivity (minimum: 2, maximum: 4093)"),
         default="2-511",
     )
 
@@ -410,7 +410,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
         - `ValueError` - If the value does not match the expected ASN format
         """
         if not BGP_ASN_RE.match(value):
-            raise ValueError(f"Invalid BGP ASN '{value}'. " "Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
+            raise ValueError(f"Invalid BGP ASN '{value}'. Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
         return value
 
 
@@ -441,43 +441,27 @@ class FabricExternalConnectivityModel(NDBaseModel):
     fabric_name: str = Field(alias="name", description="Fabric name", min_length=1, max_length=64)
     location: Optional[LocationModel] = Field(description="Geographic location of the fabric", default=None)
 
-    # License and Operations
-    license_tier: LicenseTierEnum = Field(
-        alias="licenseTier",
-        description="License Tier value of a fabric.",
-        default=LicenseTierEnum.PREMIER,
-    )
+    # License, Telemetry, and Operations
+    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License Tier for fabric.", default=LicenseTierEnum.ESSENTIALS)
     alert_suspend: AlertSuspendEnum = Field(
-        alias="alertSuspend",
-        description="Alert Suspend state configured on the fabric",
-        default=AlertSuspendEnum.DISABLED,
+        alias="alertSuspend", description="Alert Suspend state configured on the fabric.", default=AlertSuspendEnum.DISABLED
     )
-    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection", default=False)
+    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection.", default=True)
     telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
-        alias="telemetryCollectionType",
-        description="Telemetry collection method.",
-        default=TelemetryCollectionTypeEnum.OUT_OF_BAND,
+        alias="telemetryCollectionType", description="Telemetry collection method.", default=TelemetryCollectionTypeEnum.IN_BAND
     )
     telemetry_streaming_protocol: TelemetryStreamingProtocolEnum = Field(
-        alias="telemetryStreamingProtocol",
-        description="Telemetry Streaming Protocol.",
-        default=TelemetryStreamingProtocolEnum.IPV4,
+        alias="telemetryStreamingProtocol", description="Telemetry Streaming Protocol.", default=TelemetryStreamingProtocolEnum.IPV4
     )
     telemetry_source_interface: str = Field(
         alias="telemetrySourceInterface",
-        description=("Telemetry Source Interface (VLAN id or Loopback id) only valid" " if Telemetry Collection is set to inBand"),
-        default="",
+        description="Telemetry Source Interface Loopback ID, only valid if Telemetry Collection is set to inBand.",
+        default="loopback0",
     )
     telemetry_source_vrf: str = Field(
-        alias="telemetrySourceVrf",
-        description=("VRF over which telemetry is streamed, valid only if telemetry" " collection is set to inband"),
-        default="",
+        alias="telemetrySourceVrf", description="VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.", default="default"
     )
-    security_domain: str = Field(
-        alias="securityDomain",
-        description="Security Domain associated with the fabric",
-        default="all",
-    )
+    security_domain: str = Field(alias="securityDomain", description="Security Domain associated with the fabric.", default="all")
 
     # Core Management Configuration
     management: Optional[ExternalConnectivityManagementModel] = Field(description="External Connectivity management configuration", default=None)
@@ -546,24 +530,6 @@ class FabricExternalConnectivityModel(NDBaseModel):
 
 # Export all models for external use
 __all__ = [
-    "LocationModel",
-    "NetflowExporterModel",
-    "NetflowRecordModel",
-    "NetflowMonitorModel",
-    "NetflowSettingsModel",
-    "BootstrapSubnetModel",
-    "TelemetryFlowCollectionModel",
-    "TelemetryMicroburstModel",
-    "TelemetryAnalysisSettingsModel",
-    "TelemetryEnergyManagementModel",
-    "TelemetrySettingsModel",
-    "ExternalStreamingSettingsModel",
     "ExternalConnectivityManagementModel",
     "FabricExternalConnectivityModel",
-    "FabricTypeEnum",
-    "AlertSuspendEnum",
-    "LicenseTierEnum",
-    "CoppPolicyEnum",
-    "DhcpProtocolVersionEnum",
-    "PowerRedundancyModeEnum",
 ]
