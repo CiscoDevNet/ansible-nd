@@ -34,7 +34,7 @@ class LocalUserOrchestrator(NDBaseOrchestrator[LocalUserModel]):
         """
         try:
             api_endpoint = self.query_all_endpoint()
-            result = self._query_obj(api_endpoint.path)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             return result.get("localusers", []) or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e

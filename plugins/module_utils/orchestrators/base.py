@@ -58,7 +58,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     # REST infrastructure
     rest_send: RestSend
 
-    def _request(self, path: str, verb: HttpVerbEnum, data: Optional[Dict[str, Any]] = None) -> ResponseType:
+    def _request(self, path: str, verb: HttpVerbEnum, data: Optional[Dict[str, Any]] = None, not_found_ok: bool = False) -> ResponseType:
         """
         # Summary
 
@@ -69,6 +69,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         ### Exception
 
         - If the request fails (non-success result from the controller).
+        - If `not_found_ok` is False and the controller returns a 404.
         """
         self.rest_send.path = path
         self.rest_send.verb = verb
@@ -77,30 +78,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         self.rest_send.commit()
 
         if not self.rest_send.success:
-            raise Exception(f"Request failed {self.rest_send.error_summary}")
-
-        return self.rest_send.response_current.get("DATA", {})
-
-    def _query_obj(self, path: str) -> Dict[str, Any]:
-        """
-        # Summary
-
-        GET the given path and return the DATA dict, or empty dict if not found.
-
-        ## Raises
-
-        ### Exception
-
-        - If the request fails with a non-404 error.
-        """
-        self.rest_send.path = path
-        self.rest_send.verb = HttpVerbEnum.GET
-        self.rest_send.commit()
-
-        if not self.rest_send.success:
-            if self.rest_send.return_code == 404:
+            if not_found_ok and self.rest_send.return_code == 404:
                 return {}
-            raise Exception(f"Query failed {self.rest_send.error_summary}")
+            raise Exception(f"Request failed {self.rest_send.error_summary}")
 
         return self.rest_send.response_current.get("DATA", {})
 
@@ -139,7 +119,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     def query_all(self, model_instance: Optional[ModelType] = None, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.query_all_endpoint()
-            result = self._query_obj(api_endpoint.path)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
