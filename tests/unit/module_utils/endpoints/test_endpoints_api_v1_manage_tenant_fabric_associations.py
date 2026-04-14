@@ -14,7 +14,6 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type
 # pylint: enable=invalid-name
 
-import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.tenant_fabric_associations import (
     EpManageTenantFabricAssociationsGet,
     EpManageTenantFabricAssociationsPost,
