@@ -77,9 +77,13 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             self.rest_send.payload = data
         self.rest_send.commit()
 
+        # Check not_found_ok before success because ResponseHandler treats
+        # GET 404 as success=True (found=False).  Without this early return,
+        # a GET 404 would fall through and return the raw 404 DATA body.
+        if not_found_ok and self.rest_send.return_code == 404:
+            return {}
+
         if not self.rest_send.success:
-            if not_found_ok and self.rest_send.return_code == 404:
-                return {}
             raise Exception(f"Request failed {self.rest_send.error_summary}")
 
         return self.rest_send.response_current.get("DATA", {})
