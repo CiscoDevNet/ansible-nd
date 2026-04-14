@@ -20,16 +20,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
-    AlertSuspendEnum,
     FabricTypeEnum,
-    LicenseTierEnum,
-    TelemetryCollectionTypeEnum,
-    TelemetryStreamingProtocolEnum,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
-    ExternalStreamingSettingsModel,
-    LocationModel,
-    TelemetrySettingsModel,
 )
 
 """
@@ -64,8 +55,8 @@ class DataBrokerManagementModel(NDNestedModel):
     Data Broker fabric management configuration.
 
     The dataBroker management schema is minimal — it contains only the type
-    discriminator field. Unlike eBGP/iBGP fabrics, there are no additional
-    fabric-level management parameters.
+    discriminator field, supportes only essential license tier, and an auto ISL deployment option.
+    Unlike eBGP/iBGP fabrics, there are no additional fabric-level management parameters.
 
     ## Raises
 
@@ -79,22 +70,25 @@ class DataBrokerManagementModel(NDNestedModel):
         description="Fabric management type",
         default=FabricTypeEnum.DATA_BROKER,
     )
+    auto_isl_deploy: Optional[bool] = Field(
+        alias="autoISLDeploy",
+        description="Enable automatic ISL deployment.",
+        default=True,
+    )
 
 
 class FabricDataBrokerModel(NDBaseModel):
     """
     # Summary
 
-    Complete model for creating a new Data Broker (NDB) fabric.
+    Complete model for managing a Nexus Data Broker (NDB) fabric.
 
-    This model combines all necessary components for fabric creation including
-    basic fabric properties, the minimal dataBroker management settings,
-    telemetry, and streaming configuration.
+    This model combines all necessary components for fabric management including
+    basic fabric properties and the minimal dataBroker management settings.
 
     ## Raises
 
-    - `ValueError` - If required fields are missing or invalid
-    - `TypeError` - If field types don't match expected types
+    - `ValueError` - If fabric name contains invalid characters or management type is not dataBroker
     """
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
@@ -105,48 +99,15 @@ class FabricDataBrokerModel(NDBaseModel):
     # Basic Fabric Properties
     category: Literal["fabric"] = Field(description="Resource category", default="fabric")
     fabric_name: str = Field(alias="name", description="Fabric name", min_length=1, max_length=64)
-    location: Optional[LocationModel] = Field(description="Geographic location of the fabric", default=None)
 
-    # License, Telemetry, and Operations
-    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License Tier for fabric.", default=LicenseTierEnum.ESSENTIALS)
-    alert_suspend: AlertSuspendEnum = Field(
-        alias="alertSuspend", description="Alert Suspend state configured on the fabric.", default=AlertSuspendEnum.DISABLED
-    )
-    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection.", default=True)
-    telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
-        alias="telemetryCollectionType", description="Telemetry collection method.", default=TelemetryCollectionTypeEnum.IN_BAND
-    )
-    telemetry_streaming_protocol: TelemetryStreamingProtocolEnum = Field(
-        alias="telemetryStreamingProtocol", description="Telemetry Streaming Protocol.", default=TelemetryStreamingProtocolEnum.IPV4
-    )
-    telemetry_source_interface: str = Field(
-        alias="telemetrySourceInterface",
-        description="Telemetry Source Interface Loopback ID, only valid if Telemetry Collection is set to inBand.",
-        default="loopback0",
-    )
-    telemetry_source_vrf: str = Field(
-        alias="telemetrySourceVrf",
-        description="VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.",
-        default="default",
-    )
+    # License and Operations
+    license_tier: Literal["essentials"] = Field(alias="licenseTier", description="License Tier for fabric.", default="essentials")
     security_domain: str = Field(alias="securityDomain", description="Security Domain associated with the fabric.", default="all")
 
     # Core Management Configuration (minimal for dataBroker)
     management: Optional[DataBrokerManagementModel] = Field(
         description="Data Broker management configuration",
         default=None,
-    )
-
-    # Optional Advanced Settings
-    telemetry_settings: Optional[TelemetrySettingsModel] = Field(
-        alias="telemetrySettings",
-        description="Telemetry configuration",
-        default=None,
-    )
-    external_streaming_settings: ExternalStreamingSettingsModel = Field(
-        alias="externalStreamingSettings",
-        description="External streaming settings",
-        default_factory=ExternalStreamingSettingsModel,
     )
 
     @field_validator("fabric_name")
@@ -179,10 +140,6 @@ class FabricDataBrokerModel(NDBaseModel):
         # Ensure management type matches model type
         if self.management is not None and self.management.type != FabricTypeEnum.DATA_BROKER:
             raise ValueError(f"Management type must be {FabricTypeEnum.DATA_BROKER}")
-
-        # Validate telemetry consistency
-        if self.telemetry_collection and self.telemetry_settings is None:
-            self.telemetry_settings = TelemetrySettingsModel()
 
         return self
 

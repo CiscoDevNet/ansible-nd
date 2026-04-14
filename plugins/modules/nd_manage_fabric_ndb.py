@@ -41,60 +41,12 @@ options:
         - The resource category.
         type: str
         default: fabric
-      location:
-        description:
-        - The geographic location of the fabric.
-        type: dict
-        suboptions:
-          latitude:
-            description:
-            - Latitude coordinate of the fabric location (-90 to 90).
-            type: float
-            required: true
-          longitude:
-            description:
-            - Longitude coordinate of the fabric location (-180 to 180).
-            type: float
-            required: true
       license_tier:
         description:
-        - License Tier for fabric.
+        - License Tier for fabric. Only C(essentials) is supported for Data Broker fabrics.
         type: str
         default: essentials
-        choices: [ essentials, advantage, premier ]
-      alert_suspend:
-        description:
-        - Alert Suspend state configured on the fabric.
-        type: str
-        default: disabled
-        choices: [ enabled, disabled ]
-      telemetry_collection:
-        description:
-        - Enable telemetry collection.
-        type: bool
-        default: true
-      telemetry_collection_type:
-        description:
-        - Telemetry collection method.
-        type: str
-        default: inBand
-        choices: [ inBand, outOfBand ]
-      telemetry_streaming_protocol:
-        description:
-        - Telemetry Streaming Protocol.
-        type: str
-        default: ipv4
-        choices: [ ipv4, ipv6 ]
-      telemetry_source_interface:
-        description:
-        - Telemetry Source Interface Loopback ID, only valid if Telemetry Collection is set to inBand.
-        type: str
-        default: loopback0
-      telemetry_source_vrf:
-        description:
-        - VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.
-        type: str
-        default: default
+        choices: [ essentials ]
       security_domain:
         description:
         - Security Domain associated with the fabric.
@@ -103,7 +55,6 @@ options:
       management:
         description:
         - The Data Broker management configuration for the fabric.
-        - The Data Broker fabric type has minimal management settings — only the C(type) discriminator.
         type: dict
         suboptions:
           type:
@@ -112,120 +63,11 @@ options:
             type: str
             default: dataBroker
             choices: [ dataBroker ]
-      telemetry_settings:
-        description:
-        - Telemetry configuration for the fabric.
-        type: dict
-        suboptions:
-          flow_collection:
+          auto_isl_deploy:
             description:
-            - Flow collection settings.
-            type: dict
-            suboptions:
-              traffic_analytics:
-                description:
-                - Traffic analytics state.
-                type: str
-                default: enabled
-              traffic_analytics_scope:
-                description:
-                - Traffic analytics scope.
-                type: str
-                default: intraFabric
-              operating_mode:
-                description:
-                - Operating mode.
-                type: str
-                default: flowTelemetry
-              udp_categorization:
-                description:
-                - UDP categorization.
-                type: str
-                default: enabled
-          microburst:
-            description:
-            - Microburst detection settings.
-            type: dict
-            suboptions:
-              microburst:
-                description:
-                - Enable microburst detection.
-                type: bool
-                default: false
-              sensitivity:
-                description:
-                - Microburst sensitivity level.
-                type: str
-                default: low
-          analysis_settings:
-            description:
-            - Analysis settings.
-            type: dict
-            suboptions:
-              is_enabled:
-                description:
-                - Enable telemetry analysis.
-                type: bool
-                default: false
-          nas:
-            description:
-            - NAS telemetry configuration.
-            type: dict
-            suboptions:
-              server:
-                description:
-                - NAS server address.
-                type: str
-                default: ""
-              export_settings:
-                description:
-                - NAS export settings.
-                type: dict
-                suboptions:
-                  export_type:
-                    description:
-                    - Export type.
-                    type: str
-                    default: full
-                  export_format:
-                    description:
-                    - Export format.
-                    type: str
-                    default: json
-          energy_management:
-            description:
-            - Energy management settings.
-            type: dict
-            suboptions:
-              cost:
-                description:
-                - Energy cost per unit.
-                type: float
-                default: 1.2
-      external_streaming_settings:
-        description:
-        - External streaming settings for the fabric.
-        type: dict
-        suboptions:
-          email:
-            description:
-            - Email streaming configuration.
-            type: list
-            elements: dict
-          message_bus:
-            description:
-            - Message bus configuration.
-            type: list
-            elements: dict
-          syslog:
-            description:
-            - Syslog streaming configuration.
-            type: dict
-          webhooks:
-            description:
-            - Webhook configuration.
-            type: list
-            elements: dict
+            - Enable automatic ISL deployment.
+            type: bool
+            default: true
   state:
     description:
     - The desired state of the fabric resources on the Cisco Nexus Dashboard.
@@ -254,26 +96,19 @@ EXAMPLES = r"""
     state: merged
     config:
       - fabric_name: my_ndb_fabric
-        category: fabric
-        location:
-          latitude: 37.7749
-          longitude: -122.4194
-        license_tier: premier
-        alert_suspend: disabled
         security_domain: all
-        telemetry_collection: false
         management:
           type: dataBroker
+          auto_isl_deploy: true
   register: result
 
-- name: Update location on an existing Data Broker fabric using state merged
+- name: Update management settings on an existing Data Broker fabric using state merged
   cisco.nd.nd_manage_fabric_ndb:
     state: merged
     config:
       - fabric_name: my_ndb_fabric
-        location:
-          latitude: 40.7128
-          longitude: -74.0060
+        management:
+          auto_isl_deploy: false
   register: result
 
 - name: Replace a Data Broker fabric configuration using state replaced
@@ -281,17 +116,10 @@ EXAMPLES = r"""
     state: replaced
     config:
       - fabric_name: my_ndb_fabric
-        category: fabric
-        location:
-          latitude: 37.7749
-          longitude: -122.4194
-        license_tier: advantage
-        alert_suspend: enabled
         security_domain: all
-        telemetry_collection: true
-        telemetry_collection_type: inBand
         management:
           type: dataBroker
+          auto_isl_deploy: true
   register: result
 
 - name: Delete a Data Broker fabric using state deleted
