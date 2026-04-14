@@ -52,6 +52,21 @@ options:
         - Security Domain associated with the fabric.
         type: str
         default: all
+      location:
+        description:
+        - Geographic location of the fabric.
+        type: dict
+        suboptions:
+          latitude:
+            description:
+            - Latitude coordinate (-90 to 90).
+            type: float
+            required: true
+          longitude:
+            description:
+            - Longitude coordinate (-180 to 180).
+            type: float
+            required: true
       management:
         description:
         - The Data Broker management configuration for the fabric.
@@ -97,6 +112,9 @@ EXAMPLES = r"""
     config:
       - fabric_name: my_ndb_fabric
         security_domain: all
+        location:
+          latitude: 37.33939
+          longitude: -121.89496
         management:
           type: dataBroker
           auto_isl_deploy: true

@@ -9,7 +9,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import re
-from typing import Dict, List, Optional, ClassVar, Literal
+from typing import Dict, List, Optional, ClassVar, Literal, Set
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -21,6 +21,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     FabricTypeEnum,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
+    LocationModel,
 )
 
 """
@@ -95,6 +98,8 @@ class FabricDataBrokerModel(NDBaseModel):
 
     identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    config_exclude_fields: ClassVar[Set[str]] = {"telemetry_collection"}
+    exclude_from_diff: ClassVar[Set[str]] = {"telemetry_collection"}
 
     # Basic Fabric Properties
     category: Literal["fabric"] = Field(description="Resource category", default="fabric")
@@ -105,10 +110,16 @@ class FabricDataBrokerModel(NDBaseModel):
     security_domain: str = Field(alias="securityDomain", description="Security Domain associated with the fabric.", default="all")
 
     # Core Management Configuration (minimal for dataBroker)
-    management: Optional[DataBrokerManagementModel] = Field(
+    management: DataBrokerManagementModel = Field(
         description="Data Broker management configuration",
-        default=None,
+        default_factory=DataBrokerManagementModel,
     )
+
+    # Location
+    location: Optional[LocationModel] = Field(description="Geographic location of the fabric", default=None)
+
+    # Internal fields — always included in API payload, never exposed to users
+    telemetry_collection: bool = Field(alias="telemetryCollection", description="Telemetry collection setting", default=False)
 
     @field_validator("fabric_name")
     @classmethod
