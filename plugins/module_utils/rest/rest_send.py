@@ -319,8 +319,7 @@ class RestSend:
 
         self.sender.path = self.path
         self.sender.verb = self.verb
-        if self.payload is not None:
-            self.sender.payload = self.payload
+        self.sender.payload = self.payload
         success = False
         while timeout > 0 and success is False:
             msg = f"{self.class_name}.{method_name}: "
