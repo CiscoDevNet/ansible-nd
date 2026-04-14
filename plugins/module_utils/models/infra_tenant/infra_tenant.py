@@ -70,9 +70,7 @@ class InfraTenantModel(NDBaseModel):
 
     name: str = Field(alias="name")
     description: Optional[str] = Field(default=None, alias="description")
-    fabric_associations: Optional[List[InfraTenantFabricAssociationModel]] = Field(
-        default=None, alias="fabricAssociations"
-    )
+    fabric_associations: Optional[List[InfraTenantFabricAssociationModel]] = Field(default=None, alias="fabricAssociations")
 
     # --- Serializers ---
 
@@ -88,17 +86,11 @@ class InfraTenantModel(NDBaseModel):
         mode = (info.context or {}).get("mode", "payload")
 
         if mode == "config":
-            return [
-                assoc.model_dump(by_alias=False, exclude_none=True)
-                for assoc in value
-            ]
+            return [assoc.model_dump(by_alias=False, exclude_none=True) for assoc in value]
 
         # Payload mode — not used directly (excluded via payload_exclude_fields),
         # but provided for completeness.
-        return [
-            assoc.model_dump(by_alias=True, exclude_none=True)
-            for assoc in value
-        ]
+        return [assoc.model_dump(by_alias=True, exclude_none=True) for assoc in value]
 
     # --- Validators ---
 

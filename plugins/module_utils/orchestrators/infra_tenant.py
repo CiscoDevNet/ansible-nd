@@ -96,11 +96,13 @@ class InfraTenantOrchestrator(NDBaseOrchestrator[InfraTenantModel]):
         to_delete = []
         for fname in existing_by_fabric:
             if fname not in proposed_by_fabric:
-                to_delete.append({
-                    "fabricName": fname,
-                    "tenantName": tenant_name,
-                    "associate": False,
-                })
+                to_delete.append(
+                    {
+                        "fabricName": fname,
+                        "tenantName": tenant_name,
+                        "associate": False,
+                    }
+                )
 
         # Create or update associations
         to_create = []
@@ -219,10 +221,7 @@ class InfraTenantOrchestrator(NDBaseOrchestrator[InfraTenantModel]):
             # Reconcile fabric associations if specified
             if model_instance.fabric_associations is not None:
                 all_assocs = self._query_all_fabric_associations()
-                existing_for_tenant = [
-                    a for a in all_assocs
-                    if a.get("tenantName") == model_instance.name
-                ]
+                existing_for_tenant = [a for a in all_assocs if a.get("tenantName") == model_instance.name]
                 self._sync_fabric_associations(
                     tenant_name=model_instance.name,
                     proposed_associations=model_instance.fabric_associations,

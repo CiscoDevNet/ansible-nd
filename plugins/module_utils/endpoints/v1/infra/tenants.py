@@ -73,9 +73,7 @@ class EpInfraTenantsGet(_EpInfraTenantsBase):
     - GET
     """
 
-    class_name: Literal["EpInfraTenantsGet"] = Field(
-        default="EpInfraTenantsGet", frozen=True, description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpInfraTenantsGet"] = Field(default="EpInfraTenantsGet", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -102,9 +100,7 @@ class EpInfraTenantsPost(_EpInfraTenantsBase):
     - POST
     """
 
-    class_name: Literal["EpInfraTenantsPost"] = Field(
-        default="EpInfraTenantsPost", frozen=True, description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpInfraTenantsPost"] = Field(default="EpInfraTenantsPost", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -131,9 +127,7 @@ class EpInfraTenantsPut(_EpInfraTenantsBase):
     - PUT
     """
 
-    class_name: Literal["EpInfraTenantsPut"] = Field(
-        default="EpInfraTenantsPut", frozen=True, description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpInfraTenantsPut"] = Field(default="EpInfraTenantsPut", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -160,9 +154,7 @@ class EpInfraTenantsDelete(_EpInfraTenantsBase):
     - DELETE
     """
 
-    class_name: Literal["EpInfraTenantsDelete"] = Field(
-        default="EpInfraTenantsDelete", frozen=True, description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpInfraTenantsDelete"] = Field(default="EpInfraTenantsDelete", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:

@@ -73,9 +73,7 @@ class EpInfraTenantDomainsGet(_EpInfraTenantDomainsBase):
     - GET
     """
 
-    class_name: Literal["EpInfraTenantDomainsGet"] = Field(
-        default="EpInfraTenantDomainsGet", frozen=True, description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpInfraTenantDomainsGet"] = Field(default="EpInfraTenantDomainsGet", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -131,9 +129,7 @@ class EpInfraTenantDomainsPut(_EpInfraTenantDomainsBase):
     - PUT
     """
 
-    class_name: Literal["EpInfraTenantDomainsPut"] = Field(
-        default="EpInfraTenantDomainsPut", frozen=True, description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpInfraTenantDomainsPut"] = Field(default="EpInfraTenantDomainsPut", frozen=True, description="Class name for backward compatibility")
 
     @property
     def verb(self) -> HttpVerbEnum:
