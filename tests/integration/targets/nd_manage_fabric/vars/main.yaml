@@ -253,15 +253,10 @@ fabric_config_external:
 # common_ndb_fabric_config:
 fabric_config_ndb:
   category: fabric
-  location:
-    latitude: 37.7749
-    longitude: -122.4194
-  license_tier: premier
-  alert_suspend: disabled
   security_domain: all
-  telemetry_collection: false
   management:
     type: dataBroker
+    auto_isl_deploy: true
 
 # Common eBGP fabric configuration for all eBGP tests
 # common_ebgp_fabric_config:
