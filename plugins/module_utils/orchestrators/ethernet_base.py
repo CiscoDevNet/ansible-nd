@@ -2,6 +2,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# pyright: reportAttributeAccessIssue=false
+# ModelType is NDBaseModel which lacks interface-specific fields (switch_ip,
+# interface_name, config_data). Concrete subclasses always bind ModelType to a
+# model that provides these fields, so the accesses are safe at runtime.
+
 """
 Base orchestrator for ethernet interface modules on Nexus Dashboard.
 
