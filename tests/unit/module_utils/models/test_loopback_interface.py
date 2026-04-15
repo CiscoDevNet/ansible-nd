@@ -10,11 +10,7 @@ Unit tests for loopback_interface.py
 Tests the Loopback Interface Pydantic model classes.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
+from __future__ import annotations
 
 import copy
 from contextlib import contextmanager
