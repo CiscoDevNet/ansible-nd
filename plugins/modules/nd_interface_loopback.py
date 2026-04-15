@@ -236,6 +236,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.loopback_interface import LoopbackInterfaceOrchestrator
 
 
@@ -270,6 +271,10 @@ def main():
             module=module,
             model_orchestrator=LoopbackInterfaceOrchestrator,
         )
+        # Narrow type from NDBaseOrchestrator to NDBaseInterfaceOrchestrator so that
+        # interface-specific attributes (deploy, remove_pending, deploy_pending) are
+        # visible to Pylance and validated at runtime.
+        assert isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator)
         nd_state_machine.model_orchestrator.deploy = module.params["deploy"]
 
         # Manage state
