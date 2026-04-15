@@ -10,10 +10,9 @@ for all ethernet interface types (accessHost, trunkHost, routed, etc.) via the N
 Interfaces API. Type-specific orchestrators inherit from this base and provide their own
 `model_class` and `_managed_policy_types()`.
 
-Shared functionality includes:
-- Switch IP-to-serial resolution via `FabricContext`
-- Pre-flight fabric validation
-- Deferred bulk deploy and remove operations
+Inherits shared interface lifecycle operations (deploy queuing, fabric validation, switch
+resolution) from `NDBaseInterfaceOrchestrator` and adds ethernet-specific functionality:
+- Normalize-based deletion (physical interfaces cannot be deleted via remove/DELETE)
 - Port-channel membership enforcement with a whitelisted field set
 - Fabric-wide `query_all()` with per-type policy filtering
 """
@@ -25,23 +24,21 @@ from typing import ClassVar, List, Optional, Set, Type
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
-    EpManageInterfacesDeploy,
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
     EpManageInterfacesNormalize,
     EpManageInterfacesPost,
     EpManageInterfacesPut,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 ModelType = NDBaseModel
 
 
-class EthernetBaseOrchestrator(NDBaseOrchestrator[ModelType]):
+class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     """
     # Summary
 
@@ -65,7 +62,7 @@ class EthernetBaseOrchestrator(NDBaseOrchestrator[ModelType]):
     - Via `_check_port_channel_restrictions` if a non-whitelisted field is modified on a port-channel member.
     - Via `create` if the create API request fails.
     - Via `update` if the update API request fails.
-    - Via `remove_pending` if the bulk remove API request fails.
+    - Via `remove_pending` if the bulk normalize API request fails.
     - Via `deploy_pending` if the bulk deploy API request fails.
     - Via `query_one` if the query API request fails.
     - Via `query_all` if the query API request fails.
@@ -82,12 +79,8 @@ class EthernetBaseOrchestrator(NDBaseOrchestrator[ModelType]):
     create_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPost
     delete_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesNormalize
 
-    deploy: bool = True
-
     PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[Set[str]] = {"description", "admin_state", "extra_config"}
 
-    _fabric_context: Optional[FabricContext] = None
-    _pending_deploys: list[tuple[str, str]] = []
     _pending_normalizes: list[tuple[str, str]] = []
 
     def _managed_policy_types(self) -> set[str]:
@@ -104,92 +97,6 @@ class EthernetBaseOrchestrator(NDBaseOrchestrator[ModelType]):
         - Always, if not overridden by a subclass.
         """
         raise NotImplementedError("Subclasses must implement _managed_policy_types()")
-
-    @property
-    def fabric_name(self) -> str:
-        """
-        # Summary
-
-        Return `fabric_name` from module params.
-
-        ## Raises
-
-        None
-        """
-        return self.sender.params.get("fabric_name")
-
-    @property
-    def fabric_context(self) -> FabricContext:
-        """
-        # Summary
-
-        Return a lazily-initialized `FabricContext` for this orchestrator's fabric.
-
-        ## Raises
-
-        None
-        """
-        if self._fabric_context is None:
-            self._fabric_context = FabricContext(sender=self.sender, fabric_name=self.fabric_name)
-        return self._fabric_context
-
-    def _resolve_switch_id(self, switch_ip: str) -> str:
-        """
-        # Summary
-
-        Resolve a `switch_ip` to its `switchId` via `FabricContext`.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If no switch matches the given IP in the fabric.
-        """
-        return self.fabric_context.get_switch_id(switch_ip)
-
-    def validate_prerequisites(self) -> None:
-        """
-        # Summary
-
-        Run pre-flight validation before any CRUD operations. Checks that the fabric exists and is modifiable.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If the fabric does not exist on the target ND node.
-        - If the fabric is in deployment-freeze mode.
-        """
-        self.fabric_context.validate_for_mutation()
-
-    def _configure_endpoint(self, api_endpoint, switch_sn: str):
-        """
-        # Summary
-
-        Set `fabric_name` and `switch_sn` on an endpoint instance before path generation.
-
-        ## Raises
-
-        None
-        """
-        api_endpoint.fabric_name = self.fabric_name
-        api_endpoint.switch_sn = switch_sn
-        return api_endpoint
-
-    def _queue_deploy(self, interface_name: str, switch_id: str) -> None:
-        """
-        # Summary
-
-        Queue an `(interface_name, switch_id)` pair for deferred deployment. Call `deploy_pending` after all mutations
-        are complete to deploy in bulk.
-
-        ## Raises
-
-        None
-        """
-        pair = (interface_name, switch_id)
-        if pair not in self._pending_deploys:
-            self._pending_deploys.append(pair)
 
     def _queue_normalize(self, interface_name: str, switch_id: str) -> None:
         """
@@ -246,47 +153,6 @@ class EthernetBaseOrchestrator(NDBaseOrchestrator[ModelType]):
                 f"The following fields cannot be modified on port-channel members: {sorted(non_whitelisted)}. "
                 f"Only these fields can be modified: {sorted(self.PORT_CHANNEL_MODIFIABLE_FIELDS)}."
             )
-
-    def deploy_pending(self) -> ResponseType | None:
-        """
-        # Summary
-
-        Deploy all queued interface configurations in a single API call via `interfaceActions/deploy`. Clears the pending
-        queue after deployment.
-
-        When `deploy` is `False`, returns `None` without making any API call.
-
-        ## Raises
-
-        ### RuntimeError
-
-        - If the deploy API request fails.
-        """
-        if not self.deploy or not self._pending_deploys:
-            return None
-        try:
-            result = self._deploy_interfaces()
-            self._pending_deploys = []
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Bulk deploy failed for interfaces {self._pending_deploys}: {e}") from e
-
-    def _deploy_interfaces(self) -> ResponseType:
-        """
-        # Summary
-
-        Deploy queued interfaces via `interfaceActions/deploy`. Sends the explicit list of `{interfaceName, switchId}` pairs.
-
-        ## Raises
-
-        ### Exception
-
-        - If the deploy API request fails (propagated to caller).
-        """
-        api_endpoint = EpManageInterfacesDeploy()
-        api_endpoint.fabric_name = self.fabric_name
-        payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in self._pending_deploys]}
-        return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
 
     def remove_pending(self) -> ResponseType | None:
         """
@@ -445,10 +311,10 @@ class EthernetBaseOrchestrator(NDBaseOrchestrator[ModelType]):
             results = []
             for switch_id, items in groups.items():
                 api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)
-                request_body = {"interfaces": [payload for _, payload in items]}
+                request_body = {"interfaces": [payload for interface_name, payload in items]}
                 result = self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=request_body)
                 results.append(result)
-                for interface_name, _ in items:
+                for interface_name, payload in items:
                     self._queue_deploy(interface_name, switch_id)
             return results
         except Exception as e:

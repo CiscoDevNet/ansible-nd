@@ -293,6 +293,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import EthernetAccessInterfaceOrchestrator
 
 
@@ -353,6 +354,11 @@ def main():
             module=module,
             model_orchestrator=EthernetAccessInterfaceOrchestrator,
         )
+        # Narrow type from NDBaseOrchestrator to NDBaseInterfaceOrchestrator so that
+        # interface-specific attributes (deploy, remove_pending, deploy_pending) are
+        # visible to Pylance and validated at runtime.
+        if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
+            raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
         nd_state_machine.model_orchestrator.deploy = module.params["deploy"]
 
         # Manage state
