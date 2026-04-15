@@ -126,12 +126,12 @@ class VxlanFabricGroupManagementModel(NDNestedModel):
     downstream_l2_vni_range: str = Field(
         alias="downstreamL2VniRange",
         description="Unique Range for L2VNI when downstream VNI is enabled (min: 1, max: 16777214)",
-        default="60000-69000",
+        default="",
     )
     downstream_l3_vni_range: str = Field(
         alias="downstreamL3VniRange",
         description="Unique Range for L3VNI when downstream VNI is enabled (min: 1, max: 16777214)",
-        default="80000-89000",
+        default="",
     )
 
     # Underlay
@@ -416,7 +416,7 @@ class FabricGroupVxlanModel(NDBaseModel):
     fabric_name: str = Field(alias="name", description="Fabric group name", min_length=1, max_length=64)
 
     # Core Management Configuration
-    management: Optional[VxlanFabricGroupManagementModel] = Field(description="VXLAN fabric group management configuration", default=None)
+    management: VxlanFabricGroupManagementModel = Field(description="VXLAN fabric group management configuration", default_factory=VxlanFabricGroupManagementModel)
 
     @field_validator("fabric_name")
     @classmethod
@@ -427,7 +427,7 @@ class FabricGroupVxlanModel(NDBaseModel):
 
     @model_validator(mode="after")
     def validate_fabric_group_consistency(self) -> "FabricGroupVxlanModel":
-        if self.management is not None and self.management.type != FabricGroupTypeEnum.VXLAN:
+        if self.management.type != FabricGroupTypeEnum.VXLAN:
             raise ValueError(f"Management type must be {FabricGroupTypeEnum.VXLAN}")
         return self
 

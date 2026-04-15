@@ -39,8 +39,9 @@ class ManageFabricGroupVxlanOrchestrator(NDBaseOrchestrator):
         """
         try:
             api_endpoint = self.query_all_endpoint()
+            api_endpoint.endpoint_params.category = "fabricGroup"
             result = self.sender.query_obj(api_endpoint.path)
             fabrics = result.get("fabrics", []) or []
-            return [f for f in fabrics if f.get("category") == "fabricGroup" and f.get("management", {}).get("type") == "vxlan"]
+            return [f for f in fabrics if f.get("management", {}).get("type") == "vxlan"]
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e

@@ -312,10 +312,10 @@ def test_manage_fabric_group_vxlan_endpoints_00170():
 
     ## Test
 
-    - query_all invokes sender.query_obj with /api/v1/manage/fabrics
+    - query_all invokes sender.query_obj with /api/v1/manage/fabrics?category=fabricGroup
     """
     mock_sender = MagicMock(spec=NDModule)
     mock_sender.query_obj.return_value = {"fabrics": []}
     orch = ManageFabricGroupVxlanOrchestrator(sender=mock_sender)
     orch.query_all()
-    mock_sender.query_obj.assert_called_once_with("/api/v1/manage/fabrics")
+    mock_sender.query_obj.assert_called_once_with("/api/v1/manage/fabrics?category=fabricGroup")
