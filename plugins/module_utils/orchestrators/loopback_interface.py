@@ -368,10 +368,10 @@ class LoopbackInterfaceOrchestrator(NDBaseOrchestrator[LoopbackInterfaceModel]):
             results = []
             for switch_id, items in groups.items():
                 api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)
-                request_body = {"interfaces": [payload for _, payload in items]}
+                request_body = {"interfaces": [payload for interface_name, payload in items]}
                 result = self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=request_body)
                 results.append(result)
-                for interface_name, _ in items:
+                for interface_name, payload in items:
                     self._queue_deploy(interface_name, switch_id)
             return results
         except Exception as e:
