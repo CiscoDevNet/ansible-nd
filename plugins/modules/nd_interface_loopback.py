@@ -274,7 +274,8 @@ def main():
         # Narrow type from NDBaseOrchestrator to NDBaseInterfaceOrchestrator so that
         # interface-specific attributes (deploy, remove_pending, deploy_pending) are
         # visible to Pylance and validated at runtime.
-        assert isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator)
+        if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
+            raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
         nd_state_machine.model_orchestrator.deploy = module.params["deploy"]
 
         # Manage state
