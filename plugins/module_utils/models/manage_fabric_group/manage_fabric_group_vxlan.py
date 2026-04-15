@@ -416,7 +416,9 @@ class FabricGroupVxlanModel(NDBaseModel):
     fabric_name: str = Field(alias="name", description="Fabric group name", min_length=1, max_length=64)
 
     # Core Management Configuration
-    management: VxlanFabricGroupManagementModel = Field(description="VXLAN fabric group management configuration", default_factory=VxlanFabricGroupManagementModel)
+    management: VxlanFabricGroupManagementModel = Field(
+        description="VXLAN fabric group management configuration", default_factory=VxlanFabricGroupManagementModel
+    )
 
     @field_validator("fabric_name")
     @classmethod
