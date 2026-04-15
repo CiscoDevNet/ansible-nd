@@ -31,7 +31,7 @@ options:
     elements: dict
     required: true
     suboptions:
-      name:
+      member_name:
         description:
         - The name of the member fabric to add or remove from the fabric group.
         type: str
@@ -60,8 +60,8 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_group_members:
     fabric_name: my-fabric-group
     config:
-      - name: member-fabric-1
-      - name: member-fabric-2
+      - member_name: member-fabric-1
+      - member_name: member-fabric-2
     state: merged
   register: result
 
@@ -69,7 +69,7 @@ EXAMPLES = r"""
   cisco.nd.nd_manage_fabric_group_members:
     fabric_name: my-fabric-group
     config:
-      - name: member-fabric-1
+      - member_name: member-fabric-1
     state: deleted
   register: result
 

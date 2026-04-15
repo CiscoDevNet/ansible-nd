@@ -26,9 +26,9 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_group }}"
     config:
-      - name: "{{ test_member_1 }}"
-      - name: "{{ test_member_2 }}"
-      - name: "{{ test_member_3 }}"
+      - member_name: "{{ test_member_1 }}"
+      - member_name: "{{ test_member_2 }}"
+      - member_name: "{{ test_member_3 }}"
     state: deleted
 
 #############################################################################
@@ -56,8 +56,8 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_group }}"
     config:
-      - name: "{{ test_member_1 }}"
-      - name: "{{ test_member_2 }}"
+      - member_name: "{{ test_member_1 }}"
+      - member_name: "{{ test_member_2 }}"
     state: merged
   check_mode: true
   register: cm_merged_add_members
@@ -88,7 +88,7 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_group }}"
     config:
-      - name: "{{ test_member_3 }}"
+      - member_name: "{{ test_member_3 }}"
     state: merged
   register: nm_merged_add_third_member
 
@@ -105,7 +105,7 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_group }}"
     config:
-      - name: "{{ test_member_3 }}"
+      - member_name: "{{ test_member_3 }}"
     state: deleted
   check_mode: true
   register: cm_deleted_remove_member
@@ -136,8 +136,8 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric_group }}"
     config:
-      - name: "{{ test_member_1 }}"
-      - name: "{{ test_member_2 }}"
+      - member_name: "{{ test_member_1 }}"
+      - member_name: "{{ test_member_2 }}"
     state: deleted
   register: nm_deleted_remove_remaining
 

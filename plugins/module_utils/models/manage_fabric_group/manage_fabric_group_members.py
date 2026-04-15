@@ -32,7 +32,7 @@ class FabricGroupMemberModel(NDBaseModel):
 
     # --- Identifier Configuration ---
 
-    identifiers: ClassVar[Optional[List[str]]] = ["name"]
+    identifiers: ClassVar[Optional[List[str]]] = ["member_name"]
     identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
 
     # --- Serialization Configuration ---
@@ -42,7 +42,7 @@ class FabricGroupMemberModel(NDBaseModel):
 
     # --- Fields ---
 
-    name: str = Field(alias="name")
+    member_name: str = Field(alias="name")
     fabric_type: Optional[str] = Field(default=None, alias="type")
 
     # --- Argument Spec ---
@@ -56,7 +56,7 @@ class FabricGroupMemberModel(NDBaseModel):
                 elements="dict",
                 required=True,
                 options=dict(
-                    name=dict(type="str", required=True),
+                    member_name=dict(type="str", required=True),
                 ),
             ),
             state=dict(

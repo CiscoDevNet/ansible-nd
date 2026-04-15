@@ -44,10 +44,10 @@ class ManageFabricGroupMembersOrchestrator(NDBaseOrchestrator[FabricGroupMemberM
         try:
             api_endpoint = self.create_bulk_endpoint()
             api_endpoint.fabric_name = self._get_fabric_group_name()
-            payload = {"members": [{"name": instance.name} for instance in model_instances]}
+            payload = {"members": [{"name": instance.member_name} for instance in model_instances]}
             return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
         except Exception as e:
-            names = [instance.name for instance in model_instances]
+            names = [instance.member_name for instance in model_instances]
             raise Exception(f"Add members failed for {names}: {e}") from e
 
     def delete_bulk(self, model_instances: List[FabricGroupMemberModel], **kwargs) -> ResponseType:
@@ -60,10 +60,10 @@ class ManageFabricGroupMembersOrchestrator(NDBaseOrchestrator[FabricGroupMemberM
         try:
             api_endpoint = self.delete_bulk_endpoint()
             api_endpoint.fabric_name = self._get_fabric_group_name()
-            payload = {"members": [{"name": instance.name} for instance in model_instances]}
+            payload = {"members": [{"name": instance.member_name} for instance in model_instances]}
             return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
         except Exception as e:
-            names = [instance.name for instance in model_instances]
+            names = [instance.member_name for instance in model_instances]
             raise Exception(f"Remove members failed for {names}: {e}") from e
 
     def query_one(self, model_instance: FabricGroupMemberModel, **kwargs) -> ResponseType:
@@ -73,11 +73,11 @@ class ManageFabricGroupMembersOrchestrator(NDBaseOrchestrator[FabricGroupMemberM
         try:
             all_members = self.query_all()
             for member in all_members:
-                if member.get("name") == model_instance.name:
+                if member.get("name") == model_instance.member_name:
                     return member
             return None
         except Exception as e:
-            raise Exception(f"Query member failed for {model_instance.name}: {e}") from e
+            raise Exception(f"Query member failed for {model_instance.member_name}: {e}") from e
 
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
         """
