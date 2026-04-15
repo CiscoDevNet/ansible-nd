@@ -83,8 +83,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     delete_endpoint: Type[NDEndpointBaseModel] = NDEndpointBaseModel  # unused; delete() uses bulk remove
     query_one_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesGet
     query_all_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesListGet
-    create_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPost
-    delete_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesRemove
+    create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageInterfacesPost
+    delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageInterfacesRemove
 
     def create(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
@@ -177,7 +177,8 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
 
             results = []
             for switch_id, items in groups.items():
-                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)
+                # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
+                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
                 request_body = {"interfaces": [payload for interface_name, payload in items]}
                 result = self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=request_body)
                 results.append(result)
