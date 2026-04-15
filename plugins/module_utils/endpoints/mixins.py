@@ -90,6 +90,12 @@ class PolicyIdMixin(BaseModel):
     policy_id: str | None = Field(default=None, min_length=1, description="Policy ID (e.g., POLICY-12345)")
 
 
+class PolicyGroupIdMixin(BaseModel):
+    """Mixin for endpoints that require policy_group_id parameter."""
+
+    policy_group_id: Optional[str] = Field(default=None, min_length=1, description="Policy Group ID (e.g., POLICY-GROUP-143310)")
+
+
 class SwitchSerialNumberMixin(BaseModel):
     """Mixin for endpoints that require switch_sn parameter."""
 
