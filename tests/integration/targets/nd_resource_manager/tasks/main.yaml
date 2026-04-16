@@ -1,0 +1,4 @@
+---
+- name: Include tasks
+  ansible.builtin.include_tasks: rm_tasks.yaml
+  tags: ['nd']
