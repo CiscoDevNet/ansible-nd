@@ -407,7 +407,7 @@ class ResourceManagerConfigModel(NDBaseModel):
             state=dict(
                 type="str",
                 default="merged",
-                choices=["merged", "overridden", "deleted", "gathered"],
+                choices=["merged", "deleted", "gathered"],
             ),
             config=dict(type="list", elements="dict"),
         )
