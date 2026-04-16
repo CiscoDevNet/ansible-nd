@@ -295,6 +295,13 @@ def main():
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
 
+    except Exception as e:
+        output = nd_state_machine.output.format() if nd_state_machine else {}
+        error_msg = f"Module failed: {str(e)}"
+        if module.params.get("output_level") == "debug":
+            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
+        module.fail_json(msg=error_msg, **output)
+
 
 if __name__ == "__main__":
     main()
