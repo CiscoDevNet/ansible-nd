@@ -167,12 +167,18 @@ def build_inventory() -> dict:
     topo = TestbedTopology()
 
     return {
-        "_meta": {"hostvars": {}},
+        "_meta": {
+            "hostvars": {
+                "nd": {
+                    "ansible_host": conn.host,
+                },
+            },
+        },
         "all": {
             "children": ["nd"],
         },
         "nd": {
-            "hosts": [conn.host],
+            "hosts": ["nd"],
             "vars": {
                 "ansible_connection": "ansible.netcommon.httpapi",
                 "ansible_network_os": "cisco.nd.nd",
