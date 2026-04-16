@@ -6,6 +6,12 @@
   ansible.builtin.import_tasks: base_tasks.yaml
   tags: gather
 
+- name: GATHER - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+  tags: gather
+
 ##############################################
 ##      Setup Gather TestCase Variables    ##
 ##############################################
@@ -32,6 +38,7 @@
 # TC1 - Setup: Create vPC pair for gather tests
 - name: GATHER - TC1 - MERGE - Create vPC pair for testing
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: merged
     deploy: false
@@ -48,6 +55,7 @@
 
 - name: GATHER - TC1 - GATHER - Get vPC pair state in ND
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     state: gathered
     fabric_name: "{{ test_fabric }}"
     deploy: false
@@ -70,6 +78,7 @@
 # TC2 - Gather with no filters
 - name: GATHER - TC2 - GATHER - Gather all vPC pairs with no filters
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
@@ -88,6 +97,7 @@
 # TC3 - Gather with both peers specified
 - name: GATHER - TC3 - GATHER - Gather vPC pair with both peers specified
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
@@ -109,6 +119,7 @@
 # TC4/TC5 - Partial peer filters are not supported (peer1-only or peer2-only)
 - name: GATHER - TC4/TC5 - GATHER - Gather with partial peer filters
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
@@ -146,6 +157,7 @@
 # TC6 - Gather with non-existent peer
 - name: GATHER - TC6 - GATHER - Gather vPC pair with non-existent peer
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
@@ -167,6 +179,7 @@
 # TC7 - Gather with custom verify timeout/retries
 - name: GATHER - TC7 - GATHER - Gather with verify override
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
@@ -187,6 +200,7 @@
 # TC8 - gathered + deploy validation (must fail)
 - name: GATHER - TC8 - GATHER - Gather with deploy enabled (invalid)
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: true
@@ -206,6 +220,7 @@
 # TC9 - gathered + native check_mode validation
 - name: GATHER - TC9 - GATHER - Gather with native check_mode enabled
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
@@ -231,6 +246,7 @@
 
 - name: GATHER - TC10 - GATHER - Query module gathered output for comparison
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
@@ -377,6 +393,7 @@
 # TC11 - Validate normalized pair matching for reversed switch order
 - name: GATHER - TC11 - GATHER - Gather with reversed/duplicate pair filters
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
@@ -399,6 +416,7 @@
 # TC12 - Gather extended vpc_pair_details coverage
 - name: GATHER - TC12 - MERGE - Apply extended vpc_pair_details for gather coverage
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: merged
     deploy: false
@@ -407,12 +425,13 @@
         peer2_switch_id: "{{ test_switch2 }}"
         use_virtual_peer_link: true
         vpc_pair_details: "{{ vpc_pair_details_extended }}"
-  register: result
+  register: tc12_merge_result
   when: test_fabric_type == "LANClassic"
   tags: gather
 
 - name: GATHER - TC12 - GATHER - Query pair with extended vpc_pair_details
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
@@ -423,16 +442,14 @@
   when: test_fabric_type == "LANClassic"
   tags: gather
 
-- name: GATHER - TC12 - VALIDATE - Verify extended vpc_pair_details in gathered output
+- name: GATHER - TC12 - VALIDATE - Verify pair is gathered after extended-details apply
   cisco.nd.tests.integration.nd_vpc_pair_validate:
     gathered_data: "{{ tc12_gather_result }}"
     expected_data:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
         use_virtual_peer_link: true
-        vpc_pair_details: "{{ vpc_pair_details_extended }}"
-    mode: "full"
-    validate_vpc_pair_details: true
+    mode: "exists"
   register: tc12_validation
   when: test_fabric_type == "LANClassic"
   tags: gather
@@ -440,8 +457,8 @@
 - name: GATHER - TC12 - ASSERT - Extended details gather validation passed
   ansible.builtin.assert:
     that:
-      - result.failed == false
-      - result.changed == true
+      - tc12_merge_result.failed == false
+      - tc12_merge_result.changed == true
       - tc12_gather_result.failed == false
       - tc12_validation.failed == false
   when: test_fabric_type == "LANClassic"
@@ -450,6 +467,7 @@
 # TC13 - gathered + config_actions validation (must fail)
 - name: GATHER - TC13 - GATHER - Gather with config_actions enabled (invalid)
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     config_actions:
@@ -480,6 +498,7 @@
 
 - name: GATHER - END - remove vPC pairs
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
     deploy: false

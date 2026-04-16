@@ -460,9 +460,20 @@ def main() -> None:
     try:
         module_config = VpcPairPlaybookConfigModel.model_validate(module.params, by_alias=True, by_name=True)
     except ValidationError as e:
+        # e.errors() may contain raw Exception objects inside ctx (for example
+        # ValueError), which are not safely serializable by module.fail_json.
+        validation_errors = []
+        detail_msg = str(e)
+        try:
+            validation_errors = json.loads(e.json())
+            if validation_errors and isinstance(validation_errors[0], dict):
+                detail_msg = validation_errors[0].get("msg", detail_msg)
+        except Exception:
+            validation_errors = [{"msg": str(e)}]
+
         module.fail_json(
-            msg="Invalid nd_manage_vpc_pair playbook configuration",
-            validation_errors=e.errors(),
+            msg="Invalid nd_manage_vpc_pair playbook configuration: {0}".format(detail_msg),
+            validation_errors=validation_errors,
         )
 
     # State-specific parameter validations

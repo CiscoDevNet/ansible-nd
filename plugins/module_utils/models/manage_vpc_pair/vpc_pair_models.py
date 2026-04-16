@@ -147,6 +147,14 @@ class VpcPairDetailsDefault(NDNestedModel):
     OpenAPI: vpcPairDetailsDefault
     """
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_empty_strings(cls, data: Any) -> Any:
+        """Convert empty strings to None so exclude_none=True drops them."""
+        if isinstance(data, dict):
+            return {k: (None if v == "" else v) for k, v in data.items()}
+        return data
+
     type: Literal["default"] = Field(default="default", alias="type", description="Template type")
     domain_id: Optional[FlexibleInt] = Field(default=None, alias="domainId", description="VPC domain ID")
     switch_keep_alive_local_ip: Optional[str] = Field(default=None, alias="switchKeepAliveLocalIp", description="Peer-1 keep-alive IP")

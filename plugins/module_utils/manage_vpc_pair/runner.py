@@ -60,11 +60,11 @@ def run_vpc_module(nrm: Any) -> Dict[str, Any]:
         }
         return nrm.result
 
-    if state in ("deleted", "overridden") and not config:
+    if state == "deleted" and not config:
         module = nrm.module
         module.fail_json(
-            msg="Config parameter is required for state '%s'. "
-            "Specify the vPC pair(s) to %s using the config parameter." % (state, "delete" if state == "deleted" else "override"),
+            msg="Config parameter is required for state 'deleted'. "
+            "Specify the vPC pair(s) to delete using the config parameter.",
         )
 
     nrm.manage_state(state=state, new_configs=config)

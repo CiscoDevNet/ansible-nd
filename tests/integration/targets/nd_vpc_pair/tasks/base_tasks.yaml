@@ -11,6 +11,11 @@
       - "+    nd_vpc_pair Integration Test Base Setup                   +"
       - "----------------------------------------------------------------"
 
+- name: BASE - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
 # --------------------------------
 # Create Dictionary of Test Data
 # --------------------------------
@@ -58,6 +63,15 @@
       switch_po_config: "mtu 9216\nno shutdown"
       peer_switch_po_config: "mtu 9216\nno shutdown"
       fabric_name: "{{ fabric_name }}"
+    # Full details payload is useful for schema/payload coverage, but some
+    # controllers can take too long applying all knobs in one shot during
+    # delete-flow setup. Keep a lean details set for stable delete-path tests.
+    vpc_pair_details_delete_safe:
+      type: default
+      domain_id: 110
+      switch_keep_alive_local_ip: "192.0.2.11"
+      peer_switch_keep_alive_local_ip: "192.0.2.12"
+      keep_alive_vrf: management
   delegate_to: localhost
 
 # ------------------------------------------
@@ -65,6 +79,7 @@
 # ------------------------------------------
 - name: BASE - Verify fabric is reachable via vPC gather API
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
     deploy: false
@@ -79,11 +94,43 @@
       - fabric_query.failed == false
     fail_msg: "Fabric '{{ test_fabric }}' not found or vPC API unreachable."
 
+- name: BASE - Reset HTTPAPI socket before peering probe
+  ansible.builtin.meta: reset_connection
+
+- name: BASE - Probe vPC fabric peering support for this fabric/switch
+  cisco.nd.nd_rest:
+    method: GET
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairSupport?componentType=checkFabricPeeringSupport"
+  register: fabric_peering_support
+  failed_when: false
+  ignore_errors: true
+
+- name: BASE - Set support flag for use_virtual_peer_link mutation tests
+  ansible.builtin.set_fact:
+    supports_vpc_fabric_peering: >-
+      {{
+        (
+          fabric_peering_support.current.isVpcFabricPeeringSupported
+          | default(true)
+        ) | bool
+      }}
+
+- name: BASE - Warn when fabric peering toggle is unsupported
+  ansible.builtin.debug:
+    msg: >-
+      Skipping use_virtual_peer_link mutation checks because fabric peering
+      support is false for switch {{ test_switch1 }} in fabric {{ test_fabric }}.
+  when: not supports_vpc_fabric_peering | bool
+
 # ------------------------------------------
 # Clean up existing vPC pairs
 # ------------------------------------------
+- name: BASE - Reset HTTPAPI socket before cleanup
+  ansible.builtin.meta: reset_connection
+
 - name: BASE - Clean up existing vPC pairs
   cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
     deploy: false
