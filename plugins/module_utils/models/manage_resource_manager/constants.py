@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
+# Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -10,9 +10,7 @@ Shared constants and Ansible/DCNM-style enums for Resource Management models.
 Imported by all nd_manage_resource_manager_updated_models_*.py files.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 from enum import Enum
 from typing import Dict, List
