@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Allen Robel (@arobel) <arobel@cisco.com>
+# Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -12,9 +12,7 @@ Standalone model (no composite model fields). Contains only List[int].
 Endpoint: POST /fabrics/{fabricName}/resources/actions/remove
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 from typing import Any, ClassVar, Dict, List
 

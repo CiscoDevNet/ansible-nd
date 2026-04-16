@@ -10,15 +10,7 @@ This module contains endpoint definitions for switch query operations
 in the ND Manage API.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
-
-import logging
-
-log = logging.getLogger(__name__)
+from __future__ import annotations
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
@@ -83,19 +75,10 @@ class EpManageFabricSwitchesGet(BaseModel):
 
         - Complete endpoint path string including max query parameter
         """
-        log.debug(
-            "Building path for EpManageFabricSwitchesGet: fabric_name=%s, max=%s",
-            self.fabric_name,
-            self.max,
-        )
         base_path = BasePath.path("fabrics", self.fabric_name, "switches")
         return f"{base_path}?max={self.max}"
 
     @property
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
-        log.debug(
-            "Returning HTTP verb for EpManageFabricSwitchesGet: verb=%s",
-            HttpVerbEnum.GET,
-        )
         return HttpVerbEnum.GET

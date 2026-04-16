@@ -1,14 +1,10 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Cisco and/or its affiliates.
+# Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
-__copyright__ = "Copyright (c) 2026 Cisco and/or its affiliates."
-__author__ = "Jeet Ram (@jeeram) <jeeram@cisco.com>"
+from __future__ import annotations
 
 DOCUMENTATION = """
 ---
@@ -324,7 +320,7 @@ gathered:
 import logging
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
+from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule,
     nd_argument_spec,
@@ -354,14 +350,14 @@ def main():
         ],
     )
 
-    # Initialize logging — always get a logger; configure file output if config is available
-    try:
-        log_config = Log()
-        log_config.config = "/Users/jeeram/ansible/collections/ansible_collections/cisco/nd/plugins/module_utils/logging_config.json"
-        log_config.commit()
-        log = logging.getLogger("nd.nd_manage_resource_manager")
-    except (ValueError, Exception) as log_init_exc:
-        pass  # logging will fall back to root logger; detailed reason captured below
+    # Initialize logging — setup_logging() configures the "nd" logger hierarchy via dictConfig.
+    # The config parameter overrides ND_LOGGING_CONFIG env var (useful for local development).
+    # logging.getLogger() returns the actual logging.Logger used for .debug()/.info()/.error().
+    setup_logging(
+        module,
+        develop=True,
+    )
+    log = logging.getLogger("nd.nd_manage_resource_manager")
 
     log.debug(
         "main: logging initialised (logger='%s', effective_level=%s)",
@@ -399,7 +395,7 @@ def main():
 
         # Create NDResourceManagerModule — switch IP→ID resolution and config translation
         # happen automatically inside __init__ via _get_all_switches / _resolve_switch_ids_in_config
-        rm_module = NDResourceManagerModule(nd=nd, results=results, logger=log)
+        rm_module = NDResourceManagerModule(nd=nd, results=results, log=log)
 
         log.debug(
             "main: NDResourceManagerModule created — fabric='%s', state='%s', config_count=%s",

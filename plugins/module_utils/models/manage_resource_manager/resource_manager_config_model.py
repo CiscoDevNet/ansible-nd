@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Cisco Systems
+# Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """
@@ -22,9 +22,7 @@ State-aware validation is supported when model_validate() is called with
 context={"state": "merged|deleted|query|gathered"}.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import re
 from ipaddress import ip_address, ip_network
