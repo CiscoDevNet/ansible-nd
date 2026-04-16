@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
     EpManageInterfacesRemove,
@@ -53,8 +54,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
     deploy: bool = True
 
     _fabric_context: Optional[FabricContext] = None
-    _pending_deploys: list[tuple[str, str]] = []
-    _pending_removes: list[tuple[str, str]] = []
+    _pending_deploys: list[tuple[str, str]] = Field(default_factory=list)
+    _pending_removes: list[tuple[str, str]] = Field(default_factory=list)
 
     @property
     def fabric_name(self) -> str:
