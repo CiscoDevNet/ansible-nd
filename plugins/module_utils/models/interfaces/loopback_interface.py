@@ -12,7 +12,8 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
 ## Model Hierarchy
 
 - `LoopbackInterfaceModel` (top-level, `NDBaseModel`)
-    - `interface_name` (identifier)
+    - `switch_ip` (composite identifier)
+    - `interface_name` (composite identifier)
     - `interface_type` (default: "loopback")
     - `config_data` -> `LoopbackConfigDataModel`
         - `mode` (default: "managed")
@@ -200,7 +201,7 @@ class LoopbackInterfaceModel(NDBaseModel):
 
     Loopback interface configuration for Nexus Dashboard.
 
-    Uses a single identifier (`interface_name`). The nested model structure mirrors the ND Manage Interfaces API
+    Uses a composite identifier (`switch_ip`, `interface_name`). The nested model structure mirrors the ND Manage Interfaces API
     payload, so `to_payload()` and `from_response()` work via standard Pydantic serialization.
 
     ## Raises
