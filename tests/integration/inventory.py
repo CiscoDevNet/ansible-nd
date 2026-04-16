@@ -65,7 +65,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import environ
 from pathlib import Path
 
@@ -99,12 +99,27 @@ class NdConnection:
     None
     """
 
-    host: str = _required("ND_IP4", "ND controller management IP")
-    username: str = _required("ND_USERNAME", "ND login username")
-    password: str = _required("ND_PASSWORD", "ND login password")
-    domain: str = _required("ND_DOMAIN", "ND login domain e.g. 'local', 'radius'")
+    host: str = field(default="", init=False)
+    username: str = field(default="", init=False)
+    password: str = field(default="", init=False)
+    domain: str = field(default="", init=False)
     use_ssl: bool = True
     validate_certs: bool = False
+
+    def __post_init__(self) -> None:
+        """
+        # Summary
+
+        Resolve required environment variables at instance creation time, not at class definition time.
+
+        ## Raises
+
+        None
+        """
+        self.host = _required("ND_IP4", "ND controller management IP")
+        self.username = _required("ND_USERNAME", "ND login username")
+        self.password = _required("ND_PASSWORD", "ND login password")
+        self.domain = _required("ND_DOMAIN", "ND login domain e.g. 'local', 'radius'")
 
 
 @dataclass
@@ -121,8 +136,21 @@ class TestbedTopology:
     None
     """
 
-    fabric_name: str = environ.get("ND_FABRIC_NAME", "test_fabric")
-    switch_ip: str = environ.get("ND_SWITCH_IP", "192.168.1.1")
+    fabric_name: str = field(default="", init=False)
+    switch_ip: str = field(default="", init=False)
+
+    def __post_init__(self) -> None:
+        """
+        # Summary
+
+        Resolve optional environment variables at instance creation time, not at class definition time.
+
+        ## Raises
+
+        None
+        """
+        self.fabric_name = environ.get("ND_FABRIC_NAME", "test_fabric")
+        self.switch_ip = environ.get("ND_SWITCH_IP", "192.168.1.1")
 
 
 def build_inventory() -> dict:
