@@ -354,6 +354,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_l
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 
 # Service layer imports
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.resources import (
@@ -452,7 +453,8 @@ def main() -> None:
     Raises:
         VpcPairResourceError: Converted to module.fail_json with structured details
     """
-    argument_spec = VpcPairPlaybookConfigModel.get_argument_spec()
+    argument_spec = nd_argument_spec()
+    argument_spec.update(VpcPairPlaybookConfigModel.get_argument_spec())
 
     module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
     setup_logging(module)

@@ -6,17 +6,17 @@
 
 from typing import Any, Dict
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
     _raise_vpc_error,
     get_config_actions,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.runtime_endpoints import (
-    VpcPairEndpoints,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule as NDModuleV2,
     NDModuleError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.utils import (
+    FabricUtils,
+    register_action_api_call,
 )
 
 try:
@@ -149,9 +149,11 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: Dict[str, Any]) -> Dic
         not_in_sync_pairs = nrm.module.params.get("_not_in_sync_pairs", [])
         planned_actions = []
         if save_enabled:
-            planned_actions.append(f"POST {VpcPairEndpoints.fabric_config_save(fabric_name)} payload={action_payload}")
+            save_path = FabricUtils.build_config_save_path(fabric_name)
+            planned_actions.append(f"POST {save_path} payload={action_payload}")
         if deploy_enabled:
-            planned_actions.append(f"POST {VpcPairEndpoints.fabric_config_deploy(fabric_name, force_show_run=True)} payload={action_payload}")
+            deploy_path = FabricUtils.build_config_deploy_path(fabric_name, force_show_run=True)
+            planned_actions.append(f"POST {deploy_path} payload={action_payload}")
         if save_enabled and deploy_enabled:
             preview_msg = "CHECK MODE: Would save and deploy fabric configuration"
         elif save_enabled:
@@ -180,24 +182,24 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: Dict[str, Any]) -> Dic
 
     # Initialize RestSend via NDModuleV2
     nd_v2 = NDModuleV2(nrm.module)
+    fabric_utils = FabricUtils(nd_v2, fabric_name)
     results = Results()
 
     # Step 1: Save config
     if save_enabled:
-        save_path = VpcPairEndpoints.fabric_config_save(fabric_name)
+        save_path = fabric_utils.config_save_path
 
         try:
-            nd_v2.request(save_path, HttpVerbEnum.POST, action_payload)
-
-            results.response_current = {
-                "RETURN_CODE": nd_v2.status,
-                "METHOD": "POST",
-                "REQUEST_PATH": save_path,
-                "MESSAGE": "Config saved successfully",
-                "DATA": action_payload,
-            }
-            results.result_current = {"success": True, "changed": True}
-            results.register_api_call()
+            response = fabric_utils.save_config(action_payload)
+            register_action_api_call(
+                results=results,
+                request_path=save_path,
+                payload=action_payload,
+                return_code=response.get("status"),
+                message="Config saved successfully",
+                success=True,
+                changed=True,
+            )
 
         except NDModuleError as error:
             is_non_fatal = _is_non_fatal_config_save_error(error)
@@ -205,27 +207,27 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: Dict[str, Any]) -> Dic
             if can_continue:
                 # Known platform limitation warning; continue to deploy step.
                 nrm.module.warn(f"Config save failed: {error.msg}")
-                results.response_current = {
-                    "RETURN_CODE": error.status if error.status else -1,
-                    "MESSAGE": error.msg,
-                    "REQUEST_PATH": save_path,
-                    "METHOD": "POST",
-                    "DATA": action_payload,
-                }
-                results.result_current = {"success": True, "changed": False}
-                results.register_api_call()
+                register_action_api_call(
+                    results=results,
+                    request_path=save_path,
+                    payload=action_payload,
+                    return_code=error.status,
+                    message=error.msg,
+                    success=True,
+                    changed=False,
+                )
             else:
                 # Unknown config-save failures are fatal. Non-fatal signatures are
                 # only tolerated when deploy is also requested.
-                results.response_current = {
-                    "RETURN_CODE": error.status if error.status else -1,
-                    "MESSAGE": error.msg,
-                    "REQUEST_PATH": save_path,
-                    "METHOD": "POST",
-                    "DATA": action_payload,
-                }
-                results.result_current = {"success": False, "changed": False}
-                results.register_api_call()
+                register_action_api_call(
+                    results=results,
+                    request_path=save_path,
+                    payload=action_payload,
+                    return_code=error.status,
+                    message=error.msg,
+                    success=False,
+                    changed=False,
+                )
                 results.build_final_result()
                 final_result = dict(results.final_result)
                 final_msg = final_result.pop("msg", f"Config save failed: {error.msg}")
@@ -233,31 +235,30 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: Dict[str, Any]) -> Dic
 
     # Step 2: Deploy
     if deploy_enabled:
-        deploy_path = VpcPairEndpoints.fabric_config_deploy(fabric_name, force_show_run=True)
+        deploy_path = fabric_utils.config_deploy_path(force_show_run=True)
 
         try:
-            nd_v2.request(deploy_path, HttpVerbEnum.POST, action_payload)
-
-            results.response_current = {
-                "RETURN_CODE": nd_v2.status,
-                "METHOD": "POST",
-                "REQUEST_PATH": deploy_path,
-                "MESSAGE": "Deployment successful",
-                "DATA": action_payload,
-            }
-            results.result_current = {"success": True, "changed": True}
-            results.register_api_call()
+            response = fabric_utils.deploy_config(action_payload, force_show_run=True)
+            register_action_api_call(
+                results=results,
+                request_path=deploy_path,
+                payload=action_payload,
+                return_code=response.get("status"),
+                message="Deployment successful",
+                success=True,
+                changed=True,
+            )
 
         except NDModuleError as error:
-            results.response_current = {
-                "RETURN_CODE": error.status if error.status else -1,
-                "MESSAGE": error.msg,
-                "REQUEST_PATH": deploy_path,
-                "METHOD": "POST",
-                "DATA": action_payload,
-            }
-            results.result_current = {"success": False, "changed": False}
-            results.register_api_call()
+            register_action_api_call(
+                results=results,
+                request_path=deploy_path,
+                payload=action_payload,
+                return_code=error.status,
+                message=error.msg,
+                success=False,
+                changed=False,
+            )
 
             # Build final result and fail
             results.build_final_result()
