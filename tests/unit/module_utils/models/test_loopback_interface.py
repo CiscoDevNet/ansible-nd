@@ -362,7 +362,7 @@ def test_loopback_interface_00052():
     ## Test
 
     - policy_type is None
-    - Serialization in both modes returns None (excluded by exclude_none)
+    - Serialization in both modes returns None
 
     ## Classes and Methods
 
