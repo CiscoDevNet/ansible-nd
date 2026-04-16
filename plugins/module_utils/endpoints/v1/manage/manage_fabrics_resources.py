@@ -10,16 +10,9 @@ This module contains endpoint definitions for resource management operations
 in the ND Manage API.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
-
-import logging
 from typing import Optional
-
-log = logging.getLogger(__name__)
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
@@ -148,12 +141,7 @@ class EpManageFabricResourcesGet(BaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        log.debug(
-            "Building path for EpManageFabricResourcesGet: fabric_name=%s, switch_id=%s, pool_name=%s",
-            self.fabric_name,
-            self.endpoint_params.switch_id,
-            self.endpoint_params.pool_name,
-        )
+
         base_path = BasePath.path("fabrics", self.fabric_name, "resources")
 
         # Build composite query string
@@ -169,10 +157,6 @@ class EpManageFabricResourcesGet(BaseModel):
     @property
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
-        log.debug(
-            "Returning HTTP verb for EpManageFabricResourcesGet: verb=%s",
-            HttpVerbEnum.GET,
-        )
         return HttpVerbEnum.GET
 
 
@@ -237,11 +221,6 @@ class EpManageFabricResourcesPost(BaseModel):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        log.debug(
-            "Building path for EpManageFabricResourcesPost: fabric_name=%s, tenant_name=%s",
-            self.fabric_name,
-            self.endpoint_params.tenant_name,
-        )
         base_path = BasePath.path("fabrics", self.fabric_name, "resources")
         query_string = self.endpoint_params.to_query_string()
         if query_string:
@@ -251,10 +230,6 @@ class EpManageFabricResourcesPost(BaseModel):
     @property
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
-        log.debug(
-            "Returning HTTP verb for EpManageFabricResourcesPost: verb=%s",
-            HttpVerbEnum.POST,
-        )
         return HttpVerbEnum.POST
 
 
@@ -309,17 +284,9 @@ class EpManageFabricResourcesActionsRemovePost(BaseModel):
 
         - Complete endpoint path string
         """
-        log.debug(
-            "Building path for EpManageFabricResourcesActionsRemovePost: fabric_name=%s",
-            self.fabric_name,
-        )
         return BasePath.path("fabrics", self.fabric_name, "resources", "actions", "remove")
 
     @property
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
-        log.debug(
-            "Returning HTTP verb for EpManageFabricResourcesActionsRemovePost: verb=%s",
-            HttpVerbEnum.POST,
-        )
         return HttpVerbEnum.POST

@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Cisco and/or its affiliates.
+# Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import copy
 import ipaddress
@@ -65,7 +63,7 @@ class ResourceManagerDiffEngine:
     """Provide stateless validation and diff computation helpers."""
 
     @staticmethod
-    def _normalize_pool_name(pool_name: Optional[str], log: logging.Logger) -> Optional[str]:
+    def _normalize_pool_name(pool_name: str, log: logging.Logger) -> Optional[str]:
         """Normalize pool_name to canonical constant form based on ``POOL_SCOPE_MAP`` keys.
 
         Converts API-style names like ``loopbackId`` to playbook constant names like
@@ -112,22 +110,26 @@ class ResourceManagerDiffEngine:
                 token,
                 raw,
             )
+        log.debug("Returning normalized pool_name='%s' from raw='%s' ", result, raw)
         return result
 
     @staticmethod
-    def _normalize_entity_key(entity_name: str) -> str:
+    def _normalize_entity_key(entity_name: str, log: logging.Logger) -> str:
         """Normalize entity_name for order-insensitive comparison.
 
         Args:
             entity_name: Raw entity name string.
+            log: Logger instance.
 
         Returns:
             Tilde-separated string with parts sorted alphabetically.
         """
-        return "~".join(sorted(entity_name.split("~")))
+        normalis_entity_name = "~".join(sorted(entity_name.split("~")))
+        log.debug("Returning normalized entity_name='%s' from raw='%s'", normalis_entity_name, entity_name)
+        return normalis_entity_name
 
     @staticmethod
-    def _extract_scope_switch_key_val(scope_details, switch_key, src_switch_key) -> Optional[str]:
+    def _extract_scope_switch_key_val(scope_details, switch_key, src_switch_key, log: logging.Logger) -> Optional[str]:
         """Extract a switch identifier from a scope_details model using the correct attribute name.
 
         Selects between ``switch_key`` (for single-switch scopes: device, device_interface)
@@ -141,51 +143,70 @@ class ResourceManagerDiffEngine:
                 (e.g. ``'switch_id'`` or ``'switch_ip'``).
             src_switch_key: Attribute name to read for dual-switch scopes
                 (e.g. ``'src_switch_id'`` or ``'src_switch_ip'``).
+            log: Logger instance.
 
         Returns:
             The switch identifier string, or None if the scope is fabric-level
             or ``scope_details`` is None.
         """
         if scope_details is None:
+            log.debug("_extract_scope_switch_key_val: scope_details is None, returning None")
             return None
         if isinstance(scope_details, FabricScope):
+            log.debug("_extract_scope_switch_key_val: FabricScope has no switch identity, returning None")
             return None
         if isinstance(scope_details, (DeviceScope, DeviceInterfaceScope)):
-            return getattr(scope_details, switch_key, None)
+            value = getattr(scope_details, switch_key, None)
+            log.debug("_extract_scope_switch_key_val: %s scope, %s='%s'", type(scope_details).__name__, switch_key, value)
+            return value
         if isinstance(scope_details, (DevicePairScope, LinkScope)):
-            return getattr(scope_details, src_switch_key, None)
+            value = getattr(scope_details, src_switch_key, None)
+            log.debug("_extract_scope_switch_key_val: %s scope, %s='%s'", type(scope_details).__name__, src_switch_key, value)
+            return value
         # Fallback: try common attribute names
-        return getattr(scope_details, switch_key, None) or getattr(scope_details, src_switch_key, None)
+        value = getattr(scope_details, switch_key, None) or getattr(scope_details, src_switch_key, None)
+        log.debug("_extract_scope_switch_key_val: unknown scope type %s, fallback value='%s'", type(scope_details).__name__, value)
+        return value
 
     @staticmethod
-    def _extract_scope_type(scope_details) -> Optional[str]:
+    def _extract_scope_type(scope_details, log: logging.Logger) -> Optional[str]:
         """Extract and map the playbook-style scope_type from a scope_details model.
 
         Args:
             scope_details: A scope model instance.
+            log: Logger instance.
 
         Returns:
             Playbook-style scope_type string (e.g. 'device_interface'), or None.
         """
         if scope_details is None:
+            log.debug("_extract_scope_type: scope_details is None, returning None")
             return None
         raw = getattr(scope_details, "scope_type", None)
-        return API_SCOPE_TYPE_TO_PLAYBOOK.get(raw, raw) if raw else None
+        if not raw:
+            log.debug("_extract_scope_type: no scope_type attribute on %s, returning None", type(scope_details).__name__)
+            return None
+        mapped = API_SCOPE_TYPE_TO_PLAYBOOK.get(raw, raw)
+        log.debug("_extract_scope_type: raw='%s' mapped to '%s'", raw, mapped)
+        return mapped
 
     @staticmethod
-    def _compare_resource_values(have: Optional[str], want: Optional[str]) -> bool:
+    def _compare_resource_values(have: str, want: str, log: logging.Logger) -> bool:
         """Compare resource values with IPv4/IPv6 network awareness.
 
         Args:
             have: Existing resource value from the API.
             want: Proposed resource value from the playbook.
+            log: Logger instance
 
         Returns:
             True if the values are functionally equivalent, False otherwise.
         """
         if have is None and want is None:
+            log.debug("_compare_resource_values: both have and want are None, returning True")
             return True
         if have is None or want is None:
+            log.debug("_compare_resource_values: one of have or want is None (have=%s, want=%s), returning False", have, want)
             return False
 
         have = str(have).strip()
@@ -194,23 +215,34 @@ class ResourceManagerDiffEngine:
         def _classify(val):
             if "/" in val:
                 try:
-                    return "network", ipaddress.ip_network(val, strict=False)
+                    parsed = ipaddress.ip_network(val, strict=False)
+                    log.debug("_compare_resource_values: classified '%s' as network: %s", val, parsed)
+                    return "network", parsed
                 except ValueError:
-                    pass
+                    log.debug("_compare_resource_values: failed to parse '%s' as network, continuing", val)
             try:
-                return "address", ipaddress.ip_address(val)
+                parsed = ipaddress.ip_address(val)
+                log.debug("_compare_resource_values: classified '%s' as address: %s", val, parsed)
+                return "address", parsed
             except ValueError:
-                pass
+                log.debug("_compare_resource_values: failed to parse '%s' as address, classifying as raw", val)
+                log.debug("_compare_resource_values: classified '%s' as raw string", val)
             return "raw", val
 
         th, vh = _classify(have)
         tw, vw = _classify(want)
 
         if th == tw == "address":
-            return vh.exploded == vw.exploded
+            result = vh.exploded == vw.exploded
+            log.debug("_compare_resource_values: both are addresses (have=%s, want=%s), exploded comparison result=%s", vh.exploded, vw.exploded, result)
+            return result
         if th == tw == "network":
-            return vh == vw
-        return have == want
+            result = vh == vw
+            log.debug("_compare_resource_values: both are networks (have=%s, want=%s), comparison result=%s", vh, vw, result)
+            return result
+        result = have == want
+        log.debug("_compare_resource_values: raw string comparison (have='%s', want='%s'), result=%s", have, want, result)
+        return result
 
     @staticmethod
     def _make_resource_key(
@@ -218,7 +250,7 @@ class ResourceManagerDiffEngine:
         pool_name: Optional[str],
         scope_type: Optional[str],
         switch_ip: Optional[str],
-        log: Optional[logging.Logger] = None,
+        log: logging.Logger,
     ) -> Tuple:
         """Build a normalized deduplication key for a resource entry.
 
@@ -227,18 +259,29 @@ class ResourceManagerDiffEngine:
             pool_name: Pool name.
             scope_type: Playbook-style scope type.
             switch_ip: Switch IP, or None for fabric-scoped resources.
-            log: Optional logger instance.
+            log: Logger instance.
 
         Returns:
             Tuple used as a dict key for matching proposed vs existing.
         """
-        norm_entity = ResourceManagerDiffEngine._normalize_entity_key(entity_name) if entity_name else None
+        norm_entity = ResourceManagerDiffEngine._normalize_entity_key(entity_name, log=log) if entity_name else None
+        log.debug("_make_resource_key: entity_name provided %s, normalized to '%s'", entity_name, norm_entity)
+
         norm_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name, log=log)
+        log.debug("_make_resource_key: pool_name='%s' normalized to '%s'", pool_name, norm_pool)
 
         # device_pair and link encode both endpoints in entity_name;
         # normalize switch to None so existing_index and proposed lookups align.
-        norm_switch = None if scope_type in ("device_pair", "link") else switch_ip
-        return (norm_entity, norm_pool, scope_type, norm_switch)
+        if scope_type in ("device_pair", "link"):
+            norm_switch = None
+            log.debug("_make_resource_key: scope_type='%s' is multi-endpoint, setting norm_switch=None (original switch_ip='%s')", scope_type, switch_ip)
+        else:
+            norm_switch = switch_ip
+            log.debug("_make_resource_key: scope_type='%s' is single-endpoint, keeping norm_switch='%s'", scope_type, norm_switch)
+
+        key = (norm_entity, norm_pool, scope_type, norm_switch)
+        log.debug("_make_resource_key: built key=%s from entity_name='%s', pool_name='%s', scope_type='%s', switch_ip='%s'", key, entity_name, pool_name, scope_type, switch_ip)
+        return key
 
     @staticmethod
     def validate_configs(
@@ -387,8 +430,8 @@ class ResourceManagerDiffEngine:
         for res in existing:
             entity = res.entity_name
             pool = res.pool_name
-            scope_type = ResourceManagerDiffEngine._extract_scope_type(res.scope_details)
-            switch_id = ResourceManagerDiffEngine._extract_scope_switch_key_val(res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id")
+            scope_type = ResourceManagerDiffEngine._extract_scope_type(res.scope_details, log=log)
+            switch_id = ResourceManagerDiffEngine._extract_scope_switch_key_val(res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id", log=log)
             key = ResourceManagerDiffEngine._make_resource_key(entity, pool, scope_type, switch_id, log=log)
             existing_index[key] = res
             log.debug(
@@ -414,7 +457,7 @@ class ResourceManagerDiffEngine:
         # and populate the debugs bucket to mirror ND's mismatch logging.
         entity_only_index: Dict[str, List[ResourceManagerResponse]] = {}
         for res in existing:
-            norm = ResourceManagerDiffEngine._normalize_entity_key(res.entity_name or "")
+            norm = ResourceManagerDiffEngine._normalize_entity_key(res.entity_name or "", log=log)
             entity_only_index.setdefault(norm, []).append(res)
             log.debug(
                 "entity_only_index: added entity='%s' under norm_key='%s' (total under key: %s)",
@@ -488,7 +531,7 @@ class ResourceManagerDiffEngine:
                     # GAP-7: Partial-match detection — same entity_name, different
                     # pool_name / scope_type / switch_ip.  Mirrors ND's
                     # nd_rm_get_mismatched_values() / changed_dict["debugs"] logic.
-                    norm = ResourceManagerDiffEngine._normalize_entity_key(entity_name)
+                    norm = ResourceManagerDiffEngine._normalize_entity_key(entity_name, log=log)
                     partials = entity_only_index.get(norm, [])
                     log.debug(
                         "Partial-match scan for entity='%s' (norm='%s'): %s candidate(s)",
@@ -512,10 +555,8 @@ class ResourceManagerDiffEngine:
 
                         partial_pool = ResourceManagerDiffEngine._normalize_pool_name(partial.pool_name, log=log)
                         desired_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name, log=log)
-                        partial_scope = ResourceManagerDiffEngine._extract_scope_type(partial.scope_details)
-                        partial_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(
-                            partial.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip"
-                        )
+                        partial_scope = ResourceManagerDiffEngine._extract_scope_type(partial.scope_details, log=log)
+                        partial_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(partial.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip", log=log)
                         partial_resource_value = getattr(partial, "resource_value", None)
                         existing_values = {
                             "resource_id": getattr(partial, "resource_id", None),
@@ -560,7 +601,7 @@ class ResourceManagerDiffEngine:
                     matched_existing_keys.add(key)
                     existing_value = existing_res.resource_value
 
-                    if ResourceManagerDiffEngine._compare_resource_values(existing_value, resource_value):
+                    if ResourceManagerDiffEngine._compare_resource_values(existing_value, resource_value, log=log):
                         log.debug(
                             "Resource (entity=%s, pool=%s, scope=%s, switch=%s) is idempotent (value=%s)",
                             entity_name,
@@ -621,8 +662,8 @@ class ResourceManagerDiffEngine:
         nd: NDModule,
         resource_cfg: ResourceManagerConfigModel,
         api_resource: ResourceManagerResponse,
-        log: logging.Logger,
         context: str,
+        log: logging.Logger,
     ) -> None:
         """Validate user-supplied resource fields against the ND API response.
 
@@ -646,8 +687,8 @@ class ResourceManagerDiffEngine:
 
         # entity_name: tilde-order-insensitive comparison
         if resource_cfg.entity_name is not None:
-            cfg_norm = ResourceManagerDiffEngine._normalize_entity_key(resource_cfg.entity_name)
-            api_norm = ResourceManagerDiffEngine._normalize_entity_key(api_resource.entity_name) if api_resource.entity_name else None
+            cfg_norm = ResourceManagerDiffEngine._normalize_entity_key(resource_cfg.entity_name, log=log)
+            api_norm = ResourceManagerDiffEngine._normalize_entity_key(api_resource.entity_name, log=log) if api_resource.entity_name else None
 
             log.debug(
                 "validate_resource_api_fields: checking entity_name — cfg_norm='%s', api_norm='%s'",
@@ -708,7 +749,7 @@ class ResourceManagerDiffEngine:
                 resource_cfg.resource,
                 api_resource.resource_value,
             )
-            if not ResourceManagerDiffEngine._compare_resource_values(api_resource.resource_value, resource_cfg.resource):
+            if not ResourceManagerDiffEngine._compare_resource_values(api_resource.resource_value, resource_cfg.resource, log=log):
                 log.debug(
                     "validate_resource_api_fields: resource value MISMATCH — provided='%s', API='%s'",
                     resource_cfg.resource,
@@ -754,7 +795,7 @@ class NDResourceManagerModule:
         self,
         nd: NDModule,
         results: Results,
-        logger: Optional[logging.Logger] = None,
+        log: Optional[logging.Logger] = None,
     ):
         """Initialise the module, resolve fabric/state from ND params, and pre-fetch all resources.
 
@@ -768,13 +809,12 @@ class NDResourceManagerModule:
                 and the underlying ``RestSend`` HTTP client.
             results: ``Results`` instance used to accumulate API call results and
                 build the final module output.
-            logger: Optional external logger.  If not provided a module-level logger
-                (``logging.getLogger(__name__)``) is used.
+            log: Optional external logger.  If not provided a module-level logger
+                (``logging.getLogger("nd.NDResourceManagerModule")``) is used.
         """
         self.nd = nd
         self.results = results
-        self.log = logger if logger is not None else logging.getLogger(__name__)
-
+        self.log = log if log is not None else logging.getLogger("nd.NDResourceManagerModule")
         self.fabric = nd.params["fabric"]
         self.state = nd.params["state"]
         self.config = nd.params.get("config") or []
@@ -1326,7 +1366,7 @@ class NDResourceManagerModule:
           - device_pair / link  → src_switch_ip
         """
         if hasattr(resource, "scope_details") and resource.scope_details:
-            value = ResourceManagerDiffEngine._extract_scope_switch_key_val(resource.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip")
+            value = ResourceManagerDiffEngine._extract_scope_switch_key_val(resource.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip", log=self.log)
             self.log.debug("_get_switch_ip: from model scope_details, switch_ip=%s", value)
             return value
         if isinstance(resource, dict):
@@ -1337,26 +1377,6 @@ class NDResourceManagerModule:
             return value
         self.log.debug("_get_switch_ip: unrecognised resource type %s, returning None", type(resource))
         return None
-
-    def _to_dict(self, resource):
-        """Convert a resource to a plain dict suitable for API response output.
-
-        Calls ``resource.to_payload()`` for ``ResourceManagerResponse`` model instances
-        (which serialises to the ND API camelCase wire format).  Returns raw dicts
-        unchanged, since they are already in the correct format.
-
-        Args:
-            resource: A ``ResourceManagerResponse`` model instance or a plain dict.
-
-        Returns:
-            A plain dict representation of the resource.
-        """
-        if hasattr(resource, "to_payload"):
-            result = resource.to_payload()
-            self.log.debug("_to_dict: converted ResourceManagerResponse to dict via to_payload(): %s", result)
-            return result
-        self.log.debug("_to_dict: resource is already a raw dict, returning as-is")
-        return resource
 
     # ------------------------------------------------------------------
     # Matching helpers
@@ -1757,7 +1777,7 @@ class NDResourceManagerModule:
         )
 
         # Use compute_changes as the canonical diff engine.
-        changes = ResourceManagerDiffEngine.compute_changes(self.proposed, self.existing, self.log)
+        changes = ResourceManagerDiffEngine.compute_changes(self.proposed, self.existing, log=self.log)
 
         # Propagate partial-match mismatch diagnostics to the output diff (GAP-7).
         self.changed_dict[0]["debugs"].extend(changes["debugs"])
@@ -1815,17 +1835,17 @@ class NDResourceManagerModule:
         # If two items share a normalised name (unusual), the last one wins; that is
         # acceptable because validate_resource_api_fields uses order-insensitive comparison.
         cfg_by_entity: Dict[str, ResourceManagerConfigModel] = {
-            ResourceManagerDiffEngine._normalize_entity_key(cfg.entity_name): cfg for cfg, _payload in pending_payloads
+            ResourceManagerDiffEngine._normalize_entity_key(cfg.entity_name, log=self.log): cfg for cfg, _payload in pending_payloads
         }
 
         for resp_item in batch_response.resources:
             self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)})
             # GAP-5: Validate that the API response fields match what we sent.
             if resp_item.entity_name is not None:
-                norm_key = ResourceManagerDiffEngine._normalize_entity_key(resp_item.entity_name)
+                norm_key = ResourceManagerDiffEngine._normalize_entity_key(resp_item.entity_name, log=self.log)
                 matched_cfg = cfg_by_entity.get(norm_key)
                 if matched_cfg is not None:
-                    ResourceManagerDiffEngine.validate_resource_api_fields(self.nd, matched_cfg, resp_item, self.log, "Resource")
+                    ResourceManagerDiffEngine.validate_resource_api_fields(self.nd, matched_cfg, resp_item, "Resource", log=self.log)
 
         self.log.info(
             "manage_merged: Batch create successful — %s resource(s) created for fabric=%s",
@@ -1855,7 +1875,7 @@ class NDResourceManagerModule:
         )
 
         # Use compute_changes as the canonical diff engine.
-        changes = ResourceManagerDiffEngine.compute_changes(self.proposed, self.existing, self.log)
+        changes = ResourceManagerDiffEngine.compute_changes(self.proposed, self.existing, log=self.log)
 
         # Propagate partial-match mismatch diagnostics to the output diff (GAP-7).
         self.changed_dict[0]["debugs"].extend(changes["debugs"])
@@ -2006,7 +2026,7 @@ class NDResourceManagerModule:
                 res_pool = self._get_pool_name(res)
                 # Use switchId (serial number) from scopeDetails to match playbook switch config values
                 if hasattr(res, "scope_details") and res.scope_details:
-                    res_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id")
+                    res_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id", log=self.log)
                 elif isinstance(res, dict):
                     sd = res.get("scopeDetails") or {}
                     res_sw = sd.get("switchId") or sd.get("srcSwitchId")
@@ -2076,7 +2096,7 @@ class NDResourceManagerModule:
         self._validate_input()
 
         if self.config and self.state != "gathered":
-            self.proposed = ResourceManagerDiffEngine.validate_configs(self.config, self.state, self.nd, self.log)
+            self.proposed = ResourceManagerDiffEngine.validate_configs(self.config, self.state, self.nd, log=self.log)
             self.output.assign(proposed_configs=[cfg.model_dump(by_alias=True, exclude_none=True) for cfg in self.proposed])
         if self.state == "merged":
             self.log.info("manage_state: Dispatching to manage_merged()")
