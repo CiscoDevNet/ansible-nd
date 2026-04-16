@@ -120,6 +120,9 @@ options:
                 description:
                 - Optional vPC pair template details (default/custom template fields).
                 type: dict
+extends_documentation_fragment:
+- cisco.nd.modules
+- cisco.nd.check_mode
 notes:
     - This module uses NDStateMachine framework for state management
     - RestSend provides protocol-based HTTP abstraction with automatic retry logic

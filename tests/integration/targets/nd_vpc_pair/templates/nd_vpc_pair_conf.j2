@@ -45,5 +45,5 @@
 {% endif %}
 {% set _ = pair_list.append(pair_item) %}
 {% endfor %}
-{{ pair_list | to_nice_yaml(indent=2) }}
+{{ pair_list | to_nice_yaml(indent=2) | trim }}
 {% endif %}
