@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
 
@@ -38,6 +37,3 @@ class RemoveResourcesByIdsRequest(NDBaseModel):
     def to_payload(self) -> Dict[str, Any]:
         """Convert to API payload format."""
         return self.model_dump(by_alias=True, exclude_none=True)
-
-
-__all__ = ["RemoveResourcesByIdsRequest"]

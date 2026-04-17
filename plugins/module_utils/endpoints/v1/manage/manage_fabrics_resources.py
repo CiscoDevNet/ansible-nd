@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
 

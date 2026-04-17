@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
 
@@ -113,9 +112,3 @@ class ResourcesManagerBatchResponse(NDBaseModel):
         if isinstance(response, dict):
             return cls.model_validate(response)
         return cls(resources=[])
-
-
-__all__ = [
-    "ResourcesManagerBatchResponse",
-    "ResourceManagerResponse",
-]
