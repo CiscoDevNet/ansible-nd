@@ -19,7 +19,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_
     BasePath,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    BaseModel,
     ConfigDict,
     Field,
 )

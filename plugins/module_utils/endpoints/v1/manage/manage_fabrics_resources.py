@@ -29,7 +29,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params im
     LuceneQueryParams,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    BaseModel,
     ConfigDict,
     Field,
 )
@@ -123,9 +122,7 @@ class EpManageFabricResourcesGet(FabricNameMixin, ResourcesQueryParams, LuceneQu
 
     model_config = COMMON_CONFIG
 
-    class_name: Literal["EpManageFabricResourcesGet"] = Field(
-        default="EpManageFabricResourcesGet", description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpManageFabricSwitchesGet"] = Field(default="EpManageFabricSwitchesGet", description="Class name for backward compatibility")
 
     @property
     def path(self) -> str:
@@ -195,9 +192,7 @@ class EpManageFabricResourcesPost(FabricNameMixin, ResourcesQueryParams, NDEndpo
 
     model_config = COMMON_CONFIG
 
-    class_name: Literal["EpManageFabricResourcesPost"] = Field(
-        default="EpManageFabricResourcesPost", description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpManageFabricResourcesPost"] = Field(default="EpManageFabricResourcesPost", description="Class name for backward compatibility")
 
     @property
     def path(self) -> str:
