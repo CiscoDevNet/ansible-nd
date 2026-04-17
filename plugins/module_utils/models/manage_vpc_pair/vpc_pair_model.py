@@ -395,11 +395,9 @@ class VpcPairPlaybookConfigModel(BaseModel):
         default="merged",
         description="Desired state for vPC pair configuration",
     )
+    # TODO: Replace this with shared fabric_name Field() once common module
+    # field constraints are available.
     fabric_name: str = Field(description="Fabric name")
-    deploy: bool = Field(
-        default=True,
-        description="Deprecated. Use config_actions.save/config_actions.deploy instead.",
-    )
     force: bool = Field(
         default=False,
         description="Force deletion without pre-deletion safety checks",
@@ -438,7 +436,6 @@ class VpcPairPlaybookConfigModel(BaseModel):
                 choices=["merged", "replaced", "deleted", "overridden", "gathered"],
             ),
             fabric_name=dict(type="str", required=True),
-            deploy=dict(type="bool", default=True),
             force=dict(
                 type="bool",
                 default=False,

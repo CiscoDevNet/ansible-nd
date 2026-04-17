@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 
 # Copyright: (c) 2026, Sivakami S <sivakasi@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 
-from typing import Any, Dict
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common import (
     _raise_vpc_error,
@@ -22,10 +23,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.utils import (
 try:
     from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 except Exception:
+    # TODO: Remove fallback import once rest.results is guaranteed in all supported framework trees.
     from ansible_collections.cisco.nd.plugins.module_utils.results import Results
 
 
-def _needs_deployment(result: Dict[str, Any], nrm: Any) -> bool:
+def _needs_deployment(result: dict[str, Any], nrm: Any) -> bool:
     """
     Determine if save/deploy actions are needed based on changes/signals.
 
@@ -89,7 +91,7 @@ def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
     return any(signature in message for signature in non_fatal_signatures)
 
 
-def custom_vpc_deploy(nrm: Any, fabric_name: str, result: Dict[str, Any]) -> Dict[str, Any]:
+def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dict[str, Any]:
     """
     Custom save/deploy action handler for vPC fabric changes using RestSend.
 

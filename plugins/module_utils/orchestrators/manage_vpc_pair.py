@@ -3,9 +3,7 @@
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from typing import Any, Dict, List, Optional
-
-from ansible.module_utils.basic import AnsibleModule
+from typing import Any, Optional
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vpc_pair.vpc_pair_model import (
     VpcPairModel,
 )
@@ -27,12 +25,12 @@ class _VpcPairQueryContext:
     before the full state machine is constructed.
     """
 
-    def __init__(self, module: AnsibleModule) -> None:
+    def __init__(self, module: Any) -> None:
         """
         Initialize query context.
 
         Args:
-            module: AnsibleModule instance
+            module: Module-like object with .params / .warn
         """
         self.module = module
 
@@ -49,7 +47,7 @@ class VpcPairOrchestrator:
 
     def __init__(
         self,
-        module: Optional[AnsibleModule] = None,
+        module: Optional[Any] = None,
         sender: Optional[Any] = None,
         **kwargs: Any,
     ) -> None:
@@ -57,13 +55,16 @@ class VpcPairOrchestrator:
         Initialize VpcPairOrchestrator.
 
         Args:
-            module: AnsibleModule instance (preferred)
+            module: Module-like object with .params / .warn (preferred)
             sender: Optional NDModule/NDModuleV2 with .module attribute
             **kwargs: Ignored (for framework compatibility)
 
         Raises:
-            ValueError: If neither module nor sender provides an AnsibleModule
+            ValueError: If neither module nor sender provides a module object
         """
+        # TODO: Decouple module_utils orchestration from AnsibleModule by passing
+        # a lightweight runtime context from main() (e.g., params + warning sink)
+        # instead of module/sender objects with framework-specific attributes.
         del kwargs
         if module is None and sender is not None:
             module = getattr(sender, "module", None)
@@ -83,7 +84,7 @@ class VpcPairOrchestrator:
         """
         self.state_machine = state_machine
 
-    def query_all(self) -> List[Dict[str, Any]]:
+    def query_all(self) -> list[dict[str, Any]]:
         """
         Query all existing vPC pairs from the controller.
 
@@ -95,7 +96,7 @@ class VpcPairOrchestrator:
         context = self.state_machine if self.state_machine is not None else _VpcPairQueryContext(self.module)
         return custom_vpc_query_all(context)
 
-    def create(self, model_instance: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def create(self, model_instance: Any, **kwargs: Any) -> Optional[dict[str, Any]]:
         """
         Create a new vPC pair via custom_vpc_create handler.
 
@@ -114,7 +115,7 @@ class VpcPairOrchestrator:
             raise RuntimeError("VpcPairOrchestrator is not bound to a state machine")
         return custom_vpc_create(self.state_machine)
 
-    def update(self, model_instance: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update(self, model_instance: Any, **kwargs: Any) -> Optional[dict[str, Any]]:
         """
         Update an existing vPC pair via custom_vpc_update handler.
 

@@ -114,6 +114,9 @@ def _normalize_timeout(value: Optional[Any], fallback: int) -> int:
     """
     Normalize timeout values from module params with sane fallback.
 
+    Kept defensive because some internal/unit call paths can bypass
+    Ansible argspec coercion.
+
     Args:
         value: Raw timeout input from module params
         fallback: Timeout to use when value is missing/invalid
@@ -134,6 +137,9 @@ def _normalize_iteration(value: Optional[Any], fallback: int) -> int:
     """
     Normalize retry iteration count from module params with sane fallback.
 
+    Kept defensive because some internal/unit call paths can bypass
+    Ansible argspec coercion.
+
     Args:
         value: Raw iteration input from module params
         fallback: Iteration count to use when value is missing/invalid
@@ -152,7 +158,10 @@ def _normalize_iteration(value: Optional[Any], fallback: int) -> int:
 
 def _normalize_bool(value: Any, fallback: bool) -> bool:
     """
-    Normalize bool-like values with string/int support.
+    Normalize bool-like values with minimal defensive coercion.
+
+    Kept defensive because some internal/unit call paths can bypass
+    Ansible argspec coercion.
 
     Args:
         value: Raw input value
@@ -169,9 +178,11 @@ def _normalize_bool(value: Any, fallback: bool) -> bool:
         return bool(value)
     if isinstance(value, str):
         normalized = value.strip().lower()
-        if normalized in ("true", "yes", "1", "on"):
+        # Ansible's bool argspec already handles broad string/int coercion.
+        # Keep only canonical text bool values for direct internal callers.
+        if normalized == "true":
             return True
-        if normalized in ("false", "no", "0", "off"):
+        if normalized == "false":
             return False
     return fallback
 
@@ -205,14 +216,11 @@ def get_config_actions(module: Any) -> Dict[str, Any]:
     """
     Return normalized configuration action controls.
 
-    Preferred schema:
+    Schema:
         config_actions:
           save: bool
           deploy: bool
           type: "switch" | "global"
-
-    Legacy fallback:
-        deploy: bool
     """
     raw_actions = module.params.get("config_actions")
     if isinstance(raw_actions, dict):
@@ -228,10 +236,9 @@ def get_config_actions(module: Any) -> Dict[str, Any]:
             "type": action_type,
         }
 
-    legacy_deploy = _normalize_bool(module.params.get("deploy"), True)
     return {
-        "save": legacy_deploy,
-        "deploy": legacy_deploy,
+        "save": True,
+        "deploy": True,
         "type": DEFAULT_CONFIG_ACTION_TYPE,
     }
 

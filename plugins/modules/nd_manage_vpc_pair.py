@@ -57,12 +57,6 @@ options:
                 type: str
                 choices: [switch, global]
                 default: switch
-    deploy:
-        description:
-        - Deprecated. Use C(config_actions.save) and C(config_actions.deploy).
-        - Legacy knob that maps to both save and deploy actions.
-        type: bool
-        default: true
     force:
         description:
         - Force deletion without pre-deletion validation checks.
@@ -397,25 +391,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common im
 # ===== Module Entry Point =====
 
 
-def _coerce_bool(value: Any, fallback: bool = False) -> bool:
-    """
-    Normalize bool-like values from raw Ansible module args.
-    """
-    if value is None:
-        return fallback
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return bool(value)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in ("true", "yes", "1", "on"):
-            return True
-        if normalized in ("false", "no", "0", "off"):
-            return False
-    return fallback
-
-
 def _get_raw_module_args() -> Dict[str, Any]:
     """
     Best-effort extraction of raw user-provided module args before defaults.
@@ -488,24 +463,21 @@ def main() -> None:
     raw_module_args = _get_raw_module_args()
     raw_config_actions = raw_module_args.get("config_actions")
     explicit_config_actions = isinstance(raw_config_actions, dict)
-    explicit_legacy_deploy = "deploy" in raw_module_args
 
     if state == "gathered":
         explicit_write_requested = False
 
-        if explicit_legacy_deploy and _coerce_bool(raw_module_args.get("deploy"), False):
-            explicit_write_requested = True
-
         if explicit_config_actions:
-            if _coerce_bool(raw_config_actions.get("save"), False) or _coerce_bool(raw_config_actions.get("deploy"), False):
+            normalized_actions = module.params.get("config_actions") or {}
+            if ("save" in raw_config_actions and bool(normalized_actions.get("save", False))) or (
+                "deploy" in raw_config_actions and bool(normalized_actions.get("deploy", False))
+            ):
                 explicit_write_requested = True
 
         if explicit_write_requested:
             module.fail_json(
                 msg=(
-                    "Deploy parameter cannot be used with 'gathered' state. "
-                    "config_actions.save/config_actions.deploy (or legacy deploy=true) "
-                    "are not allowed for gathered."
+                    "Write action parameters cannot be used with 'gathered' state. " "config_actions.save/config_actions.deploy are not allowed for gathered."
                 )
             )
 
@@ -519,8 +491,6 @@ def main() -> None:
     # Runtime normalization for downstream service/orchestrator code.
     module.params["config_actions"] = config_actions
     module.params["verify"] = verify_settings
-    # Keep legacy deploy param in sync for backward-compatible code paths.
-    module.params["deploy"] = config_actions.get("deploy", False)
 
     if config_actions.get("deploy", False) and not config_actions.get("save", False):
         module.fail_json(msg="Invalid config_actions: config_actions.deploy=true requires config_actions.save=true")

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2025, Sivakami Sivaraman <sivakasi@cisco.com>
+# Copyright: (c) 2026, Sivakami Sivaraman <sivakasi@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -15,6 +15,10 @@ organized into functional domains:
 - Monitoring Domain: Health, status, and operational metrics
 - Consistency Domain: Configuration consistency validation
 - Validation Domain: Support checks and peer recommendations
+
+TODO:
+- Incrementally add remaining OpenAPI field constraints to unconstrained
+  model fields as we expand model coverage.
 """
 
 from typing import List, Dict, Any, Optional, Union, ClassVar, Literal

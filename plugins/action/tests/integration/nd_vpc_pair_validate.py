@@ -95,74 +95,54 @@ def _detail_value_with_alias(details: dict[str, Any], key: str) -> tuple[Any, Op
     return None, None
 
 
+def _mismatch(field: str, expected: Any, actual: Any) -> dict[str, Any]:
+    """Build a normalized mismatch record."""
+    return {"field": field, "expected": expected, "actual": actual}
+
+
+def _compare_nested_details(
+    mismatches: list[dict[str, Any]],
+    parent_field: str,
+    expected: dict[str, Any],
+    actual: dict[str, Any],
+) -> None:
+    """Compare nested expected detail keys against actual and append mismatches."""
+    for nested_key, nested_expected in expected.items():
+        nested_actual = actual.get(nested_key)
+        if nested_key not in actual:
+            mismatches.append(_mismatch(f"{parent_field}.{nested_key}", nested_expected, "MISSING"))
+            continue
+
+        if not _values_equal(nested_expected, nested_actual):
+            mismatches.append(_mismatch(f"{parent_field}.{nested_key}", nested_expected, nested_actual))
+
+
 def _compare_vpc_pair_details(expected_details: Any, actual_details: Any) -> list[dict[str, Any]]:
     """Compare expected details as a subset of actual details and return mismatches."""
-    mismatches = []
+    mismatches: list[dict[str, Any]] = []
 
     if not isinstance(expected_details, dict):
         return mismatches
 
     if not isinstance(actual_details, dict):
-        mismatches.append(
-            {
-                "field": "vpc_pair_details",
-                "expected": expected_details,
-                "actual": actual_details,
-            }
-        )
-        return mismatches
+        return [_mismatch("vpc_pair_details", expected_details, actual_details)]
 
     for exp_key, exp_value in expected_details.items():
         act_value, resolved_key = _detail_value_with_alias(actual_details, exp_key)
+        field = "vpc_pair_details.{0}".format(exp_key)
         if resolved_key is None:
-            mismatches.append(
-                {
-                    "field": "vpc_pair_details.{0}".format(exp_key),
-                    "expected": exp_value,
-                    "actual": "MISSING",
-                }
-            )
+            mismatches.append(_mismatch(field, exp_value, "MISSING"))
             continue
 
         if isinstance(exp_value, dict):
             if not isinstance(act_value, dict):
-                mismatches.append(
-                    {
-                        "field": "vpc_pair_details.{0}".format(exp_key),
-                        "expected": exp_value,
-                        "actual": act_value,
-                    }
-                )
+                mismatches.append(_mismatch(field, exp_value, act_value))
                 continue
 
-            for nested_key, nested_expected in exp_value.items():
-                if nested_key not in act_value:
-                    mismatches.append(
-                        {
-                            "field": "vpc_pair_details.{0}.{1}".format(exp_key, nested_key),
-                            "expected": nested_expected,
-                            "actual": "MISSING",
-                        }
-                    )
-                    continue
-
-                if not _values_equal(nested_expected, act_value.get(nested_key)):
-                    mismatches.append(
-                        {
-                            "field": "vpc_pair_details.{0}.{1}".format(exp_key, nested_key),
-                            "expected": nested_expected,
-                            "actual": act_value.get(nested_key),
-                        }
-                    )
+            _compare_nested_details(mismatches, field, exp_value, act_value)
         else:
             if not _values_equal(exp_value, act_value):
-                mismatches.append(
-                    {
-                        "field": "vpc_pair_details.{0}".format(exp_key),
-                        "expected": exp_value,
-                        "actual": act_value,
-                    }
-                )
+                mismatches.append(_mismatch(field, exp_value, act_value))
 
     return mismatches
 

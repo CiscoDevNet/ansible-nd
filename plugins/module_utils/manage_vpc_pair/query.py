@@ -354,6 +354,46 @@ def _extract_vpc_pairs_from_list_response(vpc_pairs_response: Any) -> List[Dict[
     return extracted_pairs
 
 
+def _get_direct_vpc_pair(
+    nd_v2: Any,
+    fabric_name: str,
+    switch_id: str,
+    timeout: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Best-effort per-switch /vpcPair lookup.
+
+    Args:
+        nd_v2: NDModuleV2 instance for RestSend
+        fabric_name: Fabric name
+        switch_id: Switch serial number
+        timeout: Optional timeout override (uses module query timeout policy if not specified)
+
+    Returns:
+        Direct vPC pair payload dict when available; otherwise None.
+    """
+    if not fabric_name or not switch_id:
+        return None
+
+    if timeout is None:
+        timeout = get_verify_timeout(nd_v2.module)
+
+    path = VpcPairEndpoints.switch_vpc_pair(fabric_name, switch_id)
+    rest_send = nd_v2._get_rest_send()
+    rest_send.save_settings()
+    rest_send.timeout = timeout
+    try:
+        direct_vpc = nd_v2.request(path, HttpVerbEnum.GET)
+    except (NDModuleError, Exception):
+        return None
+    finally:
+        rest_send.restore_settings()
+
+    if isinstance(direct_vpc, dict):
+        return direct_vpc
+    return None
+
+
 def _enrich_pairs_from_direct_vpc(
     nd_v2: Any,
     fabric_name: str,
@@ -391,17 +431,12 @@ def _enrich_pairs_from_direct_vpc(
             enriched_pairs.append(enriched)
             continue
 
-        direct_vpc = None
-        path = VpcPairEndpoints.switch_vpc_pair(fabric_name, switch_id)
-        rest_send = nd_v2._get_rest_send()
-        rest_send.save_settings()
-        rest_send.timeout = timeout
-        try:
-            direct_vpc = nd_v2.request(path, HttpVerbEnum.GET)
-        except (NDModuleError, Exception):
-            direct_vpc = None
-        finally:
-            rest_send.restore_settings()
+        direct_vpc = _get_direct_vpc_pair(
+            nd_v2=nd_v2,
+            fabric_name=fabric_name,
+            switch_id=switch_id,
+            timeout=timeout,
+        )
 
         if isinstance(direct_vpc, dict):
             peer_switch_id = direct_vpc.get(VpcFieldNames.PEER_SWITCH_ID)
@@ -524,6 +559,7 @@ def _is_ip_literal(value: Any) -> bool:
     Returns:
         True if value is a valid IP address string, False otherwise.
     """
+    # TODO: Move to a shared network helper if additional modules need IP-literal detection.
     if not isinstance(value, str):
         return False
     candidate = value.strip()
@@ -715,6 +751,8 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
     Raises:
         VpcPairResourceError: On unrecoverable query failures
     """
+    # TODO: Split this workflow into smaller helpers (list query, fallback discovery,
+    # and state-specific enrichment) so the high-level flow stays easy to follow.
     fabric_name = nrm.module.params.get("fabric_name")
 
     if not fabric_name or not isinstance(fabric_name, str) or not fabric_name.strip():
@@ -918,17 +956,12 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                 processed_switches.add(peer_switch_id)
 
                 # For configured pairs, prefer direct vPC query as source of truth.
-                try:
-                    vpc_pair_path = VpcPairEndpoints.switch_vpc_pair(fabric_name, switch_id)
-                    rest_send = nd_v2._get_rest_send()
-                    rest_send.save_settings()
-                    rest_send.timeout = get_verify_timeout(nrm.module)
-                    try:
-                        direct_vpc = nd_v2.request(vpc_pair_path, HttpVerbEnum.GET)
-                    finally:
-                        rest_send.restore_settings()
-                except (NDModuleError, Exception):
-                    direct_vpc = None
+                direct_vpc = _get_direct_vpc_pair(
+                    nd_v2=nd_v2,
+                    fabric_name=fabric_name,
+                    switch_id=switch_id,
+                    timeout=get_verify_timeout(nrm.module),
+                )
 
                 if direct_vpc:
                     resolved_peer_switch_id = direct_vpc.get(VpcFieldNames.PEER_SWITCH_ID) or peer_switch_id
@@ -1024,17 +1057,12 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
                         )
             elif not config_switch_ids or switch_id in config_switch_ids:
                 # For unconfigured switches, prefer direct vPC pair query first.
-                try:
-                    vpc_pair_path = VpcPairEndpoints.switch_vpc_pair(fabric_name, switch_id)
-                    rest_send = nd_v2._get_rest_send()
-                    rest_send.save_settings()
-                    rest_send.timeout = get_verify_timeout(nrm.module)
-                    try:
-                        direct_vpc = nd_v2.request(vpc_pair_path, HttpVerbEnum.GET)
-                    finally:
-                        rest_send.restore_settings()
-                except (NDModuleError, Exception):
-                    direct_vpc = None
+                direct_vpc = _get_direct_vpc_pair(
+                    nd_v2=nd_v2,
+                    fabric_name=fabric_name,
+                    switch_id=switch_id,
+                    timeout=get_verify_timeout(nrm.module),
+                )
 
                 if direct_vpc:
                     peer_switch_id = direct_vpc.get(VpcFieldNames.PEER_SWITCH_ID)

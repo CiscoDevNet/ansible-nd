@@ -458,6 +458,8 @@ def _validate_vpc_pair_deletion(nd_v2: Any, fabric_name: str, switch_id: str, vp
     Example:
         _validate_vpc_pair_deletion(nd_v2, "myFabric", "FDO123", "FDO123-FDO456", module)
     """
+    # TODO: Route warnings through a shared warning collector so module_utils
+    # validation logic can stay free of direct AnsibleModule.warn usage.
     try:
         # Query overview endpoint with full component data
         overview_path = VpcPairEndpoints.switch_vpc_overview(fabric_name, switch_id, component_type="full")
