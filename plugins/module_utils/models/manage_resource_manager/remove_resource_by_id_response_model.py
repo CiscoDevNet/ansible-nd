@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
 
@@ -66,9 +65,3 @@ class RemoveResourcesByIdsResponse(NDBaseModel):
         if isinstance(response, dict):
             return cls.model_validate(response)
         return cls(resources=[])
-
-
-__all__ = [
-    "RemoveResourcesByIdsResponse",
-    "RemoveResourcesByIdResponse",
-]

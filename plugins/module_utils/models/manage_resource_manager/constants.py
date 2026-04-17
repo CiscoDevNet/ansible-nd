@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 # Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
 
@@ -13,7 +12,6 @@ Imported by all nd_manage_resource_manager_updated_models_*.py files.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Dict, List
 
 # =============================================================================
 # POOL_SCOPE_MAP - Derived from dcnm_rm_check_resource_params()
@@ -21,7 +19,7 @@ from typing import Dict, List
 # Custom / user-defined pool names not present here are unrestricted.
 # =============================================================================
 
-POOL_SCOPE_MAP: Dict[str, List[str]] = {
+POOL_SCOPE_MAP: dict[str, list[str]] = {
     "L3_VNI": ["fabric"],
     "L2_VNI": ["fabric"],
     "BGP_ASN_ID": ["fabric"],
@@ -50,7 +48,7 @@ POOL_SCOPE_MAP: Dict[str, List[str]] = {
 # values (camelCase).
 # =============================================================================
 
-SCOPE_TYPE_TO_API: Dict[str, str] = {
+SCOPE_TYPE_TO_API: dict[str, str] = {
     "fabric": "fabric",
     "device": "device",
     "device_interface": "deviceInterface",
@@ -58,7 +56,7 @@ SCOPE_TYPE_TO_API: Dict[str, str] = {
     "link": "link",
 }
 
-API_SCOPE_TYPE_TO_PLAYBOOK: Dict[str, str] = {v: k for k, v in SCOPE_TYPE_TO_API.items()}
+API_SCOPE_TYPE_TO_PLAYBOOK: dict[str, str] = {v: k for k, v in SCOPE_TYPE_TO_API.items()}
 
 # =============================================================================
 # ENUMS - Ansible/DCNM-style values
@@ -80,7 +78,7 @@ class PoolType(str, Enum):
     SUBNET = "SUBNET"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         """Return list of valid choices."""
         return [e.value for e in cls]
 
@@ -104,7 +102,7 @@ class ScopeType(str, Enum):
     LINK = "link"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         """Return list of valid choices."""
         return [e.value for e in cls]
 
