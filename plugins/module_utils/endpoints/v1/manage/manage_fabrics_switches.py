@@ -1,4 +1,3 @@
-
 # Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
@@ -68,9 +67,7 @@ class EpManageFabricSwitchesGet(FabricNameMixin, LuceneQueryParams, NDEndpointBa
 
     model_config = COMMON_CONFIG
 
-    class_name: Literal["EpManageFabricSwitchesGet"] = Field(
-        default="EpManageFabricSwitchesGet", description="Class name for backward compatibility"
-    )
+    class_name: Literal["EpManageFabricSwitchesGet"] = Field(default="EpManageFabricSwitchesGet", description="Class name for backward compatibility")
 
     @property
     def path(self) -> str:
