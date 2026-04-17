@@ -477,6 +477,29 @@ def main():
         )
         module.fail_json(msg=error.msg, **results.final_result)
 
+    except ValueError as error:
+        # Validation errors raised by NDResourceManagerModule (e.g. invalid config,
+        # mandatory field missing, pool/scope mismatch, API field mismatch).
+        log.error(
+            "main: ValueError caught — msg='%s', fabric='%s', state='%s'",
+            str(error),
+            fabric,
+            state,
+        )
+        results.response_current = {
+            "RETURN_CODE": -1,
+            "MESSAGE": str(error),
+            "DATA": {},
+        }
+        results.result_current = {
+            "success": False,
+            "found": False,
+        }
+        results.diff_current = {}
+        results.register_api_call()
+        results.build_final_result()
+        module.fail_json(msg=str(error), **results.final_result)
+
     except Exception as error:
         # Unexpected errors
         log.error(
