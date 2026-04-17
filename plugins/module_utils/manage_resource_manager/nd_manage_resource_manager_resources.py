@@ -279,7 +279,15 @@ class ResourceManagerDiffEngine:
             log.debug("_make_resource_key: scope_type='%s' is single-endpoint, keeping norm_switch='%s'", scope_type, norm_switch)
 
         key = (norm_entity, norm_pool, scope_type, norm_switch)
-        log.debug("_make_resource_key: built key=%s from entity_name='%s', pool_name='%s', scope_type='%s', switch_ip='%s'", key, entity_name, pool_name, scope_type, switch_ip)
+        log.debug(
+            "_make_resource_key: built key=%s from entity_name='%s', pool_name='%s', scope_type='%s', switch_ip='%s'",
+            key,
+            entity_name,
+            pool_name,
+            scope_type,
+            switch_ip,
+        )
+
         return key
 
     @staticmethod
@@ -421,7 +429,9 @@ class ResourceManagerDiffEngine:
             entity = res.entity_name
             pool = res.pool_name
             scope_type = ResourceManagerDiffEngine._extract_scope_type(res.scope_details, log=log)
-            switch_id = ResourceManagerDiffEngine._extract_scope_switch_key_val(res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id", log=log)
+            switch_id = ResourceManagerDiffEngine._extract_scope_switch_key_val(
+                res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id", log=log
+            )
             key = ResourceManagerDiffEngine._make_resource_key(entity, pool, scope_type, switch_id, log=log)
             existing_index[key] = res
             log.debug(
@@ -546,7 +556,9 @@ class ResourceManagerDiffEngine:
                         partial_pool = ResourceManagerDiffEngine._normalize_pool_name(partial.pool_name, log=log)
                         desired_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name, log=log)
                         partial_scope = ResourceManagerDiffEngine._extract_scope_type(partial.scope_details, log=log)
-                        partial_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(partial.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip", log=log)
+                        partial_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(
+                            partial.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip", log=log
+                        )
                         partial_resource_value = getattr(partial, "resource_value", None)
                         existing_values = {
                             "resource_id": getattr(partial, "resource_id", None),
@@ -764,8 +776,7 @@ class ResourceManagerDiffEngine:
         if mismatches:
             raise ValueError(
                 f"{context} field mismatch for entity '{resource_cfg.entity_name}'. "
-                f"The following provided values do not match the API data:\n"
-                + "\n".join(f"  - {m}" for m in mismatches)
+                f"The following provided values do not match the API data:\n\n".join(f"  - {m}" for m in mismatches)
             )
 
         log.debug(
@@ -1359,7 +1370,9 @@ class NDResourceManagerModule:
           - device_pair / link  → src_switch_ip
         """
         if hasattr(resource, "scope_details") and resource.scope_details:
-            value = ResourceManagerDiffEngine._extract_scope_switch_key_val(resource.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip", log=self.log)
+            value = ResourceManagerDiffEngine._extract_scope_switch_key_val(
+                resource.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip", log=self.log
+            )
             self.log.debug("_get_switch_ip: from model scope_details, switch_ip=%s", value)
             return value
         if isinstance(resource, dict):
@@ -2019,7 +2032,9 @@ class NDResourceManagerModule:
                 res_pool = self._get_pool_name(res)
                 # Use switchId (serial number) from scopeDetails to match playbook switch config values
                 if hasattr(res, "scope_details") and res.scope_details:
-                    res_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id", log=self.log)
+                    res_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(
+                        res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id", log=self.log
+                    )
                 elif isinstance(res, dict):
                     sd = res.get("scopeDetails") or {}
                     res_sw = sd.get("switchId") or sd.get("srcSwitchId")
