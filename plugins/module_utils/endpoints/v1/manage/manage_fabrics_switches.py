@@ -12,7 +12,10 @@ in the ND Manage API.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
@@ -21,12 +24,18 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     ConfigDict,
     Field,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    FabricNameMixin,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    LuceneQueryParams,
+)
 
 # Common config for basic validation
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
 
-class EpManageFabricSwitchesGet(BaseModel):
+class EpManageFabricSwitchesGet(FabricNameMixin, LuceneQueryParams, NDEndpointBaseModel):
     """
     # Summary
 
@@ -61,22 +70,26 @@ class EpManageFabricSwitchesGet(BaseModel):
 
     model_config = COMMON_CONFIG
 
-    fabric_name: str = Field(min_length=1, max_length=64, description="Name of the fabric")
-    max: int = Field(default=10000, ge=1, description="Maximum number of switches to return")
+    class_name: Literal["EpManageFabricSwitchesGet"] = Field(
+        default="EpManageFabricSwitchesGet", description="Class name for backward compatibility"
+    )
 
     @property
     def path(self) -> str:
         """
         # Summary
 
-        Build the endpoint path with max query parameter.
+        Build the endpoint path with optional query string.
 
         ## Returns
 
-        - Complete endpoint path string including max query parameter
+        - Complete endpoint path string, optionally including query parameters
         """
         base_path = BasePath.path("fabrics", self.fabric_name, "switches")
-        return f"{base_path}?max={self.max}"
+        query_string = self.to_query_string()
+        if query_string:
+            return f"{base_path}?{query_string}"
+        return base_path
 
     @property
     def verb(self) -> HttpVerbEnum:

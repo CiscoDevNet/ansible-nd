@@ -12,14 +12,20 @@ in the ND Manage API.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ClusterNameMixin,
+    FabricNameMixin,
+    SwitchIdMixin,
+    TenantNameMixin,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
-    CompositeQueryParams,
     EndpointQueryParams,
     LuceneQueryParams,
 )
@@ -33,7 +39,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 COMMON_CONFIG = ConfigDict(validate_assignment=True)
 
 
-class ResourcesQueryParams(EndpointQueryParams):
+class ResourcesQueryParams(ClusterNameMixin, SwitchIdMixin, TenantNameMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -41,22 +47,20 @@ class ResourcesQueryParams(EndpointQueryParams):
 
     ## Parameters
 
+    - cluster_name: Name of the cluster (optional)
     - switch_id: Serial Number or Id of the switch/leaf (optional)
     - pool_name: Name of the Pool (optional)
-    - tenant_name: Name of the tenant (optional, used for POST)
 
     ## Usage
 
     ```python
-    params = ResourcesQueryParams(switch_id="leaf-101", pool_name="networkVlan")
+    params = ResourcesQueryParams(cluster_name="cluster1", switch_id="leaf-101", pool_name="networkVlan")
     query_string = params.to_query_string()
-    # Returns: "switchId=leaf-101&poolName=networkVlan"
+    # Returns: "clusterName=cluster1&switchId=leaf-101&poolName=networkVlan"
     ```
     """
 
-    switch_id: Optional[str] = Field(default=None, min_length=1, description="Serial Number or Id of the switch/leaf")
     pool_name: Optional[str] = Field(default=None, min_length=1, description="Name of the Pool")
-    tenant_name: Optional[str] = Field(default=None, min_length=1, description="Name of the tenant")
 
 
 # =============================================================================
@@ -64,7 +68,7 @@ class ResourcesQueryParams(EndpointQueryParams):
 # =============================================================================
 
 
-class EpManageFabricResourcesGet(BaseModel):
+class EpManageFabricResourcesGet(FabricNameMixin, ResourcesQueryParams, LuceneQueryParams, NDEndpointBaseModel):
     """
     # Summary
 
@@ -120,14 +124,8 @@ class EpManageFabricResourcesGet(BaseModel):
 
     model_config = COMMON_CONFIG
 
-    fabric_name: str = Field(min_length=1, max_length=64, description="Name of the fabric")
-    endpoint_params: ResourcesQueryParams = Field(
-        default_factory=ResourcesQueryParams,
-        description="Endpoint-specific query parameters",
-    )
-    lucene_params: LuceneQueryParams = Field(
-        default_factory=LuceneQueryParams,
-        description="Lucene-style filtering query parameters",
+    class_name: Literal["EpManageFabricResourcesGet"] = Field(
+        default="EpManageFabricResourcesGet", description="Class name for backward compatibility"
     )
 
     @property
@@ -143,13 +141,7 @@ class EpManageFabricResourcesGet(BaseModel):
         """
 
         base_path = BasePath.path("fabrics", self.fabric_name, "resources")
-
-        # Build composite query string
-        composite = CompositeQueryParams()
-        composite.add(self.endpoint_params)
-        composite.add(self.lucene_params)
-
-        query_string = composite.to_query_string()
+        query_string = self.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
         return base_path
@@ -160,7 +152,7 @@ class EpManageFabricResourcesGet(BaseModel):
         return HttpVerbEnum.GET
 
 
-class EpManageFabricResourcesPost(BaseModel):
+class EpManageFabricResourcesPost(FabricNameMixin, ResourcesQueryParams, NDEndpointBaseModel):
     """
     # Summary
 
@@ -204,10 +196,8 @@ class EpManageFabricResourcesPost(BaseModel):
 
     model_config = COMMON_CONFIG
 
-    fabric_name: str = Field(min_length=1, max_length=64, description="Name of the fabric")
-    endpoint_params: ResourcesQueryParams = Field(
-        default_factory=ResourcesQueryParams,
-        description="Endpoint-specific query parameters",
+    class_name: Literal["EpManageFabricResourcesPost"] = Field(
+        default="EpManageFabricResourcesPost", description="Class name for backward compatibility"
     )
 
     @property
@@ -222,7 +212,7 @@ class EpManageFabricResourcesPost(BaseModel):
         - Complete endpoint path string, optionally including query parameters
         """
         base_path = BasePath.path("fabrics", self.fabric_name, "resources")
-        query_string = self.endpoint_params.to_query_string()
+        query_string = self.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
         return base_path
@@ -238,7 +228,7 @@ class EpManageFabricResourcesPost(BaseModel):
 # =============================================================================
 
 
-class EpManageFabricResourcesActionsRemovePost(BaseModel):
+class EpManageFabricResourcesActionsRemovePost(FabricNameMixin, ResourcesQueryParams, NDEndpointBaseModel):
     """
     # Summary
 
@@ -271,7 +261,9 @@ class EpManageFabricResourcesActionsRemovePost(BaseModel):
 
     model_config = COMMON_CONFIG
 
-    fabric_name: str = Field(min_length=1, max_length=64, description="Name of the fabric")
+    class_name: Literal["EpManageFabricResourcesActionsRemovePost"] = Field(
+        default="EpManageFabricResourcesActionsRemovePost", description="Class name for backward compatibility"
+    )
 
     @property
     def path(self) -> str:
@@ -284,7 +276,12 @@ class EpManageFabricResourcesActionsRemovePost(BaseModel):
 
         - Complete endpoint path string
         """
-        return BasePath.path("fabrics", self.fabric_name, "resources", "actions", "remove")
+
+        base_path = BasePath.path("fabrics", self.fabric_name, "resources", "actions", "remove")
+        query_string = self.to_query_string()
+        if query_string:
+            return f"{base_path}?{query_string}"
+        return base_path
 
     @property
     def verb(self) -> HttpVerbEnum:
