@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import ipaddress
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
@@ -285,11 +285,11 @@ class ResourceManagerDiffEngine:
 
     @staticmethod
     def validate_configs(
-        config: Union[Dict[str, Any], List[Dict[str, Any]]],
+        config: Union[dict[str, Any], list[dict[str, Any]]],
         state: str,
         nd: NDModule,
         log: logging.Logger,
-    ) -> List[ResourceManagerConfigModel]:
+    ) -> list[ResourceManagerConfigModel]:
         """Validate raw module config and return typed resource configurations.
 
         Args:
@@ -299,14 +299,14 @@ class ResourceManagerDiffEngine:
             log: Logger instance.
 
         Returns:
-            List of validated ``ResourceManagerConfigModel`` objects.
+            list of validated ``ResourceManagerConfigModel`` objects.
         """
         log.debug("ENTER: validate_configs()")
 
         configs_list = config if isinstance(config, list) else [config]
         log.debug("Normalized to %s configuration(s)", len(configs_list))
 
-        validated_configs: List[ResourceManagerConfigModel] = []
+        validated_configs: list[ResourceManagerConfigModel] = []
         for idx, cfg in enumerate(configs_list):
             try:
                 validated = ResourceManagerConfigModel.model_validate(cfg, context={"state": state})
@@ -315,17 +315,11 @@ class ResourceManagerDiffEngine:
                 error_detail = e.errors() if hasattr(e, "errors") else str(e)
                 error_msg = f"Configuration validation failed for config index {idx}: {error_detail}"
                 log.error(error_msg)
-                if hasattr(nd, "module"):
-                    nd.module.fail_json(msg=error_msg)
-                else:
-                    raise ValueError(error_msg) from e
+                raise ValueError(error_msg) from e
             except Exception as e:
                 error_msg = f"Configuration validation failed for config index {idx}: {str(e)}"
                 log.error(error_msg)
-                if hasattr(nd, "module"):
-                    nd.module.fail_json(msg=error_msg)
-                else:
-                    raise ValueError(error_msg) from e
+                raise ValueError(error_msg) from e
 
         if not validated_configs:
             log.warning("No valid configurations found in input")
@@ -374,10 +368,7 @@ class ResourceManagerDiffEngine:
         if duplicate_keys:
             error_msg = f"Duplicate config entries found: {[str(k) for k in duplicate_keys]}. Each resource must appear only once."
             log.error(error_msg)
-            if hasattr(nd, "module"):
-                nd.module.fail_json(msg=error_msg)
-            else:
-                raise ValueError(error_msg)
+            raise ValueError(error_msg)
 
         log.info(
             "Successfully validated %s configuration(s)",
@@ -388,10 +379,10 @@ class ResourceManagerDiffEngine:
 
     @staticmethod
     def compute_changes(
-        proposed: List[ResourceManagerConfigModel],
-        existing: List[ResourceManagerResponse],
+        proposed: list[ResourceManagerConfigModel],
+        existing: list[ResourceManagerResponse],
         log: logging.Logger,
-    ) -> Dict[str, List]:
+    ) -> dict[str, list]:
         """Compare proposed and existing resources and categorize changes.
 
         Uses ``ResourceManagerResponse`` fields (``entity_name``, ``pool_name``,
@@ -406,7 +397,7 @@ class ResourceManagerDiffEngine:
             log: Logger instance.
 
         Returns:
-            Dict mapping change buckets to item lists:
+            dict mapping change buckets to item lists:
               - ``to_add``:     ``(ResourceManagerConfigModel, switch_ip)`` tuples
               - ``to_update``:  ``(ResourceManagerConfigModel, switch_ip)`` tuples
               - ``to_delete``:  ``ResourceManagerResponse`` items
@@ -426,7 +417,7 @@ class ResourceManagerDiffEngine:
 
         # Build index of existing resources keyed by
         # (normalized_entity, pool_name, playbook_scope_type, switch_id)
-        existing_index: Dict[Tuple, ResourceManagerResponse] = {}
+        existing_index: dict[Tuple, ResourceManagerResponse] = {}
         for res in existing:
             entity = res.entity_name
             pool = res.pool_name
@@ -444,7 +435,7 @@ class ResourceManagerDiffEngine:
 
         log.debug("Built existing index with %s entries", len(existing_index))
 
-        changes: Dict[str, List] = {
+        changes: dict[str, list] = {
             "to_add": [],
             "to_update": [],
             "to_delete": [],
@@ -455,7 +446,7 @@ class ResourceManagerDiffEngine:
         # Build a secondary index keyed by normalised entity_name only.
         # Used to detect partial matches (same entity, different pool/scope/switch)
         # and populate the debugs bucket to mirror ND's mismatch logging.
-        entity_only_index: Dict[str, List[ResourceManagerResponse]] = {}
+        entity_only_index: dict[str, list[ResourceManagerResponse]] = {}
         for res in existing:
             norm = ResourceManagerDiffEngine._normalize_entity_key(res.entity_name or "", log=log)
             entity_only_index.setdefault(norm, []).append(res)
@@ -682,8 +673,11 @@ class ResourceManagerDiffEngine:
 
         Returns:
             None.
+
+        Raises:
+            ValueError: When any provided field does not match the API response.
         """
-        mismatches: List[str] = []
+        mismatches: list[str] = []
 
         # entity_name: tilde-order-insensitive comparison
         if resource_cfg.entity_name is not None:
@@ -769,11 +763,10 @@ class ResourceManagerDiffEngine:
             )
 
         if mismatches:
-            nd.module.fail_json(
-                msg=(
-                    f"{context} field mismatch for entity '{resource_cfg.entity_name}'. "
-                    f"The following provided values do not match the API data:\n".join(f"  - {m}" for m in mismatches)
-                )
+            raise ValueError(
+                f"{context} field mismatch for entity '{resource_cfg.entity_name}'. "
+                f"The following provided values do not match the API data:\n"
+                + "\n".join(f"  - {m}" for m in mismatches)
             )
 
         log.debug(
@@ -828,9 +821,9 @@ class NDResourceManagerModule:
         self._resources_fetched = False
 
         # Cached GET results — switches
-        self._all_switches: List[SwitchRecord] = []
+        self._all_switches: list[SwitchRecord] = []
         self._switches_fetched = False
-        self._switch_ip_to_id: Dict[str, str] = {}
+        self._switch_ip_to_id: dict[str, str] = {}
 
         # Get All resources for the given fabric and cache them for matching during merged/deleted operations
         self._get_all_resources()
@@ -841,9 +834,9 @@ class NDResourceManagerModule:
         self.config = self._resolve_switch_ids_in_config(self.config)
 
         # Resource collections — existing/previous snapshot at init, proposed populated in manage_state
-        self.existing: List[ResourceManagerResponse] = list(self._all_resources)
-        self.previous: List[ResourceManagerResponse] = list(self._all_resources)
-        self.proposed: List[ResourceManagerConfigModel] = []
+        self.existing: list[ResourceManagerResponse] = list(self._all_resources)
+        self.previous: list[ResourceManagerResponse] = list(self._all_resources)
+        self.proposed: list[ResourceManagerConfigModel] = []
 
         # NDOutput for building consistent Ansible output across all states
         self.output: NDOutput = NDOutput(output_level=nd.params.get("output_level", "normal"))
@@ -932,7 +925,8 @@ class NDResourceManagerModule:
         For ``gathered`` state, mandatory field checks are skipped so that partial filter
         criteria (e.g. only ``pool_name`` or only ``switch``) are accepted.
 
-        Calls ``self.nd.module.fail_json`` directly on any validation failure.
+        Raises:
+            ValueError: On any validation failure.
         """
         self.log.info(
             "Validating input: state=%s, config_count=%s",
@@ -946,7 +940,7 @@ class NDResourceManagerModule:
                     "'config' is mandatory for state '%s' but was not provided",
                     self.state,
                 )
-                self.nd.module.fail_json(msg="'config' element is mandatory for state '{0}'".format(self.state))
+                raise ValueError("'config' element is mandatory for state '{0}'".format(self.state))
             return
 
         for item in self.config:
@@ -966,7 +960,7 @@ class NDResourceManagerModule:
                             field,
                             item,
                         )
-                        self.nd.module.fail_json(msg="Mandatory parameter '{0}' missing".format(field))
+                        raise ValueError("Mandatory parameter '{0}' missing".format(field))
                     else:
                         self.log.debug("Mandatory parameter '%s' present: %s", field, item.get(field))
 
@@ -977,7 +971,7 @@ class NDResourceManagerModule:
                         item.get("scope_type"),
                         item,
                     )
-                    self.nd.module.fail_json(msg="switch : Required parameter not found")
+                    raise ValueError("switch : Required parameter not found")
                 elif item.get("scope_type") != "fabric":
                     self.log.debug(
                         "'switch' provided for scope_type='%s': %s",
@@ -996,7 +990,7 @@ class NDResourceManagerModule:
                 rc, mesg = self._validate_resource_params(item)
                 if not rc:
                     self.log.error("Pool/scope compatibility check failed: %s", mesg)
-                    self.nd.module.fail_json(msg=mesg)
+                    raise ValueError(mesg)
                 else:
                     self.log.debug("Pool/scope compatibility check passed")
 
@@ -1014,7 +1008,7 @@ class NDResourceManagerModule:
                         item.get("entity_name"),
                         exc,
                     )
-                    self.nd.module.fail_json(msg="Invalid parameters in playbook: {0}".format(str(exc)))
+                    raise ValueError("Invalid parameters in playbook: {0}".format(str(exc)))
 
     # ------------------------------------------------------------------
     # ND API interaction helpers
@@ -1783,7 +1777,7 @@ class NDResourceManagerModule:
         self.changed_dict[0]["debugs"].extend(changes["debugs"])
 
         # Resources that need to be created: new (to_add) or value changed (to_update).
-        pending_items: List[Tuple] = changes["to_add"] + changes["to_update"]
+        pending_items: list[tuple[ResourceManagerConfigModel, str, ResourceManagerResponse]] = changes["to_add"] + changes["to_update"]
 
         if not pending_items:
             self.log.debug("manage_merged: No resources to create (all idempotent).")
@@ -1834,7 +1828,7 @@ class NDResourceManagerModule:
         # Build a normalised entity_name → cfg lookup for GAP-5 field validation.
         # If two items share a normalised name (unusual), the last one wins; that is
         # acceptable because validate_resource_api_fields uses order-insensitive comparison.
-        cfg_by_entity: Dict[str, ResourceManagerConfigModel] = {
+        cfg_by_entity: dict[str, ResourceManagerConfigModel] = {
             ResourceManagerDiffEngine._normalize_entity_key(cfg.entity_name, log=self.log): cfg for cfg, _payload in pending_payloads
         }
 
