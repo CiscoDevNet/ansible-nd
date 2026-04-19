@@ -59,7 +59,7 @@ options:
         description:
         - The license tier for the fabric.
         type: str
-        default: premier
+        default: essentials
         choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
@@ -71,12 +71,12 @@ options:
         description:
         - Enable telemetry collection for the fabric.
         type: bool
-        default: false
+        default: true
       telemetry_collection_type:
         description:
         - The telemetry collection type.
         type: str
-        default: outOfBand
+        default: inBand
       telemetry_streaming_protocol:
         description:
         - The telemetry streaming protocol.
@@ -86,12 +86,12 @@ options:
         description:
         - The telemetry source interface.
         type: str
-        default: ""
+        default: loopback0
       telemetry_source_vrf:
         description:
         - The telemetry source VRF.
         type: str
-        default: ""
+        default: default
       security_domain:
         description:
         - The security domain associated with the fabric.
@@ -644,7 +644,7 @@ options:
             description:
             - Enable NX-API over HTTPS.
             type: bool
-            default: false
+            default: true
           nxapi_http:
             description:
             - Enable NX-API over HTTP.
