@@ -11,7 +11,7 @@ __metaclass__ = type
 import re
 
 # from datetime import datetime
-from typing import List, Dict, Optional, ClassVar, Literal
+from typing import List, Optional, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (

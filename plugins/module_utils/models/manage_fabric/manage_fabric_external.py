@@ -8,8 +8,7 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-import re
-from typing import List, Dict, Optional, ClassVar, Literal
+from typing import List, Optional, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
