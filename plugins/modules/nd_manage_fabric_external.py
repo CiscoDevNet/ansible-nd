@@ -14,7 +14,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_manage_fabric_external
-version_added: "1.4.0"
+version_added: "2.0.0"
 short_description: Manage External Connectivity fabrics on Cisco Nexus Dashboard
 description:
 - Manage External Connectivity fabrics on Cisco Nexus Dashboard (ND).
@@ -59,7 +59,7 @@ options:
         description:
         - License Tier value of a fabric.
         type: str
-        default: premier
+        default: essentials
         choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
@@ -71,12 +71,12 @@ options:
         description:
         - Enable telemetry collection for the fabric.
         type: bool
-        default: false
+        default: true
       telemetry_collection_type:
         description:
         - Telemetry collection method.
         type: str
-        default: outOfBand
+        default: inBand
         choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
@@ -88,12 +88,12 @@ options:
         description:
         - Telemetry Source Interface (VLAN id or Loopback id) only valid if Telemetry Collection is set to inBand.
         type: str
-        default: ""
+        default: loopback0
       telemetry_source_vrf:
         description:
         - VRF over which telemetry is streamed, valid only if telemetry collection is set to inband.
         type: str
-        default: ""
+        default: default
       security_domain:
         description:
         - Security Domain associated with the fabric.

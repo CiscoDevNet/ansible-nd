@@ -11,81 +11,58 @@ __metaclass__ = type
 import re
 
 # from datetime import datetime
-from typing import List, Dict, Optional, ClassVar, Literal
+from typing import List, Optional, ClassVar, Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
     field_validator,
-    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
-    FabricTypeEnum,
-    AlertSuspendEnum,
-    LicenseTierEnum,
-    OverlayModeEnum,
-    ReplicationModeEnum,
-    LinkStateRoutingProtocolEnum,
-    CoppPolicyEnum,
-    FabricInterfaceTypeEnum,
-    GreenfieldDebugFlagEnum,
-    IsisLevelEnum,
-    SecurityGroupStatusEnum,
-    StpRootOptionEnum,
-    VpcPeerKeepAliveOptionEnum,
     AimlQosPolicyEnum,
     AllowVlanOnLeafTorPairingEnum,
     BgpAuthenticationKeyTypeEnum,
+    CoppPolicyEnum,
     DhcpProtocolVersionEnum,
     DlbMixedModeDefaultEnum,
     DlbModeEnum,
+    FabricInterfaceTypeEnum,
+    FabricTypeEnum,
+    GreenfieldDebugFlagEnum,
+    IsisLevelEnum,
+    LinkStateRoutingProtocolEnum,
     MacsecAlgorithmEnum,
     MacsecCipherSuiteEnum,
+    OverlayModeEnum,
     PowerRedundancyModeEnum,
     RendezvousPointCountEnum,
     RendezvousPointModeEnum,
+    ReplicationModeEnum,
     RouteReflectorCountEnum,
+    SecurityGroupStatusEnum,
+    StpRootOptionEnum,
     UnderlayMulticastGroupAddressLimitEnum,
+    VpcPeerKeepAliveOptionEnum,
     VrfLiteAutoConfigEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BGP_ASN_RE,
-    LocationModel,
-    NetflowExporterModel,
-    NetflowRecordModel,
-    NetflowMonitorModel,
-    NetflowSettingsModel,
     BootstrapSubnetModel,
-    TelemetryFlowCollectionModel,
-    TelemetryMicroburstModel,
-    TelemetryAnalysisSettingsModel,
-    TelemetryEnergyManagementModel,
-    TelemetrySettingsModel,
-    ExternalStreamingSettingsModel,
+    NetflowSettingsModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel
 
 """
 # Comprehensive Pydantic models for iBGP VXLAN fabric management via Nexus Dashboard
 
 This module provides comprehensive Pydantic models for creating, updating, and deleting
-iBGP VXLAN fabrics through the Nexus Dashboard Fabric Controller (NDFC) API.
+iBGP VXLAN fabrics through the Nexus Dashboard (ND) API.
 
 ## Models Overview
 
-- `LocationModel` - Geographic location coordinates
-- `NetflowExporterModel` - Netflow exporter configuration
-- `NetflowRecordModel` - Netflow record configuration
-- `NetflowMonitorModel` - Netflow monitor configuration
-- `NetflowSettingsModel` - Complete netflow settings
-- `BootstrapSubnetModel` - Bootstrap subnet configuration
-- `TelemetryFlowCollectionModel` - Telemetry flow collection settings
-- `TelemetrySettingsModel` - Complete telemetry configuration
-- `ExternalStreamingSettingsModel` - External streaming configuration
+- `FabricIbgpModel` - Complete fabric creation model
 - `VxlanIbgpManagementModel` - iBGP VXLAN specific management settings
-- `FabricModel` - Complete fabric creation model
-- `FabricDeleteModel` - Fabric deletion model
 
 ## Usage
 
@@ -97,10 +74,9 @@ fabric_data = {
     "management": {
         "type": "vxlanIbgp",
         "bgp_asn": "65001",
-        "site_id": "65001"
     }
 }
-fabric = FabricModel(**fabric_data)
+fabric = FabricIbgpModel(**fabric_data)
 ```
 """
 
@@ -131,6 +107,8 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # Name under management section is optional for backward compatibility, but if provided must be non-empty string
     name: Optional[str] = Field(description="Fabric name", min_length=1, max_length=64, default="")
+
+    # Fabric Designer Settings - unsupported at this time
     # border_count: Optional[int] = Field(alias="borderCount", description="Number of border switches", ge=0, le=32, default=0)
     # breakout_spine_interfaces: Optional[bool] = Field(alias="breakoutSpineInterfaces", description="Enable breakout spine interfaces", default=False)
     # designer_use_robot_password: Optional[bool] = Field(alias="designerUseRobotPassword", description="Use robot password for designer", default=False)
@@ -141,7 +119,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     #     alias="vrfLiteIpv6SubnetTargetMask",
     #     description="VRF Lite IPv6 subnet target mask", ge=112, le=128, default=126)
 
-    # Network Addressing
+    # Protocols and Resources
     bgp_loopback_ip_range: str = Field(alias="bgpLoopbackIpRange", description="Typically Loopback0 IP Address Range", default="10.2.0.0/22")
     nve_loopback_ip_range: str = Field(alias="nveLoopbackIpRange", description="Typically Loopback1 IP Address Range", default="10.3.0.0/22")
     anycast_rendezvous_point_ip_range: str = Field(
@@ -168,7 +146,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     multicast_group_subnet: str = Field(
         alias="multicastGroupSubnet",
-        description=("Multicast pool prefix between 8 to 30. A multicast group ipv4 from this pool is used for BUM traffic for " "each overlay network."),
+        description=("Multicast pool prefix between 8 to 30. A multicast group ipv4 from this pool is used for BUM traffic for each overlay network."),
         default="239.1.1.0/25",
     )
     auto_generate_multicast_group_address: bool = Field(
@@ -178,7 +156,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     underlay_multicast_group_address_limit: UnderlayMulticastGroupAddressLimitEnum = Field(
         alias="underlayMulticastGroupAddressLimit",
-        description=("The maximum supported value is 128 for NX-OS version 10.2(1) or earlier " "and 512 for versions above 10.2(1)"),
+        description=("The maximum supported value is 128 for NX-OS version 10.2(1) or earlier and 512 for versions above 10.2(1)"),
         default=UnderlayMulticastGroupAddressLimitEnum.V_128,
     )
     tenant_routed_multicast: bool = Field(alias="tenantRoutedMulticast", description="For Overlay ipv4 Multicast Support In VXLAN Fabrics", default=False)
@@ -200,12 +178,12 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="l2HostInterfaceMtu", description="Layer 2 host interface MTU. Must be an even number", ge=1500, le=9216, default=9216
     )
 
-    # VPC Configuration
+    # vPC Configuration
     vpc_domain_id_range: str = Field(
         alias="vpcDomainIdRange", description="vPC Domain id range (minimum: 1, maximum: 1000) to use for new pairings", default="1-1000"
     )
     vpc_peer_link_vlan: str = Field(alias="vpcPeerLinkVlan", description="VLAN range (minimum: 2, maximum: 4094) for vPC Peer Link SVI", default="3600")
-    vpc_peer_link_enable_native_vlan: bool = Field(alias="vpcPeerLinkEnableNativeVlan", description="Enable VpcPeer Link for Native Vlan", default=False)
+    vpc_peer_link_enable_native_vlan: bool = Field(alias="vpcPeerLinkEnableNativeVlan", description="Enable vPC Peer Link for Native Vlan", default=False)
     vpc_peer_keep_alive_option: VpcPeerKeepAliveOptionEnum = Field(
         alias="vpcPeerKeepAliveOption", description="Use vPC Peer Keep Alive with Loopback or Management", default=VpcPeerKeepAliveOptionEnum.MANAGEMENT
     )
@@ -238,7 +216,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     # Optional Advanced Settings
     performance_monitoring: bool = Field(
         alias="performanceMonitoring",
-        description=("If enabled, switch metrics are collected through periodic SNMP polling. " "Alternative to real-time telemetry"),
+        description=("If enabled, switch metrics are collected through periodic SNMP polling. Alternative to real-time telemetry"),
         default=False,
     )
     tenant_dhcp: bool = Field(alias="tenantDhcp", description="Enable Tenant DHCP", default=True)
@@ -247,7 +225,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     advertise_physical_ip_on_border: bool = Field(
         alias="advertisePhysicalIpOnBorder",
-        description=("Enable advertise-pip on vPC borders and border gateways only. Applicable only when vPC advertise-pip is " "not enabled"),
+        description=("Enable advertise-pip on vPC borders and border gateways only. Applicable only when vPC advertise-pip is not enabled"),
         default=True,
     )
 
@@ -262,7 +240,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     bfd_ibgp: bool = Field(alias="bfdIbgp", description="Enable BFD For iBGP", default=False)
 
     # Management Settings
-    nxapi: bool = Field(description="Enable NX-API over HTTPS", default=False)
+    nxapi: bool = Field(description="Enable NX-API over HTTPS", default=True)
     nxapi_http: bool = Field(alias="nxapiHttp", description="Enable NX-API over HTTP", default=False)
     nxapi_https_port: int = Field(alias="nxapiHttpsPort", description="HTTPS port for NX-API", ge=1, le=65535, default=443)
     nxapi_http_port: int = Field(alias="nxapiHttpPort", description="HTTP port for NX-API", ge=1, le=65535, default=80)
@@ -294,7 +272,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="tcamAllocation", description="TCAM commands are automatically generated for VxLAN and vPC Fabric Peering when Enabled", default=True
     )
 
-    # VPC Extended Configuration
+    # vPC Extended Configuration
     vpc_peer_link_port_channel_id: str = Field(
         alias="vpcPeerLinkPortChannelId", description="vPC Peer Link Port Channel ID (minimum: 1, maximum: 4096)", default="500"
     )
@@ -393,22 +371,22 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="l3vniMulticastGroup", description="Default Underlay Multicast group IPv4 address assigned for every overlay VRF", default="239.1.1.0"
     )
     l3_vni_ipv6_multicast_group: str = Field(
-        alias="l3VniIpv6MulticastGroup", description="Default Underlay Multicast group IP6 address assigned for every overlay VRF", default="ff1e::"
+        alias="l3VniIpv6MulticastGroup", description="Default Underlay Multicast group IPv6 address assigned for every overlay VRF", default="ff1e::"
     )
     rendezvous_point_mode: RendezvousPointModeEnum = Field(
-        alias="rendezvousPointMode", description="Multicast rendezvous point Mode. For ipv6 underlay, please use asm only", default=RendezvousPointModeEnum.ASM
+        alias="rendezvousPointMode", description="Multicast rendezvous point Mode. For IPv6 underlay, please use asm only", default=RendezvousPointModeEnum.ASM
     )
     phantom_rendezvous_point_loopback_id1: int = Field(
-        alias="phantomRendezvousPointLoopbackId1", description="Underlay phantom rendezvous point loopback primary Id for PIM Bi-dir deployments", default=2
+        alias="phantomRendezvousPointLoopbackId1", description="Underlay phantom rendezvous point loopback primary Id for PIM Bidir deployments", default=2
     )
     phantom_rendezvous_point_loopback_id2: int = Field(
-        alias="phantomRendezvousPointLoopbackId2", description="Underlay phantom rendezvous point loopback secondary Id for PIM Bi-dir deployments", default=3
+        alias="phantomRendezvousPointLoopbackId2", description="Underlay phantom rendezvous point loopback secondary Id for PIM Bidir deployments", default=3
     )
     phantom_rendezvous_point_loopback_id3: int = Field(
-        alias="phantomRendezvousPointLoopbackId3", description="Underlay phantom rendezvous point loopback tertiary Id for PIM Bi-dir deployments", default=4
+        alias="phantomRendezvousPointLoopbackId3", description="Underlay phantom rendezvous point loopback tertiary Id for PIM Bidir deployments", default=4
     )
     phantom_rendezvous_point_loopback_id4: int = Field(
-        alias="phantomRendezvousPointLoopbackId4", description="Underlay phantom rendezvous point loopback quaternary Id for PIM Bi-dir deployments", default=5
+        alias="phantomRendezvousPointLoopbackId4", description="Underlay phantom rendezvous point loopback quaternary Id for PIM Bidir deployments", default=5
     )
     anycast_loopback_id: int = Field(
         alias="anycastLoopbackId", description="Underlay Anycast Loopback Id.  Used for vPC Peering in VXLANv6 Fabrics", default=10
@@ -465,7 +443,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     default_vrf_redistribution_bgp_route_map: str = Field(
         alias="defaultVrfRedistributionBgpRouteMap",
-        description=("Route Map used to redistribute BGP routes to IGP in default vrf " "in auto created VRF Lite IFC links"),
+        description=("Route Map used to redistribute BGP routes to IGP in default vrf in auto created VRF Lite IFC links"),
         default="extcon-rmap-filter",
     )
 
@@ -561,7 +539,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     # MACsec
     macsec: bool = Field(
         description=(
-            "Enable MACsec in the fabric. MACsec fabric parameters are used for configuring MACsec on a fabric link if " "MACsec is enabled on the link."
+            "Enable MACsec in the fabric. MACsec fabric parameters are used for configuring MACsec on a fabric link if MACsec is enabled on the link."
         ),
         default=False,
     )
@@ -602,7 +580,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     vrf_lite_macsec_fallback_key_string: str = Field(
         alias="vrfLiteMacsecFallbackKeyString",
-        description=("DCI MACsec Fallback Key String.  Cisco Type 7 Encrypted Octet String. " "This parameter is used when DCI link has QKD disabled."),
+        description=("DCI MACsec Fallback Key String.  Cisco Type 7 Encrypted Octet String. This parameter is used when DCI link has QKD disabled."),
         default="",
     )
     vrf_lite_macsec_fallback_algorithm: MacsecAlgorithmEnum = Field(
@@ -614,7 +592,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     # Quantum Key Distribution / Trustpoint
     quantum_key_distribution: bool = Field(
         alias="quantumKeyDistribution",
-        description=("Enable Data Center Interconnect Media Access Control Security " "with Quantum Key Distribution config"),
+        description=("Enable Data Center Interconnect Media Access Control Security with Quantum Key Distribution config"),
         default=False,
     )
     quantum_key_distribution_profile_name: str = Field(
@@ -686,12 +664,12 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     aiml_qos: bool = Field(
         alias="aimlQos",
-        description=("Configures QoS and Queuing Policies specific to N9K Cloud Scale (CS) & Silicon One (S1) switch fabric for " "AI network workloads"),
+        description=("Configures QoS and Queuing Policies specific to N9K Cloud Scale (CS) & Silicon One (S1) switch fabric for AI network workloads"),
         default=False,
     )
     aiml_qos_policy: AimlQosPolicyEnum = Field(
         alias="aimlQosPolicy",
-        description=("Queuing Policy based on predominant fabric link speed: 800G / 400G / 100G / 25G. User-defined allows for " "custom configuration."),
+        description=("Queuing Policy based on predominant fabric link speed: 800G / 400G / 100G / 25G. User-defined allows for custom configuration."),
         default=AimlQosPolicyEnum.V_400G,
     )
     roce_v2: str = Field(
@@ -715,9 +693,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     wred_weight: int = Field(alias="wredWeight", description="Influences how quickly WRED reacts to queue depth changes", default=0)
     bandwidth_remaining: int = Field(alias="bandwidthRemaining", description="Percentage of remaining bandwidth allocated to AI traffic queues", default=50)
     dlb: bool = Field(
-        description=(
-            "Enables fabric-level Dynamic Load Balancing (DLB) configuration. Note: Inter-Switch-Links (ISL) will be " "configured as DLB Interfaces"
-        ),
+        description=("Enables fabric-level Dynamic Load Balancing (DLB) configuration. Note: Inter-Switch-Links (ISL) will be configured as DLB Interfaces"),
         default=False,
     )
     dlb_mode: DlbModeEnum = Field(
@@ -829,7 +805,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     ip_service_level_agreement_id_range: str = Field(
         alias="ipServiceLevelAgreementIdRange",
-        description=("Service Level Agreement (SLA) ID Range " "(minimum: 1, maximum: 655214748364735). Per switch SLA ID Range"),
+        description=("Service Level Agreement (SLA) ID Range (minimum: 1, maximum: 655214748364735). Per switch SLA ID Range"),
         default="10000-19999",
     )
     object_tracking_number_range: str = Field(
@@ -839,7 +815,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     service_network_vlan_range: str = Field(
         alias="serviceNetworkVlanRange",
-        description=("Service Network VLAN Range (minimum: 2, maximum: 4094). " "Per Switch Overlay Service Network VLAN Range"),
+        description=("Service Network VLAN Range (minimum: 2, maximum: 4094). Per Switch Overlay Service Network VLAN Range"),
         default="3000-3199",
     )
     route_map_sequence_number_range: str = Field(
@@ -859,7 +835,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # Extra Config / Pre-Interface Config / AAA / Banner
     banner: str = Field(
-        description=("Message of the Day (motd) banner. Delimiter char (very first char is delimiter char) followed by message " "ending with delimiter"),
+        description=("Message of the Day (motd) banner. Delimiter char (very first char is delimiter char) followed by message ending with delimiter"),
         default="",
     )
     extra_config_leaf: str = Field(
@@ -873,13 +849,13 @@ class VxlanIbgpManagementModel(NDNestedModel):
     extra_config_spine: str = Field(
         alias="extraConfigSpine",
         description=(
-            "Additional CLIs as captured from the show running configuration, added after interface configurations for " "all switches with some spine role"
+            "Additional CLIs as captured from the show running configuration, added after interface configurations for all switches with some spine role"
         ),
         default="",
     )
     extra_config_tor: str = Field(
         alias="extraConfigTor",
-        description=("Additional CLIs as captured from the show running configuration, added after interface configurations for " "all ToRs"),
+        description=("Additional CLIs as captured from the show running configuration, added after interface configurations for all ToRs"),
         default="",
     )
     extra_config_intra_fabric_links: str = Field(alias="extraConfigIntraFabricLinks", description="Additional CLIs for all Intra-Fabric links", default="")
@@ -896,13 +872,13 @@ class VxlanIbgpManagementModel(NDNestedModel):
     pre_interface_config_spine: str = Field(
         alias="preInterfaceConfigSpine",
         description=(
-            "Additional CLIs as captured from the show running configuration, added before interface " "configurations for all switches with some spine role"
+            "Additional CLIs as captured from the show running configuration, added before interface configurations for all switches with some spine role"
         ),
         default="",
     )
     pre_interface_config_tor: str = Field(
         alias="preInterfaceConfigTor",
-        description=("Additional CLIs as captured from the show running configuration, added before interface " "configurations for all ToRs"),
+        description=("Additional CLIs as captured from the show running configuration, added before interface configurations for all ToRs"),
         default="",
     )
 
@@ -923,7 +899,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     nve_hold_down_timer: int = Field(alias="nveHoldDownTimer", description="NVE Source Inteface HoldDown Time in seconds", default=180)
     next_generation_oam: bool = Field(
         alias="nextGenerationOAM",
-        description=("Enable the Next Generation (NG) OAM feature for all switches in the fabric to aid in trouble-shooting " "VXLAN EVPN fabrics"),
+        description=("Enable the Next Generation (NG) OAM feature for all switches in the fabric to aid in trouble-shooting VXLAN EVPN fabrics"),
         default=True,
     )
     ngoam_south_bound_loop_detect: bool = Field(
@@ -941,7 +917,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
     strict_config_compliance_mode: bool = Field(
         alias="strictConfigComplianceMode",
-        description=("Enable bi-directional compliance checks to flag additional configs in the running config that are not in " "the intent/expected config"),
+        description=("Enable bi-directional compliance checks to flag additional configs in the running config that are not in the intent/expected config"),
         default=False,
     )
     advanced_ssh_option: bool = Field(
@@ -1009,7 +985,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         - `ValueError` - If the value does not match the expected ASN format
         """
         if not BGP_ASN_RE.match(value):
-            raise ValueError(f"Invalid BGP ASN '{value}'. " "Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
+            raise ValueError(f"Invalid BGP ASN '{value}'. Expected a plain integer (1-4294967295) or dotted notation (1-65535.0-65535).")
         return value
 
     @field_validator("site_id")
@@ -1057,7 +1033,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         return value.lower()
 
 
-class FabricIbgpModel(NDBaseModel):
+class FabricIbgpModel(FabricBaseModel):
     """
     # Summary
 
@@ -1072,74 +1048,13 @@ class FabricIbgpModel(NDBaseModel):
     - `TypeError` - If field types don't match expected types
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow"  # Allow extra fields from API responses
-    )
-
-    identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
-
-    # Basic Fabric Properties
-    category: Literal["fabric"] = Field(description="Resource category", default="fabric")
-    fabric_name: str = Field(alias="name", description="Fabric name", min_length=1, max_length=64)
-    location: Optional[LocationModel] = Field(description="Geographic location of the fabric", default=None)
-
-    # License and Operations
-    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License tier", default=LicenseTierEnum.PREMIER)
-    alert_suspend: AlertSuspendEnum = Field(alias="alertSuspend", description="Alert suspension state", default=AlertSuspendEnum.DISABLED)
-    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection", default=False)
-    telemetry_collection_type: str = Field(alias="telemetryCollectionType", description="Telemetry collection type", default="outOfBand")
-    telemetry_streaming_protocol: str = Field(alias="telemetryStreamingProtocol", description="Telemetry streaming protocol", default="ipv4")
-    telemetry_source_interface: str = Field(alias="telemetrySourceInterface", description="Telemetry source interface", default="")
-    telemetry_source_vrf: str = Field(alias="telemetrySourceVrf", description="Telemetry source VRF", default="")
-    security_domain: str = Field(alias="securityDomain", description="Security domain", default="all")
+    _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.VXLAN_IBGP
 
     # Core Management Configuration
     management: Optional[VxlanIbgpManagementModel] = Field(description="iBGP VXLAN management configuration", default=None)
 
-    # Optional Advanced Settings
-    telemetry_settings: Optional[TelemetrySettingsModel] = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
-    external_streaming_settings: ExternalStreamingSettingsModel = Field(
-        alias="externalStreamingSettings", description="External streaming settings", default_factory=ExternalStreamingSettingsModel
-    )
-
-    @field_validator("fabric_name")
-    @classmethod
-    def validate_fabric_name(cls, value: str) -> str:
-        """
-        # Summary
-
-        Validate fabric name format and characters.
-
-        ## Raises
-
-        - `ValueError` - If name contains invalid characters or format
-        """
-        if not re.match(r"^[a-zA-Z0-9_-]+$", value):
-            raise ValueError(f"Fabric name can only contain letters, numbers, underscores, and hyphens, got: {value}")
-
-        return value
-
-    @model_validator(mode="after")
-    def validate_fabric_consistency(self) -> "FabricModel":
-        """
-        # Summary
-
-        Validate consistency between fabric settings and management configuration.
-
-        ## Raises
-
-        - `ValueError` - If fabric settings are inconsistent
-        """
-        # Ensure management type matches model type
-        if self.management is not None and self.management.type != FabricTypeEnum.VXLAN_IBGP:
-            raise ValueError(f"Management type must be {FabricTypeEnum.VXLAN_IBGP}")
-
-        # Propagate fabric name to management model
-        if self.management is not None:
-            self.management.name = self.fabric_name
-
-        # Propagate BGP ASN to Site ID management model if not set
+    def _post_validate_consistency(self) -> None:
+        """Propagate BGP ASN to site_id if site_id is empty."""
         if self.management is not None and self.management.site_id == "":
             bgp_asn = self.management.bgp_asn
             if "." in bgp_asn:
@@ -1150,46 +1065,9 @@ class FabricIbgpModel(NDBaseModel):
                 # Already plain decimal
                 self.management.site_id = bgp_asn
 
-        # Validate telemetry consistency
-        if self.telemetry_collection and self.telemetry_settings is None:
-            # Auto-create default telemetry settings if collection is enabled
-            self.telemetry_settings = TelemetrySettingsModel()
-
-        return self
-
-    # TODO: to generate from Fields (low priority)
-    @classmethod
-    def get_argument_spec(cls) -> Dict:
-        return dict(
-            state={
-                "type": "str",
-                "default": "merged",
-                "choices": ["merged", "replaced", "deleted", "overridden"],
-            },
-            config={"required": False, "type": "list", "elements": "dict"},
-        )
-
 
 # Export all models for external use
 __all__ = [
-    "LocationModel",
-    "NetflowExporterModel",
-    "NetflowRecordModel",
-    "NetflowMonitorModel",
-    "NetflowSettingsModel",
-    "BootstrapSubnetModel",
-    "TelemetryFlowCollectionModel",
-    "TelemetryMicroburstModel",
-    "TelemetryAnalysisSettingsModel",
-    "TelemetryEnergyManagementModel",
-    "TelemetrySettingsModel",
-    "ExternalStreamingSettingsModel",
-    "VxlanIbgpManagementModel",
     "FabricIbgpModel",
-    "FabricTypeEnum",
-    "AlertSuspendEnum",
-    "LicenseTierEnum",
-    "ReplicationModeEnum",
-    "OverlayModeEnum",
-    "LinkStateRoutingProtocolEnum",
+    "VxlanIbgpManagementModel",
 ]
