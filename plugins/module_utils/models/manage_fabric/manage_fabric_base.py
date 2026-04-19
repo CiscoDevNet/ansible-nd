@@ -68,9 +68,7 @@ class FabricBaseModel(NDBaseModel):
     - `TypeError` - If field types don't match expected types
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow"
-    )
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     # ── ClassVars (shared across all fabric models) ──
     identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
@@ -109,9 +107,7 @@ class FabricBaseModel(NDBaseModel):
     # ── Optional Advanced Settings ──
     # NOTE: `management` is intentionally NOT defined here — subclasses define it
     # with their specific management model type.
-    telemetry_settings: Optional[TelemetrySettingsModel] = Field(
-        alias="telemetrySettings", description="Telemetry configuration", default=None
-    )
+    telemetry_settings: Optional[TelemetrySettingsModel] = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
     external_streaming_settings: ExternalStreamingSettingsModel = Field(
         alias="externalStreamingSettings", description="External streaming settings", default_factory=ExternalStreamingSettingsModel
     )
