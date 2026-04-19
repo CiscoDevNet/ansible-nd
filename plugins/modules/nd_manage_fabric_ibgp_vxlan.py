@@ -13,7 +13,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 
 DOCUMENTATION = r"""
 ---
-module: nd_manage_fabric_ibgp
+module: nd_manage_fabric_ibgp_vxlan
 version_added: "2.0.0"
 short_description: Manage iBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
@@ -1584,7 +1584,7 @@ notes:
 
 EXAMPLES = r"""
 - name: Create an iBGP VXLAN fabric using state merged
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: merged
     config:
       - fabric_name: my_fabric
@@ -1664,7 +1664,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Update specific fields on an existing fabric using state merged (partial update)
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: merged
     config:
       - fabric_name: my_fabric
@@ -1677,7 +1677,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Create or fully replace an iBGP VXLAN fabric using state replaced
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: replaced
     config:
       - fabric_name: my_fabric
@@ -1761,7 +1761,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Replace fabric with only required fields (all optional settings revert to defaults)
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: replaced
     config:
       - fabric_name: my_fabric
@@ -1774,7 +1774,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Enforce exact fabric inventory using state overridden (deletes unlisted fabrics)
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: overridden
     config:
       - fabric_name: fabric_east
@@ -1830,14 +1830,14 @@ EXAMPLES = r"""
   register: result
 
 - name: Delete a specific fabric using state deleted
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: deleted
     config:
       - fabric_name: my_fabric
   register: result
 
 - name: Delete multiple fabrics in a single task
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     state: deleted
     config:
       - fabric_name: fabric_east
@@ -1852,8 +1852,8 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp import FabricIbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp import ManageIbgpFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ibgp_vxlan import ManageIbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 
 

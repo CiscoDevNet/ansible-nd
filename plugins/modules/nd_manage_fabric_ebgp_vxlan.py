@@ -13,7 +13,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 
 DOCUMENTATION = r"""
 ---
-module: nd_manage_fabric_ebgp
+module: nd_manage_fabric_ebgp_vxlan
 version_added: "2.0.0"
 short_description: Manage eBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
@@ -1381,7 +1381,7 @@ notes:
 
 EXAMPLES = r"""
 - name: Create an eBGP VXLAN fabric using state merged (with auto ASN allocation)
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: merged
     config:
       - fabric_name: my_ebgp_fabric
@@ -1462,7 +1462,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Create an eBGP VXLAN fabric with a static BGP ASN
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: merged
     config:
       - fabric_name: my_ebgp_fabric_static
@@ -1488,7 +1488,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Update specific fields on an existing eBGP fabric using state merged (partial update)
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: merged
     config:
       - fabric_name: my_ebgp_fabric
@@ -1500,7 +1500,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Create or fully replace an eBGP VXLAN fabric using state replaced
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: replaced
     config:
       - fabric_name: my_ebgp_fabric
@@ -1553,7 +1553,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Replace fabric with only required fields (all optional settings revert to defaults)
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: replaced
     config:
       - fabric_name: my_ebgp_fabric
@@ -1567,7 +1567,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Enforce exact fabric inventory using state overridden (deletes unlisted fabrics)
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: overridden
     config:
       - fabric_name: fabric_east
@@ -1627,14 +1627,14 @@ EXAMPLES = r"""
   register: result
 
 - name: Delete a specific eBGP fabric using state deleted
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: deleted
     config:
       - fabric_name: my_ebgp_fabric
   register: result
 
 - name: Delete multiple eBGP fabrics in a single task
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: deleted
     config:
       - fabric_name: fabric_east
@@ -1649,8 +1649,8 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp import FabricEbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp import ManageEbgpFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 
 

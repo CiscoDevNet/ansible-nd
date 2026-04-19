@@ -18,7 +18,7 @@
 # CLEANUP - Ensure clean state before tests
 #############################################################################
 - name: Clean up any existing test fabrics before starting tests
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -30,7 +30,7 @@
 # TEST 1: STATE MERGED - Create fabric using merged state
 #############################################################################
 - name: "TEST 1a: Create fabric using state merged (first run)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -48,7 +48,7 @@
   tags: [test_merged, test_merged_create]
 
 - name: "TEST 1b: Create fabric using state merged (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -66,7 +66,7 @@
   tags: [test_merged, test_merged_idempotent]
 
 - name: "TEST 1c: Update fabric using state merged (modify existing)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -490,7 +490,7 @@
 # TEST 2: STATE REPLACED - Create and manage fabric using replaced state
 #############################################################################
 - name: "TEST 2a: Create fabric using state replaced (first run)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
@@ -585,7 +585,7 @@
   tags: [test_replaced, test_replaced_create]
 
 - name: "TEST 2b: Create fabric using state replaced (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
@@ -680,7 +680,7 @@
   tags: [test_replaced, test_replaced_idempotent]
 
 - name: "TEST 2c: Update fabric using state replaced (complete replacement)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: replaced
     config:
@@ -1071,7 +1071,7 @@
 # TEST 3: STATE DELETED - Delete fabrics (uses test_fabric_replaced from TEST 2)
 #############################################################################
 - name: "TEST 3a: Delete fabric using state deleted"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -1089,7 +1089,7 @@
   tags: [test_deleted, test_deleted_delete]
 
 - name: "TEST 3b: Delete fabric using state deleted (second run - idempotency test)"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -1110,7 +1110,7 @@
 # TEST 4: Multiple fabric operations in single task
 #############################################################################
 - name: "TEST 4: Multiple fabric operations in single task"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: merged
     config:
@@ -1286,7 +1286,7 @@
 # FINAL CLEANUP - Clean up all test fabrics
 #############################################################################
 - name: "CLEANUP: Delete all test fabrics"
-  cisco.nd.nd_manage_fabric_ibgp:
+  cisco.nd.nd_manage_fabric_ibgp_vxlan:
     <<: *nd_info
     state: deleted
     config:
@@ -1304,7 +1304,7 @@
   debug:
     msg: |
       ========================================================
-      TEST SUMMARY for cisco.nd.nd_manage_fabric_ibgp module:
+      TEST SUMMARY for cisco.nd.nd_manage_fabric_ibgp_vxlan module:
       ========================================================
       ✓ TEST 1: STATE MERGED
         - Create fabric: {{ 'PASSED' if merged_result_1 is changed else 'FAILED' }}
