@@ -13,17 +13,14 @@ import re
 # from datetime import datetime
 from typing import List, Dict, Optional, ClassVar, Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
     field_validator,
-    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
     AimlQosPolicyEnum,
-    AlertSuspendEnum,
     AllowVlanOnLeafTorPairingEnum,
     BgpAuthenticationKeyTypeEnum,
     CoppPolicyEnum,
@@ -34,7 +31,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     FabricTypeEnum,
     GreenfieldDebugFlagEnum,
     IsisLevelEnum,
-    LicenseTierEnum,
     LinkStateRoutingProtocolEnum,
     MacsecAlgorithmEnum,
     MacsecCipherSuiteEnum,
@@ -46,8 +42,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
     RouteReflectorCountEnum,
     SecurityGroupStatusEnum,
     StpRootOptionEnum,
-    TelemetryCollectionTypeEnum,
-    TelemetryStreamingProtocolEnum,
     UnderlayMulticastGroupAddressLimitEnum,
     VpcPeerKeepAliveOptionEnum,
     VrfLiteAutoConfigEnum,
@@ -55,11 +49,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enum
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
     BGP_ASN_RE,
     BootstrapSubnetModel,
-    ExternalStreamingSettingsModel,
-    LocationModel,
     NetflowSettingsModel,
-    TelemetrySettingsModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_base import FabricBaseModel
 
 """
 # Comprehensive Pydantic models for iBGP VXLAN fabric management via Nexus Dashboard
@@ -248,7 +240,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     bfd_ibgp: bool = Field(alias="bfdIbgp", description="Enable BFD For iBGP", default=False)
 
     # Management Settings
-    nxapi: bool = Field(description="Enable NX-API over HTTPS", default=False)
+    nxapi: bool = Field(description="Enable NX-API over HTTPS", default=True)
     nxapi_http: bool = Field(alias="nxapiHttp", description="Enable NX-API over HTTP", default=False)
     nxapi_https_port: int = Field(alias="nxapiHttpsPort", description="HTTPS port for NX-API", ge=1, le=65535, default=443)
     nxapi_http_port: int = Field(alias="nxapiHttpPort", description="HTTP port for NX-API", ge=1, le=65535, default=80)
@@ -1041,7 +1033,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
         return value.lower()
 
 
-class FabricIbgpModel(NDBaseModel):
+class FabricIbgpModel(FabricBaseModel):
     """
     # Summary
 
@@ -1056,86 +1048,13 @@ class FabricIbgpModel(NDBaseModel):
     - `TypeError` - If field types don't match expected types
     """
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow"  # Allow extra fields from API responses
-    )
-
-    identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
-
-    # Basic Fabric Properties
-    category: Literal["fabric"] = Field(description="Resource category", default="fabric")
-    fabric_name: str = Field(alias="name", description="Fabric name", min_length=1, max_length=64)
-    location: Optional[LocationModel] = Field(description="Geographic location of the fabric", default=None)
-
-    # License and Operations
-    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License Tier for fabric.", default=LicenseTierEnum.ESSENTIALS)
-    alert_suspend: AlertSuspendEnum = Field(
-        alias="alertSuspend", description="Alert Suspend state configured on the fabric.", default=AlertSuspendEnum.DISABLED
-    )
-    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection.", default=True)
-    telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
-        alias="telemetryCollectionType", description="Telemetry collection method.", default=TelemetryCollectionTypeEnum.IN_BAND
-    )
-    telemetry_streaming_protocol: TelemetryStreamingProtocolEnum = Field(
-        alias="telemetryStreamingProtocol", description="Telemetry Streaming Protocol.", default=TelemetryStreamingProtocolEnum.IPV4
-    )
-    telemetry_source_interface: str = Field(
-        alias="telemetrySourceInterface",
-        description="Telemetry Source Interface Loopback ID, only valid if Telemetry Collection is set to inBand.",
-        default="loopback0",
-    )
-    telemetry_source_vrf: str = Field(
-        alias="telemetrySourceVrf", description="VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.", default="default"
-    )
-    security_domain: str = Field(alias="securityDomain", description="Security Domain associated with the fabric.", default="all")
+    _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.VXLAN_IBGP
 
     # Core Management Configuration
     management: Optional[VxlanIbgpManagementModel] = Field(description="iBGP VXLAN management configuration", default=None)
 
-    # Optional Advanced Settings
-    telemetry_settings: Optional[TelemetrySettingsModel] = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
-    external_streaming_settings: ExternalStreamingSettingsModel = Field(
-        alias="externalStreamingSettings", description="External streaming settings", default_factory=ExternalStreamingSettingsModel
-    )
-
-    @field_validator("fabric_name")
-    @classmethod
-    def validate_fabric_name(cls, value: str) -> str:
-        """
-        # Summary
-
-        Validate fabric name format and characters.
-
-        ## Raises
-
-        - `ValueError` - If name contains invalid characters or format
-        """
-        if not re.match(r"^[a-zA-Z0-9_-]+$", value):
-            raise ValueError(f"Fabric name can only contain letters, numbers, underscores, and hyphens, got: {value}")
-
-        return value
-
-    @model_validator(mode="after")
-    def validate_fabric_consistency(self) -> "FabricModel":
-        """
-        # Summary
-
-        Validate consistency between fabric settings and management configuration.
-
-        ## Raises
-
-        - `ValueError` - If fabric settings are inconsistent
-        """
-        # Ensure management type matches model type
-        if self.management is not None and self.management.type != FabricTypeEnum.VXLAN_IBGP:
-            raise ValueError(f"Management type must be {FabricTypeEnum.VXLAN_IBGP}")
-
-        # Propagate fabric name to management model
-        if self.management is not None:
-            self.management.name = self.fabric_name
-
-        # Propagate BGP ASN to Site ID management model if not set
+    def _post_validate_consistency(self) -> None:
+        """Propagate BGP ASN to site_id if site_id is empty."""
         if self.management is not None and self.management.site_id == "":
             bgp_asn = self.management.bgp_asn
             if "." in bgp_asn:
@@ -1145,25 +1064,6 @@ class FabricIbgpModel(NDBaseModel):
             else:
                 # Already plain decimal
                 self.management.site_id = bgp_asn
-
-        # Validate telemetry consistency
-        if self.telemetry_collection and self.telemetry_settings is None:
-            # Auto-create default telemetry settings if collection is enabled
-            self.telemetry_settings = TelemetrySettingsModel()
-
-        return self
-
-    # TODO: to generate from Fields (low priority)
-    @classmethod
-    def get_argument_spec(cls) -> Dict:
-        return dict(
-            state={
-                "type": "str",
-                "default": "merged",
-                "choices": ["merged", "replaced", "deleted", "overridden"],
-            },
-            config={"required": False, "type": "list", "elements": "dict"},
-        )
 
 
 # Export all models for external use

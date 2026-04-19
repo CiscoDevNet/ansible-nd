@@ -163,11 +163,6 @@ options:
               used for BGP Router ID to the routing loopback interface.
             type: bool
             default: true
-          evpn:
-            description:
-            - Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric.
-            type: bool
-            default: true
           route_map_tag:
             description:
             - Tag for Route Map FABRIC-RMAP-REDIST-SUBNET. (Min 0, Max 4294967295).
