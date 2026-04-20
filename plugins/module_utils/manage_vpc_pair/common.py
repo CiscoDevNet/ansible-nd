@@ -3,8 +3,10 @@
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+from __future__ import annotations
+
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import (
     VpcPairResourceError,
@@ -16,7 +18,7 @@ DEFAULT_CONFIG_ACTION_TYPE = "switch"
 CONFIG_ACTION_TYPE_CHOICES = ("switch", "global")
 
 
-def _collection_to_list_flex(collection: Any) -> List[Dict[str, Any]]:
+def _collection_to_list_flex(collection: Any) -> list[dict[str, Any]]:
     """
     Serialize NDConfigCollection across old/new framework variants.
 
@@ -82,7 +84,7 @@ def _canonicalize_for_compare(value: Any) -> Any:
     return value
 
 
-def _is_update_needed(want: Dict[str, Any], have: Dict[str, Any]) -> bool:
+def _is_update_needed(want: dict[str, Any], have: dict[str, Any]) -> bool:
     """
     Determine if an update is needed by comparing want and have.
 
@@ -187,7 +189,7 @@ def _normalize_bool(value: Any, fallback: bool) -> bool:
     return fallback
 
 
-def get_verify_settings(module: Any) -> Dict[str, Any]:
+def get_verify_settings(module: Any) -> dict[str, Any]:
     """
     Return normalized verification settings.
 
@@ -212,7 +214,7 @@ def get_verify_settings(module: Any) -> Dict[str, Any]:
     }
 
 
-def get_config_actions(module: Any) -> Dict[str, Any]:
+def get_config_actions(module: Any) -> dict[str, Any]:
     """
     Return normalized configuration action controls.
 

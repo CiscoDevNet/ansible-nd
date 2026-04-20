@@ -21,7 +21,9 @@ TODO:
   model fields as we expand model coverage.
 """
 
-from typing import List, Dict, Any, Optional, Union, ClassVar, Literal
+from __future__ import annotations
+
+from typing import Any, Optional, Union, ClassVar, Literal
 
 try:
     from typing import Self
@@ -202,7 +204,7 @@ class VpcPairDetailsCustom(NDNestedModel):
 
     type: Literal["custom"] = Field(default="custom", alias="type", description="Template type")
     template_name: str = Field(alias="templateName", description="Name of the custom template")
-    template_config: Dict[str, Any] = Field(alias="templateConfig", description="Free-form configuration")
+    template_config: dict[str, Any] = Field(alias="templateConfig", description="Free-form configuration")
 
 
 # ============================================================================
@@ -224,7 +226,7 @@ class VpcPairBase(SwitchPairKeyMixin, NDBaseModel):
     """
 
     # Identifier configuration
-    identifiers: ClassVar[List[str]] = ["switch_id", "peer_switch_id"]
+    identifiers: ClassVar[list[str]] = ["switch_id", "peer_switch_id"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical"]] = "composite"
 
     # Fields with validation constraints
@@ -266,12 +268,12 @@ class VpcPairBase(SwitchPairKeyMixin, NDBaseModel):
         validate_distinct_switches(self.switch_id, self.peer_switch_id, "switch_id", "peer_switch_id")
         return self
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
         return self.model_dump(by_alias=True, exclude_none=True)
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> Self:
+    def from_response(cls, response: dict[str, Any]) -> Self:
         """Create instance from API response."""
         return cls.model_validate(response)
 
@@ -285,7 +287,7 @@ class VpcPairingRequest(SwitchPairKeyMixin, NDBaseModel):
     """
 
     # Identifier configuration
-    identifiers: ClassVar[List[str]] = ["switch_id", "peer_switch_id"]
+    identifiers: ClassVar[list[str]] = ["switch_id", "peer_switch_id"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical"]] = "composite"
 
     # Fields with validation constraints
@@ -328,12 +330,12 @@ class VpcPairingRequest(SwitchPairKeyMixin, NDBaseModel):
         validate_distinct_switches(self.switch_id, self.peer_switch_id, "switch_id", "peer_switch_id")
         return self
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
         return self.model_dump(by_alias=True, exclude_none=True)
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> Self:
+    def from_response(cls, response: dict[str, Any]) -> Self:
         """Create instance from API response."""
         return cls.model_validate(response)
 
@@ -347,7 +349,7 @@ class VpcUnpairingRequest(NDBaseModel):
     """
 
     # No identifiers for unpair request
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     # Fields
     vpc_action: VpcActionEnum = Field(default=VpcActionEnum.UNPAIR, alias="vpcAction", description="Action to unpair")
@@ -356,12 +358,12 @@ class VpcUnpairingRequest(NDBaseModel):
         """Override - unpair doesn't have identifiers."""
         return "unpair"
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
         return self.model_dump(by_alias=True, exclude_none=True)
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> Self:
+    def from_response(cls, response: dict[str, Any]) -> Self:
         """Create instance from API response."""
         return cls.model_validate(response)
 
@@ -453,7 +455,7 @@ class VpcPairsInventoryBase(NDNestedModel):
     peer_switch_id: str = Field(alias="peerSwitchId", description="Peer2 switch serial number")
     admin_status: InterfaceStatusCounts = Field(alias="adminStatus", description="Admin status")
     operational_status: InterfaceStatusCounts = Field(alias="operationalStatus", description="Operational status")
-    sync_status: Dict[str, FlexibleInt] = Field(alias="syncStatus", description="Sync status")
+    sync_status: dict[str, FlexibleInt] = Field(alias="syncStatus", description="Sync status")
     logical_interfaces: LogicalInterfaceCounts = Field(alias="logicalInterfaces", description="Logical interfaces")
 
 
@@ -466,8 +468,8 @@ class VpcPairsModuleBase(NDNestedModel):
 
     switch_id: str = Field(alias="switchId", description="Peer1 switch serial number")
     peer_switch_id: str = Field(alias="peerSwitchId", description="Peer2 switch serial number")
-    module_information: Dict[str, str] = Field(default_factory=dict, alias="moduleInformation", description="VPC pair module information")
-    fex_details: Dict[str, str] = Field(default_factory=dict, alias="fexDetails", description="Fex details name-value pair(s)")
+    module_information: dict[str, str] = Field(default_factory=dict, alias="moduleInformation", description="VPC pair module information")
+    fex_details: dict[str, str] = Field(default_factory=dict, alias="fexDetails", description="Fex details name-value pair(s)")
 
 
 class VpcPairAnomaliesBase(NDNestedModel):
@@ -609,7 +611,7 @@ class Metadata(NDNestedModel):
     """
 
     counts: ResponseCounts = Field(alias="counts", description="Count information")
-    links: Optional[Dict[str, str]] = Field(default=None, alias="links", description="Pagination links (next, previous)")
+    links: Optional[dict[str, str]] = Field(default=None, alias="links", description="Pagination links (next, previous)")
 
 
 class VpcPairsResponse(NDNestedModel):
@@ -619,7 +621,7 @@ class VpcPairsResponse(NDNestedModel):
     OpenAPI: vpcPairsResponse
     """
 
-    vpc_pairs: List[Union[VpcPairIntended, VpcPairDiscovered]] = Field(alias="vpcPairs", description="List of VPC pairs")
+    vpc_pairs: list[Union[VpcPairIntended, VpcPairDiscovered]] = Field(alias="vpcPairs", description="List of VPC pairs")
     meta: Metadata = Field(alias="meta", description="Response metadata")
 
 

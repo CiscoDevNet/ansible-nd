@@ -3,9 +3,11 @@
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+from __future__ import annotations
+
 import json
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Optional
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
@@ -36,9 +38,9 @@ Note:
 """
 
 
-RunStateHandler = Callable[[Any], Dict[str, Any]]
-DeployHandler = Callable[[Any, str, Dict[str, Any]], Dict[str, Any]]
-NeedsDeployHandler = Callable[[Dict[str, Any], Any], bool]
+RunStateHandler = Callable[[Any], dict[str, Any]]
+DeployHandler = Callable[[Any, str, dict[str, Any]], dict[str, Any]]
+NeedsDeployHandler = Callable[[dict[str, Any], Any], bool]
 
 POST_APPLY_REFRESH_RETRY_DELAY_SECONDS = 1
 
@@ -61,10 +63,10 @@ class VpcPairStateMachine(NDStateMachine):
         self.model_orchestrator.bind_state_machine(self)
 
         self.current_identifier = None
-        self.existing_config: Dict[str, Any] = {}
-        self.proposed_config: Dict[str, Any] = {}
-        self.logs: List[Dict[str, Any]] = []
-        self.result: Dict[str, Any] = {}
+        self.existing_config: dict[str, Any] = {}
+        self.proposed_config: dict[str, Any] = {}
+        self.logs: list[dict[str, Any]] = []
+        self.result: dict[str, Any] = {}
 
     def format_log(
         self,
@@ -84,7 +86,7 @@ class VpcPairStateMachine(NDStateMachine):
             after_data: Optional after-state dict for the pair
             sent_payload_data: Optional API payload that was sent
         """
-        log_entry: Dict[str, Any] = {"identifier": identifier, "status": status}
+        log_entry: dict[str, Any] = {"identifier": identifier, "status": status}
         if before_data is not None:
             log_entry["before"] = before_data
         if after_data is not None:
@@ -151,7 +153,7 @@ class VpcPairStateMachine(NDStateMachine):
             return
 
         verify_attempts = get_verify_iterations(self.module)
-        refresh_errors: List[str] = []
+        refresh_errors: list[str] = []
         for attempt in range(1, verify_attempts + 1):
             try:
                 response_data = self.model_orchestrator.query_all()
@@ -191,7 +193,7 @@ class VpcPairStateMachine(NDStateMachine):
             return str(identifier)
 
     @staticmethod
-    def _extract_changed_properties(log_entry: Dict[str, Any]) -> List[str]:
+    def _extract_changed_properties(log_entry: dict[str, Any]) -> list[str]:
         """
         Best-effort changed-property extraction for update operations.
 
@@ -216,7 +218,7 @@ class VpcPairStateMachine(NDStateMachine):
 
         return sorted(set(changed))
 
-    def _build_class_diff(self) -> Dict[str, List[Any]]:
+    def _build_class_diff(self) -> dict[str, list[Any]]:
         """
         Build class-level diff with created/deleted/updated entries.
 
@@ -226,13 +228,13 @@ class VpcPairStateMachine(NDStateMachine):
         Returns:
             Dict with 'created', 'deleted', 'updated' lists of identifiers.
         """
-        created: List[Any] = []
-        deleted: List[Any] = []
-        updated: List[Dict[str, Any]] = []
+        created: list[Any] = []
+        deleted: list[Any] = []
+        updated: list[dict[str, Any]] = []
 
         created_seen = set()
         deleted_seen = set()
-        updated_map: Dict[str, Dict[str, Any]] = {}
+        updated_map: dict[str, dict[str, Any]] = {}
 
         for log_entry in self.logs:
             status = log_entry.get("status")
@@ -265,9 +267,9 @@ class VpcPairStateMachine(NDStateMachine):
     def manage_state(
         self,
         state: str,
-        new_configs: List[Dict[str, Any]],
-        unwanted_keys: Optional[List] = None,
-        override_exceptions: Optional[List] = None,
+        new_configs: list[dict[str, Any]],
+        unwanted_keys: Optional[list[Any]] = None,
+        override_exceptions: Optional[list[Any]] = None,
     ) -> None:
         """
         Execute state reconciliation for the given state and config items.
@@ -320,7 +322,7 @@ class VpcPairStateMachine(NDStateMachine):
         else:
             raise VpcPairResourceError(msg=f"Invalid state: {state}")
 
-    def _manage_create_update_state(self, state: str, unwanted_keys: List) -> None:
+    def _manage_create_update_state(self, state: str, unwanted_keys: list[Any]) -> None:
         """
         Process proposed config items for create or update operations.
 
@@ -421,7 +423,7 @@ class VpcPairStateMachine(NDStateMachine):
                         error=str(e),
                     )
 
-    def _manage_override_deletions(self, override_exceptions: List) -> None:
+    def _manage_override_deletions(self, override_exceptions: list[Any]) -> None:
         """
         Delete pairs that exist on controller but are not in proposed config.
 
@@ -542,7 +544,7 @@ class VpcPairResourceService:
         self.deploy_handler = deploy_handler
         self.needs_deployment_handler = needs_deployment_handler
 
-    def execute(self, fabric_name: str) -> Dict[str, Any]:
+    def execute(self, fabric_name: str) -> dict[str, Any]:
         """
         Execute the full vpc_pair module lifecycle.
 

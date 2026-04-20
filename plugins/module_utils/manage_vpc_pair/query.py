@@ -3,9 +3,10 @@
 # Copyright: (c) 2026, Sivakami S <sivakasi@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+from __future__ import annotations
 
 import ipaddress
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -53,7 +54,7 @@ def _as_int_or_zero(value: Any) -> int:
         return 0
 
 
-def _is_switch_config_in_sync(switch_data: Optional[Dict[str, Any]]) -> Optional[bool]:
+def _is_switch_config_in_sync(switch_data: Optional[dict[str, Any]]) -> Optional[bool]:
     """
     Determine switch-level config sync state from switch inventory payload.
 
@@ -137,7 +138,7 @@ def _is_pair_in_sync_from_overview(
     if not isinstance(response, dict):
         return None
 
-    def _has_non_sync(counts: Dict[str, Any]) -> bool:
+    def _has_non_sync(counts: dict[str, Any]) -> bool:
         if not isinstance(counts, dict):
             return False
         return any(_as_int_or_zero(counts.get(key)) > 0 for key in ("pending", "outOfSync", "inProgress"))
@@ -197,7 +198,7 @@ def _is_external_fabric(nd_v2: Any, fabric_name: str, module: Any) -> bool:
     if not isinstance(details, dict):
         return fallback
 
-    candidates: List[str] = []
+    candidates: list[str] = []
     for key in ("fabricType", "fabricTechnology", "type", "category"):
         value = details.get(key)
         if isinstance(value, str):
@@ -222,7 +223,7 @@ def _is_external_fabric(nd_v2: Any, fabric_name: str, module: Any) -> bool:
     return any("external" in token for token in candidates)
 
 
-def _get_recommendation_details(nd_v2: Any, fabric_name: str, switch_id: str, timeout: Optional[int] = None) -> Optional[Dict[str, Any]]:
+def _get_recommendation_details(nd_v2: Any, fabric_name: str, switch_id: str, timeout: Optional[int] = None) -> Optional[dict[str, Any]]:
     """
     Get VPC pair recommendation details from ND for a specific switch.
 
@@ -298,7 +299,7 @@ def _get_recommendation_details(nd_v2: Any, fabric_name: str, switch_id: str, ti
         raise
 
 
-def _extract_vpc_pairs_from_list_response(vpc_pairs_response: Any) -> List[Dict[str, Any]]:
+def _extract_vpc_pairs_from_list_response(vpc_pairs_response: Any) -> list[dict[str, Any]]:
     """
     Extract VPC pair list entries from /vpcPairs response payload.
 
@@ -359,7 +360,7 @@ def _get_direct_vpc_pair(
     fabric_name: str,
     switch_id: str,
     timeout: Optional[int] = None,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[dict[str, Any]]:
     """
     Best-effort per-switch /vpcPair lookup.
 
@@ -397,9 +398,9 @@ def _get_direct_vpc_pair(
 def _enrich_pairs_from_direct_vpc(
     nd_v2: Any,
     fabric_name: str,
-    pairs: List[Dict[str, Any]],
+    pairs: list[dict[str, Any]],
     timeout: Optional[int] = None,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Enrich pair fields from per-switch /vpcPair endpoint when available.
 
@@ -423,7 +424,7 @@ def _enrich_pairs_from_direct_vpc(
     if timeout is None:
         timeout = get_verify_timeout(nd_v2.module)
 
-    enriched_pairs: List[Dict[str, Any]] = []
+    enriched_pairs: list[dict[str, Any]] = []
     for pair in pairs:
         enriched = dict(pair)
         switch_id = enriched.get(VpcFieldNames.SWITCH_ID)
@@ -463,9 +464,9 @@ def _enrich_pairs_from_direct_vpc(
 def _filter_stale_vpc_pairs(
     nd_v2: Any,
     fabric_name: str,
-    pairs: List[Dict[str, Any]],
+    pairs: list[dict[str, Any]],
     module: Any,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Remove stale pairs using overview membership checks.
 
@@ -485,7 +486,7 @@ def _filter_stale_vpc_pairs(
     if not pairs:
         return []
 
-    pruned_pairs: List[Dict[str, Any]] = []
+    pruned_pairs: list[dict[str, Any]] = []
     for pair in pairs:
         switch_id = pair.get(VpcFieldNames.SWITCH_ID)
         if not switch_id:
@@ -507,9 +508,9 @@ def _filter_stale_vpc_pairs(
 
 
 def _filter_vpc_pairs_by_requested_config(
-    pairs: List[Dict[str, Any]],
-    config: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    pairs: list[dict[str, Any]],
+    config: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """
     Filter queried VPC pairs by explicit pair keys provided in gathered config.
 
@@ -576,8 +577,8 @@ def _resolve_config_switch_ips(
     nd_v2: Any,
     module: Any,
     fabric_name: str,
-    config: List[Dict[str, Any]],
-) -> Tuple[List[Dict[str, Any]], Dict[str, str], Optional[Dict[str, Dict[str, Any]]]]:
+    config: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, str], Optional[dict[str, dict[str, Any]]]]:
     """
     Resolve switch identifiers from management IPs to serial numbers.
 
@@ -626,8 +627,8 @@ def _resolve_config_switch_ips(
         )
         return list(config), {}, fabric_switches
 
-    normalized_config: List[Dict[str, Any]] = []
-    resolved_inputs: Dict[str, str] = {}
+    normalized_config: list[dict[str, Any]] = []
+    resolved_inputs: dict[str, str] = {}
     unresolved_inputs = set()
 
     for item in config:
@@ -679,7 +680,7 @@ def normalize_vpc_playbook_switch_identifiers(
     nd_v2: Optional[Any] = None,
     fabric_name: Optional[str] = None,
     state: Optional[str] = None,
-) -> Optional[Dict[str, Dict[str, Any]]]:
+) -> Optional[dict[str, dict[str, Any]]]:
     """
     Normalize playbook switch identifiers from management IPs to serial numbers.
 
@@ -696,7 +697,7 @@ def normalize_vpc_playbook_switch_identifiers(
         state: Optional state override (defaults to module param)
 
     Returns:
-        Optional[Dict[str, Dict]]: Preloaded fabric switches map when queried, else None.
+        Optional[dict[str, dict[str, Any]]]: Preloaded fabric switches map when queried, else None.
     """
     effective_state = state or module.params.get("state", "merged")
     effective_fabric = fabric_name if fabric_name is not None else module.params.get("fabric_name")
@@ -730,7 +731,7 @@ def normalize_vpc_playbook_switch_identifiers(
     return preloaded_fabric_switches
 
 
-def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
+def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
     """
     Query existing VPC pairs with state-aware enrichment.
 
@@ -782,8 +783,8 @@ def custom_vpc_query_all(nrm: Any) -> List[Dict[str, Any]]:
         config = nrm.module.params.get("config") or []
 
     def _set_lightweight_context(
-        lightweight_have: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        lightweight_have: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         nrm.module.params["_fabric_switches"] = []
         nrm.module.params["_fabric_switches_count"] = 0
         existing_map = nrm.module.params.get("_ip_to_sn_mapping")

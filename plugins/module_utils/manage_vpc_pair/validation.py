@@ -3,7 +3,9 @@
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
+
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
@@ -32,7 +34,7 @@ def _get_pairing_support_details(
     switch_id: str,
     component_type: str = ComponentTypeSupportEnum.CHECK_PAIRING.value,
     timeout: Optional[int] = None,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[dict[str, Any]]:
     """
     Query /vpcPairSupport endpoint to validate pairing support.
 
@@ -137,7 +139,7 @@ def _get_consistency_details(
     fabric_name: str,
     switch_id: str,
     timeout: Optional[int] = None,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[dict[str, Any]]:
     """
     Query /vpcPairConsistency endpoint for consistency diagnostics.
 
@@ -222,7 +224,7 @@ def _is_switch_in_vpc_pair(
         rest_send.restore_settings()
 
 
-def _validate_fabric_switches(nd_v2: Any, fabric_name: str) -> Dict[str, Dict[str, Any]]:
+def _validate_fabric_switches(nd_v2: Any, fabric_name: str) -> dict[str, dict[str, Any]]:
     """
     Query and validate fabric switch inventory.
 
@@ -280,7 +282,7 @@ def _validate_fabric_switches(nd_v2: Any, fabric_name: str) -> Dict[str, Dict[st
     return result
 
 
-def _validate_switch_conflicts(want_configs: List[Dict], have_vpc_pairs: List[Dict], module: Any) -> None:
+def _validate_switch_conflicts(want_configs: list[dict[str, Any]], have_vpc_pairs: list[dict[str, Any]], module: Any) -> None:
     """
     Validate that switches in want configs aren't already in different VPC pairs.
 

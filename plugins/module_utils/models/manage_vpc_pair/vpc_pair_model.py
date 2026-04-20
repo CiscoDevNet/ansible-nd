@@ -4,7 +4,9 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 
-from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Union
+from __future__ import annotations
+
+from typing import Any, ClassVar, Literal, Optional, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
@@ -43,9 +45,9 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
     defaults/validation behavior.
     """
 
-    identifiers: ClassVar[List[str]] = ["switch_id", "peer_switch_id"]
+    identifiers: ClassVar[list[str]] = ["switch_id", "peer_switch_id"]
     identifier_strategy: ClassVar[Literal["composite"]] = "composite"
-    exclude_from_diff: ClassVar[Set[str]] = set()
+    exclude_from_diff: ClassVar[set[str]] = set()
 
     model_config = ConfigDict(
         str_strip_whitespace=True,
@@ -112,7 +114,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         validate_distinct_switches(self.switch_id, self.peer_switch_id, "switch_id", "peer_switch_id")
         return self
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """
         Serialize model to camelCase API payload dict.
 
@@ -121,7 +123,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         """
         return self.model_dump(by_alias=True, exclude_none=True)
 
-    def to_diff_dict(self, exclude_unset: bool = False) -> Dict[str, Any]:
+    def to_diff_dict(self, exclude_unset: bool = False) -> dict[str, Any]:
         """
         Serialize model for diff comparison, excluding configured fields.
 
@@ -144,7 +146,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         """
         return tuple(sorted([self.switch_id, self.peer_switch_id]))
 
-    def to_config(self, **kwargs: Any) -> Dict[str, Any]:
+    def to_config(self, **kwargs: Any) -> dict[str, Any]:
         """
         Serialize model to snake_case Ansible config dict.
 
@@ -157,7 +159,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         return self.model_dump(by_alias=False, exclude_none=True, **kwargs)
 
     @classmethod
-    def from_config(cls, ansible_config: Dict[str, Any]) -> "VpcPairModel":
+    def from_config(cls, ansible_config: dict[str, Any]) -> "VpcPairModel":
         """
         Construct VpcPairModel from playbook config dict.
 
@@ -200,7 +202,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         return type(self).model_validate(merged_data, by_name=True, by_alias=True)
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> "VpcPairModel":
+    def from_response(cls, response: dict[str, Any]) -> "VpcPairModel":
         """
         Construct VpcPairModel from an API response dict.
 
@@ -219,7 +221,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         return cls.model_validate(data)
 
     @classmethod
-    def get_argument_spec(cls) -> Dict[str, Any]:
+    def get_argument_spec(cls) -> dict[str, Any]:
         """
         Return Ansible argument_spec for nd_manage_vpc_pair.
 
@@ -302,7 +304,7 @@ class VpcPairPlaybookItemModel(BaseModel):
         )
         return self
 
-    def to_runtime_config(self) -> Dict[str, Any]:
+    def to_runtime_config(self) -> dict[str, Any]:
         """
         Normalize playbook keys into runtime keys consumed by state machine code.
 
@@ -410,7 +412,7 @@ class VpcPairPlaybookConfigModel(BaseModel):
         default=None,
         description="Configuration action controls (save/deploy/type).",
     )
-    config: Optional[List[VpcPairPlaybookItemModel]] = Field(
+    config: Optional[list[VpcPairPlaybookItemModel]] = Field(
         default=None,
         description="List of vPC pair configurations",
     )
@@ -425,7 +427,7 @@ class VpcPairPlaybookConfigModel(BaseModel):
         return self
 
     @classmethod
-    def get_argument_spec(cls) -> Dict[str, Any]:
+    def get_argument_spec(cls) -> dict[str, Any]:
         """
         Return Ansible argument_spec for nd_manage_vpc_pair.
         """

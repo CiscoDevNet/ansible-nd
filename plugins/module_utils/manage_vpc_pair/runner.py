@@ -4,14 +4,16 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 
-from typing import Any, Dict
+from __future__ import annotations
+
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
     VpcFieldNames,
 )
 
 
-def run_vpc_module(nrm: Any) -> Dict[str, Any]:
+def run_vpc_module(nrm: Any) -> dict[str, Any]:
     """
     Run VPC module state machine with VPC-specific gathered output.
 

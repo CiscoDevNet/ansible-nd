@@ -3,6 +3,8 @@
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+from __future__ import annotations
+
 __copyright__ = "Copyright (c) 2026 Cisco and/or its affiliates."
 __author__ = "Sivakami S"
 
@@ -344,7 +346,7 @@ pending_delete_pairs_not_in_delete:
 """
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
@@ -391,7 +393,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common im
 # ===== Module Entry Point =====
 
 
-def _get_raw_module_args() -> Dict[str, Any]:
+def _get_raw_module_args() -> dict[str, Any]:
     """
     Best-effort extraction of raw user-provided module args before defaults.
     """

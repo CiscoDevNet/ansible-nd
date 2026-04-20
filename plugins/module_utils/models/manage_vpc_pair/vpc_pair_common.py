@@ -4,7 +4,9 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 
-from typing import Any, Dict, Optional
+from __future__ import annotations
+
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
     VpcFieldNames,
@@ -29,7 +31,7 @@ def validate_distinct_switches(
         raise ValueError(f"{first_label} and {second_label} must be different: {first_switch_id}")
 
 
-def normalize_vpc_pair_aliases(ansible_config: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_vpc_pair_aliases(ansible_config: dict[str, Any]) -> dict[str, Any]:
     """
     Accept both snake_case playbook keys and camelCase API aliases.
 
@@ -49,7 +51,7 @@ def normalize_vpc_pair_aliases(ansible_config: Dict[str, Any]) -> Dict[str, Any]
     return data
 
 
-def serialize_vpc_pair_details(vpc_pair_details: Any) -> Optional[Dict[str, Any]]:
+def serialize_vpc_pair_details(vpc_pair_details: Any) -> Optional[dict[str, Any]]:
     """Serialize optional details object to alias-based dict."""
     if vpc_pair_details is None:
         return None
