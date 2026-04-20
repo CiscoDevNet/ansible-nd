@@ -292,6 +292,7 @@ class RestSend:
             self._response.append(self.response_current)
             self._result.append(self.result_current)
             self._committed_payload = copy.deepcopy(self._payload)
+            self._payload = None
         except (TypeError, ValueError) as error:
             msg = f"{self.class_name}.{method_name}: "
             msg += "Error building response/result. "
