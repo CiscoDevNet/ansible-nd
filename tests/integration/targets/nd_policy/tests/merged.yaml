@@ -1,0 +1,170 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+
+- name: "MERGED - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: merged
+
+- block:
+
+    ##############################################
+    ##                MERGE                     ##
+    ##############################################
+
+    # TC-1: Create a single policy with clock_timezone template
+    - name: "MERGED TC1 - Create clock_timezone policy"
+      cisco.nd.nd_policy: &merged_clock_tz
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "Set timezone to CET"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC1 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    # TC-2: Idempotence - Re-run the same task
+    - name: "MERGED TC2 - Idempotence check for clock_timezone"
+      cisco.nd.nd_policy: *merged_clock_tz
+      register: result
+      tags: merged
+
+    - name: "MERGED TC2 - Verify idempotence"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: merged
+
+    # TC-3: Create policy with clock_summertime template
+    - name: "MERGED TC3 - Create clock_summertime policy"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_summertime
+            create_additional_policy: false
+            description: "Set summertime to CEST"
+            priority: 102
+            template_inputs:
+              SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC3 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    # TC-4: Create policy with switch_freeform - simple one-liner
+    - name: "MERGED TC4 - Create switch_freeform policy (system vlan long-name)"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "Enable system vlan long-name"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC4 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    # TC-5: Create policy with no description (default empty)
+    - name: "MERGED TC5 - Create bfd_timers policy with no description"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            priority: 115
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC5 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    # TC-6: Verify all created policies via gathered
+    - name: "MERGED TC6 - Gather all policies on switch1"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: gathered_result
+      tags: merged
+
+    - name: "MERGED TC6 - Verify gathered contains created policies"
+      ansible.builtin.assert:
+        that:
+          - gathered_result.changed == false
+          - gathered_result.gathered | length >= 3
+      tags: merged
+
+    # TC-7: Create additional policy even when identical exists (create_additional_policy: true)
+    - name: "MERGED TC7 - Create duplicate policy with create_additional_policy true"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: true
+            description: "Enable system vlan long-name"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC7 - Verify duplicate was created"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+  always:
+    - name: "MERGED - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: merged

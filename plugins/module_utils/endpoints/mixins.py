@@ -86,6 +86,12 @@ class OffsetMixin(BaseModel):
     offset: Optional[int] = Field(default=None, ge=0, description="Pagination offset")
 
 
+class PolicyIdMixin(BaseModel):
+    """Mixin for endpoints that require policy_id parameter."""
+
+    policy_id: Optional[str] = Field(default=None, min_length=1, description="Policy ID (e.g., POLICY-12345)")
+
+
 class SwitchSerialNumberMixin(BaseModel):
     """Mixin for endpoints that require switch_sn parameter."""
 

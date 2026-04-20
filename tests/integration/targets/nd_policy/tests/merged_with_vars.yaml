@@ -1,0 +1,199 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+
+- name: "MERGED_WITH_VARS - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: merged_with_vars
+
+- block:
+
+    ##############################################
+    ##    MERGE - WITH TEMPLATE INPUTS          ##
+    ##############################################
+
+    # TC-1: Banner with multiline template_inputs
+    - name: "MERGED_WITH_VARS TC1 - Create banner policy with multiline input"
+      cisco.nd.nd_policy: &banner_pol
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: banner
+            create_additional_policy: false
+            description: "MOTD banner"
+            priority: 200
+            template_inputs:
+              BANNER: |
+                ******************************************
+                * This device is managed by NDFC         *
+                * Unauthorized access is prohibited      *
+                ******************************************
+              BANNERDELIMITER: "_"
+              TYPE: "motd"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged_with_vars
+
+    - name: "MERGED_WITH_VARS TC1 - Verify banner creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged_with_vars
+
+    # TC-2: Idempotence for banner
+    - name: "MERGED_WITH_VARS TC2 - Banner idempotence"
+      cisco.nd.nd_policy: *banner_pol
+      register: result
+      tags: merged_with_vars
+
+    - name: "MERGED_WITH_VARS TC2 - Verify idempotence"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: merged_with_vars
+
+    # TC-3: vrf_route_tracking with specific inputs
+    - name: "MERGED_WITH_VARS TC3 - Create vrf_route_tracking policy"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: vrf_route_tracking
+            create_additional_policy: false
+            description: "VRF route tracking object 10"
+            priority: 210
+            template_inputs:
+              OBJECT_TRACKING_NUMBER: 10
+              IP_PREFIX: "10.0.0.1/31"
+              VRF_NAME: "vrf-prod-11234"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged_with_vars
+
+    - name: "MERGED_WITH_VARS TC3 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged_with_vars
+
+    # TC-4: switch_freeform with multiline CONF loaded from file
+    - name: "MERGED_WITH_VARS TC4 - Load syslog config from file"
+      ansible.builtin.set_fact:
+        syslog_vars: "{{ lookup('file', role_path + '/files/syslog.yaml') | from_yaml }}"
+      tags: merged_with_vars
+
+    - name: "MERGED_WITH_VARS TC4 - Create syslog policy from file"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "Syslog configuration"
+            priority: 220
+            template_inputs: "{{ syslog_vars }}"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged_with_vars
+
+    - name: "MERGED_WITH_VARS TC4 - Verify syslog creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged_with_vars
+
+    # TC-5: switch_freeform with spanning-tree config from file
+    - name: "MERGED_WITH_VARS TC5 - Load spanning-tree config from file"
+      ansible.builtin.set_fact:
+        spanning_tree_vars: "{{ lookup('file', role_path + '/files/spanning_tree.yaml') | from_yaml }}"
+      tags: merged_with_vars
+
+    - name: "MERGED_WITH_VARS TC5 - Create spanning-tree policy from file"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "Spanning-tree best practices"
+            priority: 225
+            template_inputs: "{{ spanning_tree_vars }}"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged_with_vars
+
+    - name: "MERGED_WITH_VARS TC5 - Verify spanning-tree creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged_with_vars
+
+    # TC-6: switch_freeform with alias config from file
+    - name: "MERGED_WITH_VARS TC6 - Load alias config from file"
+      ansible.builtin.set_fact:
+        alias_vars: "{{ lookup('file', role_path + '/files/alias.yaml') | from_yaml }}"
+      tags: merged_with_vars
+
+    - name: "MERGED_WITH_VARS TC6 - Create alias policy from file"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "CLI aliases"
+            priority: 230
+            template_inputs: "{{ alias_vars }}"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged_with_vars
+
+    - name: "MERGED_WITH_VARS TC6 - Verify alias creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged_with_vars
+
+    # TC-7: switch_freeform with inline multiline CONF (OSPF best practices)
+    - name: "MERGED_WITH_VARS TC7 - Create OSPF best practices policy"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "OSPF best practices"
+            priority: 235
+            template_inputs:
+              CONF: |
+                router ospf UNDERLAY
+                  max-metric router-lsa on-startup
+                  auto-cost reference-bandwidth 800 Gbps
+                  log-adjacency-changes
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged_with_vars
+
+    - name: "MERGED_WITH_VARS TC7 - Verify OSPF creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged_with_vars
+
+  always:
+    - name: "MERGED_WITH_VARS - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: merged_with_vars

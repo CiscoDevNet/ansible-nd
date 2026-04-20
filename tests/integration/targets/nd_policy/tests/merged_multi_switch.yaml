@@ -1,0 +1,96 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+
+- name: "MERGED_MULTI_SWITCH - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: merged_multi_switch
+
+- block:
+
+    ##############################################
+    ##      MERGE - MULTI SWITCH               ##
+    ##############################################
+
+    # TC-1: Create policies on two switches simultaneously
+    - name: "MERGED_MULTI_SWITCH TC1 - Create policy on two switches"
+      cisco.nd.nd_policy: &multi_sw_merge
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "Timezone CET on both switches"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "Enable system vlan long-name"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ ansible_switch2 }}"
+      register: result
+      tags: merged_multi_switch
+
+    - name: "MERGED_MULTI_SWITCH TC1 - Verify creation on both switches"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged_multi_switch
+
+    # TC-2: Idempotence on multi-switch
+    - name: "MERGED_MULTI_SWITCH TC2 - Idempotence check"
+      cisco.nd.nd_policy: *multi_sw_merge
+      register: result
+      tags: merged_multi_switch
+
+    - name: "MERGED_MULTI_SWITCH TC2 - Verify idempotence"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: merged_multi_switch
+
+    # TC-3: Per-switch policy override - different priorities per switch
+    - name: "MERGED_MULTI_SWITCH TC3 - Per-switch policy overrides"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "BFD timers"
+            priority: 115
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+                policies:
+                  - name: switch_freeform
+                    description: "BFD timers - custom priority sw1"
+                    priority: 200
+                    create_additional_policy: false
+                    template_inputs:
+                      CONF: "bfd interval 250 min_rx 250 multiplier 3"
+              - serial_number: "{{ ansible_switch2 }}"
+      register: result
+      tags: merged_multi_switch
+
+    - name: "MERGED_MULTI_SWITCH TC3 - Verify per-switch overrides"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged_multi_switch
+
+  always:
+    - name: "MERGED_MULTI_SWITCH - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: merged_multi_switch

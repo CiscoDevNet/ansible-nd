@@ -1,0 +1,205 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+
+- name: "MODIFY - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: modify
+
+- block:
+
+    ##############################################
+    ##     SETUP - Create initial policies      ##
+    ##############################################
+
+    - name: "MODIFY SETUP - Create initial policies for modification tests"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        use_desc_as_key: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "Timezone CET"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "System vlan long-name"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "BFD timers"
+            priority: 115
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: setup_result
+      tags: modify
+
+    - name: "MODIFY SETUP - Verify initial creation"
+      ansible.builtin.assert:
+        that:
+          - setup_result.changed == true
+      tags: modify
+
+    ##############################################
+    ##         MODIFY TEST CASES                ##
+    ##############################################
+
+    # TC-1: Modify priority of an existing policy using use_desc_as_key
+    - name: "MODIFY TC1 - Update priority using use_desc_as_key"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        use_desc_as_key: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "Timezone CET"
+            priority: 999
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: modify
+
+    - name: "MODIFY TC1 - Verify priority was updated"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: modify
+
+    # TC-2: Idempotence after modification
+    - name: "MODIFY TC2 - Idempotence after priority update"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        use_desc_as_key: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "Timezone CET"
+            priority: 999
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: modify
+
+    - name: "MODIFY TC2 - Verify idempotence"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: modify
+
+    # TC-3: Modify template_inputs of an existing policy
+    - name: "MODIFY TC3 - Update template_inputs using use_desc_as_key"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        use_desc_as_key: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "BFD timers"
+            priority: 115
+            template_inputs:
+              CONF: "bfd interval 500 min_rx 500 multiplier 5"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: modify
+
+    - name: "MODIFY TC3 - Verify template_inputs were updated"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: modify
+
+    # TC-4: Modify using policy ID (gathered first to get ID)
+    - name: "MODIFY TC4 - Gather policies to get policy IDs"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: gathered_result
+      tags: modify
+
+    - name: "MODIFY TC4 - Extract policy ID from gathered result"
+      ansible.builtin.set_fact:
+        policy_id: "{{ gathered_result.gathered[0].name }}"
+      when: gathered_result.gathered | length > 0
+      tags: modify
+
+    - name: "MODIFY TC4 - Modify policy by ID"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: "{{ policy_id }}"
+            description: "Timezone CET - modified by ID"
+            priority: 800
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      when: policy_id is defined
+      tags: modify
+
+    - name: "MODIFY TC4 - Verify modification by ID"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      when: policy_id is defined
+      tags: modify
+
+    # TC-5: Verify modifications via gathered
+    - name: "MODIFY TC5 - Gather all policies and verify modifications"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: gathered_result
+      tags: modify
+
+    - name: "MODIFY TC5 - Verify gathered results"
+      ansible.builtin.assert:
+        that:
+          - gathered_result.changed == false
+          - gathered_result.gathered | length >= 3
+      tags: modify
+
+  always:
+    - name: "MODIFY - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: modify

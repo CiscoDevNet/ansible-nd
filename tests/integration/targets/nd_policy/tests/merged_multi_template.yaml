@@ -1,0 +1,104 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+
+- name: "MERGED_MULTI_TEMPLATE - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: merged_multi_template
+
+- block:
+
+    ##############################################
+    ##      MERGE - MULTIPLE TEMPLATES          ##
+    ##############################################
+
+    # TC-1: Create multiple policies with different templates in one task
+    - name: "MERGED_MULTI_TEMPLATE TC1 - Create five policies across different templates"
+      cisco.nd.nd_policy: &multi_tmpl
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "Timezone CET"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+
+          - name: clock_summertime
+            create_additional_policy: false
+            description: "Summertime CEST"
+            priority: 102
+            template_inputs:
+              SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
+
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "System vlan long-name"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "BFD timers"
+            priority: 115
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "as-format asdot"
+            priority: 120
+            template_inputs:
+              CONF: "as-format asdot"
+
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: merged_multi_template
+
+    - name: "MERGED_MULTI_TEMPLATE TC1 - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged_multi_template
+
+    # TC-2: Idempotence - re-run same task
+    - name: "MERGED_MULTI_TEMPLATE TC2 - Idempotence check"
+      cisco.nd.nd_policy: *multi_tmpl
+      register: result
+      tags: merged_multi_template
+
+    - name: "MERGED_MULTI_TEMPLATE TC2 - Verify idempotence"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: merged_multi_template
+
+    # TC-3: Verify via gathered
+    - name: "MERGED_MULTI_TEMPLATE TC3 - Gather and verify policies"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: gathered_result
+      tags: merged_multi_template
+
+    - name: "MERGED_MULTI_TEMPLATE TC3 - Verify gathered count"
+      ansible.builtin.assert:
+        that:
+          - gathered_result.changed == false
+          - gathered_result.gathered | length >= 5
+      tags: merged_multi_template
+
+  always:
+    - name: "MERGED_MULTI_TEMPLATE - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: merged_multi_template
