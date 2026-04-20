@@ -37,20 +37,22 @@ def coerce_str_to_int(data: Any) -> Any:
 
 def coerce_to_bool(data: Any) -> Any:
     """
-    Convert various formats to bool.
+    Convert to bool with strict typing.
 
     Args:
-        data: Value to coerce (str, bool, int, or None)
+        data: Value to coerce (bool or None)
 
     Returns:
         Boolean value, or None if input is None.
-        Strings 'true', '1', 'yes', 'on' map to True.
+
+    Raises:
+        ValueError: If input is not a bool.
     """
     if data is None:
         return None
-    if isinstance(data, str):
-        return data.lower() in ("true", "1", "yes", "on")
-    return bool(data)
+    if isinstance(data, bool):
+        return data
+    raise ValueError(f"Invalid bool value: {data}")
 
 
 def coerce_list_of_str(data: Any) -> Any:

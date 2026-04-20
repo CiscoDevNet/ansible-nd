@@ -525,6 +525,8 @@ def _filter_vpc_pairs_by_requested_config(
         Filtered list of pair dicts matching requested config keys.
         Returns full pair list when config is empty or has no complete pairs.
     """
+    # TODO: Revisit promoting this pair-key filtering into a shared helper if
+    # similar gathered-filter logic is needed by other modules.
     if not pairs or not config:
         return list(pairs or [])
 

@@ -158,35 +158,11 @@ def _normalize_iteration(value: Optional[Any], fallback: int) -> int:
     return fallback
 
 
-def _normalize_bool(value: Any, fallback: bool) -> bool:
-    """
-    Normalize bool-like values with minimal defensive coercion.
-
-    Kept defensive because some internal/unit call paths can bypass
-    Ansible argspec coercion.
-
-    Args:
-        value: Raw input value
-        fallback: Default when value is None or unsupported type
-
-    Returns:
-        Boolean result.
-    """
-    if value is None:
-        return fallback
+def _require_bool(name: str, value: Any) -> bool:
+    """Require a strict bool value."""
     if isinstance(value, bool):
         return value
-    if isinstance(value, int):
-        return bool(value)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        # Ansible's bool argspec already handles broad string/int coercion.
-        # Keep only canonical text bool values for direct internal callers.
-        if normalized == "true":
-            return True
-        if normalized == "false":
-            return False
-    return fallback
+    raise TypeError(f"{name} must be a bool, got {value!r}")
 
 
 def get_verify_settings(module: Any) -> dict[str, Any]:
@@ -201,8 +177,9 @@ def get_verify_settings(module: Any) -> dict[str, Any]:
     """
     raw_verify = module.params.get("verify")
     if isinstance(raw_verify, dict):
+        enabled = raw_verify.get("enabled", True)
         return {
-            "enabled": _normalize_bool(raw_verify.get("enabled"), True),
+            "enabled": _require_bool("verify.enabled", enabled),
             "retries": _normalize_iteration(raw_verify.get("retries"), DEFAULT_VERIFY_RETRIES),
             "timeout": _normalize_timeout(raw_verify.get("timeout"), DEFAULT_VERIFY_TIMEOUT),
         }
@@ -226,16 +203,27 @@ def get_config_actions(module: Any) -> dict[str, Any]:
     """
     raw_actions = module.params.get("config_actions")
     if isinstance(raw_actions, dict):
-        save = _normalize_bool(raw_actions.get("save"), True)
-        deploy = _normalize_bool(raw_actions.get("deploy"), True)
+        save = raw_actions.get("save", True)
+        deploy = raw_actions.get("deploy", True)
         action_type_raw = raw_actions.get("type", DEFAULT_CONFIG_ACTION_TYPE)
         action_type = str(action_type_raw).strip().lower() if action_type_raw is not None else DEFAULT_CONFIG_ACTION_TYPE
         if action_type not in CONFIG_ACTION_TYPE_CHOICES:
             action_type = DEFAULT_CONFIG_ACTION_TYPE
         return {
-            "save": save,
-            "deploy": deploy,
+            "save": _require_bool("config_actions.save", save),
+            "deploy": _require_bool("config_actions.deploy", deploy),
             "type": action_type,
+        }
+
+    # Backward-compatible alias: top-level deploy controls deploy only.
+    # Keep save enabled by default to preserve historical behavior where
+    # callers can use deploy=False to skip deployment but still persist config.
+    legacy_deploy = module.params.get("deploy")
+    if isinstance(legacy_deploy, bool):
+        return {
+            "save": True,
+            "deploy": legacy_deploy,
+            "type": DEFAULT_CONFIG_ACTION_TYPE,
         }
 
     return {
