@@ -238,7 +238,14 @@ class NDConfigCollection:
         """
         Create collection from Ansible config.
         """
-        items = [model_class.from_config(item_data, **kwargs) for item_data in data]
+        items = []
+        for index, item_data in enumerate(data):
+            try:
+                items.append(model_class.from_config(item_data, **kwargs))
+            except Exception as e:
+                identifier = item_data.get("fabric_name") or item_data.get("name") or item_data.get("login_id")
+                label = f" ({identifier})" if identifier else ""
+                raise ValueError(f"config[{index}]{label}: {e}") from e
         return NDConfigCollection(model_class=model_class, items=items)
 
     @staticmethod

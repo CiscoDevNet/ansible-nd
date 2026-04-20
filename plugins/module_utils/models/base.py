@@ -128,13 +128,24 @@ class NDBaseModel(BaseModel, ABC):
 
     @classmethod
     def from_response(cls, response: Dict[str, Any], **kwargs) -> "NDBaseModel":
-        """Create model instance from API response dict."""
-        return cls.model_validate(response, by_alias=True, **kwargs)
+        """Create model instance from API response dict.
+
+        Uses extra="allow" to accept unknown fields from API responses.
+        This ensures forward compatibility when the API returns new fields
+        not yet defined in the model.
+        """
+        return cls.model_validate(response, by_alias=True, extra="allow", **kwargs)
 
     @classmethod
     def from_config(cls, ansible_config: Dict[str, Any], **kwargs) -> "NDBaseModel":
-        """Create model instance from Ansible config dict."""
-        return cls.model_validate(ansible_config, by_name=True, **kwargs)
+        """Create model instance from Ansible config dict.
+
+        Uses extra="forbid" to reject unknown fields in user input.
+        This propagates to all nested models regardless of their
+        individual model_config extra setting, ensuring misplaced
+        parameters are caught early instead of silently accepted.
+        """
+        return cls.model_validate(ansible_config, by_name=True, extra="forbid", **kwargs)
 
     # --- Identifier Access ---
 

@@ -120,7 +120,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     - `TypeError` - If required string fields are not provided
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="forbid")
 
     # Fabric Type (required for discriminated union)
     type: Literal[FabricTypeEnum.VXLAN_IBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_IBGP)

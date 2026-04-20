@@ -42,6 +42,10 @@ class NDStateMachine:
         )
         self.rest_send.sender = sender
         self.rest_send.response_handler = ResponseHandler()
+        # Disable the retry loop inherited from RestSend (designed for NDFC
+        # eventual-consistency).  ND orchestrator CRUD operations should fail
+        # immediately rather than retrying for 300 seconds.
+        self.rest_send.timeout = self.rest_send.send_interval
 
         # Operation tracking
         self.output = NDOutput(output_level=module.params.get("output_level", "normal"))
