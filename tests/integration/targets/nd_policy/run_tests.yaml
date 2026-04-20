@@ -1,0 +1,21 @@
+---
+# Runner playbook for nd_policy integration tests.
+#
+# Usage:
+#   source .env.sh
+#   ansible-playbook -i inventory/hosts.yml tests/integration/targets/nd_policy/run_tests.yaml
+#
+# To run a specific test file:
+#   ansible-playbook -i inventory/hosts.yml tests/integration/targets/nd_policy/run_tests.yaml -e testcase=merged
+#   ansible-playbook -i inventory/hosts.yml tests/integration/targets/nd_policy/run_tests.yaml -e testcase=deleted
+#   ansible-playbook -i inventory/hosts.yml tests/integration/targets/nd_policy/run_tests.yaml -e testcase=sanity
+#
+# To override switches/fabric at runtime:
+#   ansible-playbook -i inventory/hosts.yml tests/integration/targets/nd_policy/run_tests.yaml \
+#     -e ansible_it_fabric=my_fabric -e ansible_switch1=FDO12345678 -e ansible_switch2=FDO87654321
+
+- name: ND Policy Integration Tests
+  hosts: nd
+  gather_facts: false
+  roles:
+    - role: "{{ playbook_dir }}"

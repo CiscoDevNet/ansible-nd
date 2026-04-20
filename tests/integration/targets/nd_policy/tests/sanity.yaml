@@ -1,0 +1,217 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+
+- name: "SANITY - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: sanity
+
+- block:
+
+    ##############################################
+    ##      SANITY / ERROR HANDLING             ##
+    ##############################################
+
+    # TC-1: Missing fabric_name should fail
+    - name: "SANITY TC1 - Missing fabric_name"
+      cisco.nd.nd_policy:
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      ignore_errors: true
+      tags: sanity
+
+    - name: "SANITY TC1 - Verify failure for missing fabric_name"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+      tags: sanity
+
+    # TC-2: Missing config for merged state should fail
+    - name: "SANITY TC2 - Merged state without config"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+      register: result
+      ignore_errors: true
+      tags: sanity
+
+    - name: "SANITY TC2 - Verify failure for missing config"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+      tags: sanity
+
+    # TC-3: Duplicate descriptions with use_desc_as_key should fail atomically
+    - name: "SANITY TC3 - Duplicate descriptions with use_desc_as_key"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        use_desc_as_key: true
+        config:
+          - name: switch_freeform
+            description: "Same description"
+            template_inputs:
+              CONF: "system vlan long-name"
+          - name: switch_freeform
+            description: "Same description"
+            template_inputs:
+              CONF: "bfd interval 250 min_rx 250 multiplier 3"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      ignore_errors: true
+      tags: sanity
+
+    - name: "SANITY TC3 - Verify atomic failure for duplicate descriptions"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+      tags: sanity
+
+    # TC-4: Empty description with use_desc_as_key should fail
+    - name: "SANITY TC4 - Empty description with use_desc_as_key"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        use_desc_as_key: true
+        config:
+          - name: switch_freeform
+            description: ""
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      ignore_errors: true
+      tags: sanity
+
+    - name: "SANITY TC4 - Verify failure for empty description"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+      tags: sanity
+
+    # TC-5: Invalid template name should fail
+    - name: "SANITY TC5 - Non-existent template name"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: this_template_does_not_exist_12345
+            template_inputs:
+              CONF: "test"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      ignore_errors: true
+      tags: sanity
+
+    - name: "SANITY TC5 - Verify failure for invalid template"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+      tags: sanity
+
+    # TC-6: Create, delete, re-create cycle (full lifecycle)
+    - name: "SANITY TC6a - Create a policy"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "Lifecycle test"
+            priority: 500
+            template_inputs:
+              CONF: "ip tcp path-mtu-discovery"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: sanity
+
+    - name: "SANITY TC6a - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: sanity
+
+    - name: "SANITY TC6b - Delete the policy"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: sanity
+
+    - name: "SANITY TC6b - Verify deletion"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: sanity
+
+    - name: "SANITY TC6c - Re-create the policy"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "Lifecycle test - recreated"
+            priority: 500
+            template_inputs:
+              CONF: "ip tcp path-mtu-discovery"
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: sanity
+
+    - name: "SANITY TC6c - Verify re-creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: sanity
+
+    # TC-7: Invalid switch serial number should fail
+    - name: "SANITY TC7 - Non-existent switch serial"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "INVALID_SERIAL_999"
+      register: result
+      ignore_errors: true
+      tags: sanity
+
+    - name: "SANITY TC7 - Verify failure for invalid switch"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+      tags: sanity
+
+  always:
+    - name: "SANITY - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: sanity

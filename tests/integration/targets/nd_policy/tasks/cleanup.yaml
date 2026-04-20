@@ -1,0 +1,21 @@
+---
+# Clean up all test policies from both switches
+# Uses multiple template names to ensure thorough cleanup
+
+- name: "CLEANUP - Delete all test policies from switches"
+  cisco.nd.nd_policy:
+    fabric_name: "{{ ansible_it_fabric }}"
+    state: deleted
+    deploy: true
+    config:
+      - name: clock_timezone
+      - name: clock_summertime
+      - name: switch_freeform
+      - name: banner
+      - name: vrf_route_tracking
+      - name: feature_enable
+      - switch:
+          - serial_number: "{{ ansible_switch1 }}"
+          - serial_number: "{{ ansible_switch2 }}"
+  register: cleanup_result
+  ignore_errors: true
