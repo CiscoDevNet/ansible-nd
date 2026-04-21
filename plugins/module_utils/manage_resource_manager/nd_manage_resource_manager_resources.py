@@ -1863,8 +1863,14 @@ class NDResourceManagerModule:
             payloads_only = [p for _cfg, p in pending_payloads]
             batch_payload = ResourceManagerBatchRequest.model_validate({"resources": payloads_only}).to_payload()
             self._register_result(
-                "merge", OperationType.CREATE, "check mode — skipped", changed=False,
-                diff={"merged": payloads_only}, verb=HttpVerbEnum.POST, path=ep.path, payload=batch_payload,
+                "merge",
+                OperationType.CREATE,
+                "check mode — skipped",
+                changed=False,
+                diff={"merged": payloads_only},
+                verb=HttpVerbEnum.POST,
+                path=ep.path,
+                payload=batch_payload,
             )
             return
 
@@ -1909,10 +1915,14 @@ class NDResourceManagerModule:
 
         # Register the batch create with Results
         self._register_result(
-            "merge", OperationType.CREATE,
+            "merge",
+            OperationType.CREATE,
             f"batch create successful — {len(pending_payloads)} resource(s)",
-            changed=True, diff={"merged": [p for _cfg, p in pending_payloads]},
-            verb=HttpVerbEnum.POST, path=ep.path, payload=batch.to_payload(),
+            changed=True,
+            diff={"merged": [p for _cfg, p in pending_payloads]},
+            verb=HttpVerbEnum.POST,
+            path=ep.path,
+            payload=batch.to_payload(),
         )
 
     def manage_deleted(self):
@@ -1999,8 +2009,14 @@ class NDResourceManagerModule:
             ep = EpManageFabricResourcesActionsRemovePost(fabric_name=self.fabric)
             remove_req = RemoveResourcesByIdsRequest(resource_ids=resource_ids)
             self._register_result(
-                "delete", OperationType.DELETE, "check mode — skipped", changed=False,
-                diff={"deleted": resource_ids}, verb=HttpVerbEnum.POST, path=ep.path, payload=remove_req.to_payload(),
+                "delete",
+                OperationType.DELETE,
+                "check mode — skipped",
+                changed=False,
+                diff={"deleted": resource_ids},
+                verb=HttpVerbEnum.POST,
+                path=ep.path,
+                payload=remove_req.to_payload(),
             )
             return
 
@@ -2026,10 +2042,14 @@ class NDResourceManagerModule:
 
         # Register the delete with Results
         self._register_result(
-            "delete", OperationType.DELETE,
+            "delete",
+            OperationType.DELETE,
             f"deleted {len(resource_ids)} resource(s)",
-            changed=True, diff={"deleted": resource_ids},
-            verb=HttpVerbEnum.POST, path=ep.path, payload=remove_req.to_payload(),
+            changed=True,
+            diff={"deleted": resource_ids},
+            verb=HttpVerbEnum.POST,
+            path=ep.path,
+            payload=remove_req.to_payload(),
         )
 
     def manage_gathered(self):
@@ -2208,11 +2228,13 @@ class NDResourceManagerModule:
                 "exit_module: gathered state, returning %s resource(s)",
                 len(self.changed_dict[0]["gathered"]),
             )
-            final.update(self.output.format(
-                changed=False,
-                after=self.translate_gathered_results(self.existing),
-                gathered=self.changed_dict[0]["gathered"],
-            ))
+            final.update(
+                self.output.format(
+                    changed=False,
+                    after=self.translate_gathered_results(self.existing),
+                    gathered=self.changed_dict[0]["gathered"],
+                )
+            )
             self.nd.module.exit_json(**final)
             return
 
