@@ -69,6 +69,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.co
 from ansible_collections.cisco.nd.plugins.module_utils.utils import (
     ApiDataChecker,
     FabricUtils,
+    FabricSwitchInventory,
     SwitchOperationError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
@@ -81,7 +82,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils imp
     build_poap_data_block,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
-    EpManageFabricsSwitchesGet,
     EpManageFabricsSwitchesPost,
     EpManageFabricsSwitchProvisionRMAPost,
     EpManageFabricsSwitchChangeSerialNumberPost,
@@ -318,8 +318,9 @@ class SwitchDiffEngine:
             len(existing),
         )
 
-        existing_by_ip: Dict[str, SwitchDataModel] = {sw.fabric_management_ip: sw for sw in existing if sw.fabric_management_ip}
-        existing_by_id: Dict[str, SwitchDataModel] = {sw.switch_id: sw for sw in existing if sw.switch_id}
+        _idx = FabricSwitchInventory(existing)
+        existing_by_ip: Dict[str, SwitchDataModel] = _idx.by_ip()
+        existing_by_id: Dict[str, SwitchDataModel] = _idx.by_id()
 
         # Output buckets
         to_add: List[SwitchConfigModel] = []
@@ -2210,7 +2211,7 @@ class RMAHandler:
 
         log.debug("ENTER: _validate_prerequisites()")
 
-        existing_by_ip: Dict[str, SwitchDataModel] = {sw.fabric_management_ip: sw for sw in existing if sw.fabric_management_ip}
+        existing_by_ip: Dict[str, SwitchDataModel] = FabricSwitchInventory(existing).by_ip()
 
         result: Dict[str, Dict[str, Any]] = {}
 
@@ -2462,10 +2463,8 @@ class NDSwitchResourceModule:
         # Switch collections
         try:
             self.proposed: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
-            self.existing: NDConfigCollection = NDConfigCollection.from_api_response(
-                response_data=self._query_all_switches(),
-                model_class=SwitchDataModel,
-            )
+            self.inventory = FabricSwitchInventory.from_fabric(nd, self.fabric, log, SwitchDataModel)
+            self.existing: NDConfigCollection = self.inventory.collection
             self.before: NDConfigCollection = self.existing.copy()
             self.sent: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
             self.sent_adds: List[SwitchConfigModel] = []
@@ -2549,7 +2548,7 @@ class NDSwitchResourceModule:
             containing ``before``, ``after``, ``diff``, and ``changed``.
         """
         before_list = self._inventory_to_config_list(self.before)
-        existing_by_ip = {sw.fabric_management_ip: sw for sw in self.before}
+        existing_by_ip = self.inventory.by_ip()
         diff_list: List[Dict[str, Any]] = []
 
         if self._plan is not None:
@@ -2688,10 +2687,7 @@ class NDSwitchResourceModule:
             # Re-query the fabric to get the actual post-operation inventory so
             # that "after" reflects real state rather than the pre-op snapshot.
             if True not in self.results.failed:
-                self.existing = NDConfigCollection.from_api_response(
-                    response_data=self._query_all_switches(),
-                    model_class=SwitchDataModel,
-                )
+                self.existing = FabricSwitchInventory.from_fabric(self.nd, self.fabric, self.log, SwitchDataModel).collection
             # Build diff: deletes (from self.sent) + adds (from self.sent_adds)
             diff_list: List[Dict[str, Any]] = []
             for sw in self.sent:
@@ -2939,7 +2935,7 @@ class NDSwitchResourceModule:
         # config-sync and needs a deploy without a re-add.
         # Pre-provisioned switches are placeholder entries that are never
         # in-sync by design, so they are excluded from this check. Only relevant when deploy is enabled.
-        existing_by_ip = {sw.fabric_management_ip: sw for sw in self.existing}
+        existing_by_ip = self.inventory.by_ip()
         idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
 
         has_work = bool(
@@ -3081,7 +3077,7 @@ class NDSwitchResourceModule:
         self.log.debug("ENTER: _handle_overridden_state()")
         self.log.info("Handling overridden state")
 
-        existing_by_ip = {sw.fabric_management_ip: sw for sw in self.existing}
+        existing_by_ip = self.inventory.by_ip()
         idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
 
         has_work = bool(
@@ -3264,7 +3260,7 @@ class NDSwitchResourceModule:
         self.log.debug("ENTER: _handle_replaced_state()")
         self.log.info("Handling replaced state")
 
-        existing_by_ip = {sw.fabric_management_ip: sw for sw in self.existing}
+        existing_by_ip = self.inventory.by_ip()
         idempotent_save_req = self._check_idempotent_sync(plan, existing_by_ip)
 
         has_work = bool(
@@ -3480,7 +3476,7 @@ class NDSwitchResourceModule:
             for sw in switches_to_delete:
                 self._log_operation("delete", sw.fabric_management_ip)
         else:
-            existing_by_ip = {sw.fabric_management_ip: sw for sw in self.existing}
+            existing_by_ip = self.inventory.by_ip()
             switches_to_delete: List[SwitchDataModel] = []
             for cfg in proposed_config:
                 existing_sw = existing_by_ip.get(cfg.seed_ip)
@@ -3529,53 +3525,6 @@ class NDSwitchResourceModule:
         for sw in switches_to_delete:
             self.sent.add(sw)
         self.log.debug("EXIT: _handle_deleted_state()")
-
-    # =====================================================================
-    # Query Helpers
-    # =====================================================================
-
-    def _query_all_switches(self) -> List[Dict[str, Any]]:
-        """Query all switches from the fabric inventory API.
-
-        Returns:
-            List of raw switch dictionaries returned by the controller.
-        """
-        endpoint = EpManageFabricsSwitchesGet()
-        endpoint.fabric_name = self.fabric
-        self.log.debug("Querying all switches with endpoint: %s", endpoint.path)
-        self.log.debug("Query verb: %s", endpoint.verb)
-
-        # GETs must reach the real controller even when Ansible runs with --check.
-        # Temporarily override check_mode to False so RestSend sends the real
-        # request instead of returning a simulated response, then restore it.
-        in_check_mode = self.nd.module.check_mode
-        if in_check_mode:
-            self.nd.rest_send_check_mode = False
-        try:
-            result = self.nd.request(path=endpoint.path, verb=endpoint.verb)
-        except Exception as e:
-            msg = f"Failed to query switches from fabric '{self.fabric}': {e}"
-            self.log.error(msg)
-            self.nd.module.fail_json(msg=msg)
-        finally:
-            if in_check_mode:
-                self.nd.rest_send_check_mode = True
-
-        # nd.request() returns response["DATA"] directly. For a 404, the
-        # controller embeds the error as {"code": 404, "message": "Fabric not found"}
-        # inside DATA.  RestSend treats GET 404 as success=True/found=False so no
-        # exception is raised — detect it here from the returned data itself.
-        ApiDataChecker.check(result, f"Query switches from fabric '{self.fabric}'", self.log, self.nd.module.fail_json)
-
-        if isinstance(result, list):
-            switches = result
-        elif isinstance(result, dict):
-            switches = result.get("switches", [])
-        else:
-            switches = []
-
-        self.log.debug("Queried %s switches from fabric %s", len(switches), self.fabric)
-        return switches
 
     # =====================================================================
     # Operation Tracking
