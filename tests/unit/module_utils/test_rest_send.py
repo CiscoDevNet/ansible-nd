@@ -503,30 +503,32 @@ def test_rest_send_00300():
     """
     # Summary
 
-    Verify commit() in check_mode for GET request
+    Verify commit() in check_mode for GET request bypasses simulation.
 
     ## Test
 
-    - GET requests in check_mode return simulated success response
-    - response_current contains check mode indicator
+    - GET requests in check_mode go through normal mode (real controller call)
+    - response_current contains actual controller data, not simulated data
     - result_current shows success
 
     ## Classes and Methods
 
     - RestSend.commit()
-    - RestSend._commit_check_mode()
+    - RestSend._commit_normal_mode()
     """
+    method_name = inspect.stack()[0][3]
+    key = f"{method_name}a"
+
     params = {"check_mode": True}
 
     def responses():
-        yield {}
+        yield responses_rest_send(key)
+        yield responses_rest_send(key)
 
     gen_responses = ResponseGenerator(responses())
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
     sender.gen = gen_responses
-    sender.path = "/api/v1/test"
-    sender.verb = HttpVerbEnum.GET
 
     with does_not_raise():
         instance = RestSend(params)
@@ -541,11 +543,11 @@ def test_rest_send_00300():
         instance.verb = HttpVerbEnum.GET
         instance.commit()
 
-    # Verify check mode response
+    # Verify real response (not simulated check_mode response)
     assert instance.response_current["RETURN_CODE"] == 200
-    assert instance.response_current["METHOD"] == HttpVerbEnum.GET
-    assert instance.response_current["REQUEST_PATH"] == "/api/v1/test/checkmode"
-    assert instance.response_current["CHECK_MODE"] is True
+    assert instance.response_current["METHOD"] == "GET"
+    assert instance.response_current["DATA"]["status"] == "success"
+    assert instance.response_current.get("CHECK_MODE") is None
     assert instance.result_current["success"] is True
     assert instance.result_current["found"] is True
 
