@@ -12,6 +12,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_manager.resource_manager_config_model import (
     ResourceManagerConfigModel,
 )
@@ -850,12 +851,52 @@ class NDResourceManagerModule:
         # NDOutput for building consistent Ansible output across all states
         self.output: NDOutput = NDOutput(output_level=nd.params.get("output_level", "normal"))
 
+        # Proposed config list (plain dicts) for NDOutput proposed field
+        self._proposed_list: list = []
+
+        # Propagate Results metadata so every register_api_call() inherits state/check_mode
+        self.results.state = self.state
+        self.results.check_mode = nd.module.check_mode
+
         self.log.info(
             "NDResourceManagerModule initialized: fabric=%s, state=%s, config_count=%s",
             self.fabric,
             self.state,
             len(self.config),
         )
+
+    # ------------------------------------------------------------------
+    # Results registration helper
+    # ------------------------------------------------------------------
+
+    def _register_result(self, action, operation_type, message, changed, diff=None, verb=HttpVerbEnum.GET, path="", payload=None):
+        """Register a successful API call result with the Results tracker.
+
+        Centralises the repeated pattern of setting action, operation_type,
+        response_current, result_current, diff_current and calling
+        ``register_api_call()``.  All calls use ``RETURN_CODE=200`` and
+        ``success=True``; error paths in the main module entry point set
+        these fields directly.
+
+        Args:
+            action: Short label for the operation (e.g. ``'merge'``, ``'delete'``, ``'gathered'``).
+            operation_type: ``OperationType`` enum value.
+            message: Human-readable message for ``response_current["MESSAGE"]``.
+            changed: Whether the operation mutated state.
+            diff: Optional diff dict to attach.  Defaults to ``{}``.
+            verb: ``HttpVerbEnum`` value for the HTTP method used.  Defaults to ``GET``.
+            path: API endpoint path string.  Defaults to ``""``.
+            payload: Request payload dict, or ``None`` for GET / no-body requests.
+        """
+        self.results.action = action
+        self.results.operation_type = operation_type
+        self.results.verb_current = verb
+        self.results.path_current = path
+        self.results.payload_current = payload
+        self.results.response_current = {"RETURN_CODE": 200, "MESSAGE": message}
+        self.results.result_current = {"success": True, "changed": changed}
+        self.results.diff_current = diff if diff is not None else {}
+        self.results.register_api_call()
 
     # ------------------------------------------------------------------
     # Input validation
@@ -1792,6 +1833,7 @@ class NDResourceManagerModule:
 
         if not pending_items:
             self.log.debug("manage_merged: No resources to create (all idempotent).")
+            self._register_result("merge", OperationType.QUERY, "all resources idempotent", changed=False)
             return
 
         # Build payload list alongside a cfg reference for post-create validation (GAP-5).
@@ -1810,11 +1852,19 @@ class NDResourceManagerModule:
         # Track diff BEFORE the API call so --check mode also shows what would change (GAP-3).
         self.changed_dict[0]["merged"].extend(p for _cfg, p in pending_payloads)
 
+        ep = EpManageFabricResourcesPost(fabric_name=self.fabric)
         if self.nd.module.check_mode:
             self.log.info(
                 "Check mode: would create %s resource(s) for fabric=%s",
                 len(pending_payloads),
                 self.fabric,
+            )
+
+            payloads_only = [p for _cfg, p in pending_payloads]
+            batch_payload = ResourceManagerBatchRequest.model_validate({"resources": payloads_only}).to_payload()
+            self._register_result(
+                "merge", OperationType.CREATE, "check mode — skipped", changed=False,
+                diff={"merged": payloads_only}, verb=HttpVerbEnum.POST, path=ep.path, payload=batch_payload,
             )
             return
 
@@ -1826,7 +1876,6 @@ class NDResourceManagerModule:
 
         payloads_only = [p for _cfg, p in pending_payloads]
         batch = ResourceManagerBatchRequest.model_validate({"resources": payloads_only})
-        ep = EpManageFabricResourcesPost(fabric_name=self.fabric)
         resp_data = self.nd.request(ep.path, ep.verb, data=batch.to_payload())
 
         # Parse batch response.
@@ -1856,6 +1905,14 @@ class NDResourceManagerModule:
             "manage_merged: Batch create successful — %s resource(s) created for fabric=%s",
             len(pending_payloads),
             self.fabric,
+        )
+
+        # Register the batch create with Results
+        self._register_result(
+            "merge", OperationType.CREATE,
+            f"batch create successful — {len(pending_payloads)} resource(s)",
+            changed=True, diff={"merged": [p for _cfg, p in pending_payloads]},
+            verb=HttpVerbEnum.POST, path=ep.path, payload=batch.to_payload(),
         )
 
     def manage_deleted(self):
@@ -1921,6 +1978,7 @@ class NDResourceManagerModule:
                 "manage_deleted: No matching resources found to delete for fabric=%s, nothing to do",
                 self.fabric,
             )
+            self._register_result("delete", OperationType.QUERY, "no matching resources to delete", changed=False)
             return
 
         self.log.info(
@@ -1938,6 +1996,12 @@ class NDResourceManagerModule:
                 resource_ids,
             )
             self.api_responses.append({"RETURN_CODE": 200, "DATA": {"resourceIds": resource_ids}})
+            ep = EpManageFabricResourcesActionsRemovePost(fabric_name=self.fabric)
+            remove_req = RemoveResourcesByIdsRequest(resource_ids=resource_ids)
+            self._register_result(
+                "delete", OperationType.DELETE, "check mode — skipped", changed=False,
+                diff={"deleted": resource_ids}, verb=HttpVerbEnum.POST, path=ep.path, payload=remove_req.to_payload(),
+            )
             return
 
         ep = EpManageFabricResourcesActionsRemovePost(fabric_name=self.fabric)
@@ -1958,6 +2022,14 @@ class NDResourceManagerModule:
             "manage_deleted: Successfully deleted %s resource(s): %s",
             len(resource_ids),
             resource_ids,
+        )
+
+        # Register the delete with Results
+        self._register_result(
+            "delete", OperationType.DELETE,
+            f"deleted {len(resource_ids)} resource(s)",
+            changed=True, diff={"deleted": resource_ids},
+            verb=HttpVerbEnum.POST, path=ep.path, payload=remove_req.to_payload(),
         )
 
     def manage_gathered(self):
@@ -2090,6 +2162,10 @@ class NDResourceManagerModule:
         self.api_responses.extend(results)
         self.changed_dict[0]["gathered"].extend(results)
 
+        # Register the gathered query with Results
+        ep = EpManageFabricResourcesGet(fabric_name=self.fabric)
+        self._register_result("gathered", OperationType.QUERY, f"gathered {len(results)} resource(s)", changed=False, path=ep.path)
+
     def manage_state(self):
         """Validate input and dispatch to the appropriate state handler.
 
@@ -2104,7 +2180,7 @@ class NDResourceManagerModule:
 
         if self.config and self.state != "gathered":
             self.proposed = ResourceManagerDiffEngine.validate_configs(self.config, self.state, self.nd, log=self.log)
-            self.output.assign(proposed_configs=[cfg.model_dump(by_alias=True, exclude_none=True) for cfg in self.proposed])
+            self._proposed_list = [cfg.model_dump(by_alias=True, exclude_none=True) for cfg in self.proposed]
         if self.state == "merged":
             self.log.info("manage_state: Dispatching to manage_merged()")
             self.manage_merged()
@@ -2120,26 +2196,24 @@ class NDResourceManagerModule:
     def exit_module(self):
         """Build the final module result and call ``exit_json`` to return it to Ansible.
 
-        For ``gathered`` state, passes the gathered list through ``NDOutput.format``
-        so the output always includes the ``output_level`` key.
-        For all other states, computes the ``changed`` flag from whether any resources
-        were merged or deleted, re-queries the ND API to capture post-operation state
-        (unless in check mode), assigns ``previous``/``current`` snapshots via
-        ``self.output.assign``, and calls ``self.output.format`` before
-        ``self.nd.module.exit_json``.
+        Uses ``Results.build_final_result()`` to collect per-API-call metadata,
+        then overlays ``NDOutput.format(**kwargs)`` for the standard output fields
+        (before, after, diff, proposed, etc.).
         """
-        # gathered state: return gathered list via NDOutput so output_level is always present
+        self.results.build_final_result()
+        final = self.results.final_result
+
         if self.state == "gathered":
             self.log.info(
                 "exit_module: gathered state, returning %s resource(s)",
                 len(self.changed_dict[0]["gathered"]),
             )
-            self.output.assign(current=self.translate_gathered_results(self.existing))
-            result = self.output.format(
+            final.update(self.output.format(
                 changed=False,
+                after=self.translate_gathered_results(self.existing),
                 gathered=self.changed_dict[0]["gathered"],
-            )
-            self.nd.module.exit_json(**result)
+            ))
+            self.nd.module.exit_json(**final)
             return
 
         changed = len(self.changed_dict[0]["merged"]) > 0 or len(self.changed_dict[0]["deleted"]) > 0
@@ -2166,13 +2240,17 @@ class NDResourceManagerModule:
             self._get_all_resources()
             self.existing = list(self._all_resources)
 
-        self.output.assign(
-            previous=self.translate_gathered_results(self.previous),
-            current=self.translate_gathered_results(self.existing),
-        )
-        result = self.output.format(
-            changed=changed,
-            diff=self.changed_dict,
-            response=self.api_responses,
-        )
-        self.nd.module.exit_json(**result)
+        final_results_data = {
+            "changed": changed,
+            "before": self.translate_gathered_results(self.previous),
+            "after": self.translate_gathered_results(self.existing),
+            "diff": self.changed_dict,
+            "response": self.api_responses,
+        }
+
+        output_level = self.nd.params.get("output_level", "normal")
+        if output_level in ("info", "debug"):
+            final_results_data["proposed"] = self._proposed_list
+
+        final.update(self.output.format(**final_results_data))
+        self.nd.module.exit_json(**final)
