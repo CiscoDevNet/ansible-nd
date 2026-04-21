@@ -818,32 +818,6 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
         # Lightweight path for gathered and explicit-pair delete workflows.
         if state in ("gathered", "deleted"):
             if list_query_succeeded:
-                if state == "deleted" and config and not have:
-                    fallback_have = []
-                    for item in config:
-                        switch_id_val = item.get("switch_id") or item.get(VpcFieldNames.SWITCH_ID)
-                        peer_switch_id_val = item.get("peer_switch_id") or item.get(VpcFieldNames.PEER_SWITCH_ID)
-                        if not switch_id_val or not peer_switch_id_val:
-                            continue
-
-                        use_vpl_val = item.get("use_virtual_peer_link")
-                        if use_vpl_val is None:
-                            use_vpl_val = item.get(VpcFieldNames.USE_VIRTUAL_PEER_LINK, False)
-
-                        fallback_pair = {
-                            VpcFieldNames.SWITCH_ID: switch_id_val,
-                            VpcFieldNames.PEER_SWITCH_ID: peer_switch_id_val,
-                            VpcFieldNames.USE_VIRTUAL_PEER_LINK: use_vpl_val,
-                            VpcFieldNames.VPC_ACTION: VpcActionEnum.PAIR.value,
-                        }
-                        if VpcFieldNames.VPC_PAIR_DETAILS in item:
-                            fallback_pair[VpcFieldNames.VPC_PAIR_DETAILS] = item.get(VpcFieldNames.VPC_PAIR_DETAILS)
-                        fallback_have.append(fallback_pair)
-
-                    if fallback_have:
-                        nrm.module.warn("vPC list query returned no pairs for delete workflow. Using requested delete config as fallback existing set.")
-                        return _set_lightweight_context(fallback_have)
-
                 if state == "gathered":
                     have = _filter_vpc_pairs_by_requested_config(have, config)
                     have = _enrich_pairs_from_direct_vpc(
@@ -861,8 +835,10 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
                     if have:
                         return _set_lightweight_context(lightweight_have=have)
                     nrm.module.warn("vPC list query returned no active pairs for gathered workflow. Falling back to switch-level discovery.")
-                else:
+                elif have:
                     return _set_lightweight_context(have)
+                elif config and list_query_succeeded:
+                    nrm.module.warn("vPC list query returned no pairs for delete workflow. Falling back to switch-level discovery.")
 
             if not list_query_succeeded:
                 nrm.module.warn("Skipping switch-level discovery for read-only/delete workflow because the vPC list endpoint is unavailable.")

@@ -10,6 +10,7 @@
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
   tags: gather
 
 ##############################################
@@ -41,7 +42,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: merged
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: "{{ nd_vpc_pair_gather_setup_conf }}"
   register: result
   tags: gather
@@ -58,7 +62,10 @@
     <<: *nd_info
     state: gathered
     fabric_name: "{{ test_fabric }}"
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
   register: verify_result
   tags: gather
 
@@ -81,7 +88,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
   register: result
   tags: gather
 
@@ -100,7 +110,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -122,7 +135,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: "{{ [item.partial_filter] }}"
   loop:
     - test_name: "peer1 only"
@@ -160,7 +176,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "INVALID_SERIAL"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -182,7 +201,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     verify:
       timeout: 20
       retries: 3
@@ -203,7 +225,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: true
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
   register: result
   failed_when: false
   tags: gather
@@ -223,7 +248,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
   check_mode: true
   register: result
   tags: gather
@@ -249,7 +277,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
   register: gathered_result
   tags: gather
 
@@ -396,7 +427,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -419,14 +453,19 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: merged
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
         use_virtual_peer_link: true
         vpc_pair_details: "{{ vpc_pair_details_extended }}"
   register: tc12_merge_result
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: gather
 
 - name: GATHER - TC12 - GATHER - Query pair with extended vpc_pair_details
@@ -434,12 +473,17 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
   register: tc12_gather_result
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: gather
 
 - name: GATHER - TC12 - VALIDATE - Verify pair is gathered after extended-details apply
@@ -451,7 +495,9 @@
         use_virtual_peer_link: true
     mode: "exists"
   register: tc12_validation
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: gather
 
 - name: GATHER - TC12 - ASSERT - Extended details gather validation passed
@@ -461,7 +507,9 @@
       - tc12_merge_result.changed == true
       - tc12_gather_result.failed == false
       - tc12_validation.failed == false
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: gather
 
 # TC13 - gathered + config_actions validation (must fail)
@@ -501,7 +549,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"

@@ -10,6 +10,7 @@
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
   tags: override
 
 ##############################################
@@ -56,7 +57,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: overridden
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: "{{ nd_vpc_pair_override_initial_conf }}"
   register: result
   tags: override
@@ -73,7 +77,10 @@
     <<: *nd_info
     state: gathered
     fabric_name: "{{ test_fabric }}"
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -99,7 +106,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: overridden
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: "{{ nd_vpc_pair_override_overridden_conf }}"
   register: result
   tags: override
@@ -125,7 +135,10 @@
     <<: *nd_info
     state: gathered
     fabric_name: "{{ test_fabric }}"
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -167,7 +180,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: merged
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -179,7 +195,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: overridden
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: []
   register: result
   tags: override
@@ -196,7 +215,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
   register: verify_result
   tags: override
 
@@ -213,7 +235,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -225,7 +250,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: overridden
-    deploy: true
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
     config: "{{ nd_vpc_pair_override_initial_conf }}"
   register: result
   tags: override
@@ -265,7 +293,10 @@
     <<: *nd_info
     state: gathered
     fabric_name: "{{ test_fabric }}"
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -292,14 +323,19 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: overridden
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
         use_virtual_peer_link: true
         vpc_pair_details: "{{ vpc_pair_details_extended }}"
   register: result
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: override
 
 - name: OVERRIDE - TC6 - API - Query direct vpcPair state for extended details verification
@@ -307,7 +343,9 @@
     path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPair"
     method: get
   register: tc6_vpc_pair_direct
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: override
 
 - name: OVERRIDE - TC6 - ASSERT - Verify base pair state from direct API
@@ -318,7 +356,9 @@
       - (tc6_vpc_pair_direct.current.switchId | default('')) == test_switch1
       - (tc6_vpc_pair_direct.current.peerSwitchId | default('')) == test_switch2
       - (tc6_vpc_pair_direct.current.useVirtualPeerLink | default(false)) | bool == true
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: override
 
 - name: OVERRIDE - TC6 - Set flag when direct API returns detailed payload
@@ -335,7 +375,9 @@
           and (tc6_vpc_pair_direct.current.vpc_pair_details is not none)
         )
       }}
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: override
 
 - name: OVERRIDE - TC6 - VALIDATE - Verify extended vpc_pair_details state
@@ -351,6 +393,7 @@
   register: tc6_validation
   when:
     - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
     - tc6_has_vpc_pair_details | default(false) | bool
   tags: override
 
@@ -361,6 +404,7 @@
       strict vpc_pair_details validation skipped for this run.
   when:
     - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
     - not (tc6_has_vpc_pair_details | default(false) | bool)
   tags: override
 
@@ -370,7 +414,9 @@
       - result.failed == false
       - result.changed == true
       - (tc6_has_vpc_pair_details | default(false) | bool == false) or (tc6_validation.failed == false)
-  when: test_fabric_type == "LANClassic"
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
   tags: override
 
 # TC7 - Override with config_actions save+deploy
@@ -379,7 +425,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -433,7 +482,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -445,7 +497,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: overridden
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: "{{ nd_vpc_pair_override_initial_conf }}"
   check_mode: true
   register: result
@@ -463,7 +518,10 @@
   cisco.nd.nd_manage_vpc_pair:
     <<: *nd_info
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     fabric_name: "{{ test_fabric }}"
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
@@ -494,7 +552,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"

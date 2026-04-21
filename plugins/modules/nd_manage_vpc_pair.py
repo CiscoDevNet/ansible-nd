@@ -479,7 +479,9 @@ def main() -> None:
         if explicit_write_requested:
             module.fail_json(
                 msg=(
-                    "Write action parameters cannot be used with 'gathered' state. " "config_actions.save/config_actions.deploy are not allowed for gathered."
+                    "Deploy parameter cannot be used with 'gathered' state. "
+                    "config_actions.save/config_actions.deploy are not allowed for gathered. "
+                    "Write action parameters cannot be used with 'gathered' state."
                 )
             )
 

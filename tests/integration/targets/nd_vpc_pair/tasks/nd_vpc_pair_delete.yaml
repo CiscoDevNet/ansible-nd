@@ -10,6 +10,7 @@
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
   tags: delete
 
 ##############################################
@@ -41,7 +42,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: merged
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: "{{ nd_vpc_pair_delete_setup_conf }}"
   register: result
   tags: delete
@@ -58,7 +62,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -85,7 +92,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -105,7 +115,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -132,7 +145,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: merged
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: "{{ nd_vpc_pair_delete_setup_conf }}"
   register: result
   tags: delete
@@ -149,7 +165,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: true
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -191,7 +210,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -231,7 +253,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: merged
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: "{{ nd_vpc_pair_delete_setup_conf }}"
   register: result
   tags: delete
@@ -248,7 +273,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     force: true
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
@@ -269,7 +297,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -296,7 +327,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: merged
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -333,7 +367,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -360,7 +397,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: merged
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: "{{ nd_vpc_pair_delete_setup_conf }}"
   register: result
   tags: delete
@@ -414,7 +454,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: merged
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: "{{ nd_vpc_pair_delete_setup_conf }}"
   register: tc7_setup_result
   tags: delete
@@ -431,7 +474,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -452,7 +498,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"
@@ -479,7 +528,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config: []
   register: result
   failed_when: false
@@ -502,7 +554,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"

@@ -82,7 +82,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: gathered
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     verify:
       timeout: 60
       retries: 3
@@ -133,7 +136,10 @@
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
     state: deleted
-    deploy: false
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
     config:
       - peer1_switch_id: "{{ test_switch1 }}"
         peer2_switch_id: "{{ test_switch2 }}"

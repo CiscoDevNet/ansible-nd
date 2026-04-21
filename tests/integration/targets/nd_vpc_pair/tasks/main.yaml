@@ -14,23 +14,29 @@
     nd_vpc_pair_tasks_dir: "{{ playbook_dir }}"
   tasks:
     - name: Test that we have a Nexus Dashboard host, username and password
+      tags: always
       ansible.builtin.fail:
         msg: "Please define the following variables: ansible_host, ansible_user and ansible_password."
       when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
 
     - name: Discover nd_vpc_pair test cases
+      tags: always
       ansible.builtin.find:
         paths: "{{ nd_vpc_pair_tasks_dir }}"
         patterns: "{{ testcase | default('nd_vpc_pair_*') }}.yaml"
         file_type: file
+      delegate_to: localhost
+      run_once: true
       connection: local
       register: nd_vpc_pair_testcases
 
     - name: Build list of test items
+      tags: always
       ansible.builtin.set_fact:
         test_items: "{{ nd_vpc_pair_testcases.files | map(attribute='path') | sort | list }}"
 
     - name: Assert nd_vpc_pair test discovery has matches
+      tags: always
       ansible.builtin.assert:
         that:
           - test_items | length > 0
@@ -39,10 +45,12 @@
           '{{ testcase | default("nd_vpc_pair_*") }}.yaml' under '{{ nd_vpc_pair_tasks_dir }}'.
 
     - name: Display discovered tests
+      tags: always
       ansible.builtin.debug:
         msg: "Discovered {{ test_items | length }} test file(s): {{ test_items | map('basename') | list }}"
 
     - name: Run nd_vpc_pair test cases
+      tags: always
       ansible.builtin.include_tasks: "{{ test_case_to_run }}"
       loop: "{{ test_items }}"
       loop_control:
