@@ -204,7 +204,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         api_endpoint = EpManageInterfacesNormalize()
         api_endpoint.fabric_name = self.fabric_name
         payload = InterfaceDefaultConfig.to_normalize_payload(self._pending_normalizes)
-        return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
+        return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
 
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """
@@ -228,7 +228,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
             request_body = {"interfaces": [payload]}
-            result = self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=request_body)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
@@ -256,7 +256,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             api_endpoint.set_identifiers(model_instance.interface_name)
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
-            result = self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return result
         except Exception as e:
@@ -318,7 +318,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 # Guarded at runtime by @requires_bulk_support("supports_bulk_create")
                 api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
                 request_body = {"interfaces": [payload for interface_name, payload in items]}
-                result = self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=request_body)
+                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
                 results.append(result)
                 for interface_name, payload in items:
                     self._queue_deploy(interface_name, switch_id)
@@ -359,7 +359,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             api_endpoint = self._configure_endpoint(self.query_one_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
-            return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -392,7 +392,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             all_interfaces = []
             for switch_ip, switch_id in self.fabric_context.switch_map.items():
                 api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-                result = self.sender.query_obj(api_endpoint.path)
+                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
                 if not result:
                     continue
                 interfaces = result.get("interfaces", []) or []
