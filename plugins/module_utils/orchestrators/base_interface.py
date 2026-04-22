@@ -79,7 +79,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         None
         """
-        return self.sender.params.get("fabric_name")
+        return self.rest_send.params.get("fabric_name")
 
     @property
     def fabric_context(self) -> FabricContext:
@@ -93,7 +93,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         None
         """
         if self._fabric_context is None:
-            self._fabric_context = FabricContext(sender=self.sender, fabric_name=self.fabric_name)
+            self._fabric_context = FabricContext(rest_send=self.rest_send, fabric_name=self.fabric_name)
         return self._fabric_context
 
     def _resolve_switch_id(self, switch_ip: str) -> str:
@@ -208,7 +208,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint = EpManageInterfacesDeploy()
         api_endpoint.fabric_name = self.fabric_name
         payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in self._pending_deploys]}
-        return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
+        return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
 
     def remove_pending(self) -> ResponseType | None:
         """
@@ -248,4 +248,4 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         api_endpoint = EpManageInterfacesRemove()
         api_endpoint.fabric_name = self.fabric_name
         payload = {"interfaces": [{"interfaceName": name, "switchId": switch_id} for name, switch_id in self._pending_removes]}
-        return self.sender.request(path=api_endpoint.path, method=api_endpoint.verb, data=payload)
+        return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)

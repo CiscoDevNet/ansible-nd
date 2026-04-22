@@ -18,9 +18,10 @@ fields that the original implementation assumed.
 
 from typing import Optional
 
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsSummaryGet
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
 # Sentinel to distinguish "not yet fetched" from "fetched but not found"
 _NOT_FETCHED = object()
@@ -46,20 +47,41 @@ class FabricContext:
     - Via `get_switch_id` if no switch matches the given management IP.
     """
 
-    def __init__(self, sender: NDModule, fabric_name: str):
+    def __init__(self, rest_send: RestSend, fabric_name: str):
         """
         # Summary
 
-        Initialize `FabricContext` with a sender and fabric name. Metadata is not fetched until needed.
+        Initialize `FabricContext` with a `RestSend` instance and fabric name. Metadata is not fetched until needed.
 
         ## Raises
 
         None
         """
-        self._sender = sender
+        self._rest_send = rest_send
         self._fabric_name = fabric_name
         self._fabric_summary = _NOT_FETCHED
         self._switch_map: Optional[dict[str, str]] = None
+
+    def _query_get(self, path: str) -> dict:
+        """
+        # Summary
+
+        Issue a GET request via `RestSend` and return the `DATA` dict from the response. Returns `{}` on HTTP 404.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the request fails with any non-success status other than 404.
+        """
+        self._rest_send.path = path
+        self._rest_send.verb = HttpVerbEnum.GET
+        self._rest_send.commit()
+        if self._rest_send.return_code == 404:
+            return {}
+        if not self._rest_send.success:
+            raise RuntimeError(f"GET {path} failed {self._rest_send.error_summary}")
+        return self._rest_send.response_current.get("DATA", {})
 
     @property
     def fabric_name(self) -> str:
@@ -90,8 +112,7 @@ class FabricContext:
         if self._fabric_summary is _NOT_FETCHED:
             ep = EpManageFabricsSummaryGet()
             ep.fabric_name = self._fabric_name
-            result = self._sender.query_obj(ep.path, ignore_not_found_error=True)
-            # query_obj returns {} for 404 / not found
+            result = self._query_get(ep.path)
             self._fabric_summary = result if result else None
         return self._fabric_summary
 
@@ -162,7 +183,7 @@ class FabricContext:
         if self._switch_map is None:
             ep = EpManageSwitchesListGet()
             ep.fabric_name = self._fabric_name
-            result = self._sender.query_obj(ep.path, ignore_not_found_error=True)
+            result = self._query_get(ep.path)
             switches = (result.get("switches") or []) if result else []
             self._switch_map = {switch["fabricManagementIp"]: switch["switchId"] for switch in switches if "fabricManagementIp" in switch}
         return self._switch_map
