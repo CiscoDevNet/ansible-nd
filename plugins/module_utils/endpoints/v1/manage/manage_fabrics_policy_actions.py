@@ -15,17 +15,19 @@ Endpoints covered:
 - POST /fabrics/{fabricName}/policyActions/remove       - Remove policies in bulk
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
+from __future__ import annotations
 
 __author__ = "L Nikhil Sri Krishna"
 
-from typing import Literal, Optional
+from typing import Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
+    Field,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     FabricNameMixin,
 )
@@ -35,13 +37,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params im
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    ConfigDict,
-    Field,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
-    NDEndpointBaseModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 # ============================================================================
 # Query parameter classes
@@ -70,12 +66,14 @@ class PolicyActionMutationEndpointParams(EndpointQueryParams):
 
     model_config = ConfigDict(extra="forbid")
 
-    cluster_name: Optional[str] = Field(
+    # TODO: Move cluster_name to shared fields file once available.
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Target cluster name for multi-cluster deployments",
     )
-    ticket_id: Optional[str] = Field(
+    # TODO: Move ticket_id to shared fields file as a phase 2 cleanup effort.
+    ticket_id: str | None = Field(
         default=None,
         min_length=1,
         max_length=64,
@@ -102,7 +100,8 @@ class PolicyPushConfigEndpointParams(EndpointQueryParams):
 
     model_config = ConfigDict(extra="forbid")
 
-    cluster_name: Optional[str] = Field(
+    # TODO: Move cluster_name to shared fields file once available.
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Target cluster name for multi-cluster deployments",

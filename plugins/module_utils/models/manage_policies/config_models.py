@@ -26,11 +26,9 @@ Usage in nd_policy.py main()::
         )
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
-
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -57,7 +55,7 @@ class PlaybookSwitchPolicyConfig(NDNestedModel):
         - priority: 1–2000 (createBasePolicy.priority)
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     name: str = Field(
         ...,
@@ -80,7 +78,7 @@ class PlaybookSwitchPolicyConfig(NDNestedModel):
         default=True,
         description="Create a new policy even if an identical one already exists",
     )
-    template_inputs: Optional[Dict[str, Any]] = Field(
+    template_inputs: dict[str, Any] | None = Field(
         default_factory=dict,
         description="Name/value pairs passed to the policy template",
     )
@@ -98,14 +96,14 @@ class PlaybookSwitchEntry(NDNestedModel):
     Accepts ``serial_number`` or the backward-compatible alias ``ip``.
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     serial_number: str = Field(
         ...,
         min_length=1,
         description="Switch serial number, management IP, or hostname",
     )
-    policies: Optional[List[PlaybookSwitchPolicyConfig]] = Field(
+    policies: list[PlaybookSwitchPolicyConfig] | None = Field(
         default_factory=list,
         description="Per-switch policy overrides",
     )
@@ -156,9 +154,9 @@ class PlaybookPolicyConfig(NDNestedModel):
         - priority: 1–2000 (createBasePolicy.priority)
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
-    name: Optional[str] = Field(
+    name: str | None = Field(
         default=None,
         max_length=255,
         description="Template name or policy ID",
@@ -178,11 +176,11 @@ class PlaybookPolicyConfig(NDNestedModel):
         default=True,
         description="Create a new policy even if an identical one already exists",
     )
-    template_inputs: Optional[Dict[str, Any]] = Field(
+    template_inputs: dict[str, Any] | None = Field(
         default_factory=dict,
         description="Name/value pairs passed to the policy template",
     )
-    switch: Optional[List[PlaybookSwitchEntry]] = Field(
+    switch: list[PlaybookSwitchEntry] | None = Field(
         default=None,
         description="List of target switches with optional per-switch policy overrides",
     )
@@ -239,7 +237,7 @@ class PlaybookPolicyConfig(NDNestedModel):
         return self
 
     @classmethod
-    def get_argument_spec(cls) -> Dict[str, Any]:
+    def get_argument_spec(cls) -> dict[str, Any]:
         """Return the Ansible argument spec for nd_policy.
 
         Returns:
@@ -254,10 +252,3 @@ class PlaybookPolicyConfig(NDNestedModel):
             cluster_name=dict(type="str"),
             state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),
         )
-
-
-__all__ = [
-    "PlaybookPolicyConfig",
-    "PlaybookSwitchEntry",
-    "PlaybookSwitchPolicyConfig",
-]

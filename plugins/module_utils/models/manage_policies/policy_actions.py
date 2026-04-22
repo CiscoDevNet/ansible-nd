@@ -19,21 +19,19 @@ policy action endpoints:
 - ``PolicyIds`` ← ``policyActions`` request body schema per ND API specification
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
+from __future__ import annotations
 
 __author__ = "L Nikhil Sri Krishna"
 
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     field_validator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
+)
 
 
 class SwitchIds(NDNestedModel):
@@ -62,9 +60,9 @@ class SwitchIds(NDNestedModel):
     ```
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
-    switch_ids: List[str] = Field(
+    switch_ids: list[str] = Field(
         default_factory=list,
         min_length=1,
         alias="switchIds",
@@ -73,7 +71,7 @@ class SwitchIds(NDNestedModel):
 
     @field_validator("switch_ids")
     @classmethod
-    def validate_switch_ids(cls, v: List[str]) -> List[str]:
+    def validate_switch_ids(cls, v: list[str]) -> list[str]:
         """Validate that all switch IDs are non-empty strings."""
         if not v:
             raise ValueError("switch_ids must contain at least one switch ID")
@@ -82,7 +80,7 @@ class SwitchIds(NDNestedModel):
                 raise ValueError(f"Invalid switch ID: {sid!r}. Must be a non-empty string.")
         return v
 
-    def to_request_dict(self) -> Dict[str, Any]:
+    def to_request_dict(self) -> dict[str, Any]:
         """Convert to API request dictionary with camelCase keys."""
         return self.to_payload()
 
@@ -128,9 +126,9 @@ class PolicyIds(NDNestedModel):
     ```
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
-    policy_ids: List[str] = Field(
+    policy_ids: list[str] = Field(
         default_factory=list,
         min_length=1,
         alias="policyIds",
@@ -139,7 +137,7 @@ class PolicyIds(NDNestedModel):
 
     @field_validator("policy_ids")
     @classmethod
-    def validate_policy_ids(cls, v: List[str]) -> List[str]:
+    def validate_policy_ids(cls, v: list[str]) -> list[str]:
         """
         Validate that all policy IDs are non-empty strings.
 
@@ -162,7 +160,7 @@ class PolicyIds(NDNestedModel):
                 raise ValueError(f"Invalid policy ID: {policy_id!r}. Must be a non-empty string.")
         return v
 
-    def to_request_dict(self) -> Dict[str, Any]:
+    def to_request_dict(self) -> dict[str, Any]:
         """
         Convert to API request dictionary with camelCase keys.
 

@@ -4,11 +4,9 @@
 # Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-# pylint: disable=invalid-name,logging-fstring-interpolation
-__metaclass__ = type
-# pylint: enable=invalid-name
+# pylint: disable=logging-fstring-interpolation
 __copyright__ = "Copyright (c) 2026 Cisco and/or its affiliates."
 __author__ = "L Nikhil Sri Krishna"
 
@@ -527,6 +525,9 @@ import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import (
+    PlaybookPolicyConfig,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd_policy_resources import (
     NDPolicyModule,
 )
@@ -536,9 +537,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     nd_argument_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import (
-    PlaybookPolicyConfig,
-)
 
 
 # =============================================================================

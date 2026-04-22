@@ -9,12 +9,10 @@
 Extracted from the ND API specification for Nexus Dashboard Manage APIs.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 from enum import Enum
-from typing import List, Union
+from typing import Union
 
 # =============================================================================
 # ENUMS - Extracted from OpenAPI Schema components/schemas
@@ -34,7 +32,7 @@ class PolicyEntityType(str, Enum):
     INTERFACE = "interface"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         """Return list of valid choices."""
         return [e.value for e in cls]
 
@@ -82,8 +80,3 @@ class PolicyEntityType(str, Enum):
                     if et.value == camel_case:
                         return et
         raise ValueError(f"Invalid PolicyEntityType: {value}. Valid: {cls.choices()}")
-
-
-__all__ = [
-    "PolicyEntityType",
-]
