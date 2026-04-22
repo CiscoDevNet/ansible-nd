@@ -171,6 +171,21 @@ class FabricContext:
         # TODO: Implement read-only check once the correct response field is identified
         return False
 
+    def invalidate(self) -> None:
+        """
+        # Summary
+
+        Drop all cached state so the next access to `fabric_summary`, `switch_map`, or `switch_map_by_id` re-fetches from
+        the API. Useful after a mutation that should be reflected on subsequent reads.
+
+        ## Raises
+
+        None
+        """
+        self._fabric_summary = _NOT_FETCHED
+        self._switch_map = None
+        self._switch_map_by_id = None
+
     def _load_switch_maps(self) -> None:
         """
         # Summary

@@ -265,6 +265,52 @@ def test_fabric_context_00210() -> None:
         instance.get_switch_ip("FDO99999XYZ")
 
 
+def test_fabric_context_00220() -> None:
+    """
+    # Summary
+
+    Verify `invalidate` drops cached state so the next switch_map access re-fetches from the API.
+
+    ## Test
+
+    - First `switch_map` access fetches the one-switch response and caches it
+    - `invalidate()` is called
+    - Second `switch_map` access fetches the two-switch response and reflects the new state
+    - Both IP- and ID-keyed maps are refreshed
+
+    ## Classes and Methods
+
+    - FabricContext.invalidate
+    - FabricContext.switch_map
+    - FabricContext.switch_map_by_id
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+        yield responses_fabric_context(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+    with does_not_raise():
+        first_map = instance.switch_map
+        instance.invalidate()
+        second_map = instance.switch_map
+        second_map_by_id = instance.switch_map_by_id
+
+    assert first_map == {"192.168.12.151": "FDO12345ABC"}
+    assert second_map == {
+        "192.168.12.151": "FDO12345ABC",
+        "192.168.12.152": "FDO12345ABD",
+    }
+    assert second_map_by_id == {
+        "FDO12345ABC": "192.168.12.151",
+        "FDO12345ABD": "192.168.12.152",
+    }
+
+
 # =============================================================================
 # Test: validate_for_mutation
 # =============================================================================

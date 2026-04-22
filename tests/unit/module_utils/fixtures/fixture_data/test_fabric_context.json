@@ -61,6 +61,40 @@
             ]
         }
     },
+    "test_fabric_context_00220a": {
+        "TEST_NOTES": ["First switch list response (pre-invalidate): one switch"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                }
+            ]
+        }
+    },
+    "test_fabric_context_00220b": {
+        "TEST_NOTES": ["Second switch list response (post-invalidate): two switches"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                },
+                {
+                    "fabricManagementIp": "192.168.12.152",
+                    "switchId": "FDO12345ABD"
+                }
+            ]
+        }
+    },
     "test_fabric_context_00300a": {
         "TEST_NOTES": ["Fabric summary: fabric exists (for validate_for_mutation success)"],
         "RETURN_CODE": 200,
