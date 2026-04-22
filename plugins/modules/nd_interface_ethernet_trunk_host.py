@@ -286,8 +286,10 @@ options:
                         type: int
                       customer_vlan_id:
                         description:
-                        - Customer VLAN id or VLAN range(s) for selective dot1q-tunnel (e.g., V(10) or V(10-20)).
-                        type: str
+                        - List of customer VLAN ids / ranges for selective dot1q-tunnel.
+                        - Each list element may be a single VLAN (e.g., V(10)) or a range (e.g., V(10-20)).
+                        type: list
+                        elements: str
                       dot1q_tunnel:
                         description:
                         - Whether selective dot1q-tunnel is enabled for this mapping.
@@ -397,10 +399,10 @@ EXAMPLES = r"""
               allowed_vlans: "100-200"
               vlan_mapping: true
               vlan_mapping_entries:
-                - customer_vlan_id: "10"
+                - customer_vlan_id: ["10"]
                   customer_inner_vlan_id: 20
                   provider_vlan_id: 100
-                - customer_vlan_id: "30-40"
+                - customer_vlan_id: ["30-40"]
                   dot1q_tunnel: true
                   provider_vlan_id: 200
     state: merged

@@ -39,7 +39,7 @@
 
 - name: "DELETED: Verify Ethernet1/45 was reset to trunk defaults"
   vars:
-    eth45_after: "{{ nm_deleted_45.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | list }}"
+    eth45_after: "{{ nm_deleted_45.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/45') | list }}"
   ansible.builtin.assert:
     that:
       - cm_deleted_45 is changed
