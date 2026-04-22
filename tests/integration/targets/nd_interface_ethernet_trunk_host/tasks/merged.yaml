@@ -1,0 +1,395 @@
+---
+# Merged state tests for nd_interface_ethernet_trunk_host
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- CLEANUP ---
+
+- name: "SETUP: Remove test ethernet interfaces before merged tests"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names: "{{ cleanup_interface_names }}"
+    state: deleted
+  register: setup_cleanup
+  tags: always
+
+- name: "DEBUG: Show cleanup result"
+  ansible.builtin.debug:
+    var: setup_cleanup
+  tags: always
+
+- name: "DEBUG: Re-query to see if interfaces are still present after cleanup"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+        config_data:
+          network_os:
+            policy:
+              policy_type: trunk_host
+    state: merged
+  check_mode: true
+  register: debug_requery
+
+- name: "DEBUG: Show re-query result (check before list)"
+  ansible.builtin.debug:
+    msg: "Before count: {{ debug_requery.before | length }}, Eth1/41 in before: {{ debug_requery.before | selectattr('interface_name', 'equalto', 'Ethernet1/41') |
+  list | length }}"
+
+# --- MERGED CREATE: SINGLE INTERFACE ---
+
+- name: "MERGED CREATE: Create Ethernet1/41 with full config (check mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_41
+
+- name: "MERGED CREATE: Create Ethernet1/41 with full config (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41 }}"
+    state: merged
+  register: nm_merged_create_41
+
+- name: "DEBUG: Show merged create result"
+  ansible.builtin.debug:
+    var: nm_merged_create_41
+
+- name: "MERGED CREATE: Verify Ethernet1/41 creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_41 is changed
+      - nm_merged_create_41 is changed
+      - nm_merged_create_41.after | length >= 1
+      - nm_merged_create_41.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | list | length == 1
+
+# --- MERGED CREATE: FAN-OUT (MULTIPLE INTERFACES, SINGLE CONFIG) ---
+
+- name: "MERGED CREATE: Create Ethernet1/42 and Ethernet1/43 via fan-out (check mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_42_43 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_fanout
+
+- name: "MERGED CREATE: Create Ethernet1/42 and Ethernet1/43 via fan-out (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_42_43 }}"
+    state: merged
+  register: nm_merged_create_fanout
+
+- name: "MERGED CREATE: Verify fan-out creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_fanout is changed
+      - nm_merged_create_fanout is changed
+      - nm_merged_create_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | list | length == 1
+      - nm_merged_create_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | list | length == 1
+
+# --- MERGED CREATE: MULTIPLE CONFIG GROUPS ---
+
+- name: "MERGED CREATE: Create Ethernet1/44 as a separate config group (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_44 }}"
+    state: merged
+  register: nm_merged_create_44
+
+- name: "DEBUG: Show Ethernet1/44 create result"
+  ansible.builtin.debug:
+    var: nm_merged_create_44
+
+- name: "MERGED CREATE: Verify Ethernet1/44 creation"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_create_44 is changed
+      - nm_merged_create_44.after | selectattr('interface_name', 'equalto', 'Ethernet1/44') | list | length == 1
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Re-apply Ethernet1/41 creation (check mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_idem_41
+
+- name: "MERGED IDEMPOTENT: Re-apply Ethernet1/41 creation (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41 }}"
+    state: merged
+  register: nm_merged_idem_41
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_41 is not changed
+      - nm_merged_idem_41 is not changed
+
+- name: "MERGED IDEMPOTENT: Re-apply fan-out config for Ethernet1/42 and Ethernet1/43"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_42_43 }}"
+    state: merged
+  register: nm_merged_idem_fanout
+
+- name: "MERGED IDEMPOTENT: Verify fan-out idempotency"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_idem_fanout is not changed
+
+# --- MERGED UPDATE ---
+
+- name: "MERGED UPDATE: Update Ethernet1/41 allowed_vlans and description (check mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41_updated }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_update_41
+
+- name: "MERGED UPDATE: Update Ethernet1/41 allowed_vlans and description (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41_updated }}"
+    state: merged
+  register: nm_merged_update_41
+
+- name: "MERGED UPDATE: Verify Ethernet1/41 was updated"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update_41 is changed
+      - nm_merged_update_41 is changed
+
+- name: "MERGED UPDATE: Verify updated values in after state"
+  vars:
+    eth41_after: "{{ nm_merged_update_41.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first }}"
+  ansible.builtin.assert:
+    that:
+      - eth41_after.config_data.network_os.policy.allowed_vlans == "150-250"
+      - eth41_after.config_data.network_os.policy.native_vlan == 150
+      - eth41_after.config_data.network_os.policy.description == "Updated Ethernet1/41 description"
+      - eth41_after.config_data.network_os.policy.bpdu_guard == "disable"
+      - eth41_after.config_data.network_os.policy.cdp == false
+
+- name: "MERGED UPDATE: Re-apply update for idempotency"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_41_updated }}"
+    state: merged
+  register: nm_merged_update_41_idem
+
+- name: "MERGED UPDATE: Verify idempotency after update"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_41_idem is not changed
+
+# --- MERGED UPDATE: FAN-OUT UPDATE ---
+
+- name: "MERGED UPDATE: Update Ethernet1/42 and Ethernet1/43 via fan-out"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_42_43_updated }}"
+    state: merged
+  register: nm_merged_update_fanout
+
+- name: "MERGED UPDATE: Verify fan-out update"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_fanout is changed
+
+- name: "MERGED UPDATE: Verify fan-out updated values"
+  vars:
+    eth42_after: "{{ nm_merged_update_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first }}"
+    eth43_after: "{{ nm_merged_update_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first }}"
+  ansible.builtin.assert:
+    that:
+      - eth42_after.config_data.network_os.policy.allowed_vlans == "250-350"
+      - eth42_after.config_data.network_os.policy.native_vlan == 250
+      - eth42_after.config_data.network_os.policy.description == "Updated trunk ports description"
+      - eth42_after.config_data.network_os.policy.admin_state == false
+      - eth43_after.config_data.network_os.policy.allowed_vlans == "250-350"
+      - eth43_after.config_data.network_os.policy.native_vlan == 250
+      - eth43_after.config_data.network_os.policy.description == "Updated trunk ports description"
+      - eth43_after.config_data.network_os.policy.admin_state == false
+
+# --- MERGED CREATE: VLAN MAPPING ---
+
+- name: "MERGED VLAN-MAPPING: Create Ethernet1/48 with vlan_mapping enabled (check mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_48_vlan_mapping }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_vlan_mapping
+
+- name: "MERGED VLAN-MAPPING: Create Ethernet1/48 with vlan_mapping enabled (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_48_vlan_mapping }}"
+    state: merged
+  register: nm_merged_vlan_mapping
+
+- name: "MERGED VLAN-MAPPING: Verify Ethernet1/48 vlan_mapping creation"
+  vars:
+    eth48_after: "{{ nm_merged_vlan_mapping.after | selectattr('interface_name', 'equalto', 'Ethernet1/48') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_vlan_mapping is changed
+      - nm_merged_vlan_mapping is changed
+      - eth48_after.config_data.network_os.policy.vlan_mapping == true
+      - eth48_after.config_data.network_os.policy.vlan_mapping_entries | length == 2
+
+- name: "MERGED VLAN-MAPPING: Re-apply for idempotency"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_48_vlan_mapping }}"
+    state: merged
+  register: nm_merged_vlan_mapping_idem
+
+- name: "MERGED VLAN-MAPPING: Verify idempotency"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_vlan_mapping_idem is not changed
+
+# Clean up the VLAN mapping test interface before the fan-out large test
+- name: "CLEANUP: Remove Ethernet1/48 after vlan mapping test"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/48
+    state: deleted
+
+# --- MERGED WITH deploy: false ---
+
+- name: "MERGED NO-DEPLOY: Create Ethernet1/48 with deploy disabled"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/48
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "999"
+              description: "No-deploy test Ethernet1/48"
+              policy_type: trunk_host
+    deploy: false
+    state: merged
+  register: nm_merged_no_deploy
+
+- name: "DEBUG: Show no-deploy result"
+  ansible.builtin.debug:
+    var: nm_merged_no_deploy
+
+- name: "MERGED NO-DEPLOY: Verify change was staged"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_no_deploy is changed
+
+# Clean up the no-deploy test interface
+- name: "CLEANUP: Remove Ethernet1/48"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/48
+    state: deleted
+
+# --- MERGED CREATE: LARGE FAN-OUT ---
+
+- name: "MERGED CREATE: Create three interfaces via fan-out (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_45_46_47 }}"
+    state: merged
+  register: nm_merged_create_large_fanout
+
+- name: "MERGED CREATE: Verify large fan-out creation"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_create_large_fanout is changed
+      - nm_merged_create_large_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | list | length == 1
+      - nm_merged_create_large_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/46') | list | length == 1
+      - nm_merged_create_large_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/47') | list | length == 1
+
+- name: "MERGED CREATE: Verify all three fan-out interfaces have the same config"
+  vars:
+    eth45_after: "{{ nm_merged_create_large_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | first }}"
+    eth46_after: "{{ nm_merged_create_large_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/46') | first }}"
+    eth47_after: "{{ nm_merged_create_large_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/47') | first }}"
+  ansible.builtin.assert:
+    that:
+      - eth45_after.config_data.network_os.policy.allowed_vlans == "400-500"
+      - eth45_after.config_data.network_os.policy.description == "Fan-out test trunk ports"
+      - eth46_after.config_data.network_os.policy.allowed_vlans == "400-500"
+      - eth46_after.config_data.network_os.policy.description == "Fan-out test trunk ports"
+      - eth47_after.config_data.network_os.policy.allowed_vlans == "400-500"
+      - eth47_after.config_data.network_os.policy.description == "Fan-out test trunk ports"
+
+- name: "MERGED IDEMPOTENT: Re-apply large fan-out"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_45_46_47 }}"
+    state: merged
+  register: nm_merged_idem_large_fanout
+
+- name: "MERGED IDEMPOTENT: Verify large fan-out idempotency"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_idem_large_fanout is not changed
