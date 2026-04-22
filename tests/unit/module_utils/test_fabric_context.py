@@ -222,6 +222,49 @@ def test_fabric_context_00200() -> None:
         instance.get_switch_id("10.0.0.1")
 
 
+def test_fabric_context_00210() -> None:
+    """
+    # Summary
+
+    Verify `switch_map_by_id` builds a `switchId -> fabricManagementIp` dict and `get_switch_ip` resolves switch IDs.
+
+    ## Test
+
+    - GET to `/api/v1/manage/fabrics/{fabric_name}/switches` returns two switches
+    - `switch_map_by_id` contains both switchIds mapped to their IPs
+    - `get_switch_ip` resolves known switchIds
+    - `get_switch_ip` raises `RuntimeError` for unknown switchId
+
+    ## Classes and Methods
+
+    - FabricContext.switch_map_by_id
+    - FabricContext.get_switch_ip
+    """
+    method_name = inspect.stack()[0][3]
+    key = f"{method_name}a"
+
+    def responses():
+        yield responses_fabric_context(key)
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+        switch_map_by_id = instance.switch_map_by_id
+
+    assert switch_map_by_id == {
+        "FDO12345ABC": "192.168.12.151",
+        "FDO12345ABD": "192.168.12.152",
+    }
+    assert instance.get_switch_ip("FDO12345ABC") == "192.168.12.151"
+    assert instance.get_switch_ip("FDO12345ABD") == "192.168.12.152"
+
+    match = r"No switch found with switchId 'FDO99999XYZ' in fabric 'fabric_1'"
+    with pytest.raises(RuntimeError, match=match):
+        instance.get_switch_ip("FDO99999XYZ")
+
+
 # =============================================================================
 # Test: validate_for_mutation
 # =============================================================================
@@ -231,13 +274,14 @@ def test_fabric_context_00300() -> None:
     """
     # Summary
 
-    Verify `validate_for_mutation` is a no-op when the fabric exists and is modifiable.
+    Verify `validate_for_mutation` is a no-op when the fabric exists.
 
     ## Test
 
     - GET summary returns 200 -> `fabric_exists` is True
-    - Stubbed `fabric_is_local` returns True, `fabric_is_read_only` returns False
     - `validate_for_mutation` does not raise
+
+    Note: `fabric_is_local` and `fabric_is_read_only` are stubs and are intentionally not invoked by `validate_for_mutation`.
 
     ## Classes and Methods
 
