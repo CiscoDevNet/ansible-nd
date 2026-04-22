@@ -64,7 +64,9 @@ class EthernetTrunkHostVlanMappingEntryModel(NDNestedModel):
     """
 
     customer_inner_vlan_id: Optional[int] = Field(default=None, alias="customerInnerVlanId", ge=1, le=4094, description="Customer inner VLAN")
-    customer_vlan_id: Optional[str] = Field(default=None, alias="customerVlanId", description="Customer VLAN id or VLAN range(s) for selective dot1q-tunnel")
+    customer_vlan_id: Optional[List[str]] = Field(
+        default=None, alias="customerVlanId", description="Customer VLAN ids / ranges for selective dot1q-tunnel (each element may be a single VLAN or range)"
+    )
     dot1q_tunnel: Optional[bool] = Field(default=None, alias="dot1qTunnel", description="Selective dot1q-tunnel")
     provider_vlan_id: Optional[int] = Field(default=None, alias="providerVlanId", ge=1, le=4094, description="Provider VLAN")
 
@@ -178,6 +180,8 @@ class EthernetTrunkHostPolicyModel(NDNestedModel):
         """
         if value is None:
             return value
+        if isinstance(value, int):
+            value = str(value)
         if not isinstance(value, str) or not re.match(ALLOWED_VLANS_PATTERN, value):
             raise ValueError(f"allowed_vlans must be 'none', 'all', or a comma-separated list of VLAN ids or ranges (e.g., '1-200,500-2000'), got: {value!r}")
         return value
@@ -381,7 +385,7 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
                                                 elements="dict",
                                                 options=dict(
                                                     customer_inner_vlan_id=dict(type="int"),
-                                                    customer_vlan_id=dict(type="str"),
+                                                    customer_vlan_id=dict(type="list", elements="str"),
                                                     dot1q_tunnel=dict(type="bool"),
                                                     provider_vlan_id=dict(type="int"),
                                                 ),

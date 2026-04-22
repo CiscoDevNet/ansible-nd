@@ -57,7 +57,7 @@
 
 - name: "REPLACED: Verify replaced values"
   vars:
-    eth41_after: "{{ nm_replaced_41.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first }}"
+    eth41_after: "{{ nm_replaced_41.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first }}"
   ansible.builtin.assert:
     that:
       - eth41_after.config_data.network_os.policy.allowed_vlans == "500-600"
@@ -141,8 +141,8 @@
 
 - name: "REPLACED FAN-OUT: Verify replaced values for both interfaces"
   vars:
-    eth42_after: "{{ nm_replaced_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first }}"
-    eth43_after: "{{ nm_replaced_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first }}"
+    eth42_after: "{{ nm_replaced_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first }}"
+    eth43_after: "{{ nm_replaced_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first }}"
   ansible.builtin.assert:
     that:
       - eth42_after.config_data.network_os.policy.allowed_vlans == "600-700"
@@ -188,8 +188,8 @@
 
 - name: "REPLACED MULTI: Verify both config groups were replaced"
   vars:
-    eth41_after: "{{ nm_replaced_multi.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first }}"
-    eth44_after: "{{ nm_replaced_multi.after | selectattr('interface_name', 'equalto', 'Ethernet1/44') | first }}"
+    eth41_after: "{{ nm_replaced_multi.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first }}"
+    eth44_after: "{{ nm_replaced_multi.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/44') | first }}"
   ansible.builtin.assert:
     that:
       - nm_replaced_multi is changed

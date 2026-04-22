@@ -4,6 +4,15 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# --- Optional extra-vars flags ---
+# supports_vlan_mapping (bool, default: false)
+#   Enables the VLAN-mapping / dot1q-tunnel test block in merged.yaml. Skipped by
+#   default because Nexus 9000v virtual switches reject
+#   `switchport vlan mapping ... dot1q-tunnel ...` (ND returns HTTP 400).
+#   On a hardware-backed testbed run:
+#     ansible-test network-integration nd_interface_ethernet_trunk_host \
+#         --extra-vars supports_vlan_mapping=true
+
 - name: Test that we have a Nexus Dashboard host, username and password
   ansible.builtin.fail:
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'

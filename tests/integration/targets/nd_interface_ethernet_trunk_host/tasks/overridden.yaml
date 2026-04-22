@@ -83,8 +83,8 @@
 
 - name: "OVERRIDDEN: Verify overridden values"
   vars:
-    eth41_after: "{{ nm_overridden_reduce.after | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first }}"
-    eth42_after: "{{ nm_overridden_reduce.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first }}"
+    eth41_after: "{{ nm_overridden_reduce.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first }}"
+    eth42_after: "{{ nm_overridden_reduce.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first }}"
   ansible.builtin.assert:
     that:
       - eth41_after.config_data.network_os.policy.allowed_vlans == "900-950"
@@ -149,9 +149,9 @@
 
 - name: "OVERRIDDEN SWAP: Verify swap reflected in after state"
   vars:
-    eth42_after: "{{ nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first }}"
-    eth43_after: "{{ nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first }}"
-    eth44_after: "{{ nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'Ethernet1/44') | first }}"
+    eth42_after: "{{ nm_overridden_swap.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first }}"
+    eth43_after: "{{ nm_overridden_swap.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first }}"
+    eth44_after: "{{ nm_overridden_swap.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/44') | first }}"
   ansible.builtin.assert:
     that:
       - nm_overridden_swap is changed
@@ -172,9 +172,9 @@
 
 - name: "OVERRIDDEN FAN-OUT: Verify fan-out interfaces present with overridden config"
   vars:
-    eth45_after: "{{ nm_overridden_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/45') | first }}"
-    eth46_after: "{{ nm_overridden_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/46') | first }}"
-    eth47_after: "{{ nm_overridden_fanout.after | selectattr('interface_name', 'equalto', 'Ethernet1/47') | first }}"
+    eth45_after: "{{ nm_overridden_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/45') | first }}"
+    eth46_after: "{{ nm_overridden_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/46') | first }}"
+    eth47_after: "{{ nm_overridden_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/47') | first }}"
   ansible.builtin.assert:
     that:
       - nm_overridden_fanout is changed
