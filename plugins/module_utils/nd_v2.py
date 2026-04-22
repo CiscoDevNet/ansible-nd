@@ -146,9 +146,31 @@ class NDModule:
         self._sender: Optional[SenderProtocol] = None
         self._response_handler: Optional[ResponseHandlerProtocol] = None
 
+        self._rest_send_timeout: Optional[int] = None
+        self._rest_send_check_mode: Optional[bool] = None
         if self.module._debug:
             self.module.warn("Enable debug output because ANSIBLE_DEBUG was set.")
             self.params["output_level"] = "debug"
+
+    @property
+    def rest_send_timeout(self) -> Optional[int]:
+        return self._rest_send_timeout
+
+    @rest_send_timeout.setter
+    def rest_send_timeout(self, value: int) -> None:
+        self._rest_send_timeout = value
+        if self._rest_send is not None:
+            self._rest_send.timeout = value
+
+    @property
+    def rest_send_check_mode(self) -> Optional[bool]:
+        return self._rest_send_check_mode
+
+    @rest_send_check_mode.setter
+    def rest_send_check_mode(self, value: bool) -> None:
+        self._rest_send_check_mode = value
+        if self._rest_send is not None:
+            self._rest_send.check_mode = value
 
     def _get_rest_send(self) -> RestSend:
         """
@@ -178,6 +200,13 @@ class NDModule:
             msg += "Initialized RestSend instance with params: "
             msg += f"{params}"
             self.log.debug(msg)
+
+        if self._rest_send_timeout is not None:
+            self._rest_send.timeout = self._rest_send_timeout
+
+        if self._rest_send_check_mode is not None:
+            self._rest_send.check_mode = self._rest_send_check_mode
+
         return self._rest_send
 
     @property
