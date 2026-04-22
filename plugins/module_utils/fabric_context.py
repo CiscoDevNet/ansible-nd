@@ -37,14 +37,19 @@ class FabricContext:
     boolean checks and a `validate_for_mutation` method that raises `RuntimeError` with
     a clear message when the fabric cannot be modified.
 
+    TODO: `fabric_is_local` and `fabric_is_read_only` are stubs. The `GET /api/v1/manage/fabrics/{fabricName}` response does
+    not currently expose the fields the original implementation expected (`local`, `meta.allowedActions`). Until the correct
+    fields or alternative endpoints are identified, these checks are intentionally excluded from `validate_for_mutation` to
+    avoid silently passing pre-flight checks. Re-add them to `validate_for_mutation` once the underlying checks return
+    real data.
+
     ## Raises
 
     ### RuntimeError
 
     - Via `validate_for_mutation` if the fabric does not exist on any ND node.
-    - Via `validate_for_mutation` if the fabric is not local to the target ND node.
-    - Via `validate_for_mutation` if the fabric is in deployment-freeze mode.
     - Via `get_switch_id` if no switch matches the given management IP.
+    - Via `get_switch_ip` if no switch matches the given switch ID.
     """
 
     def __init__(self, rest_send: RestSend, fabric_name: str):
@@ -61,6 +66,7 @@ class FabricContext:
         self._fabric_name = fabric_name
         self._fabric_summary = _NOT_FETCHED
         self._switch_map: Optional[dict[str, str]] = None
+        self._switch_map_by_id: Optional[dict[str, str]] = None
 
     def _query_get(self, path: str) -> dict:
         """
@@ -165,6 +171,27 @@ class FabricContext:
         # TODO: Implement read-only check once the correct response field is identified
         return False
 
+    def _load_switch_maps(self) -> None:
+        """
+        # Summary
+
+        Fetch the fabric switch inventory once and populate both the IP-keyed and ID-keyed lookup maps.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the switches API query fails.
+        """
+        if self._switch_map is not None:
+            return
+        ep = EpManageSwitchesListGet()
+        ep.fabric_name = self._fabric_name
+        result = self._query_get(ep.path)
+        switches = (result.get("switches") or []) if result else []
+        self._switch_map = {sw["fabricManagementIp"]: sw["switchId"] for sw in switches if sw.get("fabricManagementIp") and sw.get("switchId")}
+        self._switch_map_by_id = {sw["switchId"]: sw["fabricManagementIp"] for sw in switches if sw.get("switchId") and sw.get("fabricManagementIp")}
+
     @property
     def switch_map(self) -> dict[str, str]:
         """
@@ -180,13 +207,28 @@ class FabricContext:
 
         - If the switches API query fails.
         """
-        if self._switch_map is None:
-            ep = EpManageSwitchesListGet()
-            ep.fabric_name = self._fabric_name
-            result = self._query_get(ep.path)
-            switches = (result.get("switches") or []) if result else []
-            self._switch_map = {switch["fabricManagementIp"]: switch["switchId"] for switch in switches if "fabricManagementIp" in switch}
+        self._load_switch_maps()
+        assert self._switch_map is not None
         return self._switch_map
+
+    @property
+    def switch_map_by_id(self) -> dict[str, str]:
+        """
+        # Summary
+
+        Return a cached mapping of `switchId` to `fabricManagementIp` for all switches in the fabric.
+
+        Fetches all switches from the ND Manage Switches API on first access and caches the result alongside `switch_map`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the switches API query fails.
+        """
+        self._load_switch_maps()
+        assert self._switch_map_by_id is not None
+        return self._switch_map_by_id
 
     def get_switch_id(self, switch_ip: str) -> str:
         """
@@ -205,36 +247,42 @@ class FabricContext:
         except KeyError as e:
             raise RuntimeError(f"No switch found with fabricManagementIp '{switch_ip}' in fabric '{self._fabric_name}'.") from e
 
+    def get_switch_ip(self, switch_id: str) -> str:
+        """
+        # Summary
+
+        Resolve a `switchId` (serial number) to its `fabricManagementIp` via the cached switch map.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If no switch matches the given switch ID in the fabric.
+        """
+        try:
+            return self.switch_map_by_id[switch_id]
+        except KeyError as e:
+            raise RuntimeError(f"No switch found with switchId '{switch_id}' in fabric '{self._fabric_name}'.") from e
+
     def validate_for_mutation(self) -> None:
         """
         # Summary
 
-        Run all pre-flight checks required before modifying resources in this fabric. Raises `RuntimeError` with a clear,
+        Run pre-flight checks required before modifying resources in this fabric. Raises `RuntimeError` with a clear,
         actionable message on the first failing check.
 
         ## Checks
 
         1. Fabric exists (on any node in the cluster).
-        2. Fabric is local to this ND node (not a remote fabric visible via cluster forwarding).
-        3. Fabric is not in a read-only state (deployment-freeze mode or empty `allowedActions`).
+
+        See the class-level TODO: `fabric_is_local` and `fabric_is_read_only` are intentionally not invoked here while their
+        underlying implementations are stubs. They will be re-added once the relevant fields are exposed by the API.
 
         ## Raises
 
         ### RuntimeError
 
         - If the fabric does not exist.
-        - If the fabric is not local to this ND node.
-        - If the fabric is in a read-only state.
         """
         if not self.fabric_exists():
-            raise RuntimeError(f"Fabric '{self._fabric_name}' not found. " f"Verify the fabric name and ensure you are targeting the correct ND node.")
-        if not self.fabric_is_local():
-            raise RuntimeError(
-                f"Fabric '{self._fabric_name}' is not local to this Nexus Dashboard node. "
-                f"Target the ND node that owns the fabric (ownerCluster: "
-                f"'{self.fabric_summary.get('ownerCluster', 'unknown')}')."
-            )
-        if self.fabric_is_read_only():
-            raise RuntimeError(
-                f"Fabric '{self._fabric_name}' is in a read-only state and cannot be modified. " f"Check that deployment-freeze mode is not enabled."
-            )
+            raise RuntimeError(f"Fabric '{self._fabric_name}' not found. Verify the fabric name and ensure you are targeting the correct ND node.")
