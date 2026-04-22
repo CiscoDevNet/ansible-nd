@@ -1,0 +1,64 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_fabric_context.py",
+        "Each key matches a test function + suffix (a/b/c/...) per CLAUDE.md unit-test conventions.",
+        "Responses mirror what ND returns for fabric summary and switches list endpoints."
+    ],
+    "test_fabric_context_00100a": {
+        "TEST_NOTES": ["Fabric summary: fabric exists"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_fabric_context_00110a": {
+        "TEST_NOTES": ["Fabric summary: 404 not found"],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+    "test_fabric_context_00200a": {
+        "TEST_NOTES": ["Switch list: two switches in fabric"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.12.151",
+                    "switchId": "FDO12345ABC"
+                },
+                {
+                    "fabricManagementIp": "192.168.12.152",
+                    "switchId": "FDO12345ABD"
+                }
+            ]
+        }
+    },
+    "test_fabric_context_00300a": {
+        "TEST_NOTES": ["Fabric summary: fabric exists (for validate_for_mutation success)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_fabric_context_00310a": {
+        "TEST_NOTES": ["Fabric summary: 404 not found (for validate_for_mutation failure)"],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    }
+}
