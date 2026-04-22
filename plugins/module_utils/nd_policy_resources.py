@@ -24,19 +24,19 @@ Models (from ``models.nd_manage_policies``):
     - ``PolicyIds``         - list of policy IDs for actions
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name,logging-fstring-interpolation,logging-not-lazy,f-string-without-interpolation,unnecessary-comprehension,implicit-str-concat
-__metaclass__ = type
-# pylint: enable=invalid-name
+from __future__ import annotations
 
 import copy
 import logging
 import re
-from typing import Any, ClassVar, Dict, List, Optional, Tuple
+from typing import Any, ClassVar
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ValidationError,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
+    BasePath,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_config_templates import (
     EpManageConfigTemplateParametersGet,
 )
@@ -54,30 +54,35 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
     EpManageSwitchActionsDeployPost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_base import (
-    PolicyCreate,
+from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import (
+    PlaybookPolicyConfig,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.gathered_models import (
     GatheredPolicy,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
-    NDConfigCollection,
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_actions import (
+    PolicyIds,
+    SwitchIds,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_base import (
+    PolicyCreate,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_crud import (
     PolicyCreateBulk,
     PolicyUpdate,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_actions import (
-    PolicyIds,
-    SwitchIds,
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
+    NDConfigCollection,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule,
     NDModuleError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import PlaybookPolicyConfig
+
+# pylint: disable=logging-fstring-interpolation,logging-not-lazy,f-string-without-interpolation,unnecessary-comprehension,implicit-str-concat
+
 
 # =============================================================================
 # Module-level helpers (stateless, used by NDPolicyModule)
@@ -150,7 +155,7 @@ class NDPolicyModule:
         self,
         nd: NDModule,
         results: Results,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
     ):
         """Initialize the Policy Resource Module.
 
@@ -186,14 +191,14 @@ class NDPolicyModule:
 
         # Template parameter cache used by _validate_template_inputs().
         # Keyed by templateName; populated lazily by _fetch_template_params().
-        self._template_params_cache: Dict[str, List[Dict]] = {}
+        self._template_params_cache: dict[str, list[dict]] = {}
 
         # Before/after snapshot lists — populated during _execute_* methods.
         # Merged into exit_json output so the caller sees what changed.
-        self._before: List[Dict] = []
-        self._after: List[Dict] = []
-        self._proposed: List[Dict] = []
-        self._gathered: List[Dict] = []
+        self._before: list[dict] = []
+        self._after: list[dict] = []
+        self._proposed: list[dict] = []
+        self._gathered: list[dict] = []
 
         self.log.info(f"Initialized NDPolicyModule for fabric: {self.fabric_name}, state: {self.state}")
 
@@ -471,7 +476,7 @@ class NDPolicyModule:
 
         return config
 
-    def _query_fabric_switches(self) -> List[Dict]:
+    def _query_fabric_switches(self) -> list[dict]:
         """Query all switches for the fabric and return raw switch records.
 
         Uses RestSend save_settings/restore_settings to temporarily force
@@ -645,7 +650,7 @@ class NDPolicyModule:
 
         self.log.debug("ENTER: _validate_config() [use_desc_as_key=true]")
 
-        desc_switch_counts: Dict[str, int] = {}
+        desc_switch_counts: dict[str, int] = {}
 
         for idx, entry in enumerate(self.config):
             name = entry.get("name", "")
@@ -839,7 +844,7 @@ class NDPolicyModule:
         self.log.debug("ENTER: _handle_gathered_state()")
         self.log.info("Handling gathered state")
 
-        policies: List[Dict] = []
+        policies: list[dict] = []
 
         if self.config:
             # --- With config: query matching policies per entry ---
@@ -956,7 +961,7 @@ class NDPolicyModule:
 
         self.log.debug("EXIT: _handle_gathered_state()")
 
-    def _get_fabric_switches(self) -> List[str]:
+    def _get_fabric_switches(self) -> list[str]:
         """Fetch all switch serial numbers in the current fabric.
 
         Delegates to ``_query_fabric_switches()`` for the API call and
@@ -983,7 +988,7 @@ class NDPolicyModule:
         self.log.debug(f"EXIT: _get_fabric_switches() -> {switches}")
         return switches
 
-    def _policy_to_config(self, policy: Dict) -> Dict:
+    def _policy_to_config(self, policy: dict) -> dict:
         """Convert a controller policy dict to a playbook-compatible config entry.
 
         The output format matches what ``state=merged`` expects, so the
@@ -1051,7 +1056,7 @@ class NDPolicyModule:
         }
     )
 
-    def _clean_template_inputs(self, template_name: str, raw_inputs: Dict[str, Any]) -> Dict[str, Any]:
+    def _clean_template_inputs(self, template_name: str, raw_inputs: dict[str, Any]) -> dict[str, Any]:
         """Remove system-injected keys from template inputs.
 
         Strips keys listed in ``_SYSTEM_INJECTED_KEYS`` and keeps
@@ -1105,7 +1110,7 @@ class NDPolicyModule:
     def _escape_lucene_value(cls, value: str) -> str:
         """Escape a value for safe inclusion in a Lucene filter term.
 
-        NDFC's Lucene implementation does **not** support double-quoted
+        ND's Lucene implementation does **not** support double-quoted
         phrase syntax (e.g. ``description:"hello world"`` returns zero
         results).  Instead, individual special characters are escaped
         with a backslash while spaces are left unescaped so that the
@@ -1122,7 +1127,7 @@ class NDPolicyModule:
         if not s:
             return s
         # Escape individual Lucene special characters with backslash.
-        # Spaces are intentionally left unescaped — NDFC performs
+        # Spaces are intentionally left unescaped — ND performs
         # tokenized (word-level) matching on spaces.
         chars_to_escape = set(r'+-!(){}[]^"~*?:\/')
         out: list = []
@@ -1163,7 +1168,7 @@ class NDPolicyModule:
         return " AND ".join(parts)
 
     @staticmethod
-    def _policies_differ(want: Dict, have: Dict) -> Dict:
+    def _policies_differ(want: dict, have: dict) -> dict:
         """Compare want vs have policy to determine if an update is needed.
 
         Fields compared:
@@ -1223,7 +1228,7 @@ class NDPolicyModule:
     # API Query Helpers
     # =========================================================================
 
-    def _query_policies_raw(self, lucene_filter: Optional[str] = None) -> List[Dict]:
+    def _query_policies_raw(self, lucene_filter: str | None = None) -> list[dict]:
         """Query policies from the controller using GET /policies (unfiltered).
 
         Returns **all** matching policies including ``markDeleted`` and
@@ -1246,7 +1251,7 @@ class NDPolicyModule:
             ep.endpoint_params.cluster_name = self.cluster_name
         if lucene_filter:
             ep.lucene_params.filter = lucene_filter
-        # Set max to retrieve all matching policies.
+        # set max to retrieve all matching policies.
         # Default page size is 10 which causes missed matches.
         ep.lucene_params.max = 10000
 
@@ -1260,9 +1265,9 @@ class NDPolicyModule:
 
     def _query_policies(
         self,
-        lucene_filter: Optional[str] = None,
+        lucene_filter: str | None = None,
         include_mark_deleted: bool = False,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Query policies with idempotency-safe filtering.
 
         Wraps ``_query_policies_raw()`` and applies post-filters:
@@ -1288,7 +1293,7 @@ class NDPolicyModule:
         if not raw:
             return []
 
-        result: List[Dict] = []
+        result: list[dict] = []
         excluded = 0
         for p in raw:
             # Always exclude internal ND sub-policies (source != "")
@@ -1310,7 +1315,7 @@ class NDPolicyModule:
         self.log.debug(f"After filtering: {len(result)} policies " f"(excluded {excluded}, include_mark_deleted={include_mark_deleted})")
         return result
 
-    def _query_policy_by_id(self, policy_id: str, include_mark_deleted: bool = False) -> Optional[Dict]:
+    def _query_policy_by_id(self, policy_id: str, include_mark_deleted: bool = False) -> dict | None:
         """Query a single policy by its ID.
 
         By default, policies marked for deletion (``markDeleted=True``)
@@ -1366,7 +1371,7 @@ class NDPolicyModule:
     # Core: Build want / have
     # =========================================================================
 
-    def _build_want(self, config_entry: Dict, state: str = "merged") -> Dict:
+    def _build_want(self, config_entry: dict, state: str = "merged") -> dict:
         """Translate a single user config entry to the API-compatible want dict.
 
         For merged state, ``name`` is required and all fields are included.
@@ -1416,7 +1421,7 @@ class NDPolicyModule:
     # Template Input Validation
     # =========================================================================
 
-    def _fetch_template_params(self, template_name: str) -> List[Dict]:
+    def _fetch_template_params(self, template_name: str) -> list[dict]:
         """Fetch and cache parameter definitions for a config template.
 
         Calls ``GET /api/v1/manage/configTemplates/{templateName}`` and
@@ -1461,7 +1466,7 @@ class NDPolicyModule:
         self.log.debug(f"EXIT: _fetch_template_params()")
         return params
 
-    def _validate_template_inputs(self, template_name: str, template_inputs: Dict[str, Any]) -> List[str]:
+    def _validate_template_inputs(self, template_name: str, template_inputs: dict[str, Any]) -> list[str]:
         """Validate user-provided templateInputs against the template schema.
 
         Performs three checks:
@@ -1491,13 +1496,13 @@ class NDPolicyModule:
             self.log.debug("No template params available, skipping validation")
             return []
 
-        errors: List[str] = []
+        errors: list[str] = []
 
         # Build lookup: param_name -> param_def
         # Filter out internal parameters (annotations.IsInternal == "true")
         # that the controller auto-populates (e.g., SERIAL_NUMBER, POLICY_ID,
         # SOURCE, FABRIC_NAME). Users should never need to set these.
-        param_map: Dict[str, Dict] = {}
+        param_map: dict[str, dict] = {}
         internal_names: set = set()
         for p in params:
             name = p.get("name")
@@ -1610,7 +1615,7 @@ class NDPolicyModule:
         self.log.debug("EXIT: _validate_template_inputs()")
         return errors
 
-    def _build_have(self, want: Dict) -> Tuple[List[Dict], Optional[str]]:
+    def _build_have(self, want: dict) -> tuple[list[dict], str | None]:
         """Query the controller to find existing policies matching the want.
 
         Handles all lookup strategies:
@@ -1680,11 +1685,11 @@ class NDPolicyModule:
         # Build Lucene query.  We always include switchId and
         # templateName (when available) to narrow results.
         # Description is included only when it contains no Lucene
-        # special characters — NDFC's Lucene does not reliably handle
+        # special characters — ND's Lucene does not reliably handle
         # escaped special chars (e.g. colons, parentheses) in the
         # description field.  In all cases, exact-match post-filtering
         # guarantees correctness.
-        lucene_kwargs: Dict[str, str] = {"switchId": want["switchId"]}
+        lucene_kwargs: dict[str, str] = {"switchId": want["switchId"]}
         if "templateName" in want:
             lucene_kwargs["templateName"] = want["templateName"]
         # Only add description to Lucene if it's "safe" (no special chars)
@@ -1707,7 +1712,7 @@ class NDPolicyModule:
     # Diff: Merged State (16 cases)
     # =========================================================================
 
-    def _get_diff_merged_single(self, want: Dict, have_list: List[Dict]) -> Dict:
+    def _get_diff_merged_single(self, want: dict, have_list: list[dict]) -> dict:
         """Compute the diff and determine the action for a single config entry.
 
         Args:
@@ -1874,7 +1879,7 @@ class NDPolicyModule:
     # Execute: Merged State
     # =========================================================================
 
-    def _execute_merged(self, diff_results: List[Dict]) -> List[str]:
+    def _execute_merged(self, diff_results: list[dict]) -> list[str]:
         """Execute the computed actions for all config entries using bulk APIs.
 
         Instead of making one API call per entry, this method collects all
@@ -1888,7 +1893,7 @@ class NDPolicyModule:
             4. Execute updates individually (PUT has no bulk API).
 
         Args:
-            diff_results: List of diff result dicts from _get_diff_merged_single.
+            diff_results: list of diff result dicts from _get_diff_merged_single.
 
         Returns:
             List of policy IDs to deploy (if deploy=true).
@@ -1899,9 +1904,9 @@ class NDPolicyModule:
 
         # Batches for bulk execution
         # Each item is (diff_entry_index, diff_entry) to preserve ordering
-        create_batch: List[Dict] = []
-        update_batch: List[Dict] = []
-        delete_and_create_batch: List[Dict] = []
+        create_batch: list[dict] = []
+        update_batch: list[dict] = []
+        delete_and_create_batch: list[dict] = []
 
         # ── Phase 1: Classify entries, register skip/fail immediately ───
         for diff_entry in diff_results:
@@ -2050,7 +2055,7 @@ class NDPolicyModule:
                 self.log.info(f"Phase 3: Removing {len(remove_ids)} old policies " f"for delete_and_create: {remove_ids}")
 
                 # Build policy→switch map for switchActions/deploy
-                dac_switch_map: Dict[str, str] = {}
+                dac_switch_map: dict[str, str] = {}
                 for d in delete_and_create_batch:
                     pid = d.get("policy_id", "")
                     have = d.get("have") or {}
@@ -2369,7 +2374,7 @@ class NDPolicyModule:
     # Diff: Deleted State (16 cases)
     # =========================================================================
 
-    def _get_diff_deleted_single(self, want: Dict, have_list: List[Dict]) -> Dict:
+    def _get_diff_deleted_single(self, want: dict, have_list: list[dict]) -> dict:
         """Compute the delete result for a single config entry.
 
         Args:
@@ -2454,7 +2459,7 @@ class NDPolicyModule:
     # Execute: Deleted State
     # =========================================================================
 
-    def _execute_deleted(self, diff_results: List[Dict]) -> None:
+    def _execute_deleted(self, diff_results: list[dict]) -> None:
         """Execute the computed actions for all deleted config entries.
 
         Collects all policy IDs to delete across all config entries, then
@@ -2467,7 +2472,7 @@ class NDPolicyModule:
             - PYTHON-type:  direct DELETE (1-step, regardless of deploy)
 
         Args:
-            diff_results: List of diff result dicts from ``_get_diff_deleted_single``.
+            diff_results: list of diff result dicts from ``_get_diff_deleted_single``.
 
         Returns:
             None.
@@ -2480,10 +2485,10 @@ class NDPolicyModule:
         all_switch_ids = []
         # Map policy ID → templateName so Phase B can route switch_freeform
         # policies through a direct DELETE instead of markDelete.
-        policy_template_map: Dict[str, str] = {}
+        policy_template_map: dict[str, str] = {}
         # Map policy ID → switchId so we know which switches to deploy after
         # direct DELETE of PYTHON-type policies.
-        policy_switch_map: Dict[str, str] = {}
+        policy_switch_map: dict[str, str] = {}
 
         for diff_entry in diff_results:
             action = diff_entry["action"]
@@ -2883,7 +2888,7 @@ class NDPolicyModule:
 
     def _deploy_policies(
         self,
-        policy_ids: List[str],
+        policy_ids: list[str],
         state: str = "merged",
     ) -> bool:
         """Deploy policies by calling pushConfig.
@@ -2893,7 +2898,7 @@ class NDPolicyModule:
         has ``status: "failed"``, the deploy is considered failed.
 
         Args:
-            policy_ids: List of policy IDs to deploy.
+            policy_ids: list of policy IDs to deploy.
             state: Module state for result reporting.
 
         Returns:
@@ -2971,7 +2976,7 @@ class NDPolicyModule:
     def _inspect_207_policies(
         data: Any,
         key: str = "policies",
-    ) -> Tuple[List[Dict], List[Dict]]:
+    ) -> tuple[list[dict], list[dict]]:
         """Inspect a 207 Multi-Status response for per-item success/failure.
 
         ND returns HTTP 207 for most bulk policy actions (create,
@@ -3033,7 +3038,7 @@ class NDPolicyModule:
     # API Helpers (low-level CRUD)
     # =========================================================================
 
-    def _api_bulk_create_policies(self, want_list: List[Dict]) -> List[Dict]:
+    def _api_bulk_create_policies(self, want_list: list[dict]) -> list[dict]:
         """Create multiple policies via a single bulk POST.
 
         Builds one ``PolicyCreateBulk`` containing all entries and sends
@@ -3041,7 +3046,7 @@ class NDPolicyModule:
         response in the same order as the request.
 
         Args:
-            want_list: List of want dicts, each with all policy fields.
+            want_list: list of want dicts, each with all policy fields.
 
         Returns:
             List of dicts (same length as want_list), each with::
@@ -3093,7 +3098,7 @@ class NDPolicyModule:
         # Parse per-policy results from the 207 response.
         # The controller returns policies in the same order as sent.
         created_policies = data.get("policies", []) if isinstance(data, dict) else []
-        results: List[Dict] = []
+        results: list[dict] = []
 
         for idx, want in enumerate(want_list):
             if idx < len(created_policies):
@@ -3121,7 +3126,7 @@ class NDPolicyModule:
         )
         return results
 
-    def _api_update_policy(self, want: Dict, have: Dict, policy_id: str) -> None:
+    def _api_update_policy(self, want: dict, have: dict, policy_id: str) -> None:
         """Update an existing policy via PUT.
 
         For templateInputs, merge user-specified keys on top of the
@@ -3166,7 +3171,7 @@ class NDPolicyModule:
 
         self.nd.request(ep.path, ep.verb, payload)
 
-    def _api_mark_delete(self, policy_ids: List[str]) -> Dict:
+    def _api_mark_delete(self, policy_ids: list[str]) -> dict:
         """Mark policies for deletion via POST /policyActions/markDelete.
 
         ND returns HTTP 207 Multi-Status with per-policy results.
@@ -3180,7 +3185,7 @@ class NDPolicyModule:
         failures and fall back to direct DELETE for those.
 
         Args:
-            policy_ids: List of policy IDs to mark-delete.
+            policy_ids: list of policy IDs to mark-delete.
 
         Returns:
             Response DATA dict from ND.  Typically contains a
@@ -3200,7 +3205,7 @@ class NDPolicyModule:
         data = self.nd.request(ep.path, ep.verb, body.to_request_dict())
         return data if isinstance(data, dict) else {}
 
-    def _api_remove_policies(self, policy_ids: List[str]) -> Dict:
+    def _api_remove_policies(self, policy_ids: list[str]) -> dict:
         """Hard-delete policies via POST /policyActions/remove.
 
         ND returns HTTP 207 Multi-Status with per-policy results.
@@ -3208,7 +3213,7 @@ class NDPolicyModule:
         ``status: "failed"`` entries.
 
         Args:
-            policy_ids: List of policy IDs to remove from ND.
+            policy_ids: list of policy IDs to remove from ND.
 
         Returns:
             Response DATA dict from ND.  Typically contains a
@@ -3252,7 +3257,7 @@ class NDPolicyModule:
 
         self.nd.request(ep.path, ep.verb)
 
-    def _api_deploy_switches(self, switch_ids: List[str]) -> dict:
+    def _api_deploy_switches(self, switch_ids: list[str]) -> dict:
         """Deploy fabric config to specific switches.
 
         Used after direct DELETE of PYTHON content-type policies to push
@@ -3263,7 +3268,7 @@ class NDPolicyModule:
         API: ``POST /fabrics/{fabricName}/switchActions/deploy``
 
         Args:
-            switch_ids: List of switch serial numbers to deploy to.
+            switch_ids: list of switch serial numbers to deploy to.
 
         Returns:
             Response DATA dict from ND.  Typically contains a ``status``
@@ -3292,9 +3297,9 @@ class NDPolicyModule:
         message: str,
         success: bool,
         found: bool,
-        diff: Dict,
+        diff: dict,
         data: Any = None,
-        state: Optional[str] = None,
+        state: str | None = None,
     ) -> None:
         """Register a single task result into the Results aggregator.
 

@@ -17,22 +17,20 @@ This module provides ``PolicyCreateBulk`` (bulk create wrapper) and
 - ``PolicyUpdate``     ← ``policyPut`` (identical to ``createPolicy``)
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
+from __future__ import annotations
 
 __author__ = "L Nikhil Sri Krishna"
 
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_base import (
     PolicyCreate,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
 )
 
 # ============================================================================
@@ -82,15 +80,15 @@ class PolicyCreateBulk(NDNestedModel):
     ```
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
-    policies: List[PolicyCreate] = Field(
+    policies: list[PolicyCreate] = Field(
         default_factory=list,
         min_length=1,
         description="List of policies to create",
     )
 
-    def to_request_dict(self) -> Dict[str, Any]:
+    def to_request_dict(self) -> dict[str, Any]:
         """
         Convert to API request dictionary.
 

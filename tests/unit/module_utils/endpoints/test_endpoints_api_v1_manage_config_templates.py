@@ -8,11 +8,7 @@ Unit tests for manage_config_templates.py
 Tests the ND Manage Config Templates endpoint classes.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
+from __future__ import annotations
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_config_templates import (

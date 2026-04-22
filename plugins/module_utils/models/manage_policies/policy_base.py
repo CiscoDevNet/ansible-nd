@@ -18,15 +18,11 @@ The ``PolicyEntityType`` enum is in ``enums.py``.
 - ``PolicyCreate``     ← ``createPolicy`` (extends ``createBasePolicy``)
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
+from __future__ import annotations
 
 __author__ = "L Nikhil Sri Krishna"
 
-from typing import Any, ClassVar, Dict, List, Literal, Optional
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -87,8 +83,8 @@ class PolicyCreate(NDBaseModel):
     """
 
     # --- NDBaseModel ClassVars ---
-    identifiers: ClassVar[List[str]] = ["switch_id", "template_name", "description"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "composite"
+    identifiers: ClassVar[list[str]] = ["switch_id", "template_name", "description"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
     exclude_from_diff: ClassVar[set] = {"source"}
 
     # Required fields from createPolicy schema
@@ -116,39 +112,39 @@ class PolicyCreate(NDBaseModel):
     )
 
     # Optional fields
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None,
         max_length=255,
         description="Description of the policy",
     )
-    priority: Optional[int] = Field(
+    priority: int | None = Field(
         default=500,
         ge=1,
         le=2000,
         description="Priority of the policy (1-2000)",
     )
-    source: Optional[str] = Field(
+    source: str | None = Field(
         default="",
         max_length=255,
         description="Source of the policy (UNDERLAY, OVERLAY, LINK, etc.). Empty means any source can update.",
     )
-    template_inputs: Optional[Dict[str, Any]] = Field(
+    template_inputs: dict[str, Any] | None = Field(
         default=None,
         alias="templateInputs",
         description="Name/value parameter list passed to the template",
     )
-    secondary_entity_name: Optional[str] = Field(
+    secondary_entity_name: str | None = Field(
         default=None,
         alias="secondaryEntityName",
         description="Name of the secondary entity (e.g., overlay name for configProfile)",
     )
-    secondary_entity_type: Optional[PolicyEntityType] = Field(
+    secondary_entity_type: PolicyEntityType | None = Field(
         default=None,
         alias="secondaryEntityType",
         description="Type of the secondary entity",
     )
 
-    def to_request_dict(self) -> Dict[str, Any]:
+    def to_request_dict(self) -> dict[str, Any]:
         """
         Convert model to API request dictionary with camelCase keys.
 

@@ -13,23 +13,12 @@ Endpoints covered:
 - GET /configTemplates/{templateName}/parameters - Get template parameters
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
+from __future__ import annotations
 
 __author__ = "L Nikhil Sri Krishna"
 
-from typing import Literal, Optional
+from typing import Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
-    EndpointQueryParams,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
-    BasePath,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
@@ -37,6 +26,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    EndpointQueryParams,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
+    BasePath,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 # ============================================================================
 # Query parameter classes
@@ -61,7 +57,8 @@ class ConfigTemplateEndpointParams(EndpointQueryParams):
 
     model_config = ConfigDict(extra="forbid")
 
-    cluster_name: Optional[str] = Field(
+    # TODO: Move cluster_name to shared fields file once available.
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Target cluster name for multi-cluster deployments",
@@ -107,7 +104,7 @@ class EpManageConfigTemplateParametersGet(NDEndpointBaseModel):
         frozen=True,
         description="Class name for backward compatibility",
     )
-    template_name: Optional[str] = Field(
+    template_name: str | None = Field(
         default=None,
         min_length=1,
         description="Configuration template name (e.g., switch_freeform, feature_enable)",

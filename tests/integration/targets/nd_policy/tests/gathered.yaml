@@ -42,7 +42,7 @@
             template_inputs:
               BANNER: |
                 ******************************************
-                * Managed by NDFC                        *
+                * Managed by ND                        *
                 ******************************************
               BANNERDELIMITER: "_"
               TYPE: "motd"

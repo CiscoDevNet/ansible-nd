@@ -27,7 +27,7 @@
             template_inputs:
               BANNER: |
                 ******************************************
-                * This device is managed by NDFC         *
+                * This device is managed by ND         *
                 * Unauthorized access is prohibited      *
                 ******************************************
               BANNERDELIMITER: "_"

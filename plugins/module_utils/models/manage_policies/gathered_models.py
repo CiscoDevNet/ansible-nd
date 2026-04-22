@@ -24,15 +24,13 @@ This model is separate from ``PolicyCreate`` because:
       ``config[]`` schema exactly for copy-paste round-trips.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 __author__ = "L Nikhil Sri Krishna"
 
 import json
 import logging
-from typing import Any, ClassVar, Dict, List, Literal, Optional, Set
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -57,12 +55,12 @@ class GatheredPolicy(NDBaseModel):
     """
 
     # --- NDBaseModel ClassVars ---
-    identifiers: ClassVar[List[str]] = ["policy_id"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
-    exclude_from_diff: ClassVar[Set[str]] = set()
+    identifiers: ClassVar[list[str]] = ["policy_id"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    exclude_from_diff: ClassVar[set[str]] = set()
 
     # Fields excluded from config output (internal / not user-facing)
-    config_exclude_fields: ClassVar[Set[str]] = {
+    config_exclude_fields: ClassVar[set[str]] = {
         "entity_type",
         "entity_name",
         "source",
@@ -86,44 +84,44 @@ class GatheredPolicy(NDBaseModel):
         alias="templateName",
         description="Name of the policy template",
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default="",
         description="Policy description",
     )
-    priority: Optional[int] = Field(
+    priority: int | None = Field(
         default=500,
         description="Policy priority (1-2000)",
     )
-    entity_type: Optional[str] = Field(
+    entity_type: str | None = Field(
         default=None,
         alias="entityType",
         description="Entity type (switch, configProfile, interface)",
     )
-    entity_name: Optional[str] = Field(
+    entity_name: str | None = Field(
         default=None,
         alias="entityName",
         description="Entity name",
     )
-    source: Optional[str] = Field(
+    source: str | None = Field(
         default=None,
         description="Policy source",
     )
-    template_inputs: Optional[Dict[str, Any]] = Field(
+    template_inputs: dict[str, Any] | None = Field(
         default=None,
         alias="templateInputs",
         description="Template input parameters",
     )
-    secondary_entity_name: Optional[str] = Field(
+    secondary_entity_name: str | None = Field(
         default=None,
         alias="secondaryEntityName",
     )
-    secondary_entity_type: Optional[str] = Field(
+    secondary_entity_type: str | None = Field(
         default=None,
         alias="secondaryEntityType",
     )
 
     @classmethod
-    def from_api_policy(cls, policy: Dict[str, Any]) -> "GatheredPolicy":
+    def from_api_policy(cls, policy: dict[str, Any]) -> "GatheredPolicy":
         """Create a GatheredPolicy from a raw ND API policy dict.
 
         Handles the ``templateInputs`` field which may be a JSON-encoded
@@ -157,7 +155,7 @@ class GatheredPolicy(NDBaseModel):
 
         return cls.from_response(data)
 
-    def to_gathered_config(self) -> Dict[str, Any]:
+    def to_gathered_config(self) -> dict[str, Any]:
         """Convert to the playbook-compatible gathered config format.
 
         The output dict matches what ``state=merged`` expects so the user
