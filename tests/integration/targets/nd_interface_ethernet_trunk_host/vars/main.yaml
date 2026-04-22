@@ -128,10 +128,10 @@ ethernet_48_vlan_mapping:
         policy_type: trunk_host
         vlan_mapping: true
         vlan_mapping_entries:
-          - customer_vlan_id: "10"
+          - customer_vlan_id: ["10"]
             customer_inner_vlan_id: 20
             provider_vlan_id: 100
-          - customer_vlan_id: "30-40"
+          - customer_vlan_id: ["30-40"]
             dot1q_tunnel: true
             provider_vlan_id: 200
 
