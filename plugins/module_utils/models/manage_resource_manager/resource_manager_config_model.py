@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 from ipaddress import ip_address, ip_network
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_manager.constants import (
@@ -59,15 +59,15 @@ class ResourceManagerConfigModel(NDBaseModel):
     and cross-field validation on top of those checks.
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     # Fields excluded from diff — operational input flags not present in gathered state.
     # entity_name, pool_type, pool_name, scope_type, resource and vrf_name
     # are all meaningful for comparison; is_pre_allocated is a request-time allocation
     # control flag (analogous to preserve_config for switches) and is omitted from diffs.
-    exclude_from_diff: ClassVar[List[str]] = ["is_pre_allocated", "switch"]
+    exclude_from_diff: ClassVar[list[str]] = ["is_pre_allocated", "switch"]
 
-    entity_name: Optional[str] = Field(
+    entity_name: str | None = Field(
         default=None,
         description=(
             "Unique name identifying the entity to which the resource is allocated. "
@@ -78,13 +78,13 @@ class ResourceManagerConfigModel(NDBaseModel):
             "link → exactly 3 tildes (~), e.g. 'SER1~Eth1/3~SER2~Eth1/3'."
         ),
     )
-    pool_type: Optional[PoolType] = Field(
+    pool_type: PoolType | None = Field(
         default=None,
         description=(
             "Type of resource pool. One of: ID (integer ID), IP (IP address), SUBNET (CIDR block). Determines the expected format for the 'resource' field."
         ),
     )
-    pool_name: Optional[str] = Field(
+    pool_name: str | None = Field(
         default=None,
         description=(
             "Name of the resource pool to use (e.g. 'L3_VNI', 'LOOPBACK_ID', 'SUBNET'). "
@@ -92,11 +92,11 @@ class ResourceManagerConfigModel(NDBaseModel):
             "Custom pool names not in POOL_SCOPE_MAP are unrestricted."
         ),
     )
-    scope_type: Optional[ScopeType] = Field(
+    scope_type: ScopeType | None = Field(
         default=None,
         description=("Scope level for the resource allocation. One of: fabric, device, device_interface, device_pair, link."),
     )
-    resource: Optional[str] = Field(
+    resource: str | None = Field(
         default=None,
         description=(
             "Value of the resource being allocated. "
@@ -106,7 +106,7 @@ class ResourceManagerConfigModel(NDBaseModel):
             "Required when is_pre_allocated is True."
         ),
     )
-    is_pre_allocated: Optional[bool] = Field(
+    is_pre_allocated: bool | None = Field(
         default=None,
         description=(
             "Whether the resource value is explicitly pre-allocated. "
@@ -115,13 +115,14 @@ class ResourceManagerConfigModel(NDBaseModel):
             "When True, the 'resource' field must also be provided."
         ),
     )
-    vrf_name: Optional[str] = Field(
+    # TO_DO(Jeet): We need to import this fields from common shared_fields file.
+    vrf_name: str | None = Field(
         default=None,
         description=("VRF name associated with the resource allocation. Use 'default' for the global default VRF. When omitted, the default VRF is assumed."),
     )
-    switch: Optional[List[str]] = Field(
+    switch: list[str] | None = Field(
         default=None,
-        description=("List of switch management IP addresses or serial numbers to which the resource is assigned. Required when scope_type is not 'fabric'."),
+        description=("list of switch management IP addresses or serial numbers to which the resource is assigned. Required when scope_type is not 'fabric'."),
     )
 
     # -------------------------------------------------------------------------
@@ -130,7 +131,7 @@ class ResourceManagerConfigModel(NDBaseModel):
 
     @field_validator("entity_name", mode="before")
     @classmethod
-    def validate_entity_name(cls, v: Any) -> Optional[str]:
+    def validate_entity_name(cls, v: Any) -> str | None:
         """Validate entity_name is a non-empty string when provided."""
         if v is None:
             return None
@@ -140,7 +141,7 @@ class ResourceManagerConfigModel(NDBaseModel):
 
     @field_validator("pool_type", mode="before")
     @classmethod
-    def normalize_pool_type(cls, v: Any) -> Optional[str]:
+    def normalize_pool_type(cls, v: Any) -> str | None:
         """Normalize pool_type to uppercase and validate against PoolType enum."""
         if v is None:
             return None
@@ -154,7 +155,7 @@ class ResourceManagerConfigModel(NDBaseModel):
 
     @field_validator("pool_name", mode="before")
     @classmethod
-    def validate_pool_name(cls, v: Any) -> Optional[str]:
+    def validate_pool_name(cls, v: Any) -> str | None:
         """Validate pool_name is a non-empty string when provided."""
         if v is None:
             return None
@@ -164,7 +165,7 @@ class ResourceManagerConfigModel(NDBaseModel):
 
     @field_validator("scope_type", mode="before")
     @classmethod
-    def normalize_scope_type(cls, v: Any) -> Optional[str]:
+    def normalize_scope_type(cls, v: Any) -> str | None:
         """Normalize scope_type to lowercase and validate against ScopeType enum."""
         if v is None:
             return None
@@ -178,7 +179,7 @@ class ResourceManagerConfigModel(NDBaseModel):
 
     @field_validator("resource", mode="before")
     @classmethod
-    def validate_resource_not_empty(cls, v: Any) -> Optional[str]:
+    def validate_resource_not_empty(cls, v: Any) -> str | None:
         """Validate resource is a non-empty string when provided."""
         if v is None:
             return None
@@ -188,7 +189,7 @@ class ResourceManagerConfigModel(NDBaseModel):
 
     @field_validator("is_pre_allocated", mode="before")
     @classmethod
-    def coerce_is_pre_allocated(cls, v: Any) -> Optional[bool]:
+    def coerce_is_pre_allocated(cls, v: Any) -> bool | None:
         """Coerce string and integer representations to bool when provided."""
         if v is None:
             return None
@@ -206,7 +207,7 @@ class ResourceManagerConfigModel(NDBaseModel):
 
     @field_validator("vrf_name", mode="before")
     @classmethod
-    def validate_vrf_name(cls, v: Any) -> Optional[str]:
+    def validate_vrf_name(cls, v: Any) -> str | None:
         """Validate vrf_name is a non-empty string when provided."""
         if v is None:
             return None
@@ -216,7 +217,7 @@ class ResourceManagerConfigModel(NDBaseModel):
 
     @field_validator("switch", mode="before")
     @classmethod
-    def validate_switch_entries(cls, v: Any) -> Optional[List[str]]:
+    def validate_switch_entries(cls, v: Any) -> list[str] | None:
         """Validate each switch entry is a non-empty string.
 
         Accepts IPv4, IPv6, or serial number strings. Format validation
@@ -386,7 +387,7 @@ class ResourceManagerConfigModel(NDBaseModel):
     # Serialization helpers
     # -------------------------------------------------------------------------
 
-    def to_gathered_dict(self) -> Dict[str, Any]:
+    def to_gathered_dict(self) -> dict[str, Any]:
         """Return a config dict suitable for gathered output.
 
         Returns all non-None fields serialised with Python field names
@@ -396,7 +397,7 @@ class ResourceManagerConfigModel(NDBaseModel):
         return self.to_config()
 
     @classmethod
-    def get_argument_spec(cls) -> Dict[str, Any]:
+    def get_argument_spec(cls) -> dict[str, Any]:
         """Return the Ansible argument spec for nd_manage_resource_manager."""
         return dict(
             fabric=dict(type="str", required=True),
