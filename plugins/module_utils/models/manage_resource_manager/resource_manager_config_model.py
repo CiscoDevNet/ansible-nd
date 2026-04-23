@@ -65,7 +65,7 @@ class ResourceManagerConfigModel(NDBaseModel):
     # entity_name, pool_type, pool_name, scope_type, resource and vrf_name
     # are all meaningful for comparison; is_pre_allocated is a request-time allocation
     # control flag (analogous to preserve_config for switches) and is omitted from diffs.
-    exclude_from_diff: ClassVar[list[str]] = ["is_pre_allocated", "switch"]
+    exclude_from_diff: ClassVar[list[str]] = ["is_pre_allocated", "switches"]
 
     entity_name: str | None = Field(
         default=None,
@@ -120,7 +120,7 @@ class ResourceManagerConfigModel(NDBaseModel):
         default=None,
         description=("VRF name associated with the resource allocation. Use 'default' for the global default VRF. When omitted, the default VRF is assumed."),
     )
-    switch: list[str] | None = Field(
+    switches: list[str] | None = Field(
         default=None,
         description=("list of switch management IP addresses or serial numbers to which the resource is assigned. Required when scope_type is not 'fabric'."),
     )
@@ -215,10 +215,10 @@ class ResourceManagerConfigModel(NDBaseModel):
             raise ValueError("vrf_name must be a non-empty string when provided")
         return str(v).strip()
 
-    @field_validator("switch", mode="before")
+    @field_validator("switches", mode="before")
     @classmethod
     def validate_switch_entries(cls, v: Any) -> list[str] | None:
-        """Validate each switch entry is a non-empty string.
+        """Validate each switches entry is a non-empty string.
 
         Accepts IPv4, IPv6, or serial number strings. Format validation
         (IP-to-serial resolution) is deferred to the module at runtime.
@@ -226,14 +226,14 @@ class ResourceManagerConfigModel(NDBaseModel):
         if v is None:
             return None
         if not isinstance(v, list):
-            raise ValueError("switch must be a list of IP addresses or serial numbers")
+            raise ValueError("switches must be a list of IP addresses or serial numbers")
         if len(v) == 0:
-            raise ValueError("switch list must not be empty when provided")
+            raise ValueError("switches list must not be empty when provided")
         validated = []
         for entry in v:
             entry_str = str(entry).strip()
             if not entry_str:
-                raise ValueError("switch list entries must be non-empty strings")
+                raise ValueError("switches list entries must be non-empty strings")
             validated.append(entry_str)
         return validated
 
@@ -340,15 +340,15 @@ class ResourceManagerConfigModel(NDBaseModel):
 
     @model_validator(mode="after")
     def validate_scope_and_switch(self) -> "ResourceManagerConfigModel":
-        """Require 'switch' when scope_type is not 'fabric'.
+        """Require 'switches' when scope_type is not 'fabric'.
 
         For the fabric scope, switch IDs are not applicable. For all other
         scopes (device, device_interface, device_pair, link), at least one
         switch must be specified to identify the target device(s).
         """
         if self.scope_type is not None and self.scope_type != ScopeType.FABRIC:
-            if not self.switch:
-                raise ValueError("'switch' is required when scope_type is '{0}' (entity_name: '{1}')".format(self.scope_type, self.entity_name))
+            if not self.switches:
+                raise ValueError("'switches' is required when scope_type is '{0}' (entity_name: '{1}')".format(self.scope_type, self.entity_name))
         return self
 
     @model_validator(mode="after")
