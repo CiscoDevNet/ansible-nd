@@ -1,0 +1,154 @@
+---
+# Test code for the ND modules
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+    test_fabric_group: "ansible_test_fabric_group"
+    test_member_1: "ansible_member_fabric_1"
+    test_member_2: "ansible_member_fabric_2"
+    test_member_3: "ansible_member_fabric_3"
+
+#############################################################################
+# CLEANUP - Ensure clean state before tests
+#############################################################################
+- name: Remove all test members from fabric group before test starts
+  cisco.nd.nd_manage_fabric_group_members: &clean_all_members
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_group }}"
+    config:
+      - member_name: "{{ test_member_1 }}"
+      - member_name: "{{ test_member_2 }}"
+      - member_name: "{{ test_member_3 }}"
+    state: deleted
+
+#############################################################################
+# GATHERED STATE TESTS
+#############################################################################
+- name: "GATHERED: Retrieve current members of the fabric group"
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_group }}"
+    config: []
+    state: gathered
+  register: gathered_result
+
+- name: "GATHERED: Verify gathered state returns members without changes"
+  ansible.builtin.assert:
+    that:
+      - gathered_result is not changed
+      - gathered_result.gathered is defined
+
+#############################################################################
+# MERGED STATE TESTS - ADD MEMBERS
+#############################################################################
+- name: "MERGED CREATE: Add members to fabric group (check mode)"
+  cisco.nd.nd_manage_fabric_group_members: &add_members_merged
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_group }}"
+    config:
+      - member_name: "{{ test_member_1 }}"
+      - member_name: "{{ test_member_2 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_add_members
+
+- name: "MERGED CREATE: Add members to fabric group (normal mode)"
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *add_members_merged
+  register: nm_merged_add_members
+
+- name: "MERGED CREATE: Verify members were added"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_add_members is changed
+      - nm_merged_add_members is changed
+
+- name: "MERGED IDEMPOTENT: Add same members again (idempotency test)"
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *add_members_merged
+  register: nm_merged_add_members_again
+
+- name: "MERGED IDEMPOTENT: Verify no changes on rerun"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_add_members_again is not changed
+
+- name: "MERGED ADD: Add a third member to fabric group"
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_group }}"
+    config:
+      - member_name: "{{ test_member_3 }}"
+    state: merged
+  register: nm_merged_add_third_member
+
+- name: "MERGED ADD: Verify third member was added"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_add_third_member is changed
+
+#############################################################################
+# DELETED STATE TESTS - REMOVE MEMBERS
+#############################################################################
+- name: "DELETED: Remove one member from fabric group (check mode)"
+  cisco.nd.nd_manage_fabric_group_members: &delete_member
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_group }}"
+    config:
+      - member_name: "{{ test_member_3 }}"
+    state: deleted
+  check_mode: true
+  register: cm_deleted_remove_member
+
+- name: "DELETED: Remove one member from fabric group (normal mode)"
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *delete_member
+  register: nm_deleted_remove_member
+
+- name: "DELETED: Verify member was removed"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_remove_member is changed
+      - nm_deleted_remove_member is changed
+
+- name: "DELETED IDEMPOTENT: Remove same member again (idempotency)"
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *delete_member
+  register: nm_deleted_remove_member_again
+
+- name: "DELETED IDEMPOTENT: Verify no changes on rerun"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_remove_member_again is not changed
+
+- name: "DELETED: Remove remaining test members"
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric_group }}"
+    config:
+      - member_name: "{{ test_member_1 }}"
+      - member_name: "{{ test_member_2 }}"
+    state: deleted
+  register: nm_deleted_remove_remaining
+
+- name: "DELETED: Verify remaining members were removed"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_remove_remaining is changed
+
+#############################################################################
+# CLEANUP
+#############################################################################
+- name: Final cleanup - remove all test members
+  cisco.nd.nd_manage_fabric_group_members:
+    <<: *clean_all_members
