@@ -1,0 +1,265 @@
+---
+- name: Test Entry Point - [nd_manage_switches - Poap]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Poap Tests - [nd_manage_switches]                  +"
+      - "----------------------------------------------------------------"
+  tags: poap
+
+- name: Poap - Setup Internal TestCase Variables
+  ansible.builtin.set_fact:
+    test_data:
+      test_fabric: "{{ ansible_it_fabric }}"
+      sw1: "{{ ansible_switch1 }}"
+      sw1_serial: "1ABC23DEFGH"
+      sw2: "{{ ansible_switch2 }}"
+      sw2_serial: "1ABC23DEFHI"
+      poap_model: "ABC-D1230a"
+      poap_version: "1.2(3)"
+      prepro_hostname: "PreProv-SW"
+      poap_hostname: "Poap-SW"
+      poap_configmodel: "['ABC-D1230a']"
+      poap_gateway: "192.168.2.1/24"
+      sw3: "{{ ansible_switch3 }}"
+      config_actions:
+        save: "{{ save }}"
+        deploy: "{{ deploy }}"
+        type: "{{ config_actions_type }}"
+    poap_enabled: false
+  delegate_to: localhost
+  tags: poap
+
+# Below commented tasks are sample tasks to enable Bootstrap and DHCP along with DHCP configs
+# Please make sure you provide correct values for required fields
+# Fabric config has many ND/DCNM auto generated values, so always GET the configs first
+# and then set the required values.
+# 
+#
+# - name: Poap Merged - Get the configs of the fabric deployed.
+#   cisco.nd.nd_rest:
+#     path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}"
+#     method: get
+#   register: result
+
+# - set_fact:
+#     result.jsondata.management.day0Bootstrap = true
+#     result.jsondata.management.localDhcpServer = true
+#     result.jsondata.management.dhcpProtocolVersion = "dhcpv4"
+#     result.jsondata.management.dhcpStartAddress = "192.168.1.10"
+#     result.jsondata.management.dhcpEndAddress = "192.168.1.20"
+#     result.jsondata.management.managementGateway = "192.168.1.1"
+#     result.jsondata.management.managementIpv4Prefix = "24"
+#
+# - name: Poap Merged - Configure Bootstrap and DHCP on Fabric
+#   cisco.nd.nd_rest:
+#     method: PUT
+#     path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}"
+#     content: "{{ result.jsondata }}"
+#
+
+# ----------------------------------------------
+# Run Test Cases
+# ----------------------------------------------
+# Base Tests
+- name: Base - Verify fabric is reachable via API
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}"
+    method: get
+  register: fabric_query
+  ignore_errors: true
+  tags: poap
+
+- name: Base - Assert fabric exists
+  ansible.builtin.assert:
+    that:
+      - fabric_query.status == 200
+    fail_msg: "Fabric '{{ test_data.test_fabric }}' not found (HTTP {{ fabric_query.status }})."
+    success_msg: "Fabric '{{ test_data.test_fabric }}' found."
+  tags: poap
+
+- name: POAP Base Task - Set Variable
+  ansible.builtin.set_fact:
+    poap_enabled: true
+  when: fabric_query.status == 200 and fabric_query.jsondata.management.day0Bootstrap
+  tags: poap
+
+# TC1
+- name: POAP TC1 - Prepare Validate Config
+  ansible.builtin.set_fact:
+    nd_switches_delete_conf:
+  delegate_to: localhost
+  tags: poap
+
+- name: POAP TC1 - Clean Up Existing Switches
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+  register: deleted_result
+  tags: poap
+
+- name: POAP TC1 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: poap
+
+- name: POAP TC1 - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_delete_conf }}"
+  register: result
+  tags: poap
+
+# ---------------------------------------------- #
+#                  Merged                        #
+# ---------------------------------------------- #
+
+# TC - 1
+- name: Poap TC1 - Prepare Configuration
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw2 }}"
+        username: '{{ switch_username }}'
+        password: '{{ switch_password }}'
+        role: border
+        preprovision:
+          serial_number: "{{ test_data.sw2_serial }}"
+          model: "{{ test_data.poap_model }}"
+          version: "{{ test_data.poap_version }}"
+          hostname: "{{ test_data.prepro_hostname }}"
+          config_data:
+            models: "{{ test_data.poap_configmodel }}"
+            gateway: "{{ test_data.poap_gateway }}"
+  when: poap_enabled == True
+  delegate_to: localhost
+  tags: poap
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: poap
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: poap_enabled == True
+  tags: poap
+
+- name: Poap TC1 - Merged - Pre-provisioned Switch Configuration
+  cisco.nd.nd_manage_switches: &conf_prepro
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_poap_conf }}"
+    config_actions: "{{ test_data.config_actions }}"
+  when: poap_enabled == True
+  register: merged_result
+  tags: poap
+
+- name: Poap TC1 - Merged - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  when: poap_enabled == True
+  register: query_result
+  tags: poap
+
+- name: Poap TC1 - Merged - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_poap_conf }}"
+    changed: "{{ merged_result.changed }}"
+  when: poap_enabled == True
+  register: result
+  tags: poap
+
+# TC - 2
+- name: Poap TC2 - Merged - Verify Idempotence
+  cisco.nd.nd_manage_switches: *conf_prepro
+  when: poap_enabled == True
+  register: merged_result
+  tags: poap
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'merged_result.changed == false'
+      - 'merged_result.msg == "No switches to merge — fabric already matches desired config"'
+  when: poap_enabled == True
+  tags: poap
+
+# TC - 3
+- name: Poap TC3 - Prepare Configuration
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw1 }}"
+        username: '{{ switch_username }}'
+        password: '{{ switch_password }}'
+        role: leaf
+        poap:
+          serial_number: "{{ test_data.sw1_serial }}"
+          hostname: "{{ test_data.poap_hostname }}"
+      - seed_ip: "{{ test_data.sw3 }}"
+        auth_proto: MD5
+        role: spine
+  when: poap_enabled == True
+  delegate_to: localhost
+  tags: poap
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: poap
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: poap_enabled == True
+  tags: poap
+
+- name: Poap TC3 - Merge Config
+  cisco.nd.nd_manage_switches: &conf_poap
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_poap_conf }}"
+    config_actions: "{{ test_data.config_actions }}"
+  when: poap_enabled == True
+  register: merged_result
+  tags: poap
+
+- name:  Poap TC3 - Merged - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  when: poap_enabled == True
+  register: query_result
+  tags: poap
+
+- name: Poap TC3 - Merged - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_poap_conf }}"
+    changed: "{{ merged_result.changed }}"
+  when: poap_enabled == True
+  register: result
+  tags: poap
+
+# TC - 4
+- name: Poap TC4 - Verify Idempotence
+  cisco.nd.nd_manage_switches: *conf_poap
+  when: poap_enabled == True
+  register: result
+  tags: poap
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+      - 'result.msg == "No switches to merge — fabric already matches desired config"'
+  when: poap_enabled == True
+  tags: poap
+
+# ----------------------------------------------
+# Cleanup Fabric Switches
+# ----------------------------------------------
+
+- name: Poap - Clean Up Existing Devices
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+  when: poap_enabled == True
+  register: deleted_result
+  tags: poap

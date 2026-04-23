@@ -1,0 +1,74 @@
+---
+# This ND test data structure is auto-generated
+# DO NOT EDIT MANUALLY
+#
+
+# ------------------------------
+# Fabric Switches
+# ------------------------------
+
+{% if switch_conf is iterable %}
+{% set switch_list = [] %}
+{% for switch in switch_conf %}
+{% set switch_item = {} %}
+{% if switch.seed_ip is defined %}
+{% set _ = switch_item.update({'seed_ip': switch.seed_ip | default('') }) %}
+{% endif %}
+{% set _ = switch_item.update({'username': switch_username}) %}
+{% set _ = switch_item.update({'password': switch_password}) %}
+{% if switch.role is defined %}
+{% set _ = switch_item.update({'role': switch.role | default('') }) %}
+{% endif %}
+{% if switch.poap is defined and switch.poap %}
+{% set poap_item = {} %}
+{% set _ = poap_item.update({'serial_number': switch.poap.serial_number}) %}
+{% set _ = poap_item.update({'hostname': switch.poap.hostname}) %}
+{% if switch.poap.image_policy is defined and switch.poap.image_policy %}
+{% set _ = poap_item.update({'image_policy': switch.poap.image_policy}) %}
+{% endif %}
+{% if switch.poap.discovery_username is defined and switch.poap.discovery_username %}
+{% set _ = poap_item.update({'discovery_username': switch.poap.discovery_username}) %}
+{% endif %}
+{% if switch.poap.discovery_password is defined and switch.poap.discovery_password %}
+{% set _ = poap_item.update({'discovery_password': switch.poap.discovery_password}) %}
+{% endif %}
+{% set _ = switch_item.update({'poap': poap_item}) %}
+{% endif %}
+{% if switch.preprovision is defined and switch.preprovision %}
+{% set preprov_item = {} %}
+{% set _ = preprov_item.update({'serial_number': switch.preprovision.serial_number}) %}
+{% set _ = preprov_item.update({'model': switch.preprovision.model}) %}
+{% set _ = preprov_item.update({'version': switch.preprovision.version}) %}
+{% set _ = preprov_item.update({'hostname': switch.preprovision.hostname}) %}
+{% if switch.preprovision.config_data is defined %}
+{% set preprov_config = {} %}
+{% for k in switch.preprovision.config_data %}
+{% set _ = preprov_config.update({k: switch.preprovision.config_data[k]}) %}
+{% endfor %}
+{% set _ = preprov_item.update({'config_data': preprov_config}) %}
+{% endif %}
+{% if switch.preprovision.image_policy is defined and switch.preprovision.image_policy %}
+{% set _ = preprov_item.update({'image_policy': switch.preprovision.image_policy}) %}
+{% endif %}
+{% if switch.preprovision.discovery_username is defined and switch.preprovision.discovery_username %}
+{% set _ = preprov_item.update({'discovery_username': switch.preprovision.discovery_username}) %}
+{% endif %}
+{% if switch.preprovision.discovery_password is defined and switch.preprovision.discovery_password %}
+{% set _ = preprov_item.update({'discovery_password': switch.preprovision.discovery_password}) %}
+{% endif %}
+{% set _ = switch_item.update({'preprovision': preprov_item}) %}
+{% endif %}
+{% if switch.poap is not defined and switch.preprovision is not defined %}
+{% if switch.auth_proto is defined %}
+{% set _ = switch_item.update({'auth_proto': switch.auth_proto | default('') }) %}
+{% endif %}
+{% if switch.preserve_config is defined %}
+{% set _ = switch_item.update({'preserve_config': switch.preserve_config | default('') }) %}
+{% else %}
+{% set _ = switch_item.update({'preserve_config': false }) %}
+{% endif %}
+{% endif %}
+{% set _ = switch_list.append(switch_item) %}
+{% endfor %}
+{{ switch_list | to_nice_yaml(indent=2) }}
+{% endif %}

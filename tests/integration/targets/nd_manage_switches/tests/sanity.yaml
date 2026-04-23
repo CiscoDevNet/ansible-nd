@@ -1,0 +1,257 @@
+---
+
+- name: Import ND Manage Switches Base Tasks
+  ansible.builtin.import_tasks: ../../tasks/base_tasks.yaml
+  tags: sanity
+
+# ----------------------------------------------
+# Run Test Cases
+# ----------------------------------------------
+
+# ---------------------------------------------- #
+#                  Merged                        #
+# ---------------------------------------------- #
+
+# TC - 1
+- name: Sanity TC1 - Merged - Prepare Switches in Fabric - GreenField Deployment
+  cisco.nd.nd_manage_switches: &conf
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_base_conf }}"
+    config_actions: "{{ test_data.config_actions }}"
+  register: create_result
+  tags: sanity
+
+- name: Sanity TC1 - Merged - Query Inventory State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: sanity
+
+- name: Sanity TC1 - Merged - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_base_conf }}"
+    changed: "{{ create_result.changed }}"
+  register: result
+  tags: sanity
+
+# TC - 2
+- name: Sanity TC2 - Merged - Idempotence
+  cisco.nd.nd_manage_switches: *conf
+  register: result
+  tags: sanity
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+      - 'result.msg == "No switches to merge — fabric already matches desired config"'
+  tags: sanity
+
+# ---------------------------------------------- #
+#                  Gathered                      #
+# ---------------------------------------------- #
+
+# TC - 2
+- name: Sanity TC2 - Gathered - Gather Switch State in Fabric
+  cisco.nd.nd_manage_switches:
+    state: gathered
+    fabric: "{{ test_data.test_fabric }}"
+  register: gathered_result
+  tags: sanity
+
+- name: Sanity TC2 - Gathered - Build Gathered Lookup
+  ansible.builtin.set_fact:
+    gathered_seeds: "{{ gathered_result.gathered | map(attribute='seed_ip') | list }}"
+    gathered_role_map: "{{ gathered_result.gathered | items2dict(key_name='seed_ip', value_name='role') }}"
+  delegate_to: localhost
+  tags: sanity
+
+- name: Sanity TC2 - Gathered - Validate Gathered Count
+  ansible.builtin.assert:
+    that:
+      - gathered_result.gathered | length == nd_switches_base_conf | length
+    fail_msg: >-
+      Gathered count {{ gathered_result.gathered | length }} does not match
+      expected {{ nd_switches_base_conf | length }}
+  tags: sanity
+
+- name: Sanity TC2 - Gathered - Validate Each Switch Present and Role Matches
+  ansible.builtin.assert:
+    that:
+      - item.seed_ip in gathered_seeds
+      - "'role' not in item or gathered_role_map[item.seed_ip] == item.role"
+    fail_msg: >-
+      Switch {{ item.seed_ip }} missing from gathered output or role mismatch
+      (expected={{ item.role | default('any') }},
+      got={{ gathered_role_map[item.seed_ip] | default('not found') }})
+  loop: "{{ nd_switches_base_conf }}"
+  tags: sanity
+
+# ---------------------------------------------- #
+#                  Replaced                      #
+# ---------------------------------------------- #
+# TC - 3
+- name: Sanity TC3 - Replaced - Prepare Config
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw1 }}"
+        role: spine
+        preserve_config: false
+  delegate_to: localhost
+  tags: sanity
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: sanity
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: sanity
+
+- name: Sanity TC3 - Replaced - New Role for the Existing Switch
+  cisco.nd.nd_manage_switches: &conf_replace
+    fabric: "{{ test_data.test_fabric }}"
+    state: replaced
+    config: "{{ nd_switches_sanity_conf }}"
+    config_actions: "{{ test_data.config_actions }}"
+  register: replaced_result
+  tags: sanity
+
+- name: Sanity TC3 - Replaced - Prepare Test Data
+  ansible.builtin.set_fact:
+    nd_switches_replaced_conf: >-
+      {{ (nd_switches_base_conf | rejectattr('seed_ip', 'equalto', test_data.sw1) | list)
+         + [nd_switches_base_conf | selectattr('seed_ip', 'equalto', test_data.sw1) | first | combine({'role': 'spine'})] }}
+  delegate_to: localhost
+  tags: sanity
+
+- name: Sanity TC3 - Replaced - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: sanity
+
+- name: Sanity TC3 - Replaced - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_replaced_conf }}"
+    changed: "{{ replaced_result.changed }}"
+  register: result
+  tags: sanity
+
+- name: Sanity TC3 - Replaced - Idempotence
+  cisco.nd.nd_manage_switches: *conf_replace
+  register: result
+  tags: sanity
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+      - 'result.msg == "No switches to replace — fabric already matches desired config"'
+  tags: sanity
+
+# ---------------------------------------------- #
+#                  Overridden                    #
+# ---------------------------------------------- #
+
+# TC - 4
+- name: Sanity TC4 - Overridden - Prepare Conf
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw2 }}"
+        role: leaf
+        preserve_config: false
+  delegate_to: localhost
+  tags: sanity
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: sanity
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: sanity
+
+- name: Sanity TC4 - Overridden - Update a New Switch using GreenField Deployment - Delete and Create - default role
+  cisco.nd.nd_manage_switches: &conf_over
+    fabric: "{{ test_data.test_fabric }}"
+    state: overridden
+    config: "{{ nd_switches_sanity_conf }}"
+    config_actions: "{{ test_data.config_actions }}"
+  register: overriden_result
+  tags: sanity
+
+- name: Sanity TC4 - Overridden - Query Inventory State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: sanity
+
+- name: Sanity TC4 - Overridden - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_sanity_conf }}"
+    changed: "{{ overriden_result.changed }}"
+  register: result
+  tags: sanity
+
+- name: Sanity TC4 - Overridden - Idempotence
+  cisco.nd.nd_manage_switches: *conf_over
+  register: result
+  tags: sanity
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+      - 'result.msg == "No switches to override — fabric already matches desired config"'
+  tags: sanity
+
+# ---------------------------------------------- #
+#                  Clean-up                      #
+# ---------------------------------------------- #
+
+# TC - 5
+- name: Sanity TC5 - Deleted - Clean up Existing devices
+  cisco.nd.nd_manage_switches: &clean
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+    config: "{{ nd_switches_sanity_conf }}"
+  register: deleted_result
+  tags: sanity
+
+- name: Sanity TC5 - Reset - Prepare Conf
+  ansible.builtin.set_fact:
+    nd_switches_sanity_conf:
+  delegate_to: localhost
+  tags: sanity
+
+- name: Sanity TC5 - Deleted - Query Inventory State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: sanity
+
+- name: Sanity TC5 - Deleted - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_sanity_conf }}"
+    changed: "{{ deleted_result.changed }}"
+  register: result
+  tags: sanity
+
+# TC - 6
+- name: Sanity TC6 - Deleted - Idempotence
+  cisco.nd.nd_manage_switches: *clean
+  register: result
+  tags: sanity
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+      - 'result.msg == "No switches to delete - fabric already matches desired config"'
+  tags: sanity

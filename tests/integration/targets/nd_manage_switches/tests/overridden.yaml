@@ -1,0 +1,168 @@
+---
+- name: Import ND Manage Switches Base Tasks
+  ansible.builtin.import_tasks: ../../tasks/base_tasks.yaml
+  tags: overridden
+
+# ----------------------------------------------
+# Run Test Cases
+# ----------------------------------------------
+
+# TC - 1
+- name: Overridden TC1 - Prepare Switches in Fabric - GreenField Deployment
+  cisco.nd.nd_manage_switches: &conf
+    fabric: "{{ test_data.test_fabric }}"
+    state: merged
+    config: "{{ nd_switches_base_conf }}"
+    config_actions: "{{ test_data.config_actions }}"
+  register: merged_result
+  tags: overridden
+
+- name: Overridden TC1 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: overridden
+
+- name: Overridden TC1 - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_base_conf }}"
+    changed: " {{ merged_result.changed }}"
+  register: result
+  tags: overridden
+
+# TC - 2
+- name: Overridden TC2 - Verify Idempotence
+  cisco.nd.nd_manage_switches: *conf
+  register: result
+  tags: overridden
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'result.changed == false'
+      - 'result.msg == "No switches to merge — fabric already matches desired config"'
+  tags: overridden
+
+# TC - 3
+- name: Overridden TC3 - Prepare Config
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw2 }}"
+        role: spine
+        preserve_config: false
+  delegate_to: localhost
+  tags: overridden
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: overridden
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: overridden
+
+- name: Overridden TC3 - Override Existing Switch - Removes Other Switches from Fabric
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: overridden
+    config: "{{ nd_switches_overridden_conf }}"
+    config_actions: "{{ test_data.config_actions }}"
+  register: overridden_result
+  tags: overridden
+
+- name: Overridden TC3 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: overridden
+
+- name: Overridden TC3 - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_overridden_conf }}"
+    changed: "{{ overridden_result.changed }}"
+  register: result
+  tags: overridden
+
+# TC - 4
+- name: Overridden TC4 - Prepare Config
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw2 }}"
+        role: leaf
+        preserve_config: false
+  delegate_to: localhost
+  tags: overridden
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: overridden
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: overridden
+
+- name: Overridden TC4 - New Role for the Existing Switch
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: overridden
+    config: "{{ nd_switches_overridden_conf }}"
+    config_actions: "{{ test_data.config_actions }}"
+  register: overridden_result
+  tags: overridden
+
+- name: Overridden TC4 - Query Switch State in Fabric
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_data.test_fabric }}/switches"
+    method: get
+  register: query_result
+  tags: overridden
+
+- name: Overridden TC4 - Validate ND Data
+  cisco.nd.nd_switches_validate:
+    nd_data: "{{ query_result }}"
+    test_data: "{{ nd_switches_overridden_conf }}"
+    changed: "{{ overridden_result.changed }}"
+  register: result
+  tags: overridden
+
+# TC - 5
+- name: Overridden TC5 - Prepare Config
+  ansible.builtin.set_fact:
+    switch_conf:
+      - seed_ip: "{{ test_data.sw2 }}"
+        preserve_config: false
+  delegate_to: localhost
+  tags: overridden
+
+- name: Import Configuration Prepare Tasks
+  vars:
+    file: overridden
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  tags: overridden
+
+- name: Overridden TC5 - Unspecified Role for the Existing Switch (Default, Leaf)
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: overridden
+    config: "{{ nd_switches_overridden_conf }}"
+    config_actions: "{{ test_data.config_actions }}"
+  register: overridden_result
+  tags: overridden
+
+- name: Assert
+  ansible.builtin.assert:
+    that:
+      - 'overridden_result.changed == false'      
+      - 'result.msg == "No switches to override — fabric already matches desired config"'
+  tags: overridden
+
+# ----------------------------------------------
+# Cleanup Fabric Switches
+# ----------------------------------------------
+
+- name: Overridden - Cleanup Fabric Switches
+  cisco.nd.nd_manage_switches:
+    fabric: "{{ test_data.test_fabric }}"
+    state: deleted
+  register: result
+  tags: overridden
