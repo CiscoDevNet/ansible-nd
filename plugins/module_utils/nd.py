@@ -276,8 +276,8 @@ class NDModule(object):
             elif info.get("modified") == "true":
                 self.result["changed"] = True
 
-        # 200: OK, 201: Created, 202: Accepted, 204: No Content
-        if self.status in (200, 201, 202, 204):
+        # 200: OK, 201: Created, 202: Accepted, 204: No Content, 207: Multi-Status
+        if self.status in (200, 201, 202, 204, 207):
             if output_format == "raw":
                 return info.get("raw")
             return info.get("body")
