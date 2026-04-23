@@ -22,11 +22,13 @@ wrapping or flattening.
             - `policy` -> `EthernetTrunkHostPolicyModel`
                 - `admin_state`, `allowed_vlans`, `native_vlan`, `vlan_mapping`,
                   `vlan_mapping_entries`, `bpdu_guard`, `speed`, `policy_type`, etc.
-                - `vlan_mapping_entries` -> List[`EthernetTrunkHostVlanMappingEntryModel`]
+                - `vlan_mapping_entries` -> list[`EthernetTrunkHostVlanMappingEntryModel`]
 """
 
+from __future__ import annotations
+
 import re
-from typing import ClassVar, Dict, List, Literal, Optional, Set
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -63,12 +65,12 @@ class EthernetTrunkHostVlanMappingEntryModel(NDNestedModel):
     None
     """
 
-    customer_inner_vlan_id: Optional[int] = Field(default=None, alias="customerInnerVlanId", ge=1, le=4094, description="Customer inner VLAN")
-    customer_vlan_id: Optional[List[str]] = Field(
+    customer_inner_vlan_id: int | None = Field(default=None, alias="customerInnerVlanId", ge=1, le=4094, description="Customer inner VLAN")
+    customer_vlan_id: list[str] | None = Field(
         default=None, alias="customerVlanId", description="Customer VLAN ids / ranges for selective dot1q-tunnel (each element may be a single VLAN or range)"
     )
-    dot1q_tunnel: Optional[bool] = Field(default=None, alias="dot1qTunnel", description="Selective dot1q-tunnel")
-    provider_vlan_id: Optional[int] = Field(default=None, alias="providerVlanId", ge=1, le=4094, description="Provider VLAN")
+    dot1q_tunnel: bool | None = Field(default=None, alias="dot1qTunnel", description="Selective dot1q-tunnel")
+    provider_vlan_id: int | None = Field(default=None, alias="providerVlanId", ge=1, le=4094, description="Provider VLAN")
 
 
 class EthernetTrunkHostPolicyModel(NDNestedModel):
@@ -84,80 +86,80 @@ class EthernetTrunkHostPolicyModel(NDNestedModel):
     - If `allowed_vlans` is not `none`, `all`, or a comma-separated list of VLAN ids / ranges
     """
 
-    admin_state: Optional[bool] = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    allowed_vlans: Optional[str] = Field(
+    admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
+    allowed_vlans: str | None = Field(
         default=None,
         alias="allowedVlans",
         description="Allowed VLANs on the trunk: 'none', 'all', or VLAN ranges (e.g., '1-200,500-2000,3000')",
     )
-    bandwidth: Optional[int] = Field(default=None, alias="bandwidth", ge=1, le=100000000, description="Bandwidth in kilobits")
-    bpdu_filter: Optional[BpduFilterEnum] = Field(default=None, alias="bpduFilter", description="Configure spanning-tree BPDU filter")
-    bpdu_guard: Optional[BpduGuardEnum] = Field(default=None, alias="bpduGuard", description="Enable spanning-tree BPDU guard")
-    cdp: Optional[bool] = Field(default=None, alias="cdp", description="Enable CDP on the interface")
-    debounce_timer: Optional[int] = Field(default=None, alias="debounceTimer", ge=0, le=20000, description="Link debounce timer in milliseconds")
-    debounce_linkup_timer: Optional[int] = Field(
+    bandwidth: int | None = Field(default=None, alias="bandwidth", ge=1, le=100000000, description="Bandwidth in kilobits")
+    bpdu_filter: BpduFilterEnum | None = Field(default=None, alias="bpduFilter", description="Configure spanning-tree BPDU filter")
+    bpdu_guard: BpduGuardEnum | None = Field(default=None, alias="bpduGuard", description="Enable spanning-tree BPDU guard")
+    cdp: bool | None = Field(default=None, alias="cdp", description="Enable CDP on the interface")
+    debounce_timer: int | None = Field(default=None, alias="debounceTimer", ge=0, le=20000, description="Link debounce timer in milliseconds")
+    debounce_linkup_timer: int | None = Field(
         default=None, alias="debounceLinkupTimer", ge=1000, le=10000, description="Link debounce link-up timer in milliseconds"
     )
-    description: Optional[str] = Field(default=None, alias="description", max_length=254, description="Interface description")
-    duplex_mode: Optional[DuplexModeEnum] = Field(default=None, alias="duplexMode", description="Port duplex mode")
-    error_detection_acl: Optional[bool] = Field(default=None, alias="errorDetectionAcl", description="Enable error detection for ACL installation failures")
-    extra_config: Optional[str] = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    fec: Optional[FecEnum] = Field(default=None, alias="fec", description="Forward error correction mode")
-    inherit_bandwidth: Optional[int] = Field(
+    description: str | None = Field(default=None, alias="description", max_length=254, description="Interface description")
+    duplex_mode: DuplexModeEnum | None = Field(default=None, alias="duplexMode", description="Port duplex mode")
+    error_detection_acl: bool | None = Field(default=None, alias="errorDetectionAcl", description="Enable error detection for ACL installation failures")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    fec: FecEnum | None = Field(default=None, alias="fec", description="Forward error correction mode")
+    inherit_bandwidth: int | None = Field(
         default=None, alias="inheritBandwidth", ge=1, le=100000000, description="Inherit bandwidth in kilobits for sub-interfaces"
     )
-    link_type: Optional[LinkTypeEnum] = Field(default=None, alias="linkType", description="Spanning-tree link type")
-    monitor: Optional[bool] = Field(default=None, alias="monitor", description="Enable switchport monitor for SPAN/ERSPAN")
-    mtu: Optional[MtuEnum] = Field(default=None, alias="mtu", description="Interface MTU")
-    native_vlan: Optional[int] = Field(default=None, alias="nativeVlan", ge=1, le=4094, description="Native VLAN for the trunk interface")
-    negotiate_auto: Optional[bool] = Field(default=None, alias="negotiateAuto", description="Enable link auto-negotiation")
-    netflow: Optional[bool] = Field(default=None, alias="netflow", description="Enable Netflow on the interface")
-    netflow_monitor: Optional[str] = Field(default=None, alias="netflowMonitor", description="Layer 2 Netflow monitor name")
-    netflow_sampler: Optional[str] = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
-    orphan_port: Optional[bool] = Field(default=None, alias="orphanPort", description="Enable vPC orphan port")
-    pfc: Optional[bool] = Field(default=None, alias="pfc", description="Enable priority flow control")
-    policy_type: Optional[TrunkHostPolicyTypeEnum] = Field(default=None, alias="policyType", description="Interface policy type")
-    port_type_edge_trunk: Optional[bool] = Field(default=None, alias="portTypeEdgeTrunk", description="Enable spanning-tree edge port behavior")
-    qos: Optional[bool] = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
-    qos_policy: Optional[str] = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
-    queuing_policy: Optional[str] = Field(default=None, alias="queuingPolicy", description="Custom queuing policy name")
-    speed: Optional[SpeedEnum] = Field(default=None, alias="speed", description="Interface speed")
-    storm_control: Optional[bool] = Field(default=None, alias="stormControl", description="Enable traffic storm control")
-    storm_control_action: Optional[StormControlActionEnum] = Field(
+    link_type: LinkTypeEnum | None = Field(default=None, alias="linkType", description="Spanning-tree link type")
+    monitor: bool | None = Field(default=None, alias="monitor", description="Enable switchport monitor for SPAN/ERSPAN")
+    mtu: MtuEnum | None = Field(default=None, alias="mtu", description="Interface MTU")
+    native_vlan: int | None = Field(default=None, alias="nativeVlan", ge=1, le=4094, description="Native VLAN for the trunk interface")
+    negotiate_auto: bool | None = Field(default=None, alias="negotiateAuto", description="Enable link auto-negotiation")
+    netflow: bool | None = Field(default=None, alias="netflow", description="Enable Netflow on the interface")
+    netflow_monitor: str | None = Field(default=None, alias="netflowMonitor", description="Layer 2 Netflow monitor name")
+    netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
+    orphan_port: bool | None = Field(default=None, alias="orphanPort", description="Enable vPC orphan port")
+    pfc: bool | None = Field(default=None, alias="pfc", description="Enable priority flow control")
+    policy_type: TrunkHostPolicyTypeEnum | None = Field(default=None, alias="policyType", description="Interface policy type")
+    port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Enable spanning-tree edge port behavior")
+    qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
+    qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
+    queuing_policy: str | None = Field(default=None, alias="queuingPolicy", description="Custom queuing policy name")
+    speed: SpeedEnum | None = Field(default=None, alias="speed", description="Interface speed")
+    storm_control: bool | None = Field(default=None, alias="stormControl", description="Enable traffic storm control")
+    storm_control_action: StormControlActionEnum | None = Field(
         default=None, alias="stormControlAction", description="Storm control action on threshold violation"
     )
-    storm_control_broadcast_level: Optional[str] = Field(
+    storm_control_broadcast_level: str | None = Field(
         default=None, alias="stormControlBroadcastLevel", description="Broadcast storm control level in percentage (0.00-100.00)"
     )
-    storm_control_broadcast_level_pps: Optional[int] = Field(
+    storm_control_broadcast_level_pps: int | None = Field(
         default=None,
         alias="stormControlBroadcastLevelPps",
         ge=0,
         le=200000000,
         description="Broadcast storm control level in packets per second",
     )
-    storm_control_multicast_level: Optional[str] = Field(
+    storm_control_multicast_level: str | None = Field(
         default=None, alias="stormControlMulticastLevel", description="Multicast storm control level in percentage (0.00-100.00)"
     )
-    storm_control_multicast_level_pps: Optional[int] = Field(
+    storm_control_multicast_level_pps: int | None = Field(
         default=None,
         alias="stormControlMulticastLevelPps",
         ge=0,
         le=200000000,
         description="Multicast storm control level in packets per second",
     )
-    storm_control_unicast_level: Optional[str] = Field(
+    storm_control_unicast_level: str | None = Field(
         default=None, alias="stormControlUnicastLevel", description="Unicast storm control level in percentage (0.00-100.00)"
     )
-    storm_control_unicast_level_pps: Optional[int] = Field(
+    storm_control_unicast_level_pps: int | None = Field(
         default=None,
         alias="stormControlUnicastLevelPps",
         ge=0,
         le=200000000,
         description="Unicast storm control level in packets per second",
     )
-    vlan_mapping: Optional[bool] = Field(default=None, alias="vlanMapping", description="Enable VLAN mapping on the interface")
-    vlan_mapping_entries: Optional[List[EthernetTrunkHostVlanMappingEntryModel]] = Field(
+    vlan_mapping: bool | None = Field(default=None, alias="vlanMapping", description="Enable VLAN mapping on the interface")
+    vlan_mapping_entries: list[EthernetTrunkHostVlanMappingEntryModel] | None = Field(
         default=None, alias="vlanMappingEntries", description="List of VLAN mapping entries; required when `vlan_mapping` is true"
     )
 
@@ -206,7 +208,7 @@ class EthernetTrunkHostPolicyModel(NDNestedModel):
     # --- Serializers ---
 
     @field_serializer("policy_type")
-    def serialize_policy_type(self, value: Optional[str], info: FieldSerializationInfo) -> Optional[str]:
+    def serialize_policy_type(self, value: str | None, info: FieldSerializationInfo) -> str | None:
         """
         # Summary
 
@@ -239,7 +241,7 @@ class EthernetTrunkHostNetworkOSModel(NDNestedModel):
     """
 
     network_os_type: str = Field(default="nx-os", alias="networkOSType")
-    policy: Optional[EthernetTrunkHostPolicyModel] = Field(default=None, alias="policy")
+    policy: EthernetTrunkHostPolicyModel | None = Field(default=None, alias="policy")
 
 
 class EthernetTrunkHostConfigDataModel(NDNestedModel):
@@ -273,19 +275,19 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
 
     # --- Identifier Configuration ---
 
-    identifiers: ClassVar[Optional[List[str]]] = ["switch_ip", "interface_name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "composite"
+    identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
 
     # --- Serialization Configuration ---
 
-    payload_exclude_fields: ClassVar[Set[str]] = {"switch_ip"}
+    payload_exclude_fields: ClassVar[set[str]] = {"switch_ip"}
 
     # --- Fields ---
 
     switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
     interface_type: str = Field(default="ethernet", alias="interfaceType")
-    config_data: Optional[EthernetTrunkHostConfigDataModel] = Field(default=None, alias="configData")
+    config_data: EthernetTrunkHostConfigDataModel | None = Field(default=None, alias="configData")
 
     @field_validator("interface_name", mode="before")
     @classmethod
@@ -306,7 +308,7 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
     # --- Argument Spec ---
 
     @classmethod
-    def get_argument_spec(cls) -> Dict:
+    def get_argument_spec(cls) -> dict:
         """
         # Summary
 

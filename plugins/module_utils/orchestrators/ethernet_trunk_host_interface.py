@@ -12,7 +12,7 @@ for ethernet trunkHost interfaces. It inherits all shared ethernet logic from
 
 from __future__ import annotations
 
-from typing import ClassVar, Optional, Type
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import TrunkHostPolicyTypeEnum
@@ -46,7 +46,7 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
     - Via inherited methods. See `EthernetBaseOrchestrator` for full details.
     """
 
-    model_class: ClassVar[Type[NDBaseModel]] = EthernetTrunkHostInterfaceModel
+    model_class: ClassVar[type[NDBaseModel]] = EthernetTrunkHostInterfaceModel
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -86,7 +86,7 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
             return False
         return True
 
-    def query_all(self, model_instance: Optional[NDBaseModel] = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: NDBaseModel | None = None, **kwargs) -> ResponseType:
         """
         # Summary
 
