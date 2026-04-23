@@ -17,7 +17,7 @@ from a list of `(interface_name, switch_id)` pairs.
 
 from __future__ import annotations
 
-from typing import ClassVar, List
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -114,7 +114,7 @@ class InterfaceDefaultConfig(NDNestedModel):
     interface_type: str = Field(default="ethernet", alias="interfaceType")
     config_data: InterfaceDefaultConfigDataModel = Field(default_factory=InterfaceDefaultConfigDataModel, alias="configData")
 
-    PAYLOAD_FIELDS: ClassVar[List[str]] = []
+    PAYLOAD_FIELDS: ClassVar[list[str]] = []
 
     @classmethod
     def to_normalize_payload(cls, switch_interfaces: list[tuple[str, str]]) -> dict:
