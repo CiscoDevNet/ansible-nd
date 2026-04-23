@@ -66,6 +66,7 @@ class ResourceManagerResponse(NDNestedModel):  # noqa: F811
         alias="resourceId",
         description="Unique identifier of the allocated resource",
     )
+    # TODO(Jeet): We need to import this fields from common shared_fields file.
     vrf_name: str | None = Field(
         default="default",
         alias="vrfName",

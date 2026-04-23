@@ -123,9 +123,9 @@ class ResourceManagerDiffEngine:
         Returns:
             Tilde-separated string with parts sorted alphabetically.
         """
-        normalis_entity_name = "~".join(sorted(entity_name.split("~")))
-        log.debug("Returning normalized entity_name='%s' from raw='%s'", normalis_entity_name, entity_name)
-        return normalis_entity_name
+        normalize_entity_name = "~".join(sorted(entity_name.split("~")))
+        log.debug("Returning normalized entity_name='%s' from raw='%s'", normalize_entity_name, entity_name)
+        return normalize_entity_name
 
     @staticmethod
     def _extract_scope_switch_key_val(scope_details, switch_key, src_switch_key, log: logging.Logger) -> str | None:
