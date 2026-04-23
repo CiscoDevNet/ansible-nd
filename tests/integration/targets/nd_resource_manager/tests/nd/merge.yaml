@@ -21,7 +21,7 @@
         pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
         pool_name: "LOOPBACK_ID"                   # Based on the 'poolType', select appropriate name
         scope_type: "device"                       # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-        switch:                                    # provide the switch information to which the given resource is attached
+        switches:                                    # provide the switch information to which the given resource is attached
           - "{{ ansible_switch1 }}"
           - "{{ ansible_switch2 }}"
 
@@ -29,7 +29,7 @@
         pool_type: "ID"                            # choose from ['ID', 'IP', 'SUBNET']
         pool_name: "VPC_ID"                        # Based on the 'poolType', select appropriate name
         scope_type: "device_pair"                  # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-        switch:                                    # provide the switch information to which the given resource is attached
+        switches:                                    # provide the switch information to which the given resource is attached
           - "{{ ansible_switch1 }}"
           - "{{ ansible_switch2 }}"
 
@@ -42,14 +42,14 @@
         pool_type: "IP"                            # choose from ['ID', 'IP', 'SUBNET']
         pool_name: "LOOPBACK1_IP_POOL"             # Based on the 'poolType', select appropriate name
         scope_type: "device_interface"             # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-        switch:                                    # provide the switch information to which the given resource is attached
+        switches:                                    # provide the switch information to which the given resource is attached
           - "{{ ansible_switch1 }}"
 
       - entity_name: "{{ ansible_sno_1 }}~{{ intf_1_3 }}~{{ ansible_sno_2 }}~{{ intf_1_3 }}" # A unique name to identify the resource
         pool_type: "SUBNET"                        # choose from ['ID', 'IP', 'SUBNET']
         pool_name: "SUBNET"                        # Based on the 'poolType', select appropriate name
         scope_type: "link"                         # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-        switch:                                    # provide the switch information to which the given resource is attached
+        switches:                                    # provide the switch information to which the given resource is attached
           - "{{ ansible_switch1 }}"
   register: result
 
@@ -86,7 +86,7 @@
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
             pool_name: "LOOPBACK_ID"                 # Based on the 'poolType', select appropriate name
             scope_type: "device"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
               - "{{ ansible_switch2 }}"
             resource: "200"                          # The value of the resource being created
@@ -95,7 +95,7 @@
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
             pool_name: "VPC_ID"                      # Based on the 'poolType', select appropriate name
             scope_type: "device_pair"                # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
               - "{{ ansible_switch2 }}"
             resource: "500"                          # The value of the resource being created
@@ -110,7 +110,7 @@
             pool_type: "IP"                          # choose from ['ID', 'IP', 'SUBNET']
             pool_name: "LOOPBACK1_IP_POOL"           # Based on the 'poolType', select appropriate name
             scope_type: "device_interface"           # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
             resource: "fe:80::04"                    # The value of the resource being created
 
@@ -118,7 +118,7 @@
             pool_type: "SUBNET"                      # choose from ['ID', 'IP', 'SUBNET']
             pool_name: "SUBNET"                      # Based on the 'poolType', select appropriate name
             scope_type: "link"                       # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
             resource: "fe:80:0505::05/64"            # The value of the resource being created
       register: result
@@ -185,7 +185,7 @@
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
             pool_name: "LOOPBACK_ID"                 # Based on the 'poolType', select appropriate name
             scope_type: "device"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
               - "{{ ansible_switch2 }}"
             resource: "1003"                         # The value of the resource being modified
@@ -194,7 +194,7 @@
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
             pool_name: "VPC_ID"                      # Based on the 'poolType', select appropriate name
             scope_type: "device_pair"                # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
               - "{{ ansible_switch2 }}"
             resource: "1005"                         # The value of the resource being modified
@@ -209,7 +209,7 @@
             pool_type: "IP"                          # choose from ['ID', 'IP', 'SUBNET']
             pool_name: "LOOPBACK1_IP_POOL"           # Based on the 'poolType', select appropriate name
             scope_type: "device_interface"           # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
             resource: "fe:81::04"                    # The value of the resource being modified
 
@@ -217,7 +217,7 @@
             pool_type: "SUBNET"                      # choose from ['ID', 'IP', 'SUBNET']
             pool_name: "SUBNET"                      # Based on the 'poolType', select appropriate name
             scope_type: "link"                       # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
             resource: "fe:81:0505::05/64"            # The value of the resource being modified
       register: result
@@ -256,7 +256,7 @@
     - name: Assert conditions
       ansible.builtin.assert:
         that:
-          - '"switch : Required parameter not found" in result["msg"]'
+          - '"switches : Required parameter not found" in result["msg"]'
 
     - name: Create Resources - Missing scope_type
       cisco.nd.nd_manage_resource_manager:
@@ -266,7 +266,7 @@
           - entity_name: "loopback_dev"              # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
             pool_name: "LOOPBACK_ID"                 # Based on the 'poolType', select appropriate name
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
               - "{{ ansible_switch2 }}"
             resource: "200"                          # The value of the resource being created
@@ -286,7 +286,7 @@
           - entity_name: "loopback_dev"              # A unique name to identify the resource
             scope_type: "device"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
             pool_name: "LOOPBACK_ID"                 # Based on the 'poolType', select appropriate name
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
               - "{{ ansible_switch2 }}"
             resource: "200"                          # The value of the resource being created
@@ -306,7 +306,7 @@
           - entity_name: "loopback_dev"              # A unique name to identify the resource
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
             scope_type: "device"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
               - "{{ ansible_switch2 }}"
             resource: "200"                          # The value of the resource being created
@@ -326,7 +326,7 @@
           - pool_name: "LOOPBACK_ID"                 # Based on the 'poolType', select appropriate name
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
             scope_type: "device"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
               - "{{ ansible_switch2 }}"
             resource: "200"                          # The value of the resource being created
@@ -347,7 +347,7 @@
             pool_name: "LOOPBACK_ID"                 # Based on the 'poolType', select appropriate name
             pool_type: "ID"                          # choose from ['ID', 'IP', 'SUBNET']
             scope_type: "device"                     # choose from ['fabric', 'device', device_interface', 'device_pair', 'link']
-            switch:                                  # provide the switch information to which the given resource is to be attached
+            switches:                                  # provide the switch information to which the given resource is to be attached
               - "{{ ansible_switch1 }}"
               - "{{ ansible_switch2 }}"
       register: result

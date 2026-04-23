@@ -344,15 +344,15 @@ class ResourceManagerDiffEngine:
                 cfg.entity_name,
                 cfg.pool_name,
                 cfg.scope_type,
-                frozenset(cfg.switch or []),
+                frozenset(cfg.switches or []),
             )
             log.debug(
-                "validate_configs: duplicate-check [%s] — entity_name='%s', pool_name='%s', scope_type='%s', switch=%s, key_seen_before=%s",
+                "validate_configs: duplicate-check [%s] — entity_name='%s', pool_name='%s', scope_type='%s', switches=%s, key_seen_before=%s",
                 cfg_dup_idx,
                 cfg.entity_name,
                 cfg.pool_name,
                 cfg.scope_type,
-                list(cfg.switch or []),
+                list(cfg.switches or []),
                 key in seen_keys,
             )
             if key in seen_keys:
@@ -481,12 +481,12 @@ class ResourceManagerDiffEngine:
             resource_value = cfg.resource
 
             log.debug(
-                "Processing proposed cfg: entity=%s, pool=%s, scope=%s, resource=%s, switch=%s",
+                "Processing proposed cfg: entity=%s, pool=%s, scope=%s, resource=%s, switches=%s",
                 entity_name,
                 pool_name,
                 scope_type,
                 resource_value,
-                cfg.switch,
+                cfg.switches,
             )
 
             # device_pair and link encode both endpoints in entity_name; one lookup covers the pair.
@@ -498,7 +498,7 @@ class ResourceManagerDiffEngine:
                     entity_name,
                 )
             else:
-                switches = cfg.switch if (scope_type != "fabric" and cfg.switch) else [None]
+                switches = cfg.switches if (scope_type != "fabric" and cfg.switches) else [None]
                 log.debug(
                     "scope_type='%s' — resolved switches=%s for entity='%s'",
                     scope_type,
@@ -1015,18 +1015,18 @@ class NDResourceManagerModule:
                         self.log.debug("Mandatory parameter '%s' present: %s", field, item.get(field))
 
                 # Switch required for non-fabric scopes
-                if item.get("scope_type") != "fabric" and not item.get("switch"):
+                if item.get("scope_type") != "fabric" and not item.get("switches"):
                     self.log.error(
-                        "'switch' is required for scope_type='%s' but is missing in config item: %s",
+                        "'switches' is required for scope_type='%s' but is missing in config item: %s",
                         item.get("scope_type"),
                         item,
                     )
-                    raise ValueError("switch : Required parameter not found")
+                    raise ValueError("switches : Required parameter not found")
                 elif item.get("scope_type") != "fabric":
                     self.log.debug(
-                        "'switch' provided for scope_type='%s': %s",
+                        "'switches' provided for scope_type='%s': %s",
                         item.get("scope_type"),
-                        item.get("switch"),
+                        item.get("switches"),
                     )
 
             # Validate pool_name / scope_type combination (only when pool_type is provided)
@@ -1244,9 +1244,9 @@ class NDResourceManagerModule:
         )
 
     def _resolve_switch_ids_in_config(self, config):
-        """Translate management IPs in config ``switch`` lists to switchId values.
+        """Translate management IPs in config ``switches`` lists to switchId values.
 
-        Returns a deep copy of ``config`` with each entry's ``switch`` list translated
+        Returns a deep copy of ``config`` with each entry's ``switches`` list translated
         from management IP strings (e.g. ``'192.168.10.150'``) to the corresponding
         ``switchId`` values (e.g. ``'9H1Q6YOL08G'``) using ``self._switch_ip_to_id``.
 
@@ -1258,7 +1258,7 @@ class NDResourceManagerModule:
             config: Raw config list from ``nd.params["config"]``. Not mutated.
 
         Returns:
-            A deep copy of ``config`` with switch IPs replaced by switchId values.
+            A deep copy of ``config`` with switches IPs replaced by switchId values.
         """
         self.log.debug(
             "_resolve_switch_ids_in_config: translating %s config item(s) using map of %s entry/entries",
@@ -1269,7 +1269,7 @@ class NDResourceManagerModule:
         config_copy = copy.deepcopy(config or [])
 
         for idx, item in enumerate(config_copy):
-            raw_switch_list = item.get("switch") or []
+            raw_switch_list = item.get("switches") or []
             entity_name = item.get("entity_name")
             scope_type = item.get("scope_type")
 
@@ -1310,9 +1310,9 @@ class NDResourceManagerModule:
                     )
                 resolved.append(sw_id)
 
-            item["switch"] = resolved
+            item["switches"] = resolved
             self.log.debug(
-                "_resolve_switch_ids_in_config: [%s] entity='%s' final switch list: %s -> %s",
+                "_resolve_switch_ids_in_config: [%s] entity='%s' final switches list: %s -> %s",
                 idx,
                 entity_name,
                 raw_switch_list,
@@ -1705,7 +1705,7 @@ class NDResourceManagerModule:
         Converts each resource from the ND API response shape
         (camelCase keys, nested scopeDetails) into the playbook ``config``
         format used by ``state: merged``:
-          entity_name, pool_type, pool_name, scope_type, resource[, switch].
+          entity_name, pool_type, pool_name, scope_type, resource[, switches].
         """
         translated = []
         self.log.debug(
@@ -1740,9 +1740,9 @@ class NDResourceManagerModule:
                 "resource": resource_value,
             }
             if scope_type != "fabric" and switch_ip:
-                item["switch"] = [switch_ip]
+                item["switches"] = [switch_ip]
                 self.log.debug(
-                    "translate_gathered_results: [%s] entity='%s' — non-fabric scope ('%s'), adding switch=['%s'] to item",
+                    "translate_gathered_results: [%s] entity='%s' — non-fabric scope ('%s'), adding switches=['%s'] to item",
                     res_idx,
                     entity_name,
                     scope_type,
@@ -1770,7 +1770,7 @@ class NDResourceManagerModule:
 
         # Merge entries that share the same (entity_name, pool_name, pool_type,
         # scope_type, resource) key — only their switch IPs differ.  Fabric-scoped
-        # resources (no 'switch' key) are passed through unchanged.
+        # resources (no 'switches' key) are passed through unchanged.
         merged: dict = {}
         for item in translated:
             key = (
@@ -1782,10 +1782,10 @@ class NDResourceManagerModule:
             )
             if key in merged:
                 # Accumulate switch IPs for matching entries (deduplicate, preserve order)
-                sw_list = item.get("switch") or []
+                sw_list = item.get("switches") or []
                 for sw in sw_list:
-                    if sw not in merged[key].get("switch", []):
-                        merged[key]["switch"].append(sw)
+                    if sw not in merged[key].get("switches", []):
+                        merged[key]["switches"].append(sw)
                         self.log.debug(
                             "translate_gathered_results: merged switch ip='%s' into existing entry for key=%s",
                             sw,
@@ -2058,7 +2058,7 @@ class NDResourceManagerModule:
         When no ``config`` is provided, all resources cached in ``self._all_resources`` are
         translated to the playbook format and returned.  When ``config`` is provided, each
         filter item is processed in sequence; a resource must satisfy every non-None
-        criterion in the filter (``entity_name``, ``pool_name``, ``switch``) to be
+        criterion in the filter (``entity_name``, ``pool_name``, ``switches``) to be
         included.  Deduplication is applied across filter items using the resource ID so
         that a resource matching multiple filters appears only once in the output.
 
@@ -2089,7 +2089,7 @@ class NDResourceManagerModule:
         for filter_item in self.config:
             filter_entity = filter_item.get("entity_name")
             filter_pool = filter_item.get("pool_name")
-            filter_switches = filter_item.get("switch") or []
+            filter_switches = filter_item.get("switches") or []
 
             # Skip filter items with no active criteria to avoid matching all resources
             if not filter_entity and not filter_pool and not filter_switches:
