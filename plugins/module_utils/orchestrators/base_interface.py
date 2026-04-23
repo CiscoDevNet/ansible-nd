@@ -16,8 +16,6 @@ with interface-type-specific payload construction and query filtering.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
     EpManageInterfacesRemove,
@@ -52,7 +50,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
     deploy: bool = True
 
-    _fabric_context: Optional[FabricContext] = None
+    _fabric_context: FabricContext | None = None
 
     def model_post_init(self, __context) -> None:
         """

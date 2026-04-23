@@ -16,7 +16,7 @@ detail endpoint. The fabric detail response does not include `local` or `meta.al
 fields that the original implementation assumed.
 """
 
-from typing import Optional
+from __future__ import annotations
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsSummaryGet
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
@@ -65,8 +65,8 @@ class FabricContext:
         self._rest_send = rest_send
         self._fabric_name = fabric_name
         self._fabric_summary = _NOT_FETCHED
-        self._switch_map: Optional[dict[str, str]] = None
-        self._switch_map_by_id: Optional[dict[str, str]] = None
+        self._switch_map: dict[str, str] | None = None
+        self._switch_map_by_id: dict[str, str] | None = None
 
     def _query_get(self, path: str) -> dict:
         """
@@ -103,7 +103,7 @@ class FabricContext:
         return self._fabric_name
 
     @property
-    def fabric_summary(self) -> Optional[dict]:
+    def fabric_summary(self) -> dict | None:
         """
         # Summary
 
@@ -223,7 +223,8 @@ class FabricContext:
         - If the switches API query fails.
         """
         self._load_switch_maps()
-        assert self._switch_map is not None
+        if self._switch_map is None:
+            raise AssertionError("switch_map is None after _load_switch_maps()")
         return self._switch_map
 
     @property
@@ -242,7 +243,8 @@ class FabricContext:
         - If the switches API query fails.
         """
         self._load_switch_maps()
-        assert self._switch_map_by_id is not None
+        if self._switch_map_by_id is None:
+            raise AssertionError("switch_map_by_id is None after _load_switch_maps()")
         return self._switch_map_by_id
 
     def get_switch_id(self, switch_ip: str) -> str:

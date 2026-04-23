@@ -21,7 +21,7 @@ orchestrator only needs to inject `switchId` and filter `query_all` results by i
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import ClassVar, List, Optional, Type
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -74,17 +74,17 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     - Via `query_all` if the query API request fails.
     """
 
-    model_class: ClassVar[Type[NDBaseModel]] = LoopbackInterfaceModel
+    model_class: ClassVar[type[NDBaseModel]] = LoopbackInterfaceModel
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
 
-    create_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPut
-    delete_endpoint: Type[NDEndpointBaseModel] = NDEndpointBaseModel  # unused; delete() uses bulk remove
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesListGet
-    create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageInterfacesPost
-    delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageInterfacesRemove
+    create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
+    update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
+    delete_endpoint: type[NDEndpointBaseModel] = NDEndpointBaseModel  # unused; delete() uses bulk remove
+    query_one_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesGet
+    query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
+    create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
+    delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
 
     def create(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
@@ -153,7 +153,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         self._queue_remove(model_instance.interface_name, switch_id)
         self._queue_deploy(model_instance.interface_name, switch_id)
 
-    def create_bulk(self, model_instances: List[LoopbackInterfaceModel], **kwargs) -> ResponseType:
+    def create_bulk(self, model_instances: list[LoopbackInterfaceModel], **kwargs) -> ResponseType:
         """
         # Summary
 
@@ -188,7 +188,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
 
-    def delete_bulk(self, model_instances: List[LoopbackInterfaceModel], **kwargs) -> None:
+    def delete_bulk(self, model_instances: list[LoopbackInterfaceModel], **kwargs) -> None:
         """
         # Summary
 
@@ -225,7 +225,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: Optional[NDBaseModel] = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: NDBaseModel | None = None, **kwargs) -> ResponseType:
         """
         # Summary
 
