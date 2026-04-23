@@ -85,7 +85,7 @@ options:
           - Required when C(state=merged).
         type: str
         required: false
-      switch:
+      switches:
         description:
           - Switch IP addresses or DNS names of the management interface of the switch to which the
             allocated resource is assigned.
@@ -149,7 +149,7 @@ EXAMPLES = """
         pool_type: "ID"                         # choose from ['ID', 'IP', 'SUBNET']
         pool_name: "VPC_ID"                     # Based on the 'poolType', select appropriate name
         scope_type: "device_pair"               # choose from ['fabric', 'device', 'device_interface', 'device_pair', 'link']
-        switch:                                 # provide the switch information to which the given resource is to be attached
+        switches:                               # provide the switch information to which the given resource is to be attached
           - 192.168.10.150
           - 192.168.10.151
         resource: "500"                         # The value of the resource being created
@@ -164,7 +164,7 @@ EXAMPLES = """
         pool_type: "IP"                         # choose from ['ID', 'IP', 'SUBNET']
         pool_name: "LOOPBACK1_IP_POOL"          # Based on the 'poolType', select appropriate name
         scope_type: "device_interface"          # choose from ['fabric', 'device', 'device_interface', 'device_pair', 'link']
-        switch:                                 # provide the switch information to which the given resource is to be attached
+        switches:                               # provide the switch information to which the given resource is to be attached
           - 192.168.10.150
         resource: "fe:80::04"                   # The value of the resource being created
 
@@ -172,7 +172,7 @@ EXAMPLES = """
         pool_type: "SUBNET"                     # choose from ['ID', 'IP', 'SUBNET']
         pool_name: "SUBNET"                     # Based on the 'poolType', select appropriate name
         scope_type: "link"                      # choose from ['fabric', 'device', 'device_interface', 'device_pair', 'link']
-        switch:                                 # provide the switch information to which the given resource is to be attached
+        switches:                               # provide the switch information to which the given resource is to be attached
           - 192.168.10.150
         resource: "fe:80:05::05/64"
 
@@ -193,7 +193,7 @@ EXAMPLES = """
         pool_type: "ID"                         # choose from ['ID', 'IP', 'SUBNET']
         pool_name: "VPC_ID"                     # Based on the 'poolType', select appropriate name
         scope_type: "device_pair"               # choose from ['fabric', 'device', 'device_interface', 'device_pair', 'link']
-        switch:                                 # provide the switch information to which the given resource is attached
+        switches:                               # provide the switch information to which the given resource is attached
           - 192.168.10.150
           - 192.168.10.151
 
@@ -206,14 +206,14 @@ EXAMPLES = """
         pool_type: "IP"                         # choose from ['ID', 'IP', 'SUBNET']
         pool_name: "LOOPBACK1_IP_POOL"          # Based on the 'poolType', select appropriate name
         scope_type: "device_interface"          # choose from ['fabric', 'device', 'device_interface', 'device_pair', 'link']
-        switch:                                 # provide the switch information to which the given resource is attached
+        switches:                               # provide the switch information to which the given resource is attached
           - 192.168.10.150
 
       - entity_name: "9H1Q6YOL08G~Ethernet1/3~9B4ZC3JGND5~Ethernet1/3" # A unique name to identify the resource
         pool_type: "SUBNET"                     # choose from ['ID', 'IP', 'SUBNET']
         pool_name: "SUBNET"                     # Based on the 'poolType', select appropriate name
         scope_type: "link"                      # choose from ['fabric', 'device', 'device_interface', 'device_pair', 'link']
-        switch:                                 # provide the switch information to which the given resource is attached
+        switches:                               # provide the switch information to which the given resource is attached
           - 192.168.10.150
 
 # GATHERING RESOURCES
@@ -240,7 +240,7 @@ EXAMPLES = """
     state: gathered                             # choose form [merged, deleted, gathered]
     fabric: test_fabric
     config:
-      - switch:                                 # provide the switch information to which the given resource is attached
+      - switches:                               # provide the switch information to which the given resource is attached
           - 192.168.10.150
 
 - name: Gather Resources - filter by fabric and pool name
@@ -258,13 +258,13 @@ EXAMPLES = """
     fabric: "{{ ansible_it_fabric }}"
     config:
       - pool_name: "L3_VNI"                     # Based on the 'poolType', select appropriate name
-        switch:                                 # provide the switch information to which the given resource is attached
+        switches:                               # provide the switch information to which the given resource is attached
           - 192.168.10.150
       - pool_name: "LOOPBACK_ID"                # Based on the 'poolType', select appropriate name
-        switch:                                 # provide the switch information to which the given resource is attached
+        switches:                               # provide the switch information to which the given resource is attached
           - 192.168.10.150
       - pool_name: "VPC_ID"                     # Based on the 'poolType', select appropriate name
-        switch:                                 # provide the switch information to which the given resource is attached
+        switches:                               # provide the switch information to which the given resource is attached
           - 192.168.10.151
 
 - name: Gather Resources - mixed query
@@ -273,11 +273,11 @@ EXAMPLES = """
     fabric: test_fabric
     config:
       - entity_name: "l2_vni_fabric"            # A unique name to identify the resource
-      - switch:                                 # provide the switch information to which the given resource is attached
+      - switches:                               # provide the switch information to which the given resource is attached
           - 192.168.10.150
       - pool_name: "LOOPBACK_ID"                # Based on the 'poolType', select appropriate name
       - pool_name: "VPC_ID"                     # Based on the 'poolType', select appropriate name
-        switch:                                 # provide the switch information to which the given resource is attached
+        switches:                               # provide the switch information to which the given resource is attached
           - 192.168.10.150
 """
 
