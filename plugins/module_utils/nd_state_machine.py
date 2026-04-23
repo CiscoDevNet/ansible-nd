@@ -16,6 +16,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
 
@@ -45,13 +46,17 @@ class NDStateMachine:
 
         # Operation tracking
         self.output = NDOutput(output_level=module.params.get("output_level", "normal"))
+        self.results = Results()
+        self.results.state = self.module.params.get("state", "")
+        self.results.check_mode = self.module.check_mode
 
         # Configuration
         # Accept either an orchestrator instance or a class.
         if isinstance(model_orchestrator, type) and issubclass(model_orchestrator, NDBaseOrchestrator):
-            self.model_orchestrator = model_orchestrator(rest_send=self.rest_send)
+            self.model_orchestrator = model_orchestrator(rest_send=self.rest_send, results=self.results)
         elif isinstance(model_orchestrator, NDBaseOrchestrator):
             self.model_orchestrator = model_orchestrator
+            self.model_orchestrator.results = self.results
         else:
             raise NDStateMachineError(f"model_orchestrator must be an NDBaseOrchestrator class or instance. Got: {type(model_orchestrator)}")
 

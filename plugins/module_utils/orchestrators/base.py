@@ -9,10 +9,11 @@ from typing import Any, ClassVar, Dict, Generic, List, Optional, Type, TypeVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
 ModelType = TypeVar("ModelType", bound=NDBaseModel)
 
@@ -57,8 +58,33 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
 
     # REST infrastructure
     rest_send: RestSend
+    results: Optional[Results] = None
 
-    def _request(self, path: str, verb: HttpVerbEnum, data: Optional[Dict[str, Any]] = None, not_found_ok: bool = False) -> ResponseType:
+    def _register_api_call(self, path: str, verb: HttpVerbEnum, operation_type: OperationType, payload: Optional[Dict[str, Any]] = None) -> None:
+        """Register the most recent REST call with Results for observability."""
+        if self.results is None:
+            return
+        self.results.action = operation_type.value
+        self.results.operation_type = operation_type
+        self.results.path_current = path
+        self.results.verb_current = verb
+        self.results.payload_current = payload
+        self.results.response_current = self.rest_send.response_current
+        self.results.result_current = self.rest_send.result_current
+        self.results.diff_current = {}
+        # Tag write operations as verbosity 2 (shown at -vv),
+        # read operations as verbosity 3 (shown at -vvv).
+        self.results.verbosity_level_current = 3 if operation_type == OperationType.QUERY else 2
+        self.results.register_api_call()
+
+    def _request(
+        self,
+        path: str,
+        verb: HttpVerbEnum,
+        data: Optional[Dict[str, Any]] = None,
+        not_found_ok: bool = False,
+        operation_type: OperationType = OperationType.QUERY,
+    ) -> ResponseType:
         """
         # Summary
 
@@ -77,6 +103,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             self.rest_send.payload = data
         self.rest_send.commit()
 
+        # Register with Results before success/error checks so that
+        # both successful and failed calls are captured for troubleshooting.
+        self._register_api_call(path, verb, operation_type, self.rest_send.committed_payload)
+
         # Check not_found_ok before success because ResponseHandler treats
         # GET 404 as success=True (found=False).  Without this early return,
         # a GET 404 would fall through and return the raw 404 DATA body.
@@ -92,7 +122,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.create_endpoint()
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload())
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.CREATE)
         except Exception as e:
             raise Exception(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -100,7 +130,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.update_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload())
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=model_instance.to_payload(), operation_type=OperationType.UPDATE)
         except Exception as e:
             raise Exception(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -108,7 +138,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.delete_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, operation_type=OperationType.DELETE)
         except Exception as e:
             raise Exception(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -116,14 +146,14 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.query_one_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, operation_type=OperationType.QUERY)
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
     def query_all(self, model_instance: Optional[ModelType] = None, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.query_all_endpoint()
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True, operation_type=OperationType.QUERY)
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
