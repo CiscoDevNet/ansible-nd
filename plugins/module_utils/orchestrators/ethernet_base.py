@@ -25,7 +25,7 @@ resolution) from `NDBaseInterfaceOrchestrator` and adds ethernet-specific functi
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import ClassVar, List, Optional, Set, Type
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -76,15 +76,15 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
 
-    create_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesPut
-    delete_endpoint: Type[NDEndpointBaseModel] = NDEndpointBaseModel  # unused; delete() uses bulk normalize
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageInterfacesListGet
-    create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageInterfacesPost
-    delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = EpManageInterfacesNormalize
+    create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
+    update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
+    delete_endpoint: type[NDEndpointBaseModel] = NDEndpointBaseModel  # unused; delete() uses bulk normalize
+    query_one_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesGet
+    query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
+    create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
+    delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesNormalize
 
-    PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[Set[str]] = {"description", "admin_state", "extra_config"}
+    PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[set[str]] = {"description", "admin_state", "extra_config"}
 
     _pending_normalizes: list[tuple[str, str]] = []
 
@@ -118,7 +118,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         if pair not in self._pending_normalizes:
             self._pending_normalizes.append(pair)
 
-    def _check_port_channel_restrictions(self, model_instance: ModelType, existing_data: Optional[dict] = None) -> None:
+    def _check_port_channel_restrictions(self, model_instance: ModelType, existing_data: dict | None = None) -> None:
         """
         # Summary
 
@@ -288,7 +288,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception as e:
             raise RuntimeError(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def create_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
+    def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
         """
         # Summary
 
@@ -326,7 +326,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
 
-    def delete_bulk(self, model_instances: List[ModelType], **kwargs) -> None:
+    def delete_bulk(self, model_instances: list[ModelType], **kwargs) -> None:
         """
         # Summary
 
@@ -363,7 +363,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         except Exception as e:
             raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: Optional[ModelType] = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
         """
         # Summary
 
