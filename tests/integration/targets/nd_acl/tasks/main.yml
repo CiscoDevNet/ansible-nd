@@ -13,7 +13,7 @@
 # ============================================================
 - name: Query ND version
   cisco.nd.nd_version:
-    state: query
+    state: gathered
   register: nd_version
 
 - name: Execute ACL tests only for ND version >= 4.1
@@ -167,7 +167,7 @@
       cisco.nd.nd_acl:
         <<: *nd_info
         fabric: "{{ fabric_name }}"
-        state: query
+        state: gathered
         config:
           - name: ansible-test-ipv4-acl
       register: query_ipv4_acl
@@ -176,7 +176,7 @@
       cisco.nd.nd_acl:
         <<: *nd_info
         fabric: "{{ fabric_name }}"
-        state: query
+        state: gathered
       register: query_all_acls
 
     # ============================================================
@@ -303,7 +303,7 @@
       cisco.nd.nd_acl:
         <<: *nd_info
         fabric: "{{ fabric_name }}"
-        state: query
+        state: gathered
       register: query_after_delete
 
     # ============================================================
