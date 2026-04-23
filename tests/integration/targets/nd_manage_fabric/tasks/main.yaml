@@ -2,6 +2,12 @@
 - name: Run nd_manage_fabric iBGP tests
   ansible.builtin.include_tasks: fabric_ibgp.yaml
 
+- name: Run nd_manage_fabric AI iBGP VXLAN tests
+  ansible.builtin.include_tasks: fabric_ai_ibgp.yaml
+
+- name: Run nd_manage_fabric AI eBGP VXLAN tests
+  ansible.builtin.include_tasks: fabric_ai_ebgp.yaml
+
 - name: Run nd_manage_fabric eBGP tests
   ansible.builtin.include_tasks: fabric_ebgp.yaml
 
