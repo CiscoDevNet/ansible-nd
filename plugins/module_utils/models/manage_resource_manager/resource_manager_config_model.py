@@ -115,7 +115,7 @@ class ResourceManagerConfigModel(NDBaseModel):
             "When True, the 'resource' field must also be provided."
         ),
     )
-    # TO_DO(Jeet): We need to import this fields from common shared_fields file.
+    # TODO(Jeet): We need to import this fields from common shared_fields file.
     vrf_name: str | None = Field(
         default=None,
         description=("VRF name associated with the resource allocation. Use 'default' for the global default VRF. When omitted, the default VRF is assumed."),
