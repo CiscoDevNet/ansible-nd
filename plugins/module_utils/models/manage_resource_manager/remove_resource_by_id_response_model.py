@@ -12,7 +12,7 @@ Endpoint: POST /fabrics/{fabricName}/resources/actions/remove (response item)
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, List, Optional
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
@@ -23,20 +23,20 @@ class RemoveResourcesByIdResponse(NDBaseModel):
     Individual resource removal response item for POST .../actions/remove.
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
-    resource_value: Optional[str] = Field(
+    resource_value: str | None = Field(
         default=None,
         alias="resourceValue",
         description="Unique value of the removed resource",
     )
-    status: Optional[str] = Field(
+    status: str | None = Field(
         default=None,
         description="Status of the resource delete request",
     )
-    message: Optional[str] = Field(
+    message: str | None = Field(
         default=None,
-        description="Optional details describing a resource delete failure",
+        description="Additional details describing a resource delete failure",
     )
 
 
@@ -44,12 +44,12 @@ class RemoveResourcesByIdsResponse(NDBaseModel):
     """
     Response body for POST - /api/v1/manage/fabrics/{fabricName}/resources/actions/remove
 
-    Composite: contains List[RemoveResourcesByIdResponse].
+    Composite: contains list[RemoveResourcesByIdResponse].
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
-    resources: List[RemoveResourcesByIdResponse] = Field(default_factory=list, description="List of resource data")
+    resources: list[RemoveResourcesByIdResponse] = Field(default_factory=list, description="list of resource data")
 
     @classmethod
     def from_response(cls, response: Any) -> "RemoveResourcesByIdsResponse":

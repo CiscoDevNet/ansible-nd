@@ -10,7 +10,7 @@ in the ND Manage API.
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -57,7 +57,7 @@ class ResourcesQueryParams(ClusterNameMixin, SwitchIdMixin, TenantNameMixin, End
     ```
     """
 
-    pool_name: Optional[str] = Field(default=None, min_length=1, description="Name of the Pool")
+    pool_name: str | None = Field(default=None, min_length=1, description="Name of the Pool")
 
 
 # =============================================================================

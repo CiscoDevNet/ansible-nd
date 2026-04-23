@@ -5,7 +5,7 @@
 """
 ResourceModel - GET response model for a single resource allocation.
 
-COMPOSITE model: contains Union[FabricScope, DeviceScope, DeviceInterfaceScope,
+COMPOSITE model: contains FabricScope | DeviceScope | DeviceInterfaceScope |
 LinkScope, DevicePairScope] as the scope_details field.
 
 Based on OpenAPI schema: resourceDetailsGet (allOf resourceDataBase + createTimestamp)
@@ -25,7 +25,7 @@ Endpoints:
 from __future__ import annotations
 
 from ipaddress import ip_address
-from typing import Any, ClassVar, Dict, List, Literal, Optional, Union
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
@@ -43,14 +43,14 @@ class FabricScope(NDNestedModel):
     Required: scopeType (enum: 'fabric')
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     scope_type: Literal["fabric"] = Field(
         default="fabric",
         alias="scopeType",
         description="Scope level: must be 'fabric'",
     )
-    fabric_name: Optional[str] = Field(
+    fabric_name: str | None = Field(
         default=None,
         alias="fabricName",
         description="Name of the fabric",
@@ -58,7 +58,7 @@ class FabricScope(NDNestedModel):
 
     @field_validator("fabric_name", mode="before")
     @classmethod
-    def validate_fabric_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_fabric_name(cls, v: str | None) -> str | None:
         if v is None:
             return None
         v = str(v).strip()
@@ -73,24 +73,24 @@ class DeviceScope(NDNestedModel):
     Required: scopeType (enum: 'device')
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     scope_type: Literal["device"] = Field(
         default="device",
         alias="scopeType",
         description="Scope level: must be 'device'",
     )
-    switch_name: Optional[str] = Field(
+    switch_name: str | None = Field(
         default=None,
         alias="switchName",
         description="Name of the switch",
     )
-    switch_id: Optional[str] = Field(
+    switch_id: str | None = Field(
         default=None,
         alias="switchId",
         description="Serial number of the switch",
     )
-    switch_ip: Optional[str] = Field(
+    switch_ip: str | None = Field(
         default=None,
         alias="switchIp",
         description="IP address of the switch",
@@ -98,21 +98,21 @@ class DeviceScope(NDNestedModel):
 
     @field_validator("switch_name", mode="before")
     @classmethod
-    def validate_switch_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_name(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return str(v).strip() or None
 
     @field_validator("switch_id", mode="before")
     @classmethod
-    def validate_switch_id(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_id(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return str(v).strip() or None
 
     @field_validator("switch_ip", mode="before")
     @classmethod
-    def validate_switch_ip(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_ip(cls, v: str | None) -> str | None:
         return ResourceValidators.validate_ip_address(v)
 
 
@@ -124,29 +124,29 @@ class DeviceInterfaceScope(NDNestedModel):
     Required: scopeType (enum: 'deviceInterface')
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     scope_type: Literal["deviceInterface"] = Field(
         default="deviceInterface",
         alias="scopeType",
         description="Scope level: must be 'deviceInterface'",
     )
-    switch_name: Optional[str] = Field(
+    switch_name: str | None = Field(
         default=None,
         alias="switchName",
         description="Name of the switch",
     )
-    switch_id: Optional[str] = Field(
+    switch_id: str | None = Field(
         default=None,
         alias="switchId",
         description="Serial number of the switch",
     )
-    switch_ip: Optional[str] = Field(
+    switch_ip: str | None = Field(
         default=None,
         alias="switchIp",
         description="IP address of the switch",
     )
-    interface_name: Optional[str] = Field(
+    interface_name: str | None = Field(
         default=None,
         alias="interfaceName",
         description="Interface name",
@@ -154,26 +154,26 @@ class DeviceInterfaceScope(NDNestedModel):
 
     @field_validator("switch_name", mode="before")
     @classmethod
-    def validate_switch_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_name(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return str(v).strip() or None
 
     @field_validator("switch_id", mode="before")
     @classmethod
-    def validate_switch_id(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_id(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return str(v).strip() or None
 
     @field_validator("switch_ip", mode="before")
     @classmethod
-    def validate_switch_ip(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_ip(cls, v: str | None) -> str | None:
         return ResourceValidators.validate_ip_address(v)
 
     @field_validator("interface_name", mode="before")
     @classmethod
-    def validate_interface_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_interface_name(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return str(v).strip() or None
@@ -187,49 +187,49 @@ class LinkScope(NDNestedModel):
     Required: scopeType (enum: 'link')
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     scope_type: Literal["link"] = Field(
         default="link",
         alias="scopeType",
         description="Scope level: must be 'link'",
     )
-    src_switch_name: Optional[str] = Field(
+    src_switch_name: str | None = Field(
         default=None,
         alias="srcSwitchName",
         description="Name of the source switch",
     )
-    src_switch_id: Optional[str] = Field(
+    src_switch_id: str | None = Field(
         default=None,
         alias="srcSwitchId",
         description="Serial number of the source switch",
     )
-    src_switch_ip: Optional[str] = Field(
+    src_switch_ip: str | None = Field(
         default=None,
         alias="srcSwitchIp",
         description="IP address of the source switch",
     )
-    src_interface_name: Optional[str] = Field(
+    src_interface_name: str | None = Field(
         default=None,
         alias="srcInterfaceName",
         description="Source interface name",
     )
-    dst_switch_name: Optional[str] = Field(
+    dst_switch_name: str | None = Field(
         default=None,
         alias="dstSwitchName",
         description="Name of the destination switch",
     )
-    dst_switch_id: Optional[str] = Field(
+    dst_switch_id: str | None = Field(
         default=None,
         alias="dstSwitchId",
         description="Serial number of the destination switch",
     )
-    dst_switch_ip: Optional[str] = Field(
+    dst_switch_ip: str | None = Field(
         default=None,
         alias="dstSwitchIp",
         description="IP address of the destination switch",
     )
-    dst_interface_name: Optional[str] = Field(
+    dst_interface_name: str | None = Field(
         default=None,
         alias="dstInterfaceName",
         description="Destination interface name",
@@ -237,26 +237,26 @@ class LinkScope(NDNestedModel):
 
     @field_validator("src_switch_name", "dst_switch_name", mode="before")
     @classmethod
-    def validate_switch_names(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_names(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return str(v).strip() or None
 
     @field_validator("src_switch_id", "dst_switch_id", mode="before")
     @classmethod
-    def validate_switch_ids(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_ids(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return str(v).strip() or None
 
     @field_validator("src_switch_ip", "dst_switch_ip", mode="before")
     @classmethod
-    def validate_switch_ips(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_ips(cls, v: str | None) -> str | None:
         return ResourceValidators.validate_ip_address(v)
 
     @field_validator("src_interface_name", "dst_interface_name", mode="before")
     @classmethod
-    def validate_interface_names(cls, v: Optional[str]) -> Optional[str]:
+    def validate_interface_names(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return str(v).strip() or None
@@ -270,44 +270,44 @@ class DevicePairScope(NDNestedModel):
     Required: scopeType (enum: 'devicePair')
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     scope_type: Literal["devicePair"] = Field(
         default="devicePair",
         alias="scopeType",
         description="Scope level: must be 'devicePair'",
     )
-    src_switch_name: Optional[str] = Field(
+    src_switch_name: str | None = Field(
         default=None,
         alias="srcSwitchName",
         description="Name of the source switch",
     )
-    src_switch_id: Optional[str] = Field(
+    src_switch_id: str | None = Field(
         default=None,
         alias="srcSwitchId",
         description="Serial number of the source switch",
     )
-    src_switch_ip: Optional[str] = Field(
+    src_switch_ip: str | None = Field(
         default=None,
         alias="srcSwitchIp",
         description="IP address of the source switch",
     )
-    dst_switch_name: Optional[str] = Field(
+    dst_switch_name: str | None = Field(
         default=None,
         alias="dstSwitchName",
         description="Name of the destination switch",
     )
-    dst_switch_id: Optional[str] = Field(
+    dst_switch_id: str | None = Field(
         default=None,
         alias="dstSwitchId",
         description="Serial number of the destination switch",
     )
-    dst_switch_ip: Optional[str] = Field(
+    dst_switch_ip: str | None = Field(
         default=None,
         alias="dstSwitchIp",
         description="IP address of the destination switch",
     )
-    peer_resource_id: Optional[int] = Field(
+    peer_resource_id: int | None = Field(
         default=None,
         alias="peerResourceId",
         description="Resource ID on the destination switch",
@@ -316,26 +316,26 @@ class DevicePairScope(NDNestedModel):
 
     @field_validator("src_switch_name", "dst_switch_name", mode="before")
     @classmethod
-    def validate_switch_names(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_names(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return str(v).strip() or None
 
     @field_validator("src_switch_id", "dst_switch_id", mode="before")
     @classmethod
-    def validate_switch_ids(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_ids(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return str(v).strip() or None
 
     @field_validator("src_switch_ip", "dst_switch_ip", mode="before")
     @classmethod
-    def validate_switch_ips(cls, v: Optional[str]) -> Optional[str]:
+    def validate_switch_ips(cls, v: str | None) -> str | None:
         return ResourceValidators.validate_ip_address(v)
 
     @field_validator("peer_resource_id", mode="before")
     @classmethod
-    def validate_peer_resource_id(cls, v: Optional[Any]) -> Optional[int]:
+    def validate_peer_resource_id(cls, v: Any | None) -> int | None:
         if v is None:
             return None
         try:
@@ -359,52 +359,52 @@ class ResourceManagerRequest(NDNestedModel):
     Path: DELETE /fabrics/{fabricName}/resources/{resourceId}
     """
 
-    identifiers: ClassVar[List[str]] = ["resource_id"]
+    identifiers: ClassVar[list[str]] = ["resource_id"]
     identifier_strategy: ClassVar[Literal["single"]] = "single"
-    exclude_from_diff: ClassVar[List[str]] = []
+    exclude_from_diff: ClassVar[list[str]] = []
 
-    pool_name: Optional[str] = Field(
+    pool_name: str | None = Field(
         default=None,
         alias="poolName",
         description="Pool under which the resource is allocated",
     )
-    pool_type: Optional[str] = Field(
+    pool_type: str | None = Field(
         default=None,
         alias="poolType",
         description="Type of pool: ID, IP, or SUBNET",
     )
-    scope_details: Optional[Union[FabricScope, DeviceScope, DeviceInterfaceScope, LinkScope, DevicePairScope]] = Field(
+    scope_details: FabricScope | DeviceScope | DeviceInterfaceScope | LinkScope | DevicePairScope | None = Field(
         default=None,
         alias="scopeDetails",
         description="Scope details; discriminated by scopeType",
     )
-    is_pre_allocated: Optional[bool] = Field(
+    is_pre_allocated: bool | None = Field(
         default=False,
         alias="isPreAllocated",
         description="true if the resource is pre-allocated (reserved) to an entity",
     )
-    entity_name: Optional[str] = Field(
+    entity_name: str | None = Field(
         default=None,
         alias="entityName",
         description="Name by which the resource is allocated",
     )
-    resource_value: Optional[str] = Field(
+    resource_value: str | None = Field(
         default=None,
         alias="resourceValue",
         description="Resource value: an ID, IP address, or subnet/CIDR",
     )
-    resource_id: Optional[int] = Field(
+    resource_id: int | None = Field(
         default=None,
         alias="resourceId",
         description="Unique identifier of the allocated resource",
         ge=0,
     )
-    vrf_name: Optional[str] = Field(
+    vrf_name: str | None = Field(
         default="default",
         alias="vrfName",
         description="VRF name when the pool is VRF-scoped; 'default' otherwise",
     )
-    create_timestamp: Optional[str] = Field(
+    create_timestamp: str | None = Field(
         default=None,
         alias="createTimestamp",
         description="Timestamp when the resource was allocated or reserved",
@@ -412,7 +412,7 @@ class ResourceManagerRequest(NDNestedModel):
 
     @field_validator("pool_name", mode="before")
     @classmethod
-    def validate_pool_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_pool_name(cls, v: str | None) -> str | None:
         if v is None:
             return None
         v = str(v).strip()
@@ -420,7 +420,7 @@ class ResourceManagerRequest(NDNestedModel):
 
     @field_validator("entity_name", mode="before")
     @classmethod
-    def validate_entity_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_entity_name(cls, v: str | None) -> str | None:
         if v is None:
             return None
         v = str(v).strip()
@@ -428,7 +428,7 @@ class ResourceManagerRequest(NDNestedModel):
 
     @field_validator("resource_value", mode="before")
     @classmethod
-    def validate_resource_value(cls, v: Optional[str]) -> Optional[str]:
+    def validate_resource_value(cls, v: str | None) -> str | None:
         """Validate resource_value: accepts an integer ID string, IPv4/v6 address,
         or CIDR subnet notation. Opaque string values are passed through."""
         if v is None:
@@ -458,7 +458,7 @@ class ResourceManagerRequest(NDNestedModel):
 
     @field_validator("resource_id", mode="before")
     @classmethod
-    def validate_resource_id(cls, v: Optional[Any]) -> Optional[int]:
+    def validate_resource_id(cls, v: Any | None) -> int | None:
         if v is None:
             return None
         try:
@@ -471,7 +471,7 @@ class ResourceManagerRequest(NDNestedModel):
 
     @field_validator("vrf_name", mode="before")
     @classmethod
-    def validate_vrf_name(cls, v: Optional[str]) -> str:
+    def validate_vrf_name(cls, v: str | None) -> str:
         if v is None:
             return "default"
         v = str(v).strip()
@@ -479,7 +479,7 @@ class ResourceManagerRequest(NDNestedModel):
 
     @field_validator("create_timestamp", mode="before")
     @classmethod
-    def validate_create_timestamp(cls, v: Optional[str]) -> Optional[str]:
+    def validate_create_timestamp(cls, v: str | None) -> str | None:
         if v is None:
             return None
         return str(v).strip() or None
@@ -528,12 +528,12 @@ class ResourceManagerRequest(NDNestedModel):
             raise ValueError(f"Unknown scopeType: {scope_type!r}. " f"Allowed values: {list(model_map.keys())}")
         return target_cls.model_validate(v)
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
         return self.model_dump(by_alias=True, exclude_none=True)
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> "ResourceModel":
+    def from_response(cls, response: dict[str, Any]) -> "ResourceModel":
         """Create model instance from API response.
 
         Handles the resourceDetailsGet schema which is an allOf of
@@ -547,7 +547,7 @@ class ResourceManagerRequest(NDNestedModel):
         """
         return cls.model_validate(response)
 
-    def to_config_dict(self) -> Dict[str, Any]:
+    def to_config_dict(self) -> dict[str, Any]:
         """Return a user-facing configuration dictionary for this resource.
 
         Produces a consistent dict suitable for display and diff output.
@@ -555,12 +555,12 @@ class ResourceManagerRequest(NDNestedModel):
         need not inspect scope_details directly.
 
         Returns:
-            Dict with resource identity and scope-specific details.
+            dict with resource identity and scope-specific details.
         """
         scope = self.scope_details
         scope_type = scope.scope_type if scope is not None else None
 
-        config: Dict[str, Any] = {
+        config: dict[str, Any] = {
             "resource_id": self.resource_id,
             "pool_name": self.pool_name,
             "resource_value": self.resource_value,
@@ -607,14 +607,14 @@ class ResourceManagerBatchRequest(NDBaseModel):
     """
     Request body for POST /fabrics/{fabricName}/resources using Ansible-style config.
 
-    Composite: contains List[ResourceManagerRequest].
+    Composite: contains list[ResourceManagerRequest].
     Each item is validated with ResourceManagerRequest before submission.
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
-    resources: List[ResourceManagerRequest] = Field(description="Array of resource configs to allocate")
+    resources: list[ResourceManagerRequest] = Field(description="Array of resource configs to allocate")
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
         return self.model_dump(by_alias=True, exclude_none=True)

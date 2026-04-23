@@ -37,7 +37,7 @@ options:
   config:
     description:
       - A list of dictionaries containing resource configurations.
-      - Optional for state C(gathered) (returns all resources when omitted).
+      - For state C(gathered), this may be omitted to return all resources.
     type: list
     elements: dict
     suboptions:
@@ -87,7 +87,7 @@ options:
         required: false
       switch:
         description:
-          - List of switch IP address or DNS name of the management interface of the switch to which the
+          - Switch IP addresses or DNS names of the management interface of the switch to which the
             allocated resource is assigned.
           - Required when C(scope_type) is not C(fabric).
         type: list
@@ -353,6 +353,7 @@ def main():
     setup_logging(
         module,
         develop=True,
+        config="/Users/jeeram/ansible/collections/ansible_collections/cisco/nd/plugins/module_utils/logging_config.json",
     )
     log = logging.getLogger("nd.nd_manage_resource_manager")
 

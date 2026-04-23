@@ -11,16 +11,13 @@ Standalone utility class (no instance required).
 from __future__ import annotations
 
 from ipaddress import ip_address, ip_network
-from typing import Optional
-
-
 class ResourceValidators:
     """
     Common validators for resource-related fields.
     """
 
     @staticmethod
-    def validate_ip_address(v: Optional[str]) -> Optional[str]:
+    def validate_ip_address(v: str | None) -> str | None:
         """Validate IPv4 or IPv6 address."""
         if v is None:
             return None
@@ -34,7 +31,7 @@ class ResourceValidators:
             raise ValueError(f"Invalid IP address format: {v}")
 
     @staticmethod
-    def validate_cidr(v: Optional[str]) -> Optional[str]:
+    def validate_cidr(v: str | None) -> str | None:
         """Validate CIDR notation (IP/mask)."""
         if v is None:
             return None
@@ -50,7 +47,7 @@ class ResourceValidators:
             raise ValueError(f"Invalid CIDR format: {v}")
 
     @staticmethod
-    def validate_pool_range(v: Optional[str]) -> Optional[str]:
+    def validate_pool_range(v: str | None) -> str | None:
         """Validate pool range format (e.g., '2300-2600' or '10.1.1.0/24')."""
         if v is None:
             return None
