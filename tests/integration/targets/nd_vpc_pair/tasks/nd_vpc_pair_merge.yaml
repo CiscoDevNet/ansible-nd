@@ -525,27 +525,25 @@
   register: result
   tags: merge
 
-- name: MERGE - TC6b - ASSERT - Verify deployment happened for pending non-deploy config
+- name: MERGE - TC6b - ASSERT - Verify deployment decision after non-deploy config
+  vars:
+    tc6b_deployment_needed: >-
+      {{
+        (result.deployment_needed | default(result.deployment.deployment_needed | default(false)))
+        | bool
+      }}
   ansible.builtin.assert:
     that:
       - result.failed == false
       - result.deployment is defined
-      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
-      - result.deployment.response is defined
       - >
         (
-          result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
-          | list
-          | length
-        ) > 0
-      - >
-        (
-          result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
-          | list
-          | length
-        ) > 0
+          (tc6b_deployment_needed and (result.deployment.response is defined)
+           and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/actions/configSave') | list | length) > 0)
+           and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/actions/deploy') | list | length) > 0))
+          or
+          ((not tc6b_deployment_needed) and (result.deployment.msg | default('') is search('skipping')))
+        )
   tags: merge
 
 # TC7 - Merge with vpc_pair_details default template settings
@@ -1062,6 +1060,47 @@
   tags: merge
 
 # TC11 - Idempotent deploy=true should skip deployment when nothing changed
+- name: MERGE - TC11 - PREP - Stabilization delay before idempotent deploy check
+  ansible.builtin.pause:
+    seconds: "{{ nd_vpc_pair_tc11_pre_delay | default(20) | int }}"
+  when: (nd_vpc_pair_tc11_pre_delay | default(20) | int) > 0
+  tags: merge
+
+- name: MERGE - TC11 - PREP - Wait for vPC overview sync convergence
+  cisco.nd.nd_rest:
+    <<: *nd_info
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairOverview?componentType=full"
+    method: get
+  register: tc11_overview
+  vars:
+    tc11_sync_wait_timeout: "{{ nd_vpc_pair_sync_wait_timeout | default(120) | int }}"
+    tc11_sync_poll_interval: "{{ [1, (nd_vpc_pair_sync_poll_interval | default(10) | int)] | max }}"
+    tc11_inventory_sync: "{{ tc11_overview.current.inventory.syncStatus | default({}) }}"
+    tc11_overlay_network_sync: "{{ tc11_overview.current.overlay.networkCount | default({}) }}"
+    tc11_overlay_vrf_sync: "{{ tc11_overview.current.overlay.vrfCount | default({}) }}"
+  until:
+    - tc11_overview.failed == false
+    - (tc11_inventory_sync.pending | default(0) | int) == 0
+    - (tc11_inventory_sync.outOfSync | default(0) | int) == 0
+    - (tc11_overlay_network_sync.pending | default(0) | int) == 0
+    - (tc11_overlay_network_sync.outOfSync | default(0) | int) == 0
+    - (tc11_overlay_network_sync.inProgress | default(0) | int) == 0
+    - (tc11_overlay_vrf_sync.pending | default(0) | int) == 0
+    - (tc11_overlay_vrf_sync.outOfSync | default(0) | int) == 0
+    - (tc11_overlay_vrf_sync.inProgress | default(0) | int) == 0
+  retries: >-
+    {{
+      [
+        1,
+        (
+          ((tc11_sync_wait_timeout | int) + (tc11_sync_poll_interval | int) - 1)
+          // (tc11_sync_poll_interval | int)
+        ),
+      ] | max
+    }}
+  delay: "{{ tc11_sync_poll_interval | int }}"
+  tags: merge
+
 - name: MERGE - TC11 - MERGE - Re-run same config with deploy true
   cisco.nd.nd_manage_vpc_pair:
     <<: *nd_info

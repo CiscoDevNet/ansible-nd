@@ -54,6 +54,44 @@ def _as_int_or_zero(value: Any) -> int:
         return 0
 
 
+def _normalize_sync_status(value: Any) -> Optional[str]:
+    """
+    Normalize sync-status values by removing separator variants.
+
+    Converts inputs such as "Out of Sync", "out_of_sync", and "out-of-sync"
+    into a stable compact token for matching.
+    """
+    if value is None:
+        return None
+
+    text = str(value).strip().lower()
+    if not text:
+        return None
+
+    return text.replace(" ", "").replace("_", "").replace("-", "")
+
+
+def _sync_status_to_bool(value: Any) -> Optional[bool]:
+    """
+    Convert common sync status values to booleans.
+
+    Returns True for in-sync signals, False for pending/out-of-sync/failure
+    signals, and None when the value is unknown.
+    """
+    if isinstance(value, bool):
+        return value
+
+    normalized = _normalize_sync_status(value)
+    if not normalized:
+        return None
+
+    if normalized in ("true", "insync"):
+        return True
+    if normalized in ("false", "pending", "outofsync", "notinsync", "failed", "error"):
+        return False
+    return None
+
+
 def _is_switch_config_in_sync(switch_data: Optional[dict[str, Any]]) -> Optional[bool]:
     """
     Determine switch-level config sync state from switch inventory payload.
@@ -74,15 +112,7 @@ def _is_switch_config_in_sync(switch_data: Optional[dict[str, Any]]) -> Optional
     else:
         status = switch_data.get("configSyncStatus")
 
-    if not isinstance(status, str):
-        return None
-
-    normalized = status.strip().lower()
-    if normalized in ("insync", "in_sync", "in-sync"):
-        return True
-    if normalized in ("pending", "outofsync", "out_of_sync", "out-of-sync", "failed", "error"):
-        return False
-    return None
+    return _sync_status_to_bool(status)
 
 
 def _is_pair_in_sync_from_overview(
@@ -153,6 +183,9 @@ def _is_pair_in_sync_from_overview(
             # If syncStatus exists and no non-sync counters are present,
             # consider it in-sync.
             return True
+        scalar_sync_state = _sync_status_to_bool(sync_status)
+        if scalar_sync_state is not None:
+            return scalar_sync_state
 
     # Overlay counters can still indicate pending/out-of-sync conditions.
     overlay = response.get(VpcFieldNames.OVERLAY)
@@ -1167,7 +1200,21 @@ def custom_vpc_query_all(nrm: Any) -> list[dict[str, Any]]:
                 elif switch_sync is True and peer_switch_sync is True:
                     config_sync_state = True
 
-                if sync_state is False or config_sync_state is False:
+                # Resolve pair sync state from both overview and switch signals.
+                #
+                # Precedence:
+                # - overview=True is authoritative in-sync (ignore switch noise).
+                # - overview=False is authoritative not-in-sync (deploy needed).
+                # - overview=None falls back to explicit switch out-of-sync.
+                pair_not_in_sync = False
+                if sync_state is True:
+                    pair_not_in_sync = False
+                elif sync_state is False:
+                    pair_not_in_sync = True
+                else:
+                    pair_not_in_sync = config_sync_state is False
+
+                if pair_not_in_sync:
                     not_in_sync_pairs.append(
                         {
                             VpcFieldNames.SWITCH_ID: switch_id,

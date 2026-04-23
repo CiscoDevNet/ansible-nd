@@ -48,10 +48,10 @@ def _needs_deployment(result: dict[str, Any], nrm: Any) -> bool:
     # Check if there are any changes in the result
     has_changes = result.get("changed", False)
 
-    # Check diff - framework stores before/after
-    before = result.get("before", [])
-    after = result.get("after", [])
-    has_diff_changes = before != after
+    # Check diff - prefer explicit diff outputs over before/after structural
+    # comparisons. before/after payloads can differ in ordering/details while
+    # still representing no effective change.
+    has_diff_changes = _has_explicit_diff_changes(result)
 
     # Check pending operations
     pending_create = nrm.module.params.get("_pending_create", [])
@@ -63,6 +63,21 @@ def _needs_deployment(result: dict[str, Any], nrm: Any) -> bool:
     needs_deploy = has_changes or has_diff_changes or has_pending or has_not_in_sync
 
     return needs_deploy
+
+
+def _has_explicit_diff_changes(result: dict[str, Any]) -> bool:
+    """
+    Detect meaningful configuration deltas from explicit diff structures.
+
+    Prefers class_diff (created/updated/deleted) when available. Falls back to
+    the raw diff list for compatibility with older output shapes.
+    """
+    class_diff = result.get("class_diff")
+    if isinstance(class_diff, dict):
+        return bool(class_diff.get("created") or class_diff.get("updated") or class_diff.get("deleted"))
+
+    diff = result.get("diff")
+    return bool(diff)
 
 
 def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
@@ -145,8 +160,6 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
 
     if nrm.module.check_mode:
         # check_mode deployment preview
-        before = result.get("before", [])
-        after = result.get("after", [])
         pending_create = nrm.module.params.get("_pending_create", [])
         pending_delete = nrm.module.params.get("_pending_delete", [])
         not_in_sync_pairs = nrm.module.params.get("_not_in_sync_pairs", [])
@@ -173,7 +186,7 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
             "would_deploy": deploy_enabled,
             "config_actions": config_actions,
             "deployment_decision_factors": {
-                "diff_has_changes": before != after,
+                "diff_has_changes": _has_explicit_diff_changes(result),
                 "pending_create_operations": len(pending_create),
                 "pending_delete_operations": len(pending_delete),
                 "not_in_sync_pairs": len(not_in_sync_pairs),
