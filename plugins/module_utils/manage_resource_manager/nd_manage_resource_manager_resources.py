@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import ipaddress
 import logging
-from typing import Any, Optional, Tuple, Union
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
@@ -62,7 +62,7 @@ class ResourceManagerDiffEngine:
     """Provide stateless validation and diff computation helpers."""
 
     @staticmethod
-    def _normalize_pool_name(pool_name: str, log: logging.Logger) -> Optional[str]:
+    def _normalize_pool_name(pool_name: str, log: logging.Logger) -> str | None:
         """Normalize pool_name to canonical constant form based on ``POOL_SCOPE_MAP`` keys.
 
         Converts API-style names like ``loopbackId`` to playbook constant names like
@@ -128,7 +128,7 @@ class ResourceManagerDiffEngine:
         return normalis_entity_name
 
     @staticmethod
-    def _extract_scope_switch_key_val(scope_details, switch_key, src_switch_key, log: logging.Logger) -> Optional[str]:
+    def _extract_scope_switch_key_val(scope_details, switch_key, src_switch_key, log: logging.Logger) -> str | None:
         """Extract a switch identifier from a scope_details model using the correct attribute name.
 
         Selects between ``switch_key`` (for single-switch scopes: device, device_interface)
@@ -168,7 +168,7 @@ class ResourceManagerDiffEngine:
         return value
 
     @staticmethod
-    def _extract_scope_type(scope_details, log: logging.Logger) -> Optional[str]:
+    def _extract_scope_type(scope_details, log: logging.Logger) -> str | None:
         """Extract and map the playbook-style scope_type from a scope_details model.
 
         Args:
@@ -245,12 +245,12 @@ class ResourceManagerDiffEngine:
 
     @staticmethod
     def _make_resource_key(
-        entity_name: Optional[str],
-        pool_name: Optional[str],
-        scope_type: Optional[str],
-        switch_ip: Optional[str],
+        entity_name: str | None,
+        pool_name: str | None,
+        scope_type: str | None,
+        switch_ip: str | None,
         log: logging.Logger,
-    ) -> Tuple:
+    ) -> tuple:
         """Build a normalized deduplication key for a resource entry.
 
         Args:
@@ -292,7 +292,7 @@ class ResourceManagerDiffEngine:
 
     @staticmethod
     def validate_configs(
-        config: Union[dict[str, Any], list[dict[str, Any]]],
+        config: dict[str, Any] | list[dict[str, Any]],
         state: str,
         nd: NDModule,
         log: logging.Logger,
@@ -798,7 +798,7 @@ class NDResourceManagerModule:
         self,
         nd: NDModule,
         results: Results,
-        log: Optional[logging.Logger] = None,
+        log: logging.Logger | None = None,
     ):
         """Initialise the module, resolve fabric/state from ND params, and pre-fetch all resources.
 
@@ -812,7 +812,7 @@ class NDResourceManagerModule:
                 and the underlying ``RestSend`` HTTP client.
             results: ``Results`` instance used to accumulate API call results and
                 build the final module output.
-            log: Optional external logger.  If not provided a module-level logger
+            log: External logger if provided. If not, a module-level logger
                 (``logging.getLogger("nd.NDResourceManagerModule")``) is used.
         """
         self.nd = nd
@@ -883,7 +883,7 @@ class NDResourceManagerModule:
             operation_type: ``OperationType`` enum value.
             message: Human-readable message for ``response_current["MESSAGE"]``.
             changed: Whether the operation mutated state.
-            diff: Optional diff dict to attach.  Defaults to ``{}``.
+            diff: Diff dict to attach when provided. Defaults to ``{}``.
             verb: ``HttpVerbEnum`` value for the HTTP method used.  Defaults to ``GET``.
             path: API endpoint path string.  Defaults to ``""``.
             payload: Request payload dict, or ``None`` for GET / no-body requests.
