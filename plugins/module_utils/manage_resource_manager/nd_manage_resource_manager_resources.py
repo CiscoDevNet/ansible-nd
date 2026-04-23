@@ -424,7 +424,7 @@ class ResourceManagerDiffEngine:
 
         # Build index of existing resources keyed by
         # (normalized_entity, pool_name, playbook_scope_type, switch_id)
-        existing_index: dict[Tuple, ResourceManagerResponse] = {}
+        existing_index: dict[tuple, ResourceManagerResponse] = {}
         for res in existing:
             entity = res.entity_name
             pool = res.pool_name
