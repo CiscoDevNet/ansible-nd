@@ -36,7 +36,6 @@ from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module im
 from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import ResponseGenerator
 from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
 
-
 # =============================================================================
 # Test doubles: minimal concrete Endpoint and Model subclasses
 # =============================================================================
@@ -132,9 +131,9 @@ def _make_rest_send(response_dicts):
 
     Each dict in response_dicts should have RETURN_CODE, MESSAGE, DATA, etc.
     """
+
     def responses():
-        for resp in response_dicts:
-            yield resp
+        yield from response_dicts
 
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
@@ -489,11 +488,13 @@ class TestMultipleApiCalls:
 
     def test_sequential_calls_accumulate(self):
         """Multiple _request calls each register a separate task."""
-        rest_send = _make_rest_send([
-            _success_response(),
-            _success_response(),
-            _success_response(),
-        ])
+        rest_send = _make_rest_send(
+            [
+                _success_response(),
+                _success_response(),
+                _success_response(),
+            ]
+        )
         results = _make_results()
         orch = _make_orchestrator(rest_send, results)
 
