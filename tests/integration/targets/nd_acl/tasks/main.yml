@@ -1,0 +1,346 @@
+# Test code for the nd_acl module
+# Copyright: (c) 2026, Slawomir Kaszlikowski
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ mso_output_level | default("debug") }}'
+
+# ============================================================
+# Version check - nd_acl requires ND 4.1 or later
+# ============================================================
+- name: Query ND version
+  cisco.nd.nd_version:
+    state: query
+  register: nd_version
+
+- name: Execute ACL tests only for ND version >= 4.1
+  when: nd_version.current.platformVersion is version('4.1', '>=')
+  block:
+
+    # ============================================================
+    # CLEANUP - ensure test ACLs do not exist before starting
+    # ============================================================
+    - name: Ensure IPv4 test ACL does not exist
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: deleted
+        config:
+          - name: ansible-test-ipv4-acl
+
+    - name: Ensure IPv6 test ACL does not exist
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: deleted
+        config:
+          - name: ansible-test-ipv6-acl
+
+    # ============================================================
+    # CREATE - merged state (new ACL)
+    # ============================================================
+    - name: Create IPv4 ACL (check mode)
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: merged
+        config:
+          - name: ansible-test-ipv4-acl
+            type: ipv4
+            entries:
+              - sequence_number: 10
+                action: remark
+                remark_comment: "Allow web traffic"
+              - sequence_number: 20
+                action: permit
+                protocol: tcp
+                src: any
+                dst: 10.1.1.0 0.0.0.255
+                dst_port_action: equal_to
+                dst_port: 80
+              - sequence_number: 100
+                action: deny
+                protocol: ip
+                src: any
+                dst: any
+      check_mode: true
+      register: cm_create_ipv4_acl
+
+    - name: Create IPv4 ACL
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: merged
+        config:
+          - name: ansible-test-ipv4-acl
+            type: ipv4
+            entries:
+              - sequence_number: 10
+                action: remark
+                remark_comment: "Allow web traffic"
+              - sequence_number: 20
+                action: permit
+                protocol: tcp
+                src: any
+                dst: 10.1.1.0 0.0.0.255
+                dst_port_action: equal_to
+                dst_port: 80
+              - sequence_number: 100
+                action: deny
+                protocol: ip
+                src: any
+                dst: any
+      register: create_ipv4_acl
+
+    - name: Create IPv4 ACL again (idempotency)
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: merged
+        config:
+          - name: ansible-test-ipv4-acl
+            type: ipv4
+            entries:
+              - sequence_number: 10
+                action: remark
+                remark_comment: "Allow web traffic"
+              - sequence_number: 20
+                action: permit
+                protocol: tcp
+                src: any
+                dst: 10.1.1.0 0.0.0.255
+                dst_port_action: equal_to
+                dst_port: 80
+              - sequence_number: 100
+                action: deny
+                protocol: ip
+                src: any
+                dst: any
+      register: create_ipv4_acl_again
+
+    # ============================================================
+    # MERGE - add new entry without removing existing ones
+    # ============================================================
+    - name: Merge additional entry into existing ACL
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: merged
+        config:
+          - name: ansible-test-ipv4-acl
+            type: ipv4
+            entries:
+              - sequence_number: 30
+                action: permit
+                protocol: tcp
+                src: any
+                dst: 10.1.1.0 0.0.0.255
+                dst_port_action: equal_to
+                dst_port: 443
+      register: merge_entry
+
+    - name: Merge additional entry again (idempotency)
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: merged
+        config:
+          - name: ansible-test-ipv4-acl
+            type: ipv4
+            entries:
+              - sequence_number: 30
+                action: permit
+                protocol: tcp
+                src: any
+                dst: 10.1.1.0 0.0.0.255
+                dst_port_action: equal_to
+                dst_port: 443
+      register: merge_entry_again
+
+    # ============================================================
+    # QUERY - read back ACLs
+    # ============================================================
+    - name: Query specific IPv4 ACL
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: query
+        config:
+          - name: ansible-test-ipv4-acl
+      register: query_ipv4_acl
+
+    - name: Query all ACLs
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: query
+      register: query_all_acls
+
+    # ============================================================
+    # IPv6 ACL
+    # ============================================================
+    - name: Create IPv6 ACL
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: merged
+        config:
+          - name: ansible-test-ipv6-acl
+            type: ipv6
+            entries:
+              - sequence_number: 10
+                action: permit
+                protocol: tcp
+                src: any
+                dst: 2001:db8::/32
+                dst_port_action: port_range
+                dst_port_range_start: 80
+                dst_port_range_end: 443
+              - sequence_number: 20
+                action: deny
+                protocol: ipv6
+                src: any
+                dst: any
+      register: create_ipv6_acl
+
+    # ============================================================
+    # REPLACE - completely replace existing ACL entries
+    # ============================================================
+    - name: Replace IPv4 ACL (check mode)
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: replaced
+        config:
+          - name: ansible-test-ipv4-acl
+            type: ipv4
+            entries:
+              - sequence_number: 10
+                action: permit
+                protocol: ip
+                src: 192.168.1.0 0.0.0.255
+                dst: any
+      check_mode: true
+      register: cm_replace_ipv4_acl
+
+    - name: Replace IPv4 ACL
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: replaced
+        config:
+          - name: ansible-test-ipv4-acl
+            type: ipv4
+            entries:
+              - sequence_number: 10
+                action: permit
+                protocol: ip
+                src: 192.168.1.0 0.0.0.255
+                dst: any
+      register: replace_ipv4_acl
+
+    - name: Replace IPv4 ACL again (idempotency)
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: replaced
+        config:
+          - name: ansible-test-ipv4-acl
+            type: ipv4
+            entries:
+              - sequence_number: 10
+                action: permit
+                protocol: ip
+                src: 192.168.1.0 0.0.0.255
+                dst: any
+      register: replace_ipv4_acl_again
+
+    # ============================================================
+    # DELETE - specific ACL
+    # ============================================================
+    - name: Delete IPv6 ACL (check mode)
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: deleted
+        config:
+          - name: ansible-test-ipv6-acl
+      check_mode: true
+      register: cm_delete_ipv6_acl
+
+    - name: Delete IPv6 ACL
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: deleted
+        config:
+          - name: ansible-test-ipv6-acl
+      register: delete_ipv6_acl
+
+    - name: Delete IPv6 ACL again (idempotency - already gone)
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: deleted
+        config:
+          - name: ansible-test-ipv6-acl
+      register: delete_ipv6_acl_again
+
+    # ============================================================
+    # DELETE - all ACLs in fabric
+    # ============================================================
+    - name: Delete all ACLs
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: deleted
+      register: delete_all_acls
+
+    - name: Query all ACLs after bulk delete
+      cisco.nd.nd_acl:
+        <<: *nd_info
+        fabric: "{{ fabric_name }}"
+        state: query
+      register: query_after_delete
+
+    # ============================================================
+    # ASSERTIONS
+    # ============================================================
+    - name: Verify all assertions
+      ansible.builtin.assert:
+        that:
+          # Create check mode reports changed, but real create also changes
+          - cm_create_ipv4_acl.changed is true
+          - create_ipv4_acl.changed is true
+          # Idempotency: same config, no change
+          - create_ipv4_acl_again.changed is false
+          # Merging a new entry causes a change
+          - merge_entry.changed is true
+          # Merging the same entry again is idempotent
+          - merge_entry_again.changed is false
+          # Merge preserves existing entries (4 entries after adding seq 30 to original 3)
+          - query_ipv4_acl.acls | length == 1
+          - query_ipv4_acl.acls[0].entries | length == 4
+          # Query never reports changed
+          - query_ipv4_acl.changed is false
+          - query_all_acls.changed is false
+          # IPv6 ACL was created
+          - create_ipv6_acl.changed is true
+          # Replace check mode reports changed
+          - cm_replace_ipv4_acl.changed is true
+          # Replace causes a change (different entries than post-merge state)
+          - replace_ipv4_acl.changed is true
+          # Replace idempotency
+          - replace_ipv4_acl_again.changed is false
+          # Delete check mode reports changed
+          - cm_delete_ipv6_acl.changed is true
+          - delete_ipv6_acl.changed is true
+          # Delete idempotency (already absent)
+          - delete_ipv6_acl_again.changed is false
+          # Bulk delete changes (IPv4 ACL still existed)
+          - delete_all_acls.changed is true
+          # After bulk delete, no ACLs remain
+          - query_after_delete.acls | length == 0
