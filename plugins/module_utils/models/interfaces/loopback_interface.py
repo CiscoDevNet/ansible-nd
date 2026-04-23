@@ -23,8 +23,10 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
                 - `admin_state`, `ip`, `ipv6`, `vrf`, `policy_type`, etc.
 """
 
+from __future__ import annotations
+
 import ipaddress
-from typing import ClassVar, Dict, List, Literal, Optional, Set
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -56,19 +58,19 @@ class LoopbackPolicyModel(NDNestedModel):
     None
     """
 
-    admin_state: Optional[bool] = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    ip: Optional[str] = Field(default=None, alias="ip", description="Loopback IPv4 address in CIDR notation (e.g. 10.1.1.1/32)")
-    ipv6: Optional[str] = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
-    vrf: Optional[str] = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
-    route_map_tag: Optional[str] = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
-    description: Optional[str] = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
-    extra_config: Optional[str] = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    policy_type: Optional[str] = Field(default=None, alias="policyType", description="Interface policy type")
+    admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
+    ip: str | None = Field(default=None, alias="ip", description="Loopback IPv4 address in CIDR notation (e.g. 10.1.1.1/32)")
+    ipv6: str | None = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
+    vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
+    route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
+    description: str | None = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    policy_type: str | None = Field(default=None, alias="policyType", description="Interface policy type")
 
     # --- Serializers ---
 
     @field_serializer("policy_type")
-    def serialize_policy_type(self, value: Optional[str], info: FieldSerializationInfo) -> Optional[str]:
+    def serialize_policy_type(self, value: str | None, info: FieldSerializationInfo) -> str | None:
         """
         # Summary
 
@@ -177,7 +179,7 @@ class LoopbackNetworkOSModel(NDNestedModel):
     """
 
     network_os_type: str = Field(default="nx-os", alias="networkOSType")
-    policy: Optional[LoopbackPolicyModel] = Field(default=None, alias="policy")
+    policy: LoopbackPolicyModel | None = Field(default=None, alias="policy")
 
 
 class LoopbackConfigDataModel(NDNestedModel):
@@ -211,19 +213,19 @@ class LoopbackInterfaceModel(NDBaseModel):
 
     # --- Identifier Configuration ---
 
-    identifiers: ClassVar[Optional[List[str]]] = ["switch_ip", "interface_name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "composite"
+    identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
 
     # --- Serialization Configuration ---
 
-    payload_exclude_fields: ClassVar[Set[str]] = {"switch_ip"}
+    payload_exclude_fields: ClassVar[set[str]] = {"switch_ip"}
 
     # --- Fields ---
 
     switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
     interface_type: str = Field(default="loopback", alias="interfaceType")
-    config_data: Optional[LoopbackConfigDataModel] = Field(default=None, alias="configData")
+    config_data: LoopbackConfigDataModel | None = Field(default=None, alias="configData")
 
     @field_validator("interface_name", mode="before")
     @classmethod
@@ -244,7 +246,7 @@ class LoopbackInterfaceModel(NDBaseModel):
     # --- Argument Spec ---
 
     @classmethod
-    def get_argument_spec(cls) -> Dict:
+    def get_argument_spec(cls) -> dict:
         """
         # Summary
 
