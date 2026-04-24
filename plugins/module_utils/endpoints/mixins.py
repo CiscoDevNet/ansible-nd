@@ -84,3 +84,15 @@ class VrfNameMixin(BaseModel):
     """Mixin for endpoints that require vrf_name parameter."""
 
     vrf_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="VRF name")
+
+
+class SwitchIdMixin(BaseModel):
+    """Mixin for endpoints that require switch_id parameter."""
+
+    switch_id: Optional[str] = Field(default=None, min_length=1, description="Serial Number or Id of the switch/leaf")
+
+
+class TenantNameMixin(BaseModel):
+    """Mixin for endpoints that require tenant_name parameter."""
+
+    tenant_name: Optional[str] = Field(default=None, min_length=1, description="Tenant Name")
