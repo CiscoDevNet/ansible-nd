@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
-
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """Enumerations for Policy Operations.
@@ -12,7 +9,6 @@ Extracted from the ND API specification for Nexus Dashboard Manage APIs.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Union
 
 # =============================================================================
 # ENUMS - Extracted from OpenAPI Schema components/schemas
@@ -37,7 +33,7 @@ class PolicyEntityType(str, Enum):
         return [e.value for e in cls]
 
     @classmethod
-    def from_user_input(cls, value: str) -> "PolicyEntityType":
+    def from_user_input(cls, value: str) -> PolicyEntityType:
         """
         Convert user-friendly input to enum value.
         Accepts underscore-separated values like 'config_profile' -> 'configProfile'
@@ -58,7 +54,7 @@ class PolicyEntityType(str, Enum):
             raise ValueError(f"Invalid entity type: {value}. Valid options: {cls.choices()}")
 
     @classmethod
-    def normalize(cls, value: Union[str, "PolicyEntityType", None]) -> "PolicyEntityType":
+    def normalize(cls, value: str | PolicyEntityType | None) -> PolicyEntityType:
         """
         Normalize input to enum value (case-insensitive).
         Accepts: SWITCH, switch, config_profile, configProfile, etc.

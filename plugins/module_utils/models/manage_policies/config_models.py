@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
-
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """Pydantic models for validating Ansible playbook input (user-facing config).
@@ -186,7 +183,7 @@ class PlaybookPolicyConfig(NDNestedModel):
     )
 
     @model_validator(mode="after")
-    def validate_state_requirements(self, info: ValidationInfo) -> "PlaybookPolicyConfig":
+    def validate_state_requirements(self, info: ValidationInfo) -> PlaybookPolicyConfig:
         """Apply state-aware validation using context.
 
         When ``context={"state": "merged", "use_desc_as_key": True}`` is

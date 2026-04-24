@@ -1,20 +1,7 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import annotations
-
-# pylint: disable=logging-fstring-interpolation
-__copyright__ = "Copyright (c) 2026 Cisco and/or its affiliates."
-__author__ = "L Nikhil Sri Krishna"
-
-ANSIBLE_METADATA = {
-    "metadata_version": "1.1",
-    "status": ["preview"],
-    "supported_by": "community",
-}
 
 DOCUMENTATION = r"""
 ---
@@ -521,6 +508,7 @@ EXAMPLES = r"""
 
 RETURN = r""
 
+# pylint: disable=logging-fstring-interpolation
 import logging
 
 from ansible.module_utils.basic import AnsibleModule
@@ -576,7 +564,7 @@ def main():
     results.action = f"policy_{state}"
 
     try:
-        log.info(f"Starting nd_policy module: state={state}")
+        log.info("Starting nd_policy module: state=%s", state)
 
         # Create NDPolicyModule — all business logic lives here
         policy_module = NDPolicyModule(
@@ -590,11 +578,11 @@ def main():
         policy_module.manage_state()
 
         # Exit with results
-        log.info(f"State management completed successfully. Changed: {results.changed}")
+        log.info("State management completed successfully. Changed: %s", results.changed)
         policy_module.exit_json()
 
     except NDModuleError as error:
-        log.error(f"NDModule error: {error.msg}")
+        log.error("NDModule error: %s", error.msg)
 
         try:
             results.response_current = nd.rest_send.response_current
@@ -614,7 +602,7 @@ def main():
         if output_level == "debug":
             results.final_result["error_details"] = error.to_dict()
 
-        log.error(f"Module failed: {results.final_result}")
+        log.error("Module failed: %s", results.final_result)
         module.fail_json(msg=error.msg, **results.final_result)
 
     except Exception as error:
@@ -622,8 +610,8 @@ def main():
 
         tb_str = traceback.format_exc()
 
-        log.error(f"Unexpected error during module execution: {str(error)}")
-        log.error(f"Error type: {error.__class__.__name__}")
+        log.error("Unexpected error during module execution: %s", str(error))
+        log.error("Error type: %s", error.__class__.__name__)
 
         try:
             results.response_current = {

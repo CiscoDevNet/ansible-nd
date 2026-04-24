@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
-
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """Read-model for ``state=gathered`` output.
@@ -38,8 +35,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
 log = logging.getLogger("nd.GatheredPolicy")
-
-# pylint: disable=logging-fstring-interpolation
 
 
 class GatheredPolicy(NDBaseModel):
@@ -121,7 +116,7 @@ class GatheredPolicy(NDBaseModel):
     )
 
     @classmethod
-    def from_api_policy(cls, policy: dict[str, Any]) -> "GatheredPolicy":
+    def from_api_policy(cls, policy: dict[str, Any]) -> GatheredPolicy:
         """Create a GatheredPolicy from a raw ND API policy dict.
 
         Handles the ``templateInputs`` field which may be a JSON-encoded
@@ -145,7 +140,7 @@ class GatheredPolicy(NDBaseModel):
             try:
                 raw_inputs = json.loads(raw_inputs)
             except (json.JSONDecodeError, ValueError):
-                log.warning(f"Failed to parse templateInputs for " f"{data.get('policyId', '?')}: {raw_inputs!r}")
+                log.warning("Failed to parse templateInputs for %s: %r", data.get("policyId", "?"), raw_inputs)
                 raw_inputs = {}
         data["templateInputs"] = raw_inputs
 
