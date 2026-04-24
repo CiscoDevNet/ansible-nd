@@ -285,10 +285,12 @@ RETURN = r"""
 """
 
 import copy
+import logging
 import traceback
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import EthernetAccessInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
@@ -342,9 +344,16 @@ def main():
         supports_check_mode=True,
     )
     require_pydantic(module)
+    setup_logging(module)
+    module_log = logging.getLogger("nd.nd_interface_ethernet_access")
 
     # Expand grouped config (interface_names list) into flat config items (interface_name singular)
     module.params["config"] = expand_config(module.params["config"])
+    module_log.debug(
+        "expand_config done items=%d switches=%d",
+        len(module.params["config"]),
+        len({item.get("switch_ip") for item in module.params["config"]}),
+    )
 
     nd_state_machine = None
 
@@ -361,8 +370,14 @@ def main():
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
         nd_state_machine.model_orchestrator.deploy = module.params["deploy"]
 
-        # Manage state
+        module_log.debug(
+            "manage_state begin state=%s check_mode=%s deploy=%s",
+            module.params.get("state"),
+            module.check_mode,
+            module.params["deploy"],
+        )
         nd_state_machine.manage_state()
+        module_log.debug("manage_state end")
 
         # Execute all queued bulk operations
         if not module.check_mode:
@@ -372,6 +387,7 @@ def main():
         module.exit_json(**nd_state_machine.output.format())
 
     except NDStateMachineError as e:
+        module_log.exception("NDStateMachineError during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module execution failed: {str(e)}"
         if module.params.get("output_level") == "debug":
