@@ -3,11 +3,18 @@
 # Copyright: (c) 2026, Allen Robel (@allenrobel)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-
+#
+# --- Usage ---
+#
+# Run the test suite with ansible-test:
+#
+#   ansible-test integration nd_interface_loopback
+#
 # --- Optional test variables ---
-# ansible-test does not accept --extra-vars on the command line. Set the
-# variables below in the [nd:vars] section of tests/integration/inventory.networking
-# (the same place nd_test_fabric_name and nd_test_switch_ip are set).
+#
+# Set the variables below in the [nd:vars] section of tests/integration/inventory.networking
+#
+# TODO: Modify the above (and below) if the team decides to use tests/integration/integration_config.yml instead.
 #
 # nd_logging_config (str, default: "")
 #   Path to a JSON file conforming to logging.config.dictConfig (see
