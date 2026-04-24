@@ -91,7 +91,9 @@ class VpcPairOrchestrator(NDBaseOrchestrator[VpcPairModel]):
         if self.state_machine is not None:
             context = self.state_machine
         else:
-            context = _VpcPairQueryContext(self.sender.module)
+            # During NDStateMachine init, orchestrator is created with rest_send.
+            # Use sender.ansible_module from RestSend for pre-bind query context.
+            context = _VpcPairQueryContext(self.rest_send.sender.ansible_module)
         return custom_vpc_query_all(context)
 
     def create(self, model_instance: Any, **kwargs: Any) -> dict[str, Any] | None:
