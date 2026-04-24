@@ -1,0 +1,148 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+
+- name: "GATHERED - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: gathered
+
+- block:
+
+    ##############################################
+    ##     SETUP - Create policies to gather    ##
+    ##############################################
+
+    - name: "GATHERED SETUP - Create policies for gather tests"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "Timezone CET"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "System vlan long-name"
+            priority: 110
+            template_inputs:
+              CONF: "system vlan long-name"
+
+          - name: banner
+            create_additional_policy: false
+            description: "MOTD banner"
+            priority: 200
+            template_inputs:
+              BANNER: |
+                ******************************************
+                * Managed by ND                        *
+                ******************************************
+              BANNERDELIMITER: "_"
+              TYPE: "motd"
+
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ ansible_switch2 }}"
+      register: setup_result
+      tags: gathered
+
+    - name: "GATHERED SETUP - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - setup_result.changed == true
+      tags: gathered
+
+    ##############################################
+    ##         GATHERED TEST CASES              ##
+    ##############################################
+
+    # TC-1: Gather all policies for a specific switch (no template filter)
+    - name: "GATHERED TC1 - Gather all policies on switch1"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC1 - Verify gathered returns policies"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length >= 3
+      tags: gathered
+
+    # TC-2: Gather filtered by template name
+    - name: "GATHERED TC2 - Gather only clock_timezone policies on switch1"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC2 - Verify filtered gathered"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length >= 1
+      tags: gathered
+
+    # TC-3: Gather policies from multiple switches
+    - name: "GATHERED TC3 - Gather policies from both switches"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ ansible_switch2 }}"
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC3 - Verify gathered from both switches"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length >= 6
+      tags: gathered
+
+    # TC-4: Gather with no config (all fabric policies)
+    - name: "GATHERED TC4 - Gather all policies in fabric (no config)"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ ansible_it_fabric }}"
+        state: gathered
+      register: result
+      tags: gathered
+
+    - name: "GATHERED TC4 - Verify fabric-wide gathered"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+          - result.gathered | length >= 6
+      tags: gathered
+
+    # TC-5: Gathered output is re-usable for merged state
+    - name: "GATHERED TC5 - Verify gathered output structure"
+      ansible.builtin.assert:
+        that:
+          - result.gathered is defined
+          - result.gathered is iterable
+      tags: gathered
+
+  always:
+    - name: "GATHERED - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: gathered

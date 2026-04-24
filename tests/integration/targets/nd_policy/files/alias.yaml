@@ -1,0 +1,8 @@
+CONF: |
+  cli alias name wr copy running-config startup-config
+  cli alias name int show interface brief
+  cli alias name cdp show cdp neighbors
+  cli alias name flogi show flogi database
+  cli alias name bgps show bgp sessions
+  cli alias name ntp show ntp peer-status
+  cli alias name log show logging last 50 | no-more

@@ -44,6 +44,7 @@ if TYPE_CHECKING:
         BeforeValidator,
         ConfigDict,
         Field,
+        ValidationInfo,
         PydanticExperimentalWarning,
         StrictBool,
         SecretStr,
@@ -69,6 +70,7 @@ else:
             BeforeValidator,
             ConfigDict,
             Field,
+            ValidationInfo,
             PydanticExperimentalWarning,
             StrictBool,
             SecretStr,
@@ -117,8 +119,10 @@ else:
             return kwargs
 
         # Fallback: Field that does nothing
-        def Field(**kwargs) -> Any:  # pylint: disable=unused-argument,invalid-name
+        def Field(*args, **kwargs) -> Any:  # pylint: disable=unused-argument,invalid-name
             """Pydantic Field fallback when pydantic is not available."""
+            if args:
+                return args[0]
             if "default_factory" in kwargs:
                 return kwargs["default_factory"]()
             return kwargs.get("default")
@@ -190,6 +194,12 @@ else:
 
             def __str__(self):
                 return f"ValidationError: {self.message}"
+
+        class ValidationInfo:
+            """Pydantic ValidationInfo fallback when pydantic is not available."""
+
+            def __init__(self, context=None, **kwargs):  # pylint: disable=unused-argument
+                self.context = context
 
         # Fallback: model_validator decorator that does nothing
         def model_validator(*args, **kwargs):  # pylint: disable=unused-argument
