@@ -353,7 +353,6 @@ def main():
     setup_logging(
         module,
         develop=True,
-        config="/Users/jeeram/ansible/collections/ansible_collections/cisco/nd/plugins/module_utils/logging_config.json",
     )
     log = logging.getLogger("nd.nd_manage_resource_manager")
 
