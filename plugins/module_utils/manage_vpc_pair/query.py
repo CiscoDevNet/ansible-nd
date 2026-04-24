@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import ipaddress
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -54,7 +54,7 @@ def _as_int_or_zero(value: Any) -> int:
         return 0
 
 
-def _normalize_sync_status(value: Any) -> Optional[str]:
+def _normalize_sync_status(value: Any) -> str | None:
     """
     Normalize sync-status values by removing separator variants.
 
@@ -71,7 +71,7 @@ def _normalize_sync_status(value: Any) -> Optional[str]:
     return text.replace(" ", "").replace("_", "").replace("-", "")
 
 
-def _sync_status_to_bool(value: Any) -> Optional[bool]:
+def _sync_status_to_bool(value: Any) -> bool | None:
     """
     Convert common sync status values to booleans.
 
@@ -92,7 +92,7 @@ def _sync_status_to_bool(value: Any) -> Optional[bool]:
     return None
 
 
-def _is_switch_config_in_sync(switch_data: Optional[dict[str, Any]]) -> Optional[bool]:
+def _is_switch_config_in_sync(switch_data: dict[str, Any] | None) -> bool | None:
     """
     Determine switch-level config sync state from switch inventory payload.
 
@@ -119,8 +119,8 @@ def _is_pair_in_sync_from_overview(
     nd_v2: Any,
     fabric_name: str,
     switch_id: str,
-    timeout: Optional[int] = None,
-) -> Optional[bool]:
+    timeout: int | None = None,
+) -> bool | None:
     """
     Determine vPC pair sync state using vpcPairOverview (componentType=full).
 
@@ -256,7 +256,7 @@ def _is_external_fabric(nd_v2: Any, fabric_name: str, module: Any) -> bool:
     return any("external" in token for token in candidates)
 
 
-def _get_recommendation_details(nd_v2: Any, fabric_name: str, switch_id: str, timeout: Optional[int] = None) -> Optional[dict[str, Any]]:
+def _get_recommendation_details(nd_v2: Any, fabric_name: str, switch_id: str, timeout: int | None = None) -> dict[str, Any] | None:
     """
     Get VPC pair recommendation details from ND for a specific switch.
 
@@ -392,8 +392,8 @@ def _get_direct_vpc_pair(
     nd_v2: Any,
     fabric_name: str,
     switch_id: str,
-    timeout: Optional[int] = None,
-) -> Optional[dict[str, Any]]:
+    timeout: int | None = None,
+) -> dict[str, Any] | None:
     """
     Best-effort per-switch /vpcPair lookup.
 
@@ -432,7 +432,7 @@ def _enrich_pairs_from_direct_vpc(
     nd_v2: Any,
     fabric_name: str,
     pairs: list[dict[str, Any]],
-    timeout: Optional[int] = None,
+    timeout: int | None = None,
 ) -> list[dict[str, Any]]:
     """
     Enrich pair fields from per-switch /vpcPair endpoint when available.
@@ -613,7 +613,7 @@ def _resolve_config_switch_ips(
     module: Any,
     fabric_name: str,
     config: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], dict[str, str], Optional[dict[str, dict[str, Any]]]]:
+) -> tuple[list[dict[str, Any]], dict[str, str], dict[str, dict[str, Any]] | None]:
     """
     Resolve switch identifiers from management IPs to serial numbers.
 
@@ -712,10 +712,10 @@ def _resolve_config_switch_ips(
 
 def normalize_vpc_playbook_switch_identifiers(
     module: Any,
-    nd_v2: Optional[Any] = None,
-    fabric_name: Optional[str] = None,
-    state: Optional[str] = None,
-) -> Optional[dict[str, dict[str, Any]]]:
+    nd_v2: Any | None = None,
+    fabric_name: str | None = None,
+    state: str | None = None,
+) -> dict[str, dict[str, Any]] | None:
     """
     Normalize playbook switch identifiers from management IPs to serial numbers.
 

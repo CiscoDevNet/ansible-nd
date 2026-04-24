@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
     VpcActionEnum,
@@ -22,7 +22,7 @@ Note:
 """
 
 
-def _get_template_config(vpc_pair_model: Any) -> Optional[dict[str, Any]]:
+def _get_template_config(vpc_pair_model: Any) -> dict[str, Any] | None:
     """
     Extract template configuration from a vPC pair model if present.
 

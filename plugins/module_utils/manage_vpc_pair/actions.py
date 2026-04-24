@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
@@ -84,7 +84,7 @@ def _build_compare_payloads(nrm: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     return want_payload, have_payload
 
 
-def custom_vpc_create(nrm: Any) -> Optional[dict[str, Any]]:
+def custom_vpc_create(nrm: Any) -> dict[str, Any] | None:
     """
     Custom create function for VPC pairs using RestSend with PUT + discriminator.
     - Validates switches exist in fabric (Common.validate_switches_exist)
@@ -219,7 +219,7 @@ def custom_vpc_create(nrm: Any) -> Optional[dict[str, Any]]:
         )
 
 
-def custom_vpc_update(nrm: Any) -> Optional[dict[str, Any]]:
+def custom_vpc_update(nrm: Any) -> dict[str, Any] | None:
     """
     Custom update function for VPC pairs using RestSend.
 

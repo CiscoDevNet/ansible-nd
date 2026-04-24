@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
@@ -72,9 +72,9 @@ class VpcPairStateMachine(NDStateMachine):
         self,
         identifier: Any,
         status: str,
-        before_data: Optional[Any] = None,
-        after_data: Optional[Any] = None,
-        sent_payload_data: Optional[Any] = None,
+        before_data: Any | None = None,
+        after_data: Any | None = None,
+        sent_payload_data: Any | None = None,
     ) -> None:
         """
         Collect operation log entries expected by nd_manage_vpc_pair flows.
@@ -268,8 +268,8 @@ class VpcPairStateMachine(NDStateMachine):
         self,
         state: str,
         new_configs: list[dict[str, Any]],
-        unwanted_keys: Optional[list[Any]] = None,
-        override_exceptions: Optional[list[Any]] = None,
+        unwanted_keys: list[Any] | None = None,
+        override_exceptions: list[Any] | None = None,
     ) -> None:
         """
         Execute state reconciliation for the given state and config items.

@@ -5,8 +5,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import Any, Callable, List, Optional, Type, Union
-
+from typing import Any, Callable, List, Optional, Union
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -24,7 +23,7 @@ class NDStateMachine:
     Generic State Machine for Nexus Dashboard (Bulk Support).
     """
 
-    def __init__(self, module: AnsibleModule, model_orchestrator: Union[Type[NDBaseOrchestrator], NDBaseOrchestrator]):
+    def __init__(self, module: AnsibleModule, model_orchestrator: Union[type[NDBaseOrchestrator], NDBaseOrchestrator]):
         """
         Initialize the ND State Machine.
         """

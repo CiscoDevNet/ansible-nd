@@ -5,7 +5,7 @@
 from __future__ import absolute_import, division, print_function
 
 from functools import wraps
-from typing import Any, ClassVar, Dict, Generic, List, Optional, Type, TypeVar
+from typing import Any, ClassVar, Dict, Generic, List, Optional, TypeVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -40,20 +40,20 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         arbitrary_types_allowed=True,
     )
 
-    model_class: ClassVar[Type[NDBaseModel]] = NDBaseModel
+    model_class: ClassVar[type[NDBaseModel]] = NDBaseModel
     supports_bulk_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = False
 
     # NOTE: if not defined by subclasses, return an error as they are required
-    create_endpoint: Type[NDEndpointBaseModel]
-    update_endpoint: Type[NDEndpointBaseModel]
-    delete_endpoint: Type[NDEndpointBaseModel]
-    query_one_endpoint: Type[NDEndpointBaseModel]
-    query_all_endpoint: Type[NDEndpointBaseModel]
+    create_endpoint: type[NDEndpointBaseModel]
+    update_endpoint: type[NDEndpointBaseModel]
+    delete_endpoint: type[NDEndpointBaseModel]
+    query_one_endpoint: type[NDEndpointBaseModel]
+    query_all_endpoint: type[NDEndpointBaseModel]
 
     # NOTE: Conditionally required
-    create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = None
-    delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = None
+    create_bulk_endpoint: Optional[type[NDEndpointBaseModel]] = None
+    delete_bulk_endpoint: Optional[type[NDEndpointBaseModel]] = None
 
     # REST infrastructure
     rest_send: RestSend

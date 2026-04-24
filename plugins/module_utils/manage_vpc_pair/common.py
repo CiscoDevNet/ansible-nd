@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.exceptions import (
     VpcPairResourceError,
@@ -112,7 +112,7 @@ def _is_update_needed(want: dict[str, Any], have: dict[str, Any]) -> bool:
     return normalized_want != normalized_have
 
 
-def _normalize_timeout(value: Optional[Any], fallback: int) -> int:
+def _normalize_timeout(value: Any | None, fallback: int) -> int:
     """
     Normalize timeout values from module params with sane fallback.
 
@@ -135,7 +135,7 @@ def _normalize_timeout(value: Optional[Any], fallback: int) -> int:
     return fallback
 
 
-def _normalize_iteration(value: Optional[Any], fallback: int) -> int:
+def _normalize_iteration(value: Any | None, fallback: int) -> int:
     """
     Normalize retry iteration count from module params with sane fallback.
 

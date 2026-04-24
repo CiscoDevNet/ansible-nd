@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Optional, Type
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import (
     NDBaseModel,
@@ -62,13 +62,13 @@ class VpcPairOrchestrator(NDBaseOrchestrator[VpcPairModel]):
     sender/module constructor styles used by shared NDStateMachine variants.
     """
 
-    model_class: ClassVar[Type[NDBaseModel]] = VpcPairModel
-    create_endpoint: Type[NDEndpointBaseModel] = EpVpcPairPut
-    update_endpoint: Type[NDEndpointBaseModel] = EpVpcPairPut
-    delete_endpoint: Type[NDEndpointBaseModel] = EpVpcPairPut
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpVpcPairGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpVpcPairsListGet
-    state_machine: Optional[Any] = None
+    model_class: ClassVar[type[NDBaseModel]] = VpcPairModel
+    create_endpoint: type[NDEndpointBaseModel] = EpVpcPairPut
+    update_endpoint: type[NDEndpointBaseModel] = EpVpcPairPut
+    delete_endpoint: type[NDEndpointBaseModel] = EpVpcPairPut
+    query_one_endpoint: type[NDEndpointBaseModel] = EpVpcPairGet
+    query_all_endpoint: type[NDEndpointBaseModel] = EpVpcPairsListGet
+    state_machine: Any | None = None
 
     def bind_state_machine(self, state_machine: Any) -> None:
         """
@@ -94,7 +94,7 @@ class VpcPairOrchestrator(NDBaseOrchestrator[VpcPairModel]):
             context = _VpcPairQueryContext(self.sender.module)
         return custom_vpc_query_all(context)
 
-    def create(self, model_instance: Any, **kwargs: Any) -> Optional[dict[str, Any]]:
+    def create(self, model_instance: Any, **kwargs: Any) -> dict[str, Any] | None:
         """
         Create a new vPC pair via custom_vpc_create handler.
 
@@ -113,7 +113,7 @@ class VpcPairOrchestrator(NDBaseOrchestrator[VpcPairModel]):
             raise RuntimeError("VpcPairOrchestrator is not bound to a state machine")
         return custom_vpc_create(self.state_machine)
 
-    def update(self, model_instance: Any, **kwargs: Any) -> Optional[dict[str, Any]]:
+    def update(self, model_instance: Any, **kwargs: Any) -> dict[str, Any] | None:
         """
         Update an existing vPC pair via custom_vpc_update handler.
 

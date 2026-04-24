@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
     CompositeQueryParams,
     EndpointQueryParams,
@@ -52,7 +50,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 class _ForceShowRunQueryParams(ForceShowRunMixin, EndpointQueryParams):
     """Query params for deploy endpoint."""
 
-    force_show_run: Optional[bool] = None
+    force_show_run: bool | None = None
 
 
 class VpcPairEndpoints:

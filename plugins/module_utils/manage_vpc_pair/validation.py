@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
@@ -33,8 +33,8 @@ def _get_pairing_support_details(
     fabric_name: str,
     switch_id: str,
     component_type: str = ComponentTypeSupportEnum.CHECK_PAIRING.value,
-    timeout: Optional[int] = None,
-) -> Optional[dict[str, Any]]:
+    timeout: int | None = None,
+) -> dict[str, Any] | None:
     """
     Query /vpcPairSupport endpoint to validate pairing support.
 
@@ -138,8 +138,8 @@ def _get_consistency_details(
     nd_v2: Any,
     fabric_name: str,
     switch_id: str,
-    timeout: Optional[int] = None,
-) -> Optional[dict[str, Any]]:
+    timeout: int | None = None,
+) -> dict[str, Any] | None:
     """
     Query /vpcPairConsistency endpoint for consistency diagnostics.
 
@@ -183,8 +183,8 @@ def _is_switch_in_vpc_pair(
     nd_v2: Any,
     fabric_name: str,
     switch_id: str,
-    timeout: Optional[int] = None,
-) -> Optional[bool]:
+    timeout: int | None = None,
+) -> bool | None:
     """
     Best-effort active-membership check via vPC overview endpoint.
 
