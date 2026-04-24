@@ -4,14 +4,27 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# --- Optional extra-vars flags ---
+# --- Optional test variables ---
+# ansible-test does not accept --extra-vars on the command line. Set the
+# variables below in the [nd:vars] section of tests/integration/inventory.networking
+# (the same place nd_test_fabric_name and nd_test_switch_ip are set).
+#
 # supports_vlan_mapping (bool, default: false)
 #   Enables the VLAN-mapping / dot1q-tunnel test block in merged.yaml. Skipped by
 #   default because Nexus 9000v virtual switches reject
 #   `switchport vlan mapping ... dot1q-tunnel ...` (ND returns HTTP 400).
-#   On a hardware-backed testbed run:
-#     ansible-test network-integration nd_interface_ethernet_trunk_host \
-#         --extra-vars supports_vlan_mapping=true
+#   On a hardware-backed testbed, add to inventory.networking [nd:vars]:
+#     supports_vlan_mapping=true
+#
+# nd_logging_config (str, default: "")
+#   Path to a JSON file conforming to logging.config.dictConfig (see
+#   plugins/module_utils/common/log.py for an example). When set, the path is
+#   forwarded to the module subprocess via the ND_LOGGING_CONFIG environment
+#   variable, enabling file-based logging from the nd collection. Empty (the
+#   default) disables logging. ansible-test strips the controller's shell env,
+#   so the variable cannot be inherited from the user's shell. Add to
+#   inventory.networking [nd:vars]:
+#     nd_logging_config=/absolute/path/to/logging_config.json
 
 - name: Test that we have a Nexus Dashboard host, username and password
   ansible.builtin.fail:
@@ -23,14 +36,18 @@
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
 
-- name: Run nd_interface_ethernet_trunk_host merged state tests
-  ansible.builtin.include_tasks: merged.yaml
+- name: Run nd_interface_ethernet_trunk_host state tests with optional logging env
+  block:
+    - name: Run nd_interface_ethernet_trunk_host merged state tests
+      ansible.builtin.include_tasks: merged.yaml
 
-- name: Run nd_interface_ethernet_trunk_host replaced state tests
-  ansible.builtin.include_tasks: replaced.yaml
+    - name: Run nd_interface_ethernet_trunk_host replaced state tests
+      ansible.builtin.include_tasks: replaced.yaml
 
-- name: Run nd_interface_ethernet_trunk_host overridden state tests
-  ansible.builtin.include_tasks: overridden.yaml
+    - name: Run nd_interface_ethernet_trunk_host overridden state tests
+      ansible.builtin.include_tasks: overridden.yaml
 
-- name: Run nd_interface_ethernet_trunk_host deleted state tests
-  ansible.builtin.include_tasks: deleted.yaml
+    - name: Run nd_interface_ethernet_trunk_host deleted state tests
+      ansible.builtin.include_tasks: deleted.yaml
+  environment:
+    ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
