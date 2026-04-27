@@ -143,3 +143,13 @@ class TrunkHostPolicyTypeEnum(str, Enum):
     """
 
     TRUNK_HOST = "trunkHost"
+
+
+class SviPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Policy type for SVI (switched virtual interface) interfaces.
+    """
+
+    SVI = "svi"
