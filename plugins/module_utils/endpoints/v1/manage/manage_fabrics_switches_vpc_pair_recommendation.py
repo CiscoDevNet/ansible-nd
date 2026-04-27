@@ -3,7 +3,9 @@
 # Copyright: (c) 2026, Sivakami Sivaraman sivakasi@cisco.com
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from typing import Literal, Optional
+from __future__ import annotations
+
+from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -37,7 +39,7 @@ class VpcPairRecommendationEndpointParams(
     """Endpoint-specific query parameters for vPC pair recommendation endpoint."""
 
     # Keep this optional for this endpoint so query param is omitted unless explicitly set.
-    use_virtual_peer_link: Optional[bool] = Field(default=None, description="Optional virtual peer link flag")
+    use_virtual_peer_link: bool | None = Field(default=None, description="Optional virtual peer link flag")
 
 
 class EpVpcPairRecommendationGet(

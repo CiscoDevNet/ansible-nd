@@ -2,10 +2,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 from copy import deepcopy
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import (
     EpFabricConfigSavePost,
@@ -71,7 +71,7 @@ def issubset(subset: Any, superset: Any) -> bool:
     return True
 
 
-def remove_unwanted_keys(data: Dict, unwanted_keys: List[Union[str, List[str]]]) -> Dict:
+def remove_unwanted_keys(data: dict, unwanted_keys: list[str | list[str]]) -> dict:
     """Remove unwanted keys from dict (supports nested paths)."""
     data = deepcopy(data)
 
@@ -100,8 +100,8 @@ def remove_unwanted_keys(data: Dict, unwanted_keys: List[Union[str, List[str]]])
 def register_action_api_call(
     results: Any,
     request_path: str,
-    payload: Dict[str, Any],
-    return_code: Optional[int],
+    payload: dict[str, Any],
+    return_code: int | None,
     message: str,
     success: bool,
     changed: bool,
@@ -160,7 +160,7 @@ class FabricUtils:
     def config_deploy_path(self, force_show_run: bool = True) -> str:
         return self.build_config_deploy_path(self.fabric_name, force_show_run=force_show_run)
 
-    def save_config(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def save_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
         Call fabric config-save action.
         """
@@ -172,7 +172,7 @@ class FabricUtils:
             "response_data": response_data,
         }
 
-    def deploy_config(self, payload: Dict[str, Any], force_show_run: bool = True) -> Dict[str, Any]:
+    def deploy_config(self, payload: dict[str, Any], force_show_run: bool = True) -> dict[str, Any]:
         """
         Call fabric deploy action.
         """

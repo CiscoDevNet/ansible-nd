@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
     VpcFieldNames,
@@ -51,7 +51,7 @@ def normalize_vpc_pair_aliases(ansible_config: dict[str, Any]) -> dict[str, Any]
     return data
 
 
-def serialize_vpc_pair_details(vpc_pair_details: Any) -> Optional[dict[str, Any]]:
+def serialize_vpc_pair_details(vpc_pair_details: Any) -> dict[str, Any] | None:
     """Serialize optional details object to alias-based dict."""
     if vpc_pair_details is None:
         return None

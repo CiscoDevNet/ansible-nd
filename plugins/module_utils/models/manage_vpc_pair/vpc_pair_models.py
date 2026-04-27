@@ -23,7 +23,7 @@ TODO:
 
 from __future__ import annotations
 
-from typing import Any, Optional, Union, ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 try:
     from typing import Self
@@ -162,37 +162,37 @@ class VpcPairDetailsDefault(NDNestedModel):
         return data
 
     type: Literal["default"] = Field(default="default", alias="type", description="Template type")
-    domain_id: Optional[FlexibleInt] = Field(default=None, alias="domainId", description="VPC domain ID")
-    switch_keep_alive_local_ip: Optional[str] = Field(default=None, alias="switchKeepAliveLocalIp", description="Peer-1 keep-alive IP")
-    peer_switch_keep_alive_local_ip: Optional[str] = Field(default=None, alias="peerSwitchKeepAliveLocalIp", description="Peer-2 keep-alive IP")
-    keep_alive_vrf: Optional[KeepAliveVrfEnum] = Field(default=None, alias="keepAliveVrf", description="Keep-alive VRF")
-    keep_alive_hold_timeout: Optional[FlexibleInt] = Field(default=3, alias="keepAliveHoldTimeout", description="Keep-alive hold timeout")
-    enable_mirror_config: Optional[FlexibleBool] = Field(default=False, alias="enableMirrorConfig", description="Enable config mirroring")
-    is_vpc_plus: Optional[FlexibleBool] = Field(default=False, alias="isVpcPlus", description="VPC+ topology")
-    fabric_path_switch_id: Optional[FlexibleInt] = Field(default=None, alias="fabricPathSwitchId", description="FabricPath switch ID")
-    is_vteps: Optional[FlexibleBool] = Field(default=False, alias="isVteps", description="Configure NVE source loopback")
-    nve_interface: Optional[FlexibleInt] = Field(default=1, alias="nveInterface", description="NVE interface")
-    switch_source_loopback: Optional[FlexibleInt] = Field(default=None, alias="switchSourceLoopback", description="Peer-1 source loopback")
-    peer_switch_source_loopback: Optional[FlexibleInt] = Field(default=None, alias="peerSwitchSourceLoopback", description="Peer-2 source loopback")
-    switch_primary_ip: Optional[str] = Field(default=None, alias="switchPrimaryIp", description="Peer-1 primary IP")
-    peer_switch_primary_ip: Optional[str] = Field(default=None, alias="peerSwitchPrimaryIp", description="Peer-2 primary IP")
-    loopback_secondary_ip: Optional[str] = Field(default=None, alias="loopbackSecondaryIp", description="Secondary loopback IP")
-    switch_domain_config: Optional[str] = Field(default=None, alias="switchDomainConfig", description="Peer-1 domain config CLI")
-    peer_switch_domain_config: Optional[str] = Field(default=None, alias="peerSwitchDomainConfig", description="Peer-2 domain config CLI")
-    switch_po_id: Optional[FlexibleInt] = Field(default=None, alias="switchPoId", description="Peer-1 port-channel ID")
-    peer_switch_po_id: Optional[FlexibleInt] = Field(default=None, alias="peerSwitchPoId", description="Peer-2 port-channel ID")
-    switch_member_interfaces: Optional[FlexibleListStr] = Field(default=None, alias="switchMemberInterfaces", description="Peer-1 member interfaces")
-    peer_switch_member_interfaces: Optional[FlexibleListStr] = Field(default=None, alias="peerSwitchMemberInterfaces", description="Peer-2 member interfaces")
-    po_mode: Optional[str] = Field(default="active", alias="poMode", description="Port-channel mode")
-    switch_po_description: Optional[str] = Field(default=None, alias="switchPoDescription", description="Peer-1 port-channel description")
-    peer_switch_po_description: Optional[str] = Field(default=None, alias="peerSwitchPoDescription", description="Peer-2 port-channel description")
-    admin_state: Optional[FlexibleBool] = Field(default=True, alias="adminState", description="Admin state")
-    allowed_vlans: Optional[str] = Field(default="all", alias="allowedVlans", description="Allowed VLANs")
-    switch_native_vlan: Optional[FlexibleInt] = Field(default=None, alias="switchNativeVlan", description="Peer-1 native VLAN")
-    peer_switch_native_vlan: Optional[FlexibleInt] = Field(default=None, alias="peerSwitchNativeVlan", description="Peer-2 native VLAN")
-    switch_po_config: Optional[str] = Field(default=None, alias="switchPoConfig", description="Peer-1 port-channel freeform config")
-    peer_switch_po_config: Optional[str] = Field(default=None, alias="peerSwitchPoConfig", description="Peer-2 port-channel freeform config")
-    fabric_name: Optional[str] = Field(default=None, alias="fabricName", description="Fabric name")
+    domain_id: FlexibleInt | None = Field(default=None, alias="domainId", description="VPC domain ID")
+    switch_keep_alive_local_ip: str | None = Field(default=None, alias="switchKeepAliveLocalIp", description="Peer-1 keep-alive IP")
+    peer_switch_keep_alive_local_ip: str | None = Field(default=None, alias="peerSwitchKeepAliveLocalIp", description="Peer-2 keep-alive IP")
+    keep_alive_vrf: KeepAliveVrfEnum | None = Field(default=None, alias="keepAliveVrf", description="Keep-alive VRF")
+    keep_alive_hold_timeout: FlexibleInt | None = Field(default=3, alias="keepAliveHoldTimeout", description="Keep-alive hold timeout")
+    enable_mirror_config: FlexibleBool | None = Field(default=False, alias="enableMirrorConfig", description="Enable config mirroring")
+    is_vpc_plus: FlexibleBool | None = Field(default=False, alias="isVpcPlus", description="VPC+ topology")
+    fabric_path_switch_id: FlexibleInt | None = Field(default=None, alias="fabricPathSwitchId", description="FabricPath switch ID")
+    is_vteps: FlexibleBool | None = Field(default=False, alias="isVteps", description="Configure NVE source loopback")
+    nve_interface: FlexibleInt | None = Field(default=1, alias="nveInterface", description="NVE interface")
+    switch_source_loopback: FlexibleInt | None = Field(default=None, alias="switchSourceLoopback", description="Peer-1 source loopback")
+    peer_switch_source_loopback: FlexibleInt | None = Field(default=None, alias="peerSwitchSourceLoopback", description="Peer-2 source loopback")
+    switch_primary_ip: str | None = Field(default=None, alias="switchPrimaryIp", description="Peer-1 primary IP")
+    peer_switch_primary_ip: str | None = Field(default=None, alias="peerSwitchPrimaryIp", description="Peer-2 primary IP")
+    loopback_secondary_ip: str | None = Field(default=None, alias="loopbackSecondaryIp", description="Secondary loopback IP")
+    switch_domain_config: str | None = Field(default=None, alias="switchDomainConfig", description="Peer-1 domain config CLI")
+    peer_switch_domain_config: str | None = Field(default=None, alias="peerSwitchDomainConfig", description="Peer-2 domain config CLI")
+    switch_po_id: FlexibleInt | None = Field(default=None, alias="switchPoId", description="Peer-1 port-channel ID")
+    peer_switch_po_id: FlexibleInt | None = Field(default=None, alias="peerSwitchPoId", description="Peer-2 port-channel ID")
+    switch_member_interfaces: FlexibleListStr | None = Field(default=None, alias="switchMemberInterfaces", description="Peer-1 member interfaces")
+    peer_switch_member_interfaces: FlexibleListStr | None = Field(default=None, alias="peerSwitchMemberInterfaces", description="Peer-2 member interfaces")
+    po_mode: str | None = Field(default="active", alias="poMode", description="Port-channel mode")
+    switch_po_description: str | None = Field(default=None, alias="switchPoDescription", description="Peer-1 port-channel description")
+    peer_switch_po_description: str | None = Field(default=None, alias="peerSwitchPoDescription", description="Peer-2 port-channel description")
+    admin_state: FlexibleBool | None = Field(default=True, alias="adminState", description="Admin state")
+    allowed_vlans: str | None = Field(default="all", alias="allowedVlans", description="Allowed VLANs")
+    switch_native_vlan: FlexibleInt | None = Field(default=None, alias="switchNativeVlan", description="Peer-1 native VLAN")
+    peer_switch_native_vlan: FlexibleInt | None = Field(default=None, alias="peerSwitchNativeVlan", description="Peer-2 native VLAN")
+    switch_po_config: str | None = Field(default=None, alias="switchPoConfig", description="Peer-1 port-channel freeform config")
+    peer_switch_po_config: str | None = Field(default=None, alias="peerSwitchPoConfig", description="Peer-2 port-channel freeform config")
+    fabric_name: str | None = Field(default=None, alias="fabricName", description="Fabric name")
 
 
 class VpcPairDetailsCustom(NDNestedModel):
@@ -233,7 +233,7 @@ class VpcPairBase(SwitchPairKeyMixin, NDBaseModel):
     switch_id: str = Field(alias="switchId", description="Switch serial number (Peer-1)", min_length=3, max_length=64)
     peer_switch_id: str = Field(alias="peerSwitchId", description="Peer switch serial number (Peer-2)", min_length=3, max_length=64)
     use_virtual_peer_link: FlexibleBool = Field(default=False, alias="useVirtualPeerLink", description="Virtual peer link present")
-    vpc_pair_details: Optional[Union[VpcPairDetailsDefault, VpcPairDetailsCustom]] = Field(
+    vpc_pair_details: VpcPairDetailsDefault | VpcPairDetailsCustom | None = Field(
         default=None, discriminator="type", alias="vpcPairDetails", description="VPC pair configuration details"
     )
 
@@ -295,7 +295,7 @@ class VpcPairingRequest(SwitchPairKeyMixin, NDBaseModel):
     switch_id: str = Field(alias="switchId", description="Switch serial number (Peer-1)", min_length=3, max_length=64)
     peer_switch_id: str = Field(alias="peerSwitchId", description="Peer switch serial number (Peer-2)", min_length=3, max_length=64)
     use_virtual_peer_link: FlexibleBool = Field(default=False, alias="useVirtualPeerLink", description="Virtual peer link present")
-    vpc_pair_details: Optional[Union[VpcPairDetailsDefault, VpcPairDetailsCustom]] = Field(
+    vpc_pair_details: VpcPairDetailsDefault | VpcPairDetailsCustom | None = Field(
         default=None, discriminator="type", alias="vpcPairDetails", description="VPC pair configuration details"
     )
 
@@ -421,16 +421,16 @@ class VpcPairsVxlanBase(NDNestedModel):
     routing_loopback: SwitchInfo = Field(alias="routingLoopback", description="Routing loopback")
     routing_loopback_status: SwitchInfo = Field(alias="routingLoopbackStatus", description="Routing loopback status")
     routing_loopback_primary_ip: SwitchInfo = Field(alias="routingLoopbackPrimaryIp", description="Routing loopback primary IP")
-    routing_loopback_secondary_ip: Optional[SwitchInfo] = Field(default=None, alias="routingLoopbackSecondaryIp", description="Routing loopback secondary IP")
+    routing_loopback_secondary_ip: SwitchInfo | None = Field(default=None, alias="routingLoopbackSecondaryIp", description="Routing loopback secondary IP")
     vtep_loopback: SwitchInfo = Field(alias="vtepLoopback", description="VTEP loopback")
     vtep_loopback_status: SwitchInfo = Field(alias="vtepLoopbackStatus", description="VTEP loopback status")
     vtep_loopback_primary_ip: SwitchInfo = Field(alias="vtepLoopbackPrimaryIp", description="VTEP loopback primary IP")
-    vtep_loopback_secondary_ip: Optional[SwitchInfo] = Field(default=None, alias="vtepLoopbackSecondaryIp", description="VTEP loopback secondary IP")
+    vtep_loopback_secondary_ip: SwitchInfo | None = Field(default=None, alias="vtepLoopbackSecondaryIp", description="VTEP loopback secondary IP")
     nve_interface: SwitchInfo = Field(alias="nveInterface", description="NVE interface")
     nve_status: SwitchInfo = Field(alias="nveStatus", description="NVE status")
-    multisite_loopback: Optional[SwitchInfo] = Field(default=None, alias="multisiteLoopback", description="Multisite loopback")
-    multisite_loopback_status: Optional[SwitchInfo] = Field(default=None, alias="multisiteLoopbackStatus", description="Multisite loopback status")
-    multisite_loopback_primary_ip: Optional[SwitchInfo] = Field(default=None, alias="multisiteLoopbackPrimaryIp", description="Multisite loopback primary IP")
+    multisite_loopback: SwitchInfo | None = Field(default=None, alias="multisiteLoopback", description="Multisite loopback")
+    multisite_loopback_status: SwitchInfo | None = Field(default=None, alias="multisiteLoopbackStatus", description="Multisite loopback status")
+    multisite_loopback_primary_ip: SwitchInfo | None = Field(default=None, alias="multisiteLoopbackPrimaryIp", description="Multisite loopback primary IP")
 
 
 class VpcPairsOverlayBase(NDNestedModel):
@@ -503,8 +503,8 @@ class CommonVpcConsistencyParams(NDNestedModel):
 
     # Port channel info
     peer_link_port_channel: FlexibleInt = Field(alias="peerLinkPortChannel", description="Port channel peer link")
-    port_channel_name: Optional[str] = Field(default=None, alias="portChannelName", description="Port channel name")
-    description: Optional[str] = Field(default=None, alias="description", description="Port channel description")
+    port_channel_name: str | None = Field(default=None, alias="portChannelName", description="Port channel name")
+    description: str | None = Field(default=None, alias="description", description="Port channel description")
 
     # VPC system parameters
     system_mac_address: str = Field(alias="systemMacAddress", description="System MAC address")
@@ -528,11 +528,11 @@ class VpcPairConsistency(NDNestedModel):
     peer_switch_id: str = Field(alias="peerSwitchId", description="Secondary switch serial number")
     type2_consistency: FlexibleBool = Field(alias="type2Consistency", description="Type-2 consistency status")
     type2_consistency_reason: str = Field(alias="type2ConsistencyReason", description="Consistency reason")
-    timestamp: Optional[FlexibleInt] = Field(default=None, alias="timestamp", description="Timestamp of check")
+    timestamp: FlexibleInt | None = Field(default=None, alias="timestamp", description="Timestamp of check")
     primary_parameters: CommonVpcConsistencyParams = Field(alias="primaryParameters", description="Primary switch consistency parameters")
     secondary_parameters: CommonVpcConsistencyParams = Field(alias="secondaryParameters", description="Secondary switch consistency parameters")
-    is_consistent: Optional[FlexibleBool] = Field(default=None, alias="isConsistent", description="Overall consistency")
-    is_discovered: Optional[FlexibleBool] = Field(default=None, alias="isDiscovered", description="Whether pair is discovered")
+    is_consistent: FlexibleBool | None = Field(default=None, alias="isConsistent", description="Overall consistency")
+    is_discovered: FlexibleBool | None = Field(default=None, alias="isDiscovered", description="Whether pair is discovered")
 
 
 # ============================================================================
@@ -611,7 +611,7 @@ class Metadata(NDNestedModel):
     """
 
     counts: ResponseCounts = Field(alias="counts", description="Count information")
-    links: Optional[dict[str, str]] = Field(default=None, alias="links", description="Pagination links (next, previous)")
+    links: dict[str, str] | None = Field(default=None, alias="links", description="Pagination links (next, previous)")
 
 
 class VpcPairsResponse(NDNestedModel):
@@ -621,7 +621,7 @@ class VpcPairsResponse(NDNestedModel):
     OpenAPI: vpcPairsResponse
     """
 
-    vpc_pairs: list[Union[VpcPairIntended, VpcPairDiscovered]] = Field(alias="vpcPairs", description="List of VPC pairs")
+    vpc_pairs: list[VpcPairIntended | VpcPairDiscovered] = Field(alias="vpcPairs", description="List of VPC pairs")
     meta: Metadata = Field(alias="meta", description="Response metadata")
 
 

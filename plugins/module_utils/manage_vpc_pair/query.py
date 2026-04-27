@@ -732,7 +732,7 @@ def normalize_vpc_playbook_switch_identifiers(
         state: Optional state override (defaults to module param)
 
     Returns:
-        Optional[dict[str, dict[str, Any]]]: Preloaded fabric switches map when queried, else None.
+        dict[str, dict[str, Any]] | None: Preloaded fabric switches map when queried, else None.
     """
     effective_state = state or module.params.get("state", "merged")
     effective_fabric = fabric_name if fabric_name is not None else module.params.get("fabric_name")

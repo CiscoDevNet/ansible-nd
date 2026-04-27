@@ -11,8 +11,6 @@ fields to endpoint models without duplication.
 
 from __future__ import absolute_import, annotations, division, print_function
 
-from typing import Optional
-
 from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
@@ -23,13 +21,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 class ClusterNameMixin(BaseModel):
     """Mixin for endpoints that require cluster_name parameter."""
 
-    cluster_name: Optional[str] = Field(default=None, min_length=1, description="Cluster name")
+    cluster_name: str | None = Field(default=None, min_length=1, description="Cluster name")
 
 
 class FabricNameMixin(BaseModel):
     """Mixin for endpoints that require fabric_name parameter."""
 
-    fabric_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="Fabric name")
+    fabric_name: str | None = Field(default=None, min_length=1, max_length=64, description="Fabric name")
 
 
 class ForceShowRunMixin(BaseModel):
@@ -41,7 +39,7 @@ class ForceShowRunMixin(BaseModel):
 class HealthCategoryMixin(BaseModel):
     """Mixin for endpoints that require health_category parameter."""
 
-    health_category: Optional[str] = Field(default=None, min_length=1, description="Health category")
+    health_category: str | None = Field(default=None, min_length=1, description="Health category")
 
 
 class InclAllMsdSwitchesMixin(BaseModel):
@@ -53,55 +51,55 @@ class InclAllMsdSwitchesMixin(BaseModel):
 class LinkUuidMixin(BaseModel):
     """Mixin for endpoints that require link_uuid parameter."""
 
-    link_uuid: Optional[str] = Field(default=None, min_length=1, description="Link UUID")
+    link_uuid: str | None = Field(default=None, min_length=1, description="Link UUID")
 
 
 class LoginIdMixin(BaseModel):
     """Mixin for endpoints that require login_id parameter."""
 
-    login_id: Optional[str] = Field(default=None, min_length=1, description="Login ID")
+    login_id: str | None = Field(default=None, min_length=1, description="Login ID")
 
 
 class NetworkNameMixin(BaseModel):
     """Mixin for endpoints that require network_name parameter."""
 
-    network_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="Network name")
+    network_name: str | None = Field(default=None, min_length=1, max_length=64, description="Network name")
 
 
 class NodeNameMixin(BaseModel):
     """Mixin for endpoints that require node_name parameter."""
 
-    node_name: Optional[str] = Field(default=None, min_length=1, description="Node name")
+    node_name: str | None = Field(default=None, min_length=1, description="Node name")
 
 
 class SwitchSerialNumberMixin(BaseModel):
     """Mixin for endpoints that require switch_sn parameter."""
 
-    switch_sn: Optional[str] = Field(default=None, min_length=1, description="Switch serial number")
+    switch_sn: str | None = Field(default=None, min_length=1, description="Switch serial number")
 
 
 class VrfNameMixin(BaseModel):
     """Mixin for endpoints that require vrf_name parameter."""
 
-    vrf_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="VRF name")
+    vrf_name: str | None = Field(default=None, min_length=1, max_length=64, description="VRF name")
 
 
 class SwitchIdMixin(BaseModel):
     """Mixin for endpoints that require switch_id parameter."""
 
-    switch_id: Optional[str] = Field(default=None, min_length=1, description="Switch serial number")
+    switch_id: str | None = Field(default=None, min_length=1, description="Switch serial number")
 
 
 class PeerSwitchIdMixin(BaseModel):
     """Mixin for endpoints that require peer_switch_id parameter."""
 
-    peer_switch_id: Optional[str] = Field(default=None, min_length=1, description="Peer switch serial number")
+    peer_switch_id: str | None = Field(default=None, min_length=1, description="Peer switch serial number")
 
 
 class UseVirtualPeerLinkMixin(BaseModel):
     """Mixin for endpoints that require use_virtual_peer_link parameter."""
 
-    use_virtual_peer_link: Optional[bool] = Field(
+    use_virtual_peer_link: bool | None = Field(
         default=False,
         description="Indicates whether a virtual peer link is present",
     )
@@ -110,22 +108,22 @@ class UseVirtualPeerLinkMixin(BaseModel):
 class FromClusterMixin(BaseModel):
     """Mixin for endpoints that support fromCluster query parameter."""
 
-    from_cluster: Optional[str] = Field(default=None, description="Optional cluster name")
+    from_cluster: str | None = Field(default=None, description="Optional cluster name")
 
 
 class TicketIdMixin(BaseModel):
     """Mixin for endpoints that support ticketId query parameter."""
 
-    ticket_id: Optional[str] = Field(default=None, description="Change ticket ID")
+    ticket_id: str | None = Field(default=None, description="Change ticket ID")
 
 
 class ComponentTypeMixin(BaseModel):
     """Mixin for endpoints that require componentType query parameter."""
 
-    component_type: Optional[str] = Field(default=None, description="Component type for filtering response")
+    component_type: str | None = Field(default=None, description="Component type for filtering response")
 
 
 class ViewMixin(BaseModel):
     """Mixin for endpoints that support view parameter."""
 
-    view: Optional[str] = Field(default=None, description="Optional view type for filtering results")
+    view: str | None = Field(default=None, description="Optional view type for filtering results")

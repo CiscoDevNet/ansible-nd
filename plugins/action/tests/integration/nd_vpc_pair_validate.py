@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 from ansible.plugins.action import ActionBase
 from ansible.utils.display import Display
 
@@ -34,7 +34,7 @@ def _normalize_pair(pair: dict[str, Any]) -> frozenset[str]:
     return frozenset([s1.strip(), s2.strip()])
 
 
-def _get_virtual_peer_link(pair: dict[str, Any]) -> Optional[Any]:
+def _get_virtual_peer_link(pair: dict[str, Any]) -> Any | None:
     """Extract the use_virtual_peer_link / useVirtualPeerLink value from a pair dict."""
     for key in ("useVirtualPeerLink", "use_virtual_peer_link"):
         if key in pair:
@@ -42,7 +42,7 @@ def _get_virtual_peer_link(pair: dict[str, Any]) -> Optional[Any]:
     return None
 
 
-def _get_vpc_pair_details(pair: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _get_vpc_pair_details(pair: dict[str, Any]) -> dict[str, Any] | None:
     """Extract vpc_pair_details / vpcPairDetails from a pair dict."""
     for key in ("vpc_pair_details", "vpcPairDetails"):
         if key in pair:
@@ -75,7 +75,7 @@ def _values_equal(expected: Any, actual: Any) -> bool:
     return _coerce_scalar(expected) == _coerce_scalar(actual)
 
 
-def _detail_value_with_alias(details: dict[str, Any], key: str) -> tuple[Any, Optional[str]]:
+def _detail_value_with_alias(details: dict[str, Any], key: str) -> tuple[Any, str | None]:
     """
     Fetch detail value supporting snake_case/camelCase alias forms.
     Returns tuple(value, resolved_key). value is None if not found.
@@ -181,7 +181,7 @@ class ActionModule(ActionBase):
 
     VALID_MODES = frozenset(["full", "count_only", "exists"])
 
-    def run(self, tmp: Any = None, task_vars: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    def run(self, tmp: Any = None, task_vars: dict[str, Any] | None = None) -> dict[str, Any]:
         results = super(ActionModule, self).run(tmp, task_vars)
         results["failed"] = False
 

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal, Optional, Union
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
@@ -76,7 +76,7 @@ class VpcPairModel(SwitchPairKeyMixin, NDBaseModel):
         alias=VpcFieldNames.USE_VIRTUAL_PEER_LINK,
         description="Virtual peer link enabled",
     )
-    vpc_pair_details: Optional[Union[VpcPairDetailsDefault, VpcPairDetailsCustom]] = Field(
+    vpc_pair_details: VpcPairDetailsDefault | VpcPairDetailsCustom | None = Field(
         default=None,
         discriminator="type",
         alias=VpcFieldNames.VPC_PAIR_DETAILS,
@@ -261,7 +261,7 @@ class VpcPairPlaybookItemModel(BaseModel):
         default=False,
         description="Virtual peer link enabled",
     )
-    vpc_pair_details: Optional[Union[VpcPairDetailsDefault, VpcPairDetailsCustom]] = Field(
+    vpc_pair_details: VpcPairDetailsDefault | VpcPairDetailsCustom | None = Field(
         default=None,
         discriminator="type",
         alias=VpcFieldNames.VPC_PAIR_DETAILS,
@@ -404,15 +404,15 @@ class VpcPairPlaybookConfigModel(BaseModel):
         default=False,
         description="Force deletion without pre-deletion safety checks",
     )
-    verify: Optional[VerifyConfigModel] = Field(
+    verify: VerifyConfigModel | None = Field(
         default=None,
         description="Verification controls (enabled/retries/timeout).",
     )
-    config_actions: Optional[ConfigActionsModel] = Field(
+    config_actions: ConfigActionsModel | None = Field(
         default=None,
         description="Configuration action controls (save/deploy/type).",
     )
-    config: Optional[list[VpcPairPlaybookItemModel]] = Field(
+    config: list[VpcPairPlaybookItemModel] | None = Field(
         default=None,
         description="List of vPC pair configurations",
     )
