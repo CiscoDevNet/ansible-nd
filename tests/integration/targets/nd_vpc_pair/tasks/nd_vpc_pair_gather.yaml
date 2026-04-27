@@ -1,0 +1,561 @@
+##############################################
+##                 SETUP                    ##
+##############################################
+
+- name: Import nd_vpc_pair Base Tasks
+  ansible.builtin.import_tasks: base_tasks.yaml
+  tags: gather
+
+- name: GATHER - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vpc_pair_module_timeout | default(600) }}"
+  tags: gather
+
+##############################################
+##      Setup Gather TestCase Variables    ##
+##############################################
+
+- name: GATHER - Setup config
+  ansible.builtin.set_fact:
+    vpc_pair_conf:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+  delegate_to: localhost
+  tags: gather
+
+- name: Import Configuration Prepare Tasks - gather_setup
+  vars:
+    file: gather_setup
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: gather
+
+##############################################
+##                GATHER                     ##
+##############################################
+
+# TC1 - Setup: Create vPC pair for gather tests
+- name: GATHER - TC1 - MERGE - Create vPC pair for testing
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_vpc_pair_gather_setup_conf }}"
+  register: result
+  tags: gather
+
+- name: GATHER - TC1 - ASSERT - Check if creation successful
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: gather
+
+- name: GATHER - TC1 - GATHER - Get vPC pair state in ND
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+  register: verify_result
+  tags: gather
+
+- name: GATHER - TC1 - VALIDATE - Verify vPC pair state in ND
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ verify_result }}"
+    expected_data: "{{ nd_vpc_pair_gather_setup_conf }}"
+  register: validation
+  tags: gather
+
+- name: GATHER - TC1 - ASSERT - Validation passed
+  ansible.builtin.assert:
+    that:
+      - validation.failed == false
+  tags: gather
+
+# TC2 - Gather with no filters
+- name: GATHER - TC2 - GATHER - Gather all vPC pairs with no filters
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+  register: result
+  tags: gather
+
+- name: GATHER - TC2 - ASSERT - Check gather results
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
+      - '(result.gathered.vpc_pairs | length) == 1'
+  tags: gather
+
+# TC3 - Gather with both peers specified
+- name: GATHER - TC3 - GATHER - Gather vPC pair with both peers specified
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: result
+  tags: gather
+
+- name: GATHER - TC3 - ASSERT - Check gather results with both peers
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
+      - '(result.gathered.vpc_pairs | length) == 1'
+  tags: gather
+
+# TC4/TC5 - Partial peer filters are not supported (peer1-only or peer2-only)
+- name: GATHER - TC4/TC5 - GATHER - Gather with partial peer filters
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ [item.partial_filter] }}"
+  loop:
+    - test_name: "peer1 only"
+      partial_filter:
+        peer1_switch_id: "{{ test_switch1 }}"
+    - test_name: "peer2 only"
+      partial_filter:
+        peer2_switch_id: "{{ test_switch2 }}"
+  loop_control:
+    label: "{{ item.test_name }}"
+  register: partial_filter_results
+  failed_when: false
+  tags: gather
+
+- name: GATHER - TC4/TC5 - ASSERT - Verify partial peer gathers are rejected
+  ansible.builtin.assert:
+    that:
+      - item.msg is defined
+      - >
+        (
+          item.failed | default(false)
+        )
+        or
+        (
+          (item.msg | lower) is search("missing required arguments")
+        )
+  loop: "{{ partial_filter_results.results }}"
+  loop_control:
+    label: "{{ item.item.test_name }}"
+  tags: gather
+
+# TC6 - Gather with non-existent peer
+- name: GATHER - TC6 - GATHER - Gather vPC pair with non-existent peer
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "INVALID_SERIAL"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: result
+  failed_when: false
+  tags: gather
+
+- name: GATHER - TC6 - ASSERT - Check gather results with non-existent peer
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
+  tags: gather
+
+# TC7 - Gather with custom verify timeout/retries
+- name: GATHER - TC7 - GATHER - Gather with verify override
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    verify:
+      timeout: 20
+      retries: 3
+  register: result
+  tags: gather
+
+- name: GATHER - TC7 - ASSERT - Verify verify path execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
+  tags: gather
+
+# TC8 - gathered + deploy validation (must fail)
+- name: GATHER - TC8 - GATHER - Gather with deploy enabled (invalid)
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+  register: result
+  failed_when: false
+  tags: gather
+
+- name: GATHER - TC8 - ASSERT - Verify gathered+deploy validation
+  ansible.builtin.assert:
+    that:
+      - result.changed == false
+      - result.gathered is not defined
+      - result.msg is defined
+      - result.msg is search("Deploy parameter cannot be used")
+  tags: gather
+
+# TC9 - gathered + native check_mode validation
+- name: GATHER - TC9 - GATHER - Gather with native check_mode enabled
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+  check_mode: true
+  register: result
+  tags: gather
+
+- name: GATHER - TC9 - ASSERT - Verify gathered+check_mode behavior
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
+  tags: gather
+
+# TC10 - Validate /vpcPairs list API alignment with module gathered output
+- name: GATHER - TC10 - LIST - Query vPC pairs list endpoint directly
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/vpcPairs"
+    method: get
+  register: vpc_pairs_list_result
+  tags: gather
+
+- name: GATHER - TC10 - GATHER - Query module gathered output for comparison
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+  register: gathered_result
+  tags: gather
+
+- name: GATHER - TC10 - ASSERT - Verify list and gathered payload availability
+  ansible.builtin.assert:
+    that:
+      - vpc_pairs_list_result.failed == false
+      - vpc_pairs_list_result.current.vpcPairs is defined
+      - vpc_pairs_list_result.current.vpcPairs is sequence
+      - gathered_result.failed == false
+      - gathered_result.changed == false
+      - gathered_result.gathered.vpc_pairs is defined
+  tags: gather
+
+- name: GATHER - TC10 - ASSERT - Ensure each /vpcPairs entry appears in gathered output
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          (
+            gathered_result.gathered.vpc_pairs
+            | selectattr('switch_id', 'equalto', item.switchId)
+            | selectattr('peer_switch_id', 'equalto', item.peerSwitchId)
+            | list
+            | length
+          ) > 0
+        ) or
+        (
+          (
+            gathered_result.gathered.vpc_pairs
+            | selectattr('switch_id', 'equalto', item.peerSwitchId)
+            | selectattr('peer_switch_id', 'equalto', item.switchId)
+            | list
+            | length
+          ) > 0
+        )
+  loop: "{{ vpc_pairs_list_result.current.vpcPairs | default([]) }}"
+  tags: gather
+
+- name: GATHER - TC10 - CHECK - Determine if /vpcPairs list has data
+  ansible.builtin.set_fact:
+    tc10_list_has_pairs: "{{ (vpc_pairs_list_result.current.vpcPairs | default([]) | length) > 0 }}"
+  tags: gather
+
+# NOTE: eBGP (VXLAN eBGP) fabrics may return an empty /vpcPairs list even when
+# pairs exist. The module's gathered query works via switch-level fallback
+# endpoints. Skip list-vs-gathered comparison when the list API returns empty.
+- name: GATHER - TC10 - PREP - Extract target pair from /vpcPairs response
+  ansible.builtin.set_fact:
+    tc10_pair_from_list: >-
+      {{
+        (
+          vpc_pairs_list_result.current.vpcPairs
+          | default([])
+          | selectattr('switchId', 'equalto', test_switch1)
+          | selectattr('peerSwitchId', 'equalto', test_switch2)
+          | list
+          | first
+        )
+        | default(
+            (
+              vpc_pairs_list_result.current.vpcPairs
+              | default([])
+              | selectattr('switchId', 'equalto', test_switch2)
+              | selectattr('peerSwitchId', 'equalto', test_switch1)
+              | list
+              | first
+            ),
+            true
+          )
+      }}
+  when: tc10_list_has_pairs | bool
+  tags: gather
+
+- name: GATHER - TC10 - PREP - Extract target pair from gathered output
+  ansible.builtin.set_fact:
+    tc10_pair_from_gathered: >-
+      {{
+        (
+          gathered_result.gathered.vpc_pairs
+          | selectattr('switch_id', 'equalto', test_switch1)
+          | selectattr('peer_switch_id', 'equalto', test_switch2)
+          | list
+          | first
+        )
+        | default(
+            (
+              gathered_result.gathered.vpc_pairs
+              | selectattr('switch_id', 'equalto', test_switch2)
+              | selectattr('peer_switch_id', 'equalto', test_switch1)
+              | list
+              | first
+            ),
+            true
+          )
+      }}
+  when: tc10_list_has_pairs | bool
+  tags: gather
+
+- name: GATHER - TC10 - ASSERT - Verify useVirtualPeerLink alignment for target pair
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - tc10_pair_from_list is mapping
+      - tc10_pair_from_gathered is mapping
+      - tc10_gather_vpl == true
+      - (not tc10_list_has_vpl) or (tc10_list_vpl == tc10_gather_vpl)
+  vars:
+    tc10_list_has_vpl: >-
+      {{
+        (tc10_pair_from_list.useVirtualPeerLink is defined)
+        or
+        (tc10_pair_from_list.useVirtualPeerlink is defined)
+      }}
+    tc10_list_vpl: >-
+      {{
+        tc10_pair_from_list.useVirtualPeerLink
+        | default(tc10_pair_from_list.useVirtualPeerlink | default(false))
+        | bool
+      }}
+    tc10_gather_vpl: >-
+      {{
+        tc10_pair_from_gathered.use_virtual_peer_link
+        | default(tc10_pair_from_gathered.useVirtualPeerLink | default(false))
+        | bool
+      }}
+  when: tc10_list_has_pairs | bool
+  tags: gather
+
+- name: GATHER - TC10 - ASSERT - Verify gathered output has pairs when list API is empty (eBGP behavior)
+  ansible.builtin.assert:
+    that:
+      - gathered_result.gathered.vpc_pairs | length > 0
+    fail_msg: >-
+      The /vpcPairs list endpoint returned empty (expected for eBGP fabrics),
+      but the module gathered output should still find pairs via switch-level
+      fallback queries. Found: {{ gathered_result.gathered.vpc_pairs }}
+  when: not (tc10_list_has_pairs | bool)
+  tags: gather
+
+# TC11 - Validate normalized pair matching for reversed switch order
+- name: GATHER - TC11 - GATHER - Gather with reversed/duplicate pair filters
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+      - peer1_switch_id: "{{ test_switch2 }}"
+        peer2_switch_id: "{{ test_switch1 }}"
+  register: result
+  tags: gather
+
+- name: GATHER - TC11 - ASSERT - Verify one pair returned for reversed filters
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - '(result.gathered.vpc_pairs | length) == 1'
+  tags: gather
+
+# TC12 - Gather extended vpc_pair_details coverage
+- name: GATHER - TC12 - MERGE - Apply extended vpc_pair_details for gather coverage
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+        vpc_pair_details: "{{ vpc_pair_details_extended }}"
+  register: tc12_merge_result
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
+  tags: gather
+
+- name: GATHER - TC12 - GATHER - Query pair with extended vpc_pair_details
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  register: tc12_gather_result
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
+  tags: gather
+
+- name: GATHER - TC12 - VALIDATE - Verify pair is gathered after extended-details apply
+  cisco.nd.tests.integration.nd_vpc_pair_validate:
+    gathered_data: "{{ tc12_gather_result }}"
+    expected_data:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+        use_virtual_peer_link: true
+    mode: "exists"
+  register: tc12_validation
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
+  tags: gather
+
+- name: GATHER - TC12 - ASSERT - Extended details gather validation passed
+  ansible.builtin.assert:
+    that:
+      - tc12_merge_result.failed == false
+      - tc12_merge_result.changed == true
+      - tc12_gather_result.failed == false
+      - tc12_validation.failed == false
+  when:
+    - test_fabric_type == "LANClassic"
+    - supports_vpc_fabric_peering | default(true) | bool
+  tags: gather
+
+# TC13 - gathered + config_actions validation (must fail)
+- name: GATHER - TC13 - GATHER - Gather with config_actions enabled (invalid)
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: true
+      deploy: false
+      type: switch
+  register: result
+  failed_when: false
+  tags: gather
+
+- name: GATHER - TC13 - ASSERT - Verify gathered+config_actions validation
+  ansible.builtin.assert:
+    that:
+      - result.changed == false
+      - result.gathered is not defined
+      - result.msg is defined
+      - >
+        (
+          (result.msg is search("Deploy parameter cannot be used"))
+          or
+          (result.msg is search("config_actions.save/config_actions.deploy"))
+        )
+  tags: gather
+
+##############################################
+##                 CLEAN-UP                 ##
+##############################################
+
+- name: GATHER - END - remove vPC pairs
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false
+  when: cleanup_at_end | default(true)
+  tags: gather

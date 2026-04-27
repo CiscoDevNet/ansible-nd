@@ -1,0 +1,146 @@
+---
+# Shared base tasks for nd_vpc_pair integration tests.
+# Import this at the top of each test file:
+#   - import_tasks: base_tasks.yaml
+#     tags: <test_tag>
+
+- name: BASE - Test Entry Point - [nd_manage_vpc_pair]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+    nd_vpc_pair Integration Test Base Setup                   +"
+      - "----------------------------------------------------------------"
+
+- name: BASE - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+# --------------------------------
+# Create Dictionary of Test Data
+# --------------------------------
+- name: BASE - Setup Internal TestCase Variables
+  ansible.builtin.set_fact:
+    test_fabric: "{{ fabric_name }}"
+    test_switch1: "{{ switch1_serial }}"
+    test_switch2: "{{ switch2_serial }}"
+    test_fabric_type: "{{ fabric_type | default('LANClassic') }}"
+    deploy_local: true
+  delegate_to: localhost
+
+- name: BASE - Setup extended vpc_pair_details payload for coverage
+  ansible.builtin.set_fact:
+    vpc_pair_details_extended:
+      type: default
+      domain_id: 110
+      switch_keep_alive_local_ip: "192.0.2.11"
+      peer_switch_keep_alive_local_ip: "192.0.2.12"
+      keep_alive_vrf: management
+      keep_alive_hold_timeout: 5
+      enable_mirror_config: true
+      is_vpc_plus: true
+      fabric_path_switch_id: 100
+      is_vteps: true
+      nve_interface: 2
+      switch_source_loopback: 10
+      peer_switch_source_loopback: 11
+      switch_primary_ip: "192.0.2.21"
+      peer_switch_primary_ip: "192.0.2.22"
+      loopback_secondary_ip: "192.0.2.23"
+      switch_domain_config: "peer-keepalive destination 10.1.1.2 source 10.1.1.1 vrf management"
+      peer_switch_domain_config: "peer-keepalive destination 10.1.1.1 source 10.1.1.2 vrf management"
+      switch_po_id: 200
+      peer_switch_po_id: 201
+      switch_member_interfaces: ["eth1/5", "eth1/7"]
+      peer_switch_member_interfaces: ["eth1/6", "eth1/8"]
+      po_mode: active
+      switch_po_description: "Peer-1 Port-Channel Description"
+      peer_switch_po_description: "Peer-2 Port-Channel Description"
+      admin_state: true
+      allowed_vlans: "1-100"
+      switch_native_vlan: 1
+      peer_switch_native_vlan: 2
+      switch_po_config: "mtu 9216\nno shutdown"
+      peer_switch_po_config: "mtu 9216\nno shutdown"
+      fabric_name: "{{ fabric_name }}"
+    # Full details payload is useful for schema/payload coverage, but some
+    # controllers can take too long applying all knobs in one shot during
+    # delete-flow setup. Keep a lean details set for stable delete-path tests.
+    vpc_pair_details_delete_safe:
+      type: default
+      domain_id: 110
+      switch_keep_alive_local_ip: "192.0.2.11"
+      peer_switch_keep_alive_local_ip: "192.0.2.12"
+      keep_alive_vrf: management
+  delegate_to: localhost
+
+# ------------------------------------------
+# Query Fabric Reachability
+# ------------------------------------------
+- name: BASE - Verify fabric is reachable via vPC gather API
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    verify:
+      timeout: 60
+      retries: 3
+  register: fabric_query
+  failed_when: false
+- name: BASE - Assert fabric exists
+  ansible.builtin.assert:
+    that:
+      - fabric_query.failed == false
+    fail_msg: "Fabric '{{ test_fabric }}' not found or vPC API unreachable."
+
+- name: BASE - Reset HTTPAPI socket before peering probe
+  ansible.builtin.meta: reset_connection
+
+- name: BASE - Probe vPC fabric peering support for this fabric/switch
+  cisco.nd.nd_rest:
+    method: GET
+    path: "/api/v1/manage/fabrics/{{ test_fabric }}/switches/{{ test_switch1 }}/vpcPairSupport?componentType=checkFabricPeeringSupport"
+  register: fabric_peering_support
+  failed_when: false
+  ignore_errors: true
+
+- name: BASE - Set support flag for use_virtual_peer_link mutation tests
+  ansible.builtin.set_fact:
+    supports_vpc_fabric_peering: >-
+      {{
+        (
+          fabric_peering_support.current.isVpcFabricPeeringSupported
+          | default(true)
+        ) | bool
+      }}
+
+- name: BASE - Warn when fabric peering toggle is unsupported
+  ansible.builtin.debug:
+    msg: >-
+      Skipping use_virtual_peer_link mutation checks because fabric peering
+      support is false for switch {{ test_switch1 }} in fabric {{ test_fabric }}.
+  when: not supports_vpc_fabric_peering | bool
+
+# ------------------------------------------
+# Clean up existing vPC pairs
+# ------------------------------------------
+- name: BASE - Reset HTTPAPI socket before cleanup
+  ansible.builtin.meta: reset_connection
+
+- name: BASE - Clean up existing vPC pairs
+  cisco.nd.nd_manage_vpc_pair:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - peer1_switch_id: "{{ test_switch1 }}"
+        peer2_switch_id: "{{ test_switch2 }}"
+  failed_when: false

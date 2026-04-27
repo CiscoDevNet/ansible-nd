@@ -2,10 +2,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 from functools import wraps
-from typing import Any, ClassVar, Dict, Generic, List, Optional, Type, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -40,25 +40,25 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         arbitrary_types_allowed=True,
     )
 
-    model_class: ClassVar[Type[NDBaseModel]] = NDBaseModel
+    model_class: ClassVar[type[NDBaseModel]] = NDBaseModel
     supports_bulk_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = False
 
     # NOTE: if not defined by subclasses, return an error as they are required
-    create_endpoint: Type[NDEndpointBaseModel]
-    update_endpoint: Type[NDEndpointBaseModel]
-    delete_endpoint: Type[NDEndpointBaseModel]
-    query_one_endpoint: Type[NDEndpointBaseModel]
-    query_all_endpoint: Type[NDEndpointBaseModel]
+    create_endpoint: type[NDEndpointBaseModel]
+    update_endpoint: type[NDEndpointBaseModel]
+    delete_endpoint: type[NDEndpointBaseModel]
+    query_one_endpoint: type[NDEndpointBaseModel]
+    query_all_endpoint: type[NDEndpointBaseModel]
 
     # NOTE: Conditionally required
-    create_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = None
-    delete_bulk_endpoint: Optional[Type[NDEndpointBaseModel]] = None
+    create_bulk_endpoint: type[NDEndpointBaseModel] | None = None
+    delete_bulk_endpoint: type[NDEndpointBaseModel] | None = None
 
     # REST infrastructure
     rest_send: RestSend
 
-    def _request(self, path: str, verb: HttpVerbEnum, data: Optional[Dict[str, Any]] = None, not_found_ok: bool = False) -> ResponseType:
+    def _request(self, path: str, verb: HttpVerbEnum, data: dict[str, Any] | None = None, not_found_ok: bool = False) -> ResponseType:
         """
         # Summary
 
@@ -120,7 +120,7 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    def query_all(self, model_instance: Optional[ModelType] = None, **kwargs) -> ResponseType:
+    def query_all(self, model_instance: ModelType | None = None, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.query_all_endpoint()
             result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
@@ -137,9 +137,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         return self
 
     @requires_bulk_support("supports_bulk_create")
-    def create_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
+    def create_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
         raise NotImplementedError
 
     @requires_bulk_support("supports_bulk_delete")
-    def delete_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:
+    def delete_bulk(self, model_instances: list[ModelType], **kwargs) -> ResponseType:
         raise NotImplementedError

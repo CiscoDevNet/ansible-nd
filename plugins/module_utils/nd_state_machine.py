@@ -3,10 +3,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
-from typing import Any, Callable, List, Optional, Type, Union
-
+from typing import Any, Callable
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -24,7 +23,7 @@ class NDStateMachine:
     Generic State Machine for Nexus Dashboard (Bulk Support).
     """
 
-    def __init__(self, module: AnsibleModule, model_orchestrator: Union[Type[NDBaseOrchestrator], NDBaseOrchestrator]):
+    def __init__(self, module: AnsibleModule, model_orchestrator: type[NDBaseOrchestrator] | NDBaseOrchestrator):
         """
         Initialize the ND State Machine.
         """
@@ -104,7 +103,7 @@ class NDStateMachine:
         *args: Any,
         error_msg_prefix: str = "Operation failed",
         **kwargs: Any,
-    ) -> Optional[ResponseType]:
+    ) -> ResponseType | None:
         """Execute an API operation with standardized error handling."""
         try:
             if not self.check_mode:
@@ -120,8 +119,8 @@ class NDStateMachine:
         """
         Handle merged/replaced/overridden states.
         """
-        items_to_create: List[NDBaseModel] = []
-        items_to_update: List[NDBaseModel] = []
+        items_to_create: list[NDBaseModel] = []
+        items_to_update: list[NDBaseModel] = []
 
         for proposed_item in self.proposed:
             identifier = None
@@ -200,7 +199,7 @@ class NDStateMachine:
         ]
         self._delete_items(items_to_delete)
 
-    def _delete_items(self, items: List[NDBaseModel]) -> None:
+    def _delete_items(self, items: list[NDBaseModel]) -> None:
         """Delete a list of items individually or in bulk."""
         if not items:
             return

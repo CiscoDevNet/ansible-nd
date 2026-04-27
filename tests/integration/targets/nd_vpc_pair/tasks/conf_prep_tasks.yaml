@@ -1,0 +1,35 @@
+---
+# Shared configuration preparation tasks for nd_vpc_pair integration tests.
+#
+# Usage:
+#   - name: Import Configuration Prepare Tasks
+#     vars:
+#       file: merge  # output file identifier
+#     import_tasks: conf_prep_tasks.yaml
+#
+# Requires: vpc_pair_conf variable to be set before importing.
+
+- name: Build vPC Pair Config Data from Template
+  ansible.builtin.file:
+    path: "{{ nd_vpc_pair_root | default(playbook_dir | dirname) }}/files"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+- name: Build vPC Pair Config Data from Template
+  ansible.builtin.template:
+    src: "{{ nd_vpc_pair_root | default(playbook_dir | dirname) }}/templates/nd_vpc_pair_conf.j2"
+    dest: "{{ nd_vpc_pair_root | default(playbook_dir | dirname) }}/files/nd_vpc_pair_{{ file }}_conf.yaml"
+    mode: "0644"
+  delegate_to: localhost
+
+- name: Load Configuration Data into Variable
+  ansible.builtin.set_fact:
+    "{{ 'nd_vpc_pair_' + file + '_conf' }}": >-
+      {{
+        lookup(
+          'file',
+          (nd_vpc_pair_root | default(playbook_dir | dirname)) + '/files/nd_vpc_pair_' + file + '_conf.yaml'
+        ) | from_yaml
+      }}
+  delegate_to: localhost

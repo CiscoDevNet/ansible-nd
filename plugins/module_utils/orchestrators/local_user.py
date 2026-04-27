@@ -4,8 +4,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-from typing import ClassVar, Type
-
+from typing import ClassVar
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.infra.aaa_local_users import (
     EpInfraAaaLocalUsersDelete,
@@ -20,13 +19,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types impor
 
 
 class LocalUserOrchestrator(NDBaseOrchestrator[LocalUserModel]):
-    model_class: ClassVar[Type[NDBaseModel]] = LocalUserModel
+    model_class: ClassVar[type[NDBaseModel]] = LocalUserModel
 
-    create_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersPut
-    delete_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersDelete
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpInfraAaaLocalUsersGet
+    create_endpoint: type[NDEndpointBaseModel] = EpInfraAaaLocalUsersPost
+    update_endpoint: type[NDEndpointBaseModel] = EpInfraAaaLocalUsersPut
+    delete_endpoint: type[NDEndpointBaseModel] = EpInfraAaaLocalUsersDelete
+    query_one_endpoint: type[NDEndpointBaseModel] = EpInfraAaaLocalUsersGet
+    query_all_endpoint: type[NDEndpointBaseModel] = EpInfraAaaLocalUsersGet
 
     def query_all(self) -> ResponseType:
         """
