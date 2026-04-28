@@ -1,0 +1,125 @@
+---
+# Variables for nd_interface_svi integration tests.
+#
+# Override fabric_name and switch_ip in your inventory or extra-vars
+# to match a real ND 4.2 testbed.
+
+test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
+test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
+
+# VLAN IDs reserved for these integration tests. The orchestrator expands each
+# ID into an interface named `vlan<id>`. These VLANs must NOT have SVIs already
+# configured at the start of the test run (cleanup is run first to ensure this).
+
+# --- Base configs ---
+
+svi_333:
+  switch_ip: "{{ test_switch_ip }}"
+  vlan_ids:
+    - 333
+  config_data:
+    network_os:
+      policy:
+        policy_type: svi
+        admin_state: true
+        description: "Ansible integration test vlan333"
+        ip: 10.99.99.1
+        prefix: 24
+        ip_redirects: true
+        pim_sparse: false
+        pim_dr_priority: 1
+        advertise_subnet_in_underlay: false
+        netflow: false
+
+svi_334_335:
+  switch_ip: "{{ test_switch_ip }}"
+  vlan_ids:
+    - 334
+    - 335
+  config_data:
+    network_os:
+      policy:
+        policy_type: svi
+        admin_state: true
+        description: "Ansible integration test fan-out"
+        ip: 10.99.100.1
+        prefix: 24
+        ip_redirects: true
+        pim_sparse: false
+        pim_dr_priority: 1
+        advertise_subnet_in_underlay: false
+        netflow: false
+
+svi_336:
+  switch_ip: "{{ test_switch_ip }}"
+  vlan_ids:
+    - 336
+  config_data:
+    network_os:
+      policy:
+        policy_type: svi
+        admin_state: true
+        description: "Ansible integration test vlan336"
+        ip: 10.99.101.1
+        prefix: 24
+
+# --- Updated configs for merge/replace tests ---
+
+svi_333_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  vlan_ids:
+    - 333
+  config_data:
+    network_os:
+      policy:
+        policy_type: svi
+        admin_state: true
+        description: "Updated vlan333 description"
+        ip: 10.99.99.2
+        prefix: 24
+        ip_redirects: false
+        pim_sparse: true
+        pim_dr_priority: 50
+        advertise_subnet_in_underlay: true
+        netflow: false
+
+svi_334_335_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  vlan_ids:
+    - 334
+    - 335
+  config_data:
+    network_os:
+      policy:
+        policy_type: svi
+        admin_state: false
+        description: "Updated fan-out description"
+        ip: 10.99.100.2
+        prefix: 24
+        ip_redirects: true
+
+# --- Fan-out config for large/multi tests ---
+
+svi_337_338:
+  switch_ip: "{{ test_switch_ip }}"
+  vlan_ids:
+    - 337
+    - 338
+  config_data:
+    network_os:
+      policy:
+        policy_type: svi
+        admin_state: true
+        description: "Fan-out test SVIs"
+        ip: 10.99.102.1
+        prefix: 24
+
+# --- Cleanup helper: all test VLAN IDs ---
+
+cleanup_vlan_ids:
+  - 333
+  - 334
+  - 335
+  - 336
+  - 337
+  - 338

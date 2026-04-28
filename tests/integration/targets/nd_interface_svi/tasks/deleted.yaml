@@ -1,0 +1,119 @@
+---
+# Deleted state tests for nd_interface_svi
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point vlan333, vlan334, vlan335 exist (from overridden grow).
+# Unlike trunk_host (where deleted = reset to defaults), SVI delete actually
+# removes the SVI from ND via interfaceActions/remove + interfaceActions/deploy.
+
+# --- DELETED: SINGLE SVI ---
+
+- name: "DELETED: Delete vlan333 (check mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 333
+    state: deleted
+  check_mode: true
+  register: cm_deleted_333
+
+- name: "DELETED: Delete vlan333 (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 333
+    state: deleted
+  register: nm_deleted_333
+
+- name: "DELETED: Verify vlan333 was removed"
+  vars:
+    vlan333_after: "{{ nm_deleted_333.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan333') | list }}"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_333 is changed
+      - nm_deleted_333 is changed
+      - vlan333_after | length == 0
+
+# --- DELETED: IDEMPOTENCY ---
+
+- name: "DELETED IDEMPOTENT: Delete vlan333 again"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 333
+    state: deleted
+  register: nm_deleted_333_idem
+
+- name: "DELETED IDEMPOTENT: Verify no change when SVI already gone"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_333_idem is not changed
+
+# --- DELETED: FAN-OUT DELETE ---
+
+- name: "DELETED FAN-OUT: Delete vlan334 and vlan335 via fan-out (check mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 334
+          - 335
+    state: deleted
+  check_mode: true
+  register: cm_deleted_fanout
+
+- name: "DELETED FAN-OUT: Delete vlan334 and vlan335 via fan-out (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 334
+          - 335
+    state: deleted
+  register: nm_deleted_fanout
+
+- name: "DELETED FAN-OUT: Verify both SVIs removed"
+  vars:
+    vlan334_after: "{{ nm_deleted_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan334') | list }}"
+    vlan335_after: "{{ nm_deleted_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan335') | list }}"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_fanout is changed
+      - nm_deleted_fanout is changed
+      - vlan334_after | length == 0
+      - vlan335_after | length == 0
+
+# --- DELETED: BULK CLEANUP (FINAL TEARDOWN) ---
+
+- name: "DELETED CLEANUP: Remove any remaining test SVIs"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids: "{{ cleanup_vlan_ids }}"
+    state: deleted
+  register: nm_deleted_cleanup
+
+- name: "DELETED CLEANUP: Verify all test SVIs are gone"
+  vars:
+    remaining: "{{ nm_deleted_cleanup.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'in', ['vlan333', 'vlan334', 'vlan335', 'vlan336', 'vlan337', 'vlan338']) | list }}"
+  ansible.builtin.assert:
+    that:
+      - remaining | length == 0
