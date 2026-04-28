@@ -1,0 +1,195 @@
+---
+# Overridden state tests for nd_interface_svi
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point vlan333, vlan334, vlan335, vlan336, vlan337, vlan338 exist
+# from prior tests. Override will reduce the set to only what is specified.
+#
+# Unlike trunk_host (where deleted interfaces remain visible at fabric defaults),
+# SVIs that are removed by overridden are truly deleted from ND and disappear
+# from this module's query filter.
+
+# --- OVERRIDDEN: REDUCE TO TWO SVIs ---
+
+- name: "OVERRIDDEN: Override to only vlan333 and vlan334 (check mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 333
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Overridden vlan333"
+              ip: 10.99.200.1
+              prefix: 24
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 334
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Overridden vlan334"
+              ip: 10.99.201.1
+              prefix: 24
+    state: overridden
+  check_mode: true
+  register: cm_overridden_reduce
+
+- name: "OVERRIDDEN: Override to only vlan333 and vlan334 (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 333
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Overridden vlan333"
+              ip: 10.99.200.1
+              prefix: 24
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 334
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Overridden vlan334"
+              ip: 10.99.201.1
+              prefix: 24
+    state: overridden
+  register: nm_overridden_reduce
+
+- name: "OVERRIDDEN: Verify reduce changed and applied"
+  ansible.builtin.assert:
+    that:
+      - cm_overridden_reduce is changed
+      - nm_overridden_reduce is changed
+
+- name: "OVERRIDDEN: Verify vlan333 and vlan334 carry the overridden config"
+  vars:
+    vlan333_after: "{{ nm_overridden_reduce.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan333') | first }}"
+    vlan334_after: "{{ nm_overridden_reduce.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan334') | first }}"
+  ansible.builtin.assert:
+    that:
+      - vlan333_after.config_data.network_os.policy.description == "Overridden vlan333"
+      - vlan333_after.config_data.network_os.policy.ip == "10.99.200.1"
+      - vlan334_after.config_data.network_os.policy.description == "Overridden vlan334"
+      - vlan334_after.config_data.network_os.policy.ip == "10.99.201.1"
+
+- name: "OVERRIDDEN: Verify removed SVIs are gone from after state"
+  vars:
+    vlan335_after: "{{ nm_overridden_reduce.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan335') | list }}"
+    vlan336_after: "{{ nm_overridden_reduce.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan336') | list }}"
+    vlan337_after: "{{ nm_overridden_reduce.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan337') | list }}"
+    vlan338_after: "{{ nm_overridden_reduce.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan338') | list }}"
+  ansible.builtin.assert:
+    that:
+      - vlan335_after | length == 0
+      - vlan336_after | length == 0
+      - vlan337_after | length == 0
+      - vlan338_after | length == 0
+
+# --- OVERRIDDEN: IDEMPOTENCY ---
+
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply the same overridden config"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 333
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Overridden vlan333"
+              ip: 10.99.200.1
+              prefix: 24
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 334
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Overridden vlan334"
+              ip: 10.99.201.1
+              prefix: 24
+    state: overridden
+  register: nm_overridden_idem
+
+- name: "OVERRIDDEN IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_idem is not changed
+
+# --- OVERRIDDEN: GROW THE SET BACK ---
+
+- name: "OVERRIDDEN: Re-add vlan335 by including it in the override set"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 333
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Overridden vlan333"
+              ip: 10.99.200.1
+              prefix: 24
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 334
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Overridden vlan334"
+              ip: 10.99.201.1
+              prefix: 24
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 335
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Overridden vlan335"
+              ip: 10.99.202.1
+              prefix: 24
+    state: overridden
+  register: nm_overridden_grow
+
+- name: "OVERRIDDEN: Verify grow changed and vlan335 is present"
+  vars:
+    vlan335_after: "{{ nm_overridden_grow.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan335') | list }}"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_grow is changed
+      - vlan335_after | length == 1
+      - vlan335_after[0].config_data.network_os.policy.description == "Overridden vlan335"

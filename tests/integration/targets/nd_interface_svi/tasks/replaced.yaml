@@ -1,0 +1,143 @@
+---
+# Replaced state tests for nd_interface_svi
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point vlan333 (updated), vlan334-335 (updated), vlan336,
+# vlan337-338 exist from merged tests.
+
+# --- REPLACED: FULL REPLACE (SINGLE) ---
+
+- name: "REPLACED: Replace vlan333 config entirely (check mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 333
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Replaced vlan333"
+              ip: 10.99.150.1
+              prefix: 24
+    state: replaced
+  check_mode: true
+  register: cm_replaced_333
+
+- name: "REPLACED: Replace vlan333 config entirely (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 333
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Replaced vlan333"
+              ip: 10.99.150.1
+              prefix: 24
+    state: replaced
+  register: nm_replaced_333
+
+- name: "REPLACED: Verify vlan333 was replaced"
+  vars:
+    vlan333_after: "{{ nm_replaced_333.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan333') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_333 is changed
+      - nm_replaced_333 is changed
+      - vlan333_after.config_data.network_os.policy.description == "Replaced vlan333"
+      - vlan333_after.config_data.network_os.policy.ip == "10.99.150.1"
+
+- name: "REPLACED IDEMPOTENT: Re-apply replace for vlan333"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 333
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Replaced vlan333"
+              ip: 10.99.150.1
+              prefix: 24
+    state: replaced
+  register: nm_replaced_333_idem
+
+- name: "REPLACED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_333_idem is not changed
+
+# --- REPLACED: FAN-OUT ---
+
+- name: "REPLACED: Replace vlan334 and vlan335 via fan-out (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 334
+          - 335
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Replaced fan-out"
+              ip: 10.99.151.1
+              prefix: 24
+    state: replaced
+  register: nm_replaced_fanout
+
+- name: "REPLACED: Verify fan-out replace"
+  vars:
+    vlan334_after: "{{ nm_replaced_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan334') | first }}"
+    vlan335_after: "{{ nm_replaced_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan335') | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_fanout is changed
+      - vlan334_after.config_data.network_os.policy.description == "Replaced fan-out"
+      - vlan334_after.config_data.network_os.policy.ip == "10.99.151.1"
+      - vlan335_after.config_data.network_os.policy.description == "Replaced fan-out"
+      - vlan335_after.config_data.network_os.policy.ip == "10.99.151.1"
+
+- name: "REPLACED IDEMPOTENT: Verify fan-out replace idempotency"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 334
+          - 335
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "Replaced fan-out"
+              ip: 10.99.151.1
+              prefix: 24
+    state: replaced
+  register: nm_replaced_fanout_idem
+
+- name: "REPLACED IDEMPOTENT: Verify fan-out idempotency"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_fanout_idem is not changed
