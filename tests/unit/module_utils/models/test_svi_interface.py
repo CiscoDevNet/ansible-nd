@@ -239,7 +239,7 @@ def test_svi_interface_00130(value, should_raise):
     """
     # Summary
 
-    Verify the `description_must_be_ascii` validator rejects any non-ASCII character.
+    Verify `description` (typed `AsciiDescription`) rejects any non-ASCII character.
 
     Cisco backend pipes interface descriptions through CLI generators that 500 on UTF-8. Catching this client-side
     gives users a clear error instead of a generic "unexpected error during policy execution" 500.
@@ -251,7 +251,8 @@ def test_svi_interface_00130(value, should_raise):
 
     ## Classes and Methods
 
-    - SviPolicyModel.description_must_be_ascii()
+    - SviPolicyModel.__init__()
+    - models.types.ascii_only()
     """
     if should_raise:
         with pytest.raises(ValidationError, match="description must contain only ASCII"):

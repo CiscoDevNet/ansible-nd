@@ -42,6 +42,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import SviPolicyTypeEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
 
 class SviPolicyModel(NDNestedModel):
@@ -60,7 +61,7 @@ class SviPolicyModel(NDNestedModel):
 
     policy_type: SviPolicyTypeEnum = Field(default=SviPolicyTypeEnum.SVI, alias="policyType", description="Interface policy type")
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    description: str | None = Field(default=None, alias="description", max_length=254, description="Interface description")
+    description: AsciiDescription = Field(default=None, alias="description", max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
     mtu: int | None = Field(default=None, alias="mtu", ge=576, le=9216, description="Interface MTU")
     ip: str | None = Field(default=None, alias="ip", description="IPv4 address of the SVI")
@@ -79,34 +80,6 @@ class SviPolicyModel(NDNestedModel):
     netflow: bool | None = Field(default=None, alias="netflow", description="Enable Netflow on the interface")
 
     # --- Validators ---
-
-    @field_validator("description")
-    @classmethod
-    def description_must_be_ascii(cls, value):
-        """
-        # Summary
-
-        Reject non-ASCII characters in `description`. Some NX-OS / ND backend code paths pipe interface descriptions
-        through CLI generators that do not handle UTF-8 cleanly and return a generic 500 ("unexpected error during
-        policy execution") instead of a meaningful validation error. Catching this client-side gives the user a clear
-        message instead of a confusing server fault. Remove or relax this check once Cisco fixes the backend.
-
-        ## Raises
-
-        ### ValueError
-
-        - If `value` contains any non-ASCII character.
-        """
-        if value is None:
-            return value
-        try:
-            value.encode("ascii")
-        except UnicodeEncodeError as e:
-            raise ValueError(
-                f"description must contain only ASCII characters; got non-ASCII at position {e.start}: {value[e.start]!r}. "
-                "The ND backend currently returns a generic 500 for non-ASCII descriptions."
-            ) from None
-        return value
 
     @field_validator("policy_type", mode="before")
     @classmethod
