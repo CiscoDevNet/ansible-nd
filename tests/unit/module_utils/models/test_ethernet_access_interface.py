@@ -363,6 +363,52 @@ def test_ethernet_access_interface_00230():
 
 
 @pytest.mark.parametrize(
+    "value,should_raise",
+    [
+        ("plain ASCII", False),
+        ("with-hyphen and 123", False),
+        ("em — dash", True),
+        ("smart “quotes”", True),
+        ("emoji \U0001F600", True),
+        ("latin-1 \xe9", True),
+    ],
+    ids=[
+        "ascii_ok",
+        "ascii_punct_digits",
+        "em_dash_rejected",
+        "smart_quotes_rejected",
+        "emoji_rejected",
+        "latin1_rejected",
+    ],
+)
+def test_ethernet_access_interface_00235(value, should_raise):
+    """
+    # Summary
+
+    Verify `description` (typed `AsciiDescription`) rejects any non-ASCII character.
+
+    Cisco backend pipes interface descriptions through CLI generators that 500 on UTF-8. Catching this client-side
+    gives users a clear error instead of a generic "unexpected error during policy execution" 500.
+
+    ## Test
+
+    - ASCII strings accepted
+    - Non-ASCII characters (em-dash, smart quotes, emoji, latin-1) raise
+
+    ## Classes and Methods
+
+    - EthernetAccessPolicyModel.__init__()
+    - models.types.ascii_only()
+    """
+    if should_raise:
+        with pytest.raises(ValidationError, match="description must contain only ASCII"):
+            EthernetAccessPolicyModel(description=value)
+    else:
+        instance = EthernetAccessPolicyModel(description=value)
+        assert instance.description == value
+
+
+@pytest.mark.parametrize(
     "field,enum_cls",
     [
         ("speed", SpeedEnum),

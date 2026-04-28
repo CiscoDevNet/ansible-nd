@@ -44,6 +44,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     StormControlActionEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
 
 class EthernetAccessPolicyModel(NDNestedModel):
@@ -67,7 +68,7 @@ class EthernetAccessPolicyModel(NDNestedModel):
     debounce_linkup_timer: int | None = Field(
         default=None, alias="debounceLinkupTimer", ge=1000, le=10000, description="Link debounce link-up timer in milliseconds"
     )
-    description: str | None = Field(default=None, alias="description", max_length=254, description="Interface description")
+    description: AsciiDescription = Field(default=None, alias="description", max_length=254, description="Interface description")
     duplex_mode: DuplexModeEnum | None = Field(default=None, alias="duplexMode", description="Port duplex mode")
     error_detection_acl: bool | None = Field(default=None, alias="errorDetectionAcl", description="Enable error detection for ACL installation failures")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
