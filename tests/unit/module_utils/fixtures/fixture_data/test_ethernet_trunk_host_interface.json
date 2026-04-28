@@ -18,6 +18,16 @@
             "ownerCluster": "cluster_a"
         }
     },
+    "test_query_all_happy_path_00400_freeze": {
+        "TEST_NOTES": ["Deployment freeze: disabled (for validate_prerequisites)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/deploymentFreeze",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentFreeze": false
+        }
+    },
     "test_query_all_happy_path_00400b": {
         "TEST_NOTES": ["Switch list: two switches in fabric_1"],
         "RETURN_CODE": 200,
@@ -121,6 +131,16 @@
                     }
                 }
             ]
+        }
+    },
+    "test_query_all_all_default_00410_freeze": {
+        "TEST_NOTES": ["Deployment freeze: disabled (for validate_prerequisites)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/deploymentFreeze",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentFreeze": false
         }
     },
     "test_query_all_all_default_00410a": {
