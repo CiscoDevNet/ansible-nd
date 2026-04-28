@@ -18,7 +18,10 @@ fields that the original implementation assumed.
 
 from __future__ import annotations
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsSummaryGet
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
+    EpManageFabricsDeploymentFreezeGet,
+    EpManageFabricsSummaryGet,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -65,6 +68,7 @@ class FabricContext:
         self._rest_send = rest_send
         self._fabric_name = fabric_name
         self._fabric_summary = _NOT_FETCHED
+        self._deployment_freeze: object | bool = _NOT_FETCHED
         self._switch_map: dict[str, str] | None = None
         self._switch_map_by_id: dict[str, str] | None = None
 
@@ -171,18 +175,46 @@ class FabricContext:
         # TODO: Implement read-only check once the correct response field is identified
         return False
 
+    def fabric_is_deployment_frozen(self) -> bool:
+        """
+        # Summary
+
+        Check whether the fabric is in deployment freeze mode. When deployment freeze is enabled, configuration changes cannot be
+        deployed from the controller to switches.
+
+        Lazily fetches `/api/v1/manage/fabrics/{fabric_name}/deploymentFreeze` on first access and caches the result.
+
+        Returns `False` if the fabric does not exist (the fabric-existence error is surfaced separately by `validate_for_mutation`).
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the deploymentFreeze endpoint returns a non-success status other than 404.
+        """
+        if self._deployment_freeze is _NOT_FETCHED:
+            if not self.fabric_exists():
+                self._deployment_freeze = False
+            else:
+                ep = EpManageFabricsDeploymentFreezeGet()
+                ep.fabric_name = self._fabric_name
+                result = self._query_get(ep.path)
+                self._deployment_freeze = bool(result.get("deploymentFreeze", False)) if result else False
+        return bool(self._deployment_freeze)
+
     def invalidate(self) -> None:
         """
         # Summary
 
-        Drop all cached state so the next access to `fabric_summary`, `switch_map`, or `switch_map_by_id` re-fetches from
-        the API. Useful after a mutation that should be reflected on subsequent reads.
+        Drop all cached state so the next access to `fabric_summary`, `fabric_is_deployment_frozen`, `switch_map`, or
+        `switch_map_by_id` re-fetches from the API. Useful after a mutation that should be reflected on subsequent reads.
 
         ## Raises
 
         None
         """
         self._fabric_summary = _NOT_FETCHED
+        self._deployment_freeze = _NOT_FETCHED
         self._switch_map = None
         self._switch_map_by_id = None
 
@@ -291,6 +323,7 @@ class FabricContext:
         ## Checks
 
         1. Fabric exists (on any node in the cluster).
+        2. Fabric is not in deployment freeze mode.
 
         See the class-level TODO: `fabric_is_local` and `fabric_is_read_only` are intentionally not invoked here while their
         underlying implementations are stubs. They will be re-added once the relevant fields are exposed by the API.
@@ -300,6 +333,12 @@ class FabricContext:
         ### RuntimeError
 
         - If the fabric does not exist.
+        - If the fabric is in deployment freeze mode.
         """
         if not self.fabric_exists():
             raise RuntimeError(f"Fabric '{self._fabric_name}' not found. Verify the fabric name and ensure you are targeting the correct ND node.")
+        if self.fabric_is_deployment_frozen():
+            raise RuntimeError(
+                f"Fabric '{self._fabric_name}' is in deployment freeze mode. Configuration changes cannot be deployed to switches "
+                "while deployment freeze is enabled. Disable deployment freeze on the fabric before retrying."
+            )

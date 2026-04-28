@@ -175,6 +175,77 @@ def test_fabric_context_00110() -> None:
 
 
 # =============================================================================
+# Test: fabric_is_deployment_frozen
+# =============================================================================
+
+
+def test_fabric_context_00120() -> None:
+    """
+    # Summary
+
+    Verify `fabric_is_deployment_frozen` returns True when the deploymentFreeze endpoint reports the fabric is frozen.
+
+    ## Test
+
+    - First GET (summary) returns 200 so the fabric is considered to exist
+    - Second GET (deploymentFreeze) returns `{"deploymentFreeze": true}`
+    - `fabric_is_deployment_frozen()` returns True
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_is_deployment_frozen
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+        yield responses_fabric_context(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+        result = instance.fabric_is_deployment_frozen()
+
+    assert result is True
+
+
+def test_fabric_context_00130() -> None:
+    """
+    # Summary
+
+    Verify `fabric_is_deployment_frozen` returns False and caches the result so subsequent calls do not re-fetch.
+
+    ## Test
+
+    - First GET (summary) returns 200, second GET (deploymentFreeze) returns `{"deploymentFreeze": false}`
+    - `fabric_is_deployment_frozen()` returns False
+    - A second call returns False without consuming another response (cache hit)
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_is_deployment_frozen
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+        yield responses_fabric_context(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+        first = instance.fabric_is_deployment_frozen()
+        cached = instance.fabric_is_deployment_frozen()
+
+    assert first is False
+    assert cached is False
+
+
+# =============================================================================
 # Test: switch_map / get_switch_id
 # =============================================================================
 
@@ -320,11 +391,12 @@ def test_fabric_context_00300() -> None:
     """
     # Summary
 
-    Verify `validate_for_mutation` is a no-op when the fabric exists.
+    Verify `validate_for_mutation` is a no-op when the fabric exists and is not in deployment freeze mode.
 
     ## Test
 
-    - GET summary returns 200 -> `fabric_exists` is True
+    - First GET (summary) returns 200 -> `fabric_exists` is True
+    - Second GET (deploymentFreeze) returns `{"deploymentFreeze": false}`
     - `validate_for_mutation` does not raise
 
     Note: `fabric_is_local` and `fabric_is_read_only` are stubs and are intentionally not invoked by `validate_for_mutation`.
@@ -334,10 +406,10 @@ def test_fabric_context_00300() -> None:
     - FabricContext.validate_for_mutation
     """
     method_name = inspect.stack()[0][3]
-    key = f"{method_name}a"
 
     def responses():
-        yield responses_fabric_context(key)
+        yield responses_fabric_context(f"{method_name}a")
+        yield responses_fabric_context(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -373,5 +445,37 @@ def test_fabric_context_00310() -> None:
 
     instance = FabricContext(rest_send=rest_send, fabric_name="missing_fabric")
     match = r"Fabric 'missing_fabric' not found"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_for_mutation()
+
+
+def test_fabric_context_00320() -> None:
+    """
+    # Summary
+
+    Verify `validate_for_mutation` raises `RuntimeError` when the fabric is in deployment freeze mode.
+
+    ## Test
+
+    - First GET (summary) returns 200 so the fabric exists
+    - Second GET (deploymentFreeze) returns `{"deploymentFreeze": true}`
+    - `validate_for_mutation` raises with a message that mentions deployment freeze and the fabric name
+
+    ## Classes and Methods
+
+    - FabricContext.validate_for_mutation
+    - FabricContext.fabric_is_deployment_frozen
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+        yield responses_fabric_context(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+    match = r"Fabric 'fabric_1' is in deployment freeze mode"
     with pytest.raises(RuntimeError, match=match):
         instance.validate_for_mutation()

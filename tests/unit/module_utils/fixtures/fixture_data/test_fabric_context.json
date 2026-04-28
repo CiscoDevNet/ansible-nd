@@ -23,6 +23,48 @@
         "MESSAGE": "Not Found",
         "DATA": {}
     },
+    "test_fabric_context_00120a": {
+        "TEST_NOTES": ["Deployment freeze: enabled"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_fabric_context_00120b": {
+        "TEST_NOTES": ["Deployment freeze: enabled"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/deploymentFreeze",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentFreeze": true
+        }
+    },
+    "test_fabric_context_00130a": {
+        "TEST_NOTES": ["Deployment freeze: disabled (false)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_fabric_context_00130b": {
+        "TEST_NOTES": ["Deployment freeze: disabled (false)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/deploymentFreeze",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentFreeze": false
+        }
+    },
     "test_fabric_context_00200a": {
         "TEST_NOTES": ["Switch list: two switches in fabric"],
         "RETURN_CODE": 200,
@@ -106,6 +148,16 @@
             "ownerCluster": "cluster_a"
         }
     },
+    "test_fabric_context_00300b": {
+        "TEST_NOTES": ["Deployment freeze: disabled (validate_for_mutation success)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/deploymentFreeze",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentFreeze": false
+        }
+    },
     "test_fabric_context_00310a": {
         "TEST_NOTES": ["Fabric summary: 404 not found (for validate_for_mutation failure)"],
         "RETURN_CODE": 404,
@@ -113,5 +165,26 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
         "MESSAGE": "Not Found",
         "DATA": {}
+    },
+    "test_fabric_context_00320a": {
+        "TEST_NOTES": ["Fabric summary: fabric exists (deployment freeze raise path)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_fabric_context_00320b": {
+        "TEST_NOTES": ["Deployment freeze: enabled (validate_for_mutation must raise)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/deploymentFreeze",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentFreeze": true
+        }
     }
 }
