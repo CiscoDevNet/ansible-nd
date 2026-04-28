@@ -1,0 +1,236 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for tests/unit/module_utils/orchestrators/test_svi_interface.py",
+        "Each key matches a test function + suffix (a/b/c/...) per CLAUDE.md unit-test conventions.",
+        "Simulates ND responses for:",
+        "  - GET /api/v1/manage/fabrics/{fabric}/summary  (fabric_summary)",
+        "  - GET /api/v1/manage/fabrics/{fabric}/switches (switch_map)",
+        "  - GET /api/v1/manage/fabrics/{fabric}/switches/{sn}/interfaces (list)",
+        "  - GET /api/v1/manage/fabrics/{fabric}/switches/{sn}/interfaces/{name} (one)",
+        "  - POST /api/v1/manage/fabrics/{fabric}/switches/{sn}/interfaces (create)",
+        "  - PUT  /api/v1/manage/fabrics/{fabric}/switches/{sn}/interfaces/{name} (update)",
+        "  - POST /api/v1/manage/fabrics/{fabric}/interfaceActions/remove",
+        "  - POST /api/v1/manage/fabrics/{fabric}/interfaceActions/deploy"
+    ],
+    "test_query_all_happy_path_00400a": {
+        "TEST_NOTES": ["Fabric summary: fabric exists (for validate_prerequisites)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_query_all_happy_path_00400b": {
+        "TEST_NOTES": ["Switch list: two switches"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"},
+                {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}
+            ]
+        }
+    },
+    "test_query_all_happy_path_00400c": {
+        "TEST_NOTES": [
+            "Switch FDO11111AAA: one SVI (kept), one ethernet (filtered out by interfaceType), one VLAN with non-svi policy (filtered out by policyType)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "vlan100",
+                    "interfaceType": "svi",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "svi", "description": "kept"}}
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "accessHost"}}
+                    }
+                },
+                {
+                    "interfaceName": "vlan999",
+                    "interfaceType": "svi",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "underlaySvi"}}
+                    }
+                }
+            ]
+        }
+    },
+    "test_query_all_happy_path_00400d": {
+        "TEST_NOTES": ["Switch FDO22222BBB: one SVI"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "vlan200",
+                    "interfaceType": "svi",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "svi", "description": "switch-2"}}
+                    }
+                }
+            ]
+        }
+    },
+    "test_query_all_fabric_not_found_00420a": {
+        "TEST_NOTES": ["Fabric summary 404 — drives validate_for_mutation to raise"],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+    "test_query_one_happy_path_00500a": {
+        "TEST_NOTES": ["Switch list for switch_id resolution"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_query_one_happy_path_00500b": {
+        "TEST_NOTES": ["GET /interfaces/vlan333 — returns single SVI"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/vlan333",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaceName": "vlan333",
+            "interfaceType": "svi",
+            "switchId": "FDO11111AAA",
+            "configData": {
+                "mode": "managed",
+                "networkOS": {"networkOSType": "nx-os", "policy": {"policyType": "svi", "description": "exists"}}
+            }
+        }
+    },
+    "test_create_happy_path_00600a": {
+        "TEST_NOTES": ["Switch list for switch_id resolution"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_create_happy_path_00600b": {
+        "TEST_NOTES": ["POST /interfaces — create response"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "vlan333", "status": "success", "message": "Interface added successfully"}
+            ]
+        }
+    },
+    "test_update_happy_path_00700a": {
+        "TEST_NOTES": ["Switch list for switch_id resolution"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_update_happy_path_00700b": {
+        "TEST_NOTES": ["PUT /interfaces/vlan333 — update response"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/vlan333",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_delete_happy_path_00800a": {
+        "TEST_NOTES": ["Switch list for switch_id resolution"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_remove_pending_happy_path_00810a": {
+        "TEST_NOTES": ["POST /interfaceActions/remove — bulk remove response"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/remove",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"interfaceName": "vlan333", "status": "success", "message": "Interface removed", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_deploy_pending_happy_path_00820a": {
+        "TEST_NOTES": ["POST /interfaceActions/deploy — bulk deploy response"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"interfaceName": "vlan333", "status": "success", "message": "Interface deployed", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_create_bulk_happy_path_00900a": {
+        "TEST_NOTES": ["Switch list for switch_id resolution (called once for each model in the bulk)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_create_bulk_happy_path_00900b": {
+        "TEST_NOTES": ["POST /interfaces with two SVIs in the array"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "results": [
+                {"name": "vlan333", "status": "success"},
+                {"name": "vlan334", "status": "success"}
+            ]
+        }
+    }
+}
