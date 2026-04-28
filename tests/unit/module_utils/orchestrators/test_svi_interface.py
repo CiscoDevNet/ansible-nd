@@ -145,6 +145,7 @@ def test_svi_orchestrator_00400() -> None:
 
     def responses():
         yield responses_svi("test_query_all_happy_path_00400a")
+        yield responses_svi("test_query_all_happy_path_00400_freeze")
         yield responses_svi("test_query_all_happy_path_00400b")
         yield responses_svi("test_query_all_happy_path_00400c")
         yield responses_svi("test_query_all_happy_path_00400d")
