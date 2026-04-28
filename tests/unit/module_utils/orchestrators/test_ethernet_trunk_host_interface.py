@@ -320,6 +320,7 @@ def test_ethernet_trunk_host_orchestrator_00400() -> None:
 
     def responses():
         yield responses_trunk_host("test_query_all_happy_path_00400a")
+        yield responses_trunk_host("test_query_all_happy_path_00400_freeze")
         yield responses_trunk_host("test_query_all_happy_path_00400b")
         yield responses_trunk_host("test_query_all_happy_path_00400c")
         yield responses_trunk_host("test_query_all_happy_path_00400d")
@@ -368,6 +369,7 @@ def test_ethernet_trunk_host_orchestrator_00410() -> None:
 
     def responses():
         yield responses_trunk_host("test_query_all_all_default_00410a")
+        yield responses_trunk_host("test_query_all_all_default_00410_freeze")
         yield responses_trunk_host("test_query_all_all_default_00410b")
         yield responses_trunk_host("test_query_all_all_default_00410c")
 
