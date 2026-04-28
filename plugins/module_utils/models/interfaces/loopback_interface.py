@@ -37,6 +37,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
 LOOPBACK_POLICY_TYPE_MAPPING = NDConstantMapping(
     {
@@ -63,7 +64,7 @@ class LoopbackPolicyModel(NDNestedModel):
     ipv6: str | None = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
     route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
-    description: str | None = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
+    description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
     policy_type: str | None = Field(default=None, alias="policyType", description="Interface policy type")
 
