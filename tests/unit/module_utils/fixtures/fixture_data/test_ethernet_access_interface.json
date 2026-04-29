@@ -1,0 +1,126 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for tests/unit/module_utils/orchestrators/test_ethernet_access_interface.py",
+        "Each key matches a test function + suffix (a/b/c/...) per CLAUDE.md unit-test conventions.",
+        "The fixtures simulate ND responses for:",
+        "  - GET /api/v1/manage/fabrics/{fabric_name}/summary  (fabric_summary via FabricContext)",
+        "  - GET /api/v1/manage/fabrics/{fabric_name}/switches (switch_map via FabricContext)",
+        "  - GET /api/v1/manage/fabrics/{fabric_name}/switches/{sn}/interfaces (EpManageInterfacesListGet per switch)"
+    ],
+    "test_query_all_happy_path_00400a": {
+        "TEST_NOTES": ["Fabric summary: fabric exists (for validate_prerequisites)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
+    "test_query_all_happy_path_00400_freeze": {
+        "TEST_NOTES": ["Deployment freeze: disabled (for validate_prerequisites)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/deploymentFreeze",
+        "MESSAGE": "OK",
+        "DATA": {
+            "deploymentFreeze": false
+        }
+    },
+    "test_query_all_happy_path_00400b": {
+        "TEST_NOTES": ["Switch list: two switches in fabric_1"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_query_all_happy_path_00400c": {
+        "TEST_NOTES": [
+            "Interfaces for switch FDO11111AAA: one accessHost, one trunkHost (should be filtered out).",
+            "Expect: only the accessHost interface is retained."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 20,
+                                "description": "host-1"
+                            }
+                        }
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "trunk",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "trunkHost",
+                                "allowedVlans": "1-100"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_query_all_happy_path_00400d": {
+        "TEST_NOTES": ["Interfaces for switch FDO22222BBB: one accessHost."],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet2/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 30
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_query_all_fabric_not_found_00420a": {
+        "TEST_NOTES": ["Fabric summary: 404 not found; validate_prerequisites should raise RuntimeError."],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    }
+}

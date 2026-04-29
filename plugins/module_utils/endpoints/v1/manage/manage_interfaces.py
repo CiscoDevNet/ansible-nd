@@ -17,8 +17,12 @@ in the ND Manage API.
   (POST /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces)
 - `EpManageInterfacesPut` - Update a specific interface
   (PUT /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
+- `EpManageInterfacesDelete` - Delete a virtual interface (loopback, SVI); not supported for physical ethernet
+  (DELETE /api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name})
 - `EpManageInterfacesDeploy` - Deploy interface configurations
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/deploy)
+- `EpManageInterfacesNormalize` - Reset physical interface configurations to default
+  (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/normalize)
 - `EpManageInterfacesRemove` - Bulk delete interfaces
   (POST /api/v1/manage/fabrics/{fabric_name}/interfaceActions/remove)
 """
@@ -238,6 +242,46 @@ class EpManageInterfacesPut(_EpManageInterfacesBase):
         return HttpVerbEnum.PUT
 
 
+class EpManageInterfacesDelete(_EpManageInterfacesBase):
+    """
+    # Summary
+
+    Delete a specific interface configuration.
+
+    - Path: `/api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name}`
+    - Verb: DELETE
+
+    This endpoint works for virtual interfaces (loopback, SVI) only. For physical ethernet interfaces, the API returns
+    HTTP 500 ("Interface cannot be deleted!!!").
+    
+    To reset physical interfaces to their default state, see `EpManageInterfacesNormalize` and set the payload to an
+    appropriate default config (for example `module_utils/models/interfaces/interface_default_config.py`).
+
+    ## Raises
+
+    ### ValueError
+
+    - Via inherited `path` property if `fabric_name`, `switch_sn`, or `interface_name` is not set.
+    """
+
+    class_name: Literal["EpManageInterfacesDelete"] = Field(
+        default="EpManageInterfacesDelete", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.DELETE`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.DELETE
+
+
 class EpManageInterfacesDeploy(FabricNameMixin, NDEndpointBaseModel):
     """
     # Summary
@@ -275,6 +319,58 @@ class EpManageInterfacesDeploy(FabricNameMixin, NDEndpointBaseModel):
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         return BasePath.path("fabrics", self.fabric_name, "interfaceActions", "deploy")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.POST`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.POST
+
+
+class EpManageInterfacesNormalize(FabricNameMixin, NDEndpointBaseModel):
+    """
+    # Summary
+
+    Normalize interface configurations on switches.
+
+    - Path: `/api/v1/manage/fabrics/{fabric_name}/interfaceActions/normalize`
+    - Verb: POST
+    - Body: `{"interfaceType": "ethernet", "configData": {...}, "switchInterfaces": [{"interfaceName": "...", "switchId": "..."}]}`
+
+    ## Raises
+
+    ### ValueError
+
+    - Via `path` property if `fabric_name` is not set.
+    """
+
+    class_name: Literal["EpManageInterfacesNormalize"] = Field(
+        default="EpManageInterfacesNormalize", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the normalize endpoint path.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `fabric_name` is not set before accessing `path`.
+        """
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", self.fabric_name, "interfaceActions", "normalize")
 
     @property
     def verb(self) -> HttpVerbEnum:
