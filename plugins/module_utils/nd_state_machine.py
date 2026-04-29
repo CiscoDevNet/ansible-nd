@@ -74,7 +74,9 @@ class NDStateMachine:
             # Ongoing collection of configuration objects that were changed
             self.sent = NDConfigCollection(model_class=self.model_class)
             # Collection of configuration objects given by user
-            self.proposed = NDConfigCollection.from_ansible_config(data=self.module.params.get("config", []), model_class=self.model_class)
+            raw_config = self.module.params.get("config", [])
+            raw_config = self.model_orchestrator.prepare_config_data(raw_config)
+            self.proposed = NDConfigCollection.from_ansible_config(data=raw_config, model_class=self.model_class)
 
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
 

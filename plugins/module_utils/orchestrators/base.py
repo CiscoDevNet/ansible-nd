@@ -1,4 +1,5 @@
 # Copyright: (c) 2026, Gaspard Micol (@gmicol) <gmicol@cisco.com>
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -127,6 +128,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
+
+    def prepare_config_data(self, raw_config):
+        """Hook for subclasses to backfill or normalize raw user config before the proposed collection is built. Returns the list unchanged by default."""
+        return raw_config
 
     @model_validator(mode="after")
     def validate_bulk_endpoints(self):

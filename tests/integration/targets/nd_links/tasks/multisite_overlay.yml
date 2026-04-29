@@ -1,0 +1,231 @@
+# Test code for the cisco.nd.nd_links module.
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Run nd_links multisiteOverlay policy lifecycle (inter-fabric)
+  module_defaults:
+    cisco.nd.nd_links:
+      output_level: '{{ nd_output_level | default("debug") }}'
+      fabric_name: '{{ test_fabric_msite_src }}'
+      link_scope: manage
+  block:
+    - name: Ensure multisiteOverlay links do not exist before tests
+      cisco.nd.nd_links: &msite_overlay_cleanup
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/40
+            dst_interface_name: Ethernet1/40
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/41
+            dst_interface_name: Ethernet1/41
+        state: deleted
+
+    - name: Create two multisiteOverlay links (merged - check mode)
+      cisco.nd.nd_links: &msite_overlay_create
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/40
+            dst_interface_name: Ethernet1/40
+            config_data:
+              policy_type: multisiteOverlay
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address: 10.99.40.1
+                dst_ip_address: 10.99.40.2
+                ebgp_multihop: 5
+                ipv4_trm: false
+                ipv6_trm: false
+                src_interface_description: ansible msite-overlay 40 source
+                dst_interface_description: ansible msite-overlay 40 destination
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/41
+            dst_interface_name: Ethernet1/41
+            config_data:
+              policy_type: multisiteOverlay
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address: 10.99.41.1
+                dst_ip_address: 10.99.41.2
+                ebgp_multihop: 5
+        state: merged
+      check_mode: true
+      register: cm_msite_overlay_create
+
+    - name: Create two multisiteOverlay links (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *msite_overlay_create
+      register: nm_msite_overlay_create
+
+    - name: Create two multisiteOverlay links again (idempotency)
+      cisco.nd.nd_links:
+        <<: *msite_overlay_create
+      register: nm_msite_overlay_create_again
+
+    - name: Asserts for multisiteOverlay create
+      ansible.builtin.assert:
+        that:
+          - cm_msite_overlay_create is changed
+          - cm_msite_overlay_create.proposed | length == 2
+          - cm_msite_overlay_create.proposed.0.config_data.policy_type == "multisiteOverlay"
+          - cm_msite_overlay_create.proposed.0.config_data.template_inputs.src_ebgp_asn == "65001"
+
+          - nm_msite_overlay_create is changed
+          - (nm_msite_overlay_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/40') | first).config_data.policy_type == "multisiteOverlay"
+          - (nm_msite_overlay_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/40') | first).config_data.template_inputs.ebgp_multihop == 5
+
+          - nm_msite_overlay_create_again is not changed
+
+    - name: Update multisiteOverlay link Eth1/40 (merged - check mode)
+      cisco.nd.nd_links: &msite_overlay_update
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/40
+            dst_interface_name: Ethernet1/40
+            config_data:
+              policy_type: multisiteOverlay
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address: 10.99.40.1
+                dst_ip_address: 10.99.40.2
+                ebgp_multihop: 10
+                ipv4_trm: true
+                src_interface_description: updated msite-overlay source
+        state: merged
+      check_mode: true
+      register: cm_msite_overlay_update
+
+    - name: Update multisiteOverlay link Eth1/40 (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *msite_overlay_update
+      register: nm_msite_overlay_update
+
+    - name: Update multisiteOverlay link Eth1/40 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *msite_overlay_update
+      register: nm_msite_overlay_update_again
+
+    - name: Asserts for multisiteOverlay update
+      ansible.builtin.assert:
+        that:
+          - cm_msite_overlay_update is changed
+          - cm_msite_overlay_update.proposed.0.config_data.template_inputs.ebgp_multihop == 10
+
+          - nm_msite_overlay_update is changed
+          - (nm_msite_overlay_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/40') | first).config_data.template_inputs.ebgp_multihop == 10
+          - (nm_msite_overlay_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/40') | first).config_data.template_inputs.ipv4_trm == true
+
+          - nm_msite_overlay_update_again is not changed
+
+    - name: Replace multisiteOverlay link Eth1/40 (replaced - check mode)
+      cisco.nd.nd_links: &msite_overlay_replace
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/40
+            dst_interface_name: Ethernet1/40
+            config_data:
+              policy_type: multisiteOverlay
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address: 10.99.40.1
+                dst_ip_address: 10.99.40.2
+                ebgp_multihop: 5
+        state: replaced
+      check_mode: true
+      register: cm_msite_overlay_replace
+
+    - name: Replace multisiteOverlay link Eth1/40 (replaced - normal mode)
+      cisco.nd.nd_links:
+        <<: *msite_overlay_replace
+      register: nm_msite_overlay_replace
+
+    - name: Replace multisiteOverlay link Eth1/40 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *msite_overlay_replace
+      register: nm_msite_overlay_replace_again
+
+    - name: Asserts for multisiteOverlay replace
+      ansible.builtin.assert:
+        that:
+          - cm_msite_overlay_replace is changed
+          - nm_msite_overlay_replace is changed
+          - (nm_msite_overlay_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/40') | first).config_data.template_inputs.ebgp_multihop == 5
+          - (nm_msite_overlay_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/41') | list) | length == 1
+          - nm_msite_overlay_replace_again is not changed
+
+    - name: Delete multisiteOverlay link Eth1/40 (deleted - check mode)
+      cisco.nd.nd_links: &msite_overlay_delete_one
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/40
+            dst_interface_name: Ethernet1/40
+        state: deleted
+      check_mode: true
+      register: cm_msite_overlay_delete
+
+    - name: Delete multisiteOverlay link Eth1/40 (deleted - normal mode)
+      cisco.nd.nd_links:
+        <<: *msite_overlay_delete_one
+      register: nm_msite_overlay_delete
+
+    - name: Delete multisiteOverlay link Eth1/40 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *msite_overlay_delete_one
+      register: nm_msite_overlay_delete_again
+
+    - name: Bulk delete remaining multisiteOverlay link
+      cisco.nd.nd_links: &msite_overlay_bulk_delete
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/41
+            dst_interface_name: Ethernet1/41
+        state: deleted
+      register: nm_msite_overlay_bulk_delete
+
+    - name: Bulk delete remaining multisiteOverlay link again (idempotency)
+      cisco.nd.nd_links:
+        <<: *msite_overlay_bulk_delete
+      register: nm_msite_overlay_bulk_delete_again
+
+    - name: Asserts for multisiteOverlay delete
+      ansible.builtin.assert:
+        that:
+          - cm_msite_overlay_delete is changed
+          - nm_msite_overlay_delete is changed
+          - (nm_msite_overlay_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/40') | list) | length == 0
+          - nm_msite_overlay_delete_again is not changed
+
+          - nm_msite_overlay_bulk_delete is changed
+          - (nm_msite_overlay_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/41') | list) | length == 0
+          - nm_msite_overlay_bulk_delete_again is not changed
+
+    - name: Final cleanup of multisiteOverlay links
+      cisco.nd.nd_links:
+        <<: *msite_overlay_cleanup
