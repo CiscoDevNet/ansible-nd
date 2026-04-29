@@ -103,6 +103,25 @@ EXAMPLES = r"""
             mtu: 9216
     state: merged
 
+- name: Identify switches by management IP (avoids hostname collisions)
+  cisco.nd.nd_links:
+    fabric_name: fab1
+    config:
+      - src_fabric_name: fab1
+        dst_fabric_name: fab1
+        src_switch_ip: 192.0.2.10
+        dst_switch_ip: 192.0.2.11
+        src_interface_name: Ethernet1/1
+        dst_interface_name: Ethernet1/1
+        config_data:
+          policy_type: numbered
+          template_inputs:
+            src_ip: 10.0.0.1
+            dst_ip: 10.0.0.2
+            mtu: 9216
+            interface_admin_state: true
+    state: merged
+
 - name: Create links with explicit scope and change control
   cisco.nd.nd_links:
     fabric_name: fab1

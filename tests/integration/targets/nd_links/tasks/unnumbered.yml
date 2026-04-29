@@ -1,0 +1,311 @@
+# Test code for the cisco.nd.nd_links module.
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Run nd_links unnumbered policy lifecycle
+  module_defaults:
+    cisco.nd.nd_links:
+      output_level: '{{ nd_output_level | default("debug") }}'
+      fabric_name: '{{ test_fabric_unnumbered }}'
+      link_scope: manage
+  block:
+    - name: Ensure unnumbered links do not exist before tests
+      cisco.nd.nd_links: &unnumbered_cleanup
+        config:
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/32
+            dst_interface_name: Ethernet1/32
+        state: deleted
+
+    - name: Create three unnumbered links (merged - check mode)
+      cisco.nd.nd_links: &unnumbered_create
+        config:
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: unnumbered
+              template_inputs:
+                mtu: 9216
+                speed: auto
+                fec: auto
+                interface_admin_state: true
+                src_interface_description: ansible unnumbered 30 source
+                dst_interface_description: ansible unnumbered 30 destination
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+            config_data:
+              policy_type: unnumbered
+              template_inputs:
+                mtu: 9216
+                interface_admin_state: true
+                src_interface_description: ansible unnumbered 31 source
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/32
+            dst_interface_name: Ethernet1/32
+            config_data:
+              policy_type: unnumbered
+              template_inputs:
+                mtu: 9216
+                interface_admin_state: true
+        state: merged
+      check_mode: true
+      register: cm_unnumbered_create
+
+    - name: Create three unnumbered links (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *unnumbered_create
+      register: nm_unnumbered_create
+
+    - name: Create three unnumbered links again (idempotency)
+      cisco.nd.nd_links:
+        <<: *unnumbered_create
+      register: nm_unnumbered_create_again
+
+    - name: Asserts for unnumbered create
+      ansible.builtin.assert:
+        that:
+          - cm_unnumbered_create is changed
+          - cm_unnumbered_create.proposed | length == 3
+          - cm_unnumbered_create.proposed.0.config_data.policy_type == "unnumbered"
+
+          - nm_unnumbered_create is changed
+          - (nm_unnumbered_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "unnumbered"
+          - (nm_unnumbered_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.mtu == 9216
+
+          - nm_unnumbered_create_again is not changed
+
+    - name: Update unnumbered link Eth1/30 (merged - check mode)
+      cisco.nd.nd_links: &unnumbered_update
+        config:
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: unnumbered
+              template_inputs:
+                mtu: 1500
+                speed: auto
+                fec: auto
+                interface_admin_state: false
+                src_interface_description: updated unnumbered source
+                dst_interface_description: updated unnumbered destination
+        state: merged
+      check_mode: true
+      register: cm_unnumbered_update
+
+    - name: Update unnumbered link Eth1/30 (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *unnumbered_update
+      register: nm_unnumbered_update
+
+    - name: Update unnumbered link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *unnumbered_update
+      register: nm_unnumbered_update_again
+
+    - name: Asserts for unnumbered update
+      ansible.builtin.assert:
+        that:
+          - cm_unnumbered_update is changed
+          - cm_unnumbered_update.proposed.0.config_data.template_inputs.mtu == 1500
+
+          - nm_unnumbered_update is changed
+          - (nm_unnumbered_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.mtu == 1500
+          - (nm_unnumbered_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.src_interface_description == "updated unnumbered source"
+
+          - nm_unnumbered_update_again is not changed
+
+    - name: Replace unnumbered link Eth1/30 (replaced - check mode)
+      cisco.nd.nd_links: &unnumbered_replace
+        config:
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: unnumbered
+              template_inputs:
+                mtu: 9216
+                interface_admin_state: true
+        state: replaced
+      check_mode: true
+      register: cm_unnumbered_replace
+
+    - name: Replace unnumbered link Eth1/30 (replaced - normal mode)
+      cisco.nd.nd_links:
+        <<: *unnumbered_replace
+      register: nm_unnumbered_replace
+
+    - name: Replace unnumbered link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *unnumbered_replace
+      register: nm_unnumbered_replace_again
+
+    - name: Asserts for unnumbered replace
+      ansible.builtin.assert:
+        that:
+          - cm_unnumbered_replace is changed
+          - nm_unnumbered_replace is changed
+          - (nm_unnumbered_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.mtu == 9216
+          - (nm_unnumbered_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 1
+          - (nm_unnumbered_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 1
+          - nm_unnumbered_replace_again is not changed
+
+    - name: Override down to a single unnumbered link (overridden - check mode)
+      cisco.nd.nd_links: &unnumbered_override
+        config:
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: unnumbered
+              template_inputs:
+                mtu: 9216
+                interface_admin_state: true
+        state: overridden
+      check_mode: true
+      register: cm_unnumbered_override
+
+    - name: Override down to a single unnumbered link (overridden - normal mode)
+      cisco.nd.nd_links:
+        <<: *unnumbered_override
+      register: nm_unnumbered_override
+
+    - name: Override down to a single unnumbered link again (idempotency)
+      cisco.nd.nd_links:
+        <<: *unnumbered_override
+      register: nm_unnumbered_override_again
+
+    - name: Asserts for unnumbered override
+      ansible.builtin.assert:
+        that:
+          - cm_unnumbered_override is changed
+          - nm_unnumbered_override is changed
+          - (nm_unnumbered_override.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | list) | length == 1
+          - (nm_unnumbered_override.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 0
+          - (nm_unnumbered_override.after | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 0
+          - nm_unnumbered_override_again is not changed
+
+    - name: Re-create Eth1/31 and Eth1/32 for delete coverage
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+            config_data:
+              policy_type: unnumbered
+              template_inputs:
+                mtu: 9216
+                interface_admin_state: true
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/32
+            dst_interface_name: Ethernet1/32
+            config_data:
+              policy_type: unnumbered
+              template_inputs:
+                mtu: 9216
+                interface_admin_state: true
+        state: merged
+
+    - name: Delete unnumbered link Eth1/30 (deleted - check mode)
+      cisco.nd.nd_links: &unnumbered_delete_one
+        config:
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+        state: deleted
+      check_mode: true
+      register: cm_unnumbered_delete
+
+    - name: Delete unnumbered link Eth1/30 (deleted - normal mode)
+      cisco.nd.nd_links:
+        <<: *unnumbered_delete_one
+      register: nm_unnumbered_delete
+
+    - name: Delete unnumbered link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *unnumbered_delete_one
+      register: nm_unnumbered_delete_again
+
+    - name: Bulk delete remaining unnumbered links
+      cisco.nd.nd_links: &unnumbered_bulk_delete
+        config:
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+          - src_fabric_name: '{{ test_fabric_unnumbered }}'
+            dst_fabric_name: '{{ test_fabric_unnumbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/32
+            dst_interface_name: Ethernet1/32
+        state: deleted
+      register: nm_unnumbered_bulk_delete
+
+    - name: Bulk delete remaining unnumbered links again (idempotency)
+      cisco.nd.nd_links:
+        <<: *unnumbered_bulk_delete
+      register: nm_unnumbered_bulk_delete_again
+
+    - name: Asserts for unnumbered delete
+      ansible.builtin.assert:
+        that:
+          - cm_unnumbered_delete is changed
+          - nm_unnumbered_delete is changed
+          - (nm_unnumbered_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | list) | length == 0
+          - nm_unnumbered_delete_again is not changed
+
+          - nm_unnumbered_bulk_delete is changed
+          - (nm_unnumbered_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 0
+          - (nm_unnumbered_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 0
+          - nm_unnumbered_bulk_delete_again is not changed
+
+    - name: Final cleanup of unnumbered links
+      cisco.nd.nd_links:
+        <<: *unnumbered_cleanup

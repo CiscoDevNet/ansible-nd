@@ -129,6 +129,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
 
+    def prepare_config_data(self, raw_config):
+        """Hook for subclasses to backfill or normalize raw user config before the proposed collection is built. Returns the list unchanged by default."""
+        return raw_config
+
     @model_validator(mode="after")
     def validate_bulk_endpoints(self):
         if self.supports_bulk_create and self.create_bulk_endpoint is None:

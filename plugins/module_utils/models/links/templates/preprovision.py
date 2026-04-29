@@ -8,17 +8,15 @@ from typing import Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 
 from .base import (
-    InterfaceBasicsMixin,
     InterfaceDescriptionsMixin,
     LinkTemplateBase,
 )
 
 
 class PreprovisionTemplateInputs(
-    InterfaceBasicsMixin,
     InterfaceDescriptionsMixin,
     LinkTemplateBase,
 ):
-    """Template inputs for policy_type=preprovision (config staged before devices land)."""
+    """Template inputs for policy_type=preprovision. Limited to the four interface description and config fields ND returns for this policy; including others (mtu, speed, fec, interface_admin_state) breaks idempotency because ND drops them on read."""
 
     policy_type_marker: Literal["preprovision"] = Field(default="preprovision", exclude=True)

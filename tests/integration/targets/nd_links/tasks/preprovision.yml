@@ -1,0 +1,294 @@
+# Test code for the cisco.nd.nd_links module.
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Run nd_links preprovision policy lifecycle
+  module_defaults:
+    cisco.nd.nd_links:
+      output_level: '{{ nd_output_level | default("debug") }}'
+      fabric_name: '{{ test_fabric_preprovision }}'
+      link_scope: manage
+  block:
+    - name: Ensure preprovision links do not exist before tests
+      cisco.nd.nd_links: &preprovision_cleanup
+        config:
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/32
+            dst_interface_name: Ethernet1/32
+        state: deleted
+
+    - name: Create three preprovision links (merged - check mode)
+      cisco.nd.nd_links: &preprovision_create
+        config:
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: preprovision
+              template_inputs:
+                src_interface_description: ansible preprovision 30 source
+                dst_interface_description: ansible preprovision 30 destination
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+            config_data:
+              policy_type: preprovision
+              template_inputs:
+                src_interface_description: ansible preprovision 31 source
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/32
+            dst_interface_name: Ethernet1/32
+            config_data:
+              policy_type: preprovision
+              template_inputs:
+                src_interface_description: ansible preprovision 32 source
+        state: merged
+      check_mode: true
+      register: cm_preprovision_create
+
+    - name: Create three preprovision links (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *preprovision_create
+      register: nm_preprovision_create
+
+    - name: Create three preprovision links again (idempotency)
+      cisco.nd.nd_links:
+        <<: *preprovision_create
+      register: nm_preprovision_create_again
+
+    - name: Asserts for preprovision create
+      ansible.builtin.assert:
+        that:
+          - cm_preprovision_create is changed
+          - cm_preprovision_create.proposed | length == 3
+          - cm_preprovision_create.proposed.0.config_data.policy_type == "preprovision"
+
+          - nm_preprovision_create is changed
+          - (nm_preprovision_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "preprovision"
+          - (nm_preprovision_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.src_interface_description == "ansible preprovision 30 source"
+
+          - nm_preprovision_create_again is not changed
+
+    - name: Update preprovision link Eth1/30 (merged - check mode)
+      cisco.nd.nd_links: &preprovision_update
+        config:
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: preprovision
+              template_inputs:
+                src_interface_description: updated preprovision source
+                dst_interface_description: updated preprovision destination
+        state: merged
+      check_mode: true
+      register: cm_preprovision_update
+
+    - name: Update preprovision link Eth1/30 (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *preprovision_update
+      register: nm_preprovision_update
+
+    - name: Update preprovision link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *preprovision_update
+      register: nm_preprovision_update_again
+
+    - name: Asserts for preprovision update
+      ansible.builtin.assert:
+        that:
+          - cm_preprovision_update is changed
+          - cm_preprovision_update.proposed.0.config_data.template_inputs.src_interface_description == "updated preprovision source"
+
+          - nm_preprovision_update is changed
+          - (nm_preprovision_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.src_interface_description == "updated preprovision source"
+
+          - nm_preprovision_update_again is not changed
+
+    - name: Replace preprovision link Eth1/30 (replaced - check mode)
+      cisco.nd.nd_links: &preprovision_replace
+        config:
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: preprovision
+              template_inputs:
+                src_interface_description: replaced preprovision source
+        state: replaced
+      check_mode: true
+      register: cm_preprovision_replace
+
+    - name: Replace preprovision link Eth1/30 (replaced - normal mode)
+      cisco.nd.nd_links:
+        <<: *preprovision_replace
+      register: nm_preprovision_replace
+
+    - name: Replace preprovision link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *preprovision_replace
+      register: nm_preprovision_replace_again
+
+    - name: Asserts for preprovision replace
+      ansible.builtin.assert:
+        that:
+          - cm_preprovision_replace is changed
+          - nm_preprovision_replace is changed
+          - (nm_preprovision_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 1
+          - (nm_preprovision_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 1
+          - nm_preprovision_replace_again is not changed
+
+    - name: Override down to a single preprovision link (overridden - check mode)
+      cisco.nd.nd_links: &preprovision_override
+        config:
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: preprovision
+              template_inputs:
+                src_interface_description: override preprovision source
+        state: overridden
+      check_mode: true
+      register: cm_preprovision_override
+
+    - name: Override down to a single preprovision link (overridden - normal mode)
+      cisco.nd.nd_links:
+        <<: *preprovision_override
+      register: nm_preprovision_override
+
+    - name: Override down to a single preprovision link again (idempotency)
+      cisco.nd.nd_links:
+        <<: *preprovision_override
+      register: nm_preprovision_override_again
+
+    - name: Asserts for preprovision override
+      ansible.builtin.assert:
+        that:
+          - cm_preprovision_override is changed
+          - nm_preprovision_override is changed
+          - (nm_preprovision_override.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | list) | length == 1
+          - (nm_preprovision_override.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 0
+          - (nm_preprovision_override.after | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 0
+          - nm_preprovision_override_again is not changed
+
+    - name: Re-create Eth1/31 and Eth1/32 for delete coverage
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+            config_data:
+              policy_type: preprovision
+              template_inputs:
+                src_interface_description: ansible preprovision 31 source
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/32
+            dst_interface_name: Ethernet1/32
+            config_data:
+              policy_type: preprovision
+              template_inputs:
+                src_interface_description: ansible preprovision 32 source
+        state: merged
+
+    - name: Delete preprovision link Eth1/30 (deleted - check mode)
+      cisco.nd.nd_links: &preprovision_delete_one
+        config:
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+        state: deleted
+      check_mode: true
+      register: cm_preprovision_delete
+
+    - name: Delete preprovision link Eth1/30 (deleted - normal mode)
+      cisco.nd.nd_links:
+        <<: *preprovision_delete_one
+      register: nm_preprovision_delete
+
+    - name: Delete preprovision link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *preprovision_delete_one
+      register: nm_preprovision_delete_again
+
+    - name: Bulk delete remaining preprovision links
+      cisco.nd.nd_links: &preprovision_bulk_delete
+        config:
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+          - src_fabric_name: '{{ test_fabric_preprovision }}'
+            dst_fabric_name: '{{ test_fabric_preprovision }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/32
+            dst_interface_name: Ethernet1/32
+        state: deleted
+      register: nm_preprovision_bulk_delete
+
+    - name: Bulk delete remaining preprovision links again (idempotency)
+      cisco.nd.nd_links:
+        <<: *preprovision_bulk_delete
+      register: nm_preprovision_bulk_delete_again
+
+    - name: Asserts for preprovision delete
+      ansible.builtin.assert:
+        that:
+          - cm_preprovision_delete is changed
+          - nm_preprovision_delete is changed
+          - (nm_preprovision_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | list) | length == 0
+          - nm_preprovision_delete_again is not changed
+
+          - nm_preprovision_bulk_delete is changed
+          - (nm_preprovision_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 0
+          - (nm_preprovision_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/32') | list) | length == 0
+          - nm_preprovision_bulk_delete_again is not changed
+
+    - name: Final cleanup of preprovision links
+      cisco.nd.nd_links:
+        <<: *preprovision_cleanup

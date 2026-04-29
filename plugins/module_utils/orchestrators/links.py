@@ -3,6 +3,7 @@
 
 from __future__ import absolute_import, division, print_function
 
+import logging
 from typing import ClassVar, Dict, List, Optional, Type
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import model_validator
@@ -11,6 +12,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.links.links import
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_link import BaseLinkStrategy
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+from ansible_collections.cisco.nd.plugins.module_utils.utils import FabricSwitchIndex
 
 
 class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
@@ -52,54 +54,101 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
             raise ValueError("NDLinkOrchestrator requires a strategy instance")
         object.__setattr__(self, "_link_id_map", {})
         object.__setattr__(self, "_existing_by_key", {})
-        object.__setattr__(self, "_switch_id_by_fabric", {})
+        object.__setattr__(self, "_switch_index_by_fabric", {})
+        object.__setattr__(self, "_log", logging.getLogger("nd.LinkOrchestrator"))
 
-    def _fetch_switches_for_fabric(self, fabric_name: str) -> Dict[str, str]:
-        """Return ``{switch_name: switch_id}`` for a fabric via GET /manage/fabrics/.../switches."""
-        path = "/api/v1/manage/fabrics/{0}/switches".format(fabric_name)
-        try:
-            response = self.sender.query_obj(path)
-        except Exception:
-            return {}
+    def _index_for_fabric(self, fabric_name: str) -> FabricSwitchIndex:
+        if fabric_name not in self._switch_index_by_fabric:
+            self._switch_index_by_fabric[fabric_name] = FabricSwitchIndex.from_fabric(self.sender, fabric_name, self._log)
+        return self._switch_index_by_fabric[fabric_name]
 
-        if isinstance(response, dict):
-            items = response.get("switches", response.get("items", []))
-        elif isinstance(response, list):
-            items = response
-        else:
-            items = []
-
-        result: Dict[str, str] = {}
-        for sw in items:
-            if not isinstance(sw, dict):
+    def prepare_config_data(self, raw_config):
+        """Backfill switch_name and switch_id on each entry. Identity uses switch_name, so callers who only supplied IP or serial need it populated before the proposed collection is built."""
+        if not isinstance(raw_config, list):
+            return raw_config
+        for entry in raw_config:
+            if not isinstance(entry, dict):
                 continue
-            name = sw.get("hostname") or sw.get("switchName") or sw.get("name")
-            sid = sw.get("switchId") or sw.get("serialNumber") or sw.get("id")
-            if name and sid:
-                result[name] = sid
-        return result
+            self._backfill_switch_for_side(entry, "src")
+            self._backfill_switch_for_side(entry, "dst")
+        return raw_config
+
+    def _backfill_switch_for_side(self, entry, side: str) -> None:
+        """Priority switch_id > switch_ip > switch_name. Higher priority overwrites lower with the canonical hostname from the index."""
+        name_key = "{0}_switch_name".format(side)
+        ip_key = "{0}_switch_ip".format(side)
+        id_key = "{0}_switch_id".format(side)
+        fabric_key = "{0}_fabric_name".format(side)
+
+        sid = entry.get(id_key)
+        ip = entry.get(ip_key)
+        name = entry.get(name_key)
+
+        if not (sid or ip or name):
+            return
+
+        fabric = entry.get(fabric_key)
+        if not fabric:
+            return
+
+        index = self._index_for_fabric(fabric)
+
+        if sid:
+            info = index.by_id.get(sid)
+            if not info:
+                raise Exception(
+                    "Could not find switch with {0}_switch_id='{1}' in fabric '{2}'.".format(side, sid, fabric)
+                )
+            if info.get("name"):
+                entry[name_key] = info["name"]
+            return
+
+        if ip:
+            resolved = index.by_ip.get(ip)
+            if not resolved:
+                raise Exception(
+                    "Could not resolve {0}_switch_ip='{1}' in fabric '{2}'. "
+                    "No switch with that management IP was found.".format(side, ip, fabric)
+                )
+            entry[id_key] = resolved
+            info = index.by_id.get(resolved)
+            if info and info.get("name"):
+                entry[name_key] = info["name"]
+            return
+
+        matches = index.by_name.get(name, [])
+        if len(matches) == 1:
+            entry[id_key] = matches[0]
+            return
+        if len(matches) > 1:
+            raise Exception(
+                "{0}_switch_name='{1}' is ambiguous in fabric '{2}' "
+                "(matches {3} switches: {4}). Use {0}_switch_ip or "
+                "{0}_switch_id to disambiguate.".format(side, name, fabric, len(matches), ", ".join(matches))
+            )
+        raise Exception(
+            "Could not resolve {0}_switch_name='{1}' in fabric '{2}'. "
+            "No switch with that hostname was found.".format(side, name, fabric)
+        )
 
     def _resolve_switch_ids(self, model_instances: List[NDLinkModel]) -> None:
-        """Fill missing src/dst switch_id on proposed items (user supplied IDs untouched)."""
-        fabrics_to_lookup = set()
         for item in model_instances:
-            if not item.src_switch_id and item.src_switch_name and item.src_fabric_name:
-                fabrics_to_lookup.add(item.src_fabric_name)
-            if not item.dst_switch_id and item.dst_switch_name and item.dst_fabric_name:
-                fabrics_to_lookup.add(item.dst_fabric_name)
-
-        for fabric_name in fabrics_to_lookup:
-            if fabric_name in self._switch_id_by_fabric:
-                continue
-            self._switch_id_by_fabric[fabric_name] = self._fetch_switches_for_fabric(fabric_name)
-
-        for item in model_instances:
-            if not item.src_switch_id and item.src_switch_name:
-                sid = self._switch_id_by_fabric.get(item.src_fabric_name, {}).get(item.src_switch_name)
+            if not item.src_switch_id and item.src_fabric_name and (item.src_switch_ip or item.src_switch_name):
+                sid = self._index_for_fabric(item.src_fabric_name).resolve(
+                    switch_ip=item.src_switch_ip,
+                    switch_name=item.src_switch_name,
+                    fabric_name=item.src_fabric_name,
+                    side="src",
+                )
                 if sid:
                     item.src_switch_id = sid
-            if not item.dst_switch_id and item.dst_switch_name:
-                sid = self._switch_id_by_fabric.get(item.dst_fabric_name, {}).get(item.dst_switch_name)
+            if not item.dst_switch_id and item.dst_fabric_name and (item.dst_switch_ip or item.dst_switch_name):
+                sid = self._index_for_fabric(item.dst_fabric_name).resolve(
+                    switch_ip=item.dst_switch_ip,
+                    switch_name=item.dst_switch_name,
+                    fabric_name=item.dst_fabric_name,
+                    side="dst",
+                )
                 if sid:
                     item.dst_switch_id = sid
 

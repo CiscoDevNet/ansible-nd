@@ -1,0 +1,228 @@
+# Test code for the cisco.nd.nd_links module.
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Run nd_links ebgpVrfLite policy lifecycle (inter-fabric)
+  module_defaults:
+    cisco.nd.nd_links:
+      output_level: '{{ nd_output_level | default("debug") }}'
+      fabric_name: '{{ test_fabric_vrflite_src }}'
+      link_scope: manage
+  block:
+    - name: Ensure ebgpVrfLite links do not exist before tests
+      cisco.nd.nd_links: &vrflite_cleanup
+        config:
+          - src_fabric_name: '{{ test_fabric_vrflite_src }}'
+            dst_fabric_name: '{{ test_fabric_vrflite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+          - src_fabric_name: '{{ test_fabric_vrflite_src }}'
+            dst_fabric_name: '{{ test_fabric_vrflite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+        state: deleted
+
+    - name: Create two ebgpVrfLite links (merged - check mode)
+      cisco.nd.nd_links: &vrflite_create
+        config:
+          - src_fabric_name: '{{ test_fabric_vrflite_src }}'
+            dst_fabric_name: '{{ test_fabric_vrflite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: ebgpVrfLite
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address_mask: "10.99.30.1/30"
+                dst_ip_address: "10.99.30.2"
+                link_mtu: 9216
+                src_interface_description: ansible vrflite 30 source
+                dst_interface_description: ansible vrflite 30 destination
+          - src_fabric_name: '{{ test_fabric_vrflite_src }}'
+            dst_fabric_name: '{{ test_fabric_vrflite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+            config_data:
+              policy_type: ebgpVrfLite
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address_mask: "10.99.31.1/30"
+                dst_ip_address: "10.99.31.2"
+                link_mtu: 9216
+        state: merged
+      check_mode: true
+      register: cm_vrflite_create
+
+    - name: Create two ebgpVrfLite links (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *vrflite_create
+      register: nm_vrflite_create
+
+    - name: Create two ebgpVrfLite links again (idempotency)
+      cisco.nd.nd_links:
+        <<: *vrflite_create
+      register: nm_vrflite_create_again
+
+    - name: Asserts for ebgpVrfLite create
+      ansible.builtin.assert:
+        that:
+          - cm_vrflite_create is changed
+          - cm_vrflite_create.proposed | length == 2
+          - cm_vrflite_create.proposed.0.config_data.policy_type == "ebgpVrfLite"
+          - cm_vrflite_create.proposed.0.config_data.template_inputs.src_ebgp_asn == "65001"
+
+          - nm_vrflite_create is changed
+          - (nm_vrflite_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "ebgpVrfLite"
+          - (nm_vrflite_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.link_mtu == 9216
+
+          - nm_vrflite_create_again is not changed
+
+    - name: Update ebgpVrfLite link Eth1/30 (merged - check mode)
+      cisco.nd.nd_links: &vrflite_update
+        config:
+          - src_fabric_name: '{{ test_fabric_vrflite_src }}'
+            dst_fabric_name: '{{ test_fabric_vrflite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: ebgpVrfLite
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address_mask: "10.99.30.1/30"
+                dst_ip_address: "10.99.30.2"
+                link_mtu: 1500
+                src_interface_description: updated vrflite source
+        state: merged
+      check_mode: true
+      register: cm_vrflite_update
+
+    - name: Update ebgpVrfLite link Eth1/30 (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *vrflite_update
+      register: nm_vrflite_update
+
+    - name: Update ebgpVrfLite link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *vrflite_update
+      register: nm_vrflite_update_again
+
+    - name: Asserts for ebgpVrfLite update
+      ansible.builtin.assert:
+        that:
+          - cm_vrflite_update is changed
+          - cm_vrflite_update.proposed.0.config_data.template_inputs.link_mtu == 1500
+
+          - nm_vrflite_update is changed
+          - (nm_vrflite_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.link_mtu == 1500
+          - (nm_vrflite_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.src_interface_description == "updated vrflite source"
+
+          - nm_vrflite_update_again is not changed
+
+    - name: Replace ebgpVrfLite link Eth1/30 (replaced - check mode)
+      cisco.nd.nd_links: &vrflite_replace
+        config:
+          - src_fabric_name: '{{ test_fabric_vrflite_src }}'
+            dst_fabric_name: '{{ test_fabric_vrflite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: ebgpVrfLite
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address_mask: "10.99.30.1/30"
+                dst_ip_address: "10.99.30.2"
+                link_mtu: 9216
+        state: replaced
+      check_mode: true
+      register: cm_vrflite_replace
+
+    - name: Replace ebgpVrfLite link Eth1/30 (replaced - normal mode)
+      cisco.nd.nd_links:
+        <<: *vrflite_replace
+      register: nm_vrflite_replace
+
+    - name: Replace ebgpVrfLite link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *vrflite_replace
+      register: nm_vrflite_replace_again
+
+    - name: Asserts for ebgpVrfLite replace
+      ansible.builtin.assert:
+        that:
+          - cm_vrflite_replace is changed
+          - nm_vrflite_replace is changed
+          - (nm_vrflite_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.link_mtu == 9216
+          - (nm_vrflite_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 1
+          - nm_vrflite_replace_again is not changed
+
+    - name: Delete ebgpVrfLite link Eth1/30 (deleted - check mode)
+      cisco.nd.nd_links: &vrflite_delete_one
+        config:
+          - src_fabric_name: '{{ test_fabric_vrflite_src }}'
+            dst_fabric_name: '{{ test_fabric_vrflite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+        state: deleted
+      check_mode: true
+      register: cm_vrflite_delete
+
+    - name: Delete ebgpVrfLite link Eth1/30 (deleted - normal mode)
+      cisco.nd.nd_links:
+        <<: *vrflite_delete_one
+      register: nm_vrflite_delete
+
+    - name: Delete ebgpVrfLite link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *vrflite_delete_one
+      register: nm_vrflite_delete_again
+
+    - name: Bulk delete remaining ebgpVrfLite link
+      cisco.nd.nd_links: &vrflite_bulk_delete
+        config:
+          - src_fabric_name: '{{ test_fabric_vrflite_src }}'
+            dst_fabric_name: '{{ test_fabric_vrflite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+        state: deleted
+      register: nm_vrflite_bulk_delete
+
+    - name: Bulk delete remaining ebgpVrfLite link again (idempotency)
+      cisco.nd.nd_links:
+        <<: *vrflite_bulk_delete
+      register: nm_vrflite_bulk_delete_again
+
+    - name: Asserts for ebgpVrfLite delete
+      ansible.builtin.assert:
+        that:
+          - cm_vrflite_delete is changed
+          - nm_vrflite_delete is changed
+          - (nm_vrflite_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | list) | length == 0
+          - nm_vrflite_delete_again is not changed
+
+          - nm_vrflite_bulk_delete is changed
+          - (nm_vrflite_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 0
+          - nm_vrflite_bulk_delete_again is not changed
+
+    - name: Final cleanup of ebgpVrfLite links
+      cisco.nd.nd_links:
+        <<: *vrflite_cleanup

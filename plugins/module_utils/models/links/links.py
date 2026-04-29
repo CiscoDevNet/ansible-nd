@@ -92,11 +92,15 @@ class NDLinkModel(NDBaseModel):
         "link_type",
         "src_switch_id",
         "dst_switch_id",
+        "src_switch_ip",
+        "dst_switch_ip",
     }
 
     payload_exclude_fields: ClassVar[set] = {
         "link_id",
         "link_type",
+        "src_switch_ip",
+        "dst_switch_ip",
     }
 
     src_cluster_name: Optional[str] = Field(default=None, alias="srcClusterName")
@@ -112,6 +116,8 @@ class NDLinkModel(NDBaseModel):
     link_id: Optional[str] = Field(default=None, alias="linkId")
     src_switch_id: Optional[str] = Field(default=None, alias="srcSwitchId")
     dst_switch_id: Optional[str] = Field(default=None, alias="dstSwitchId")
+    src_switch_ip: Optional[str] = Field(default=None, alias="srcSwitchIp")
+    dst_switch_ip: Optional[str] = Field(default=None, alias="dstSwitchIp")
 
     config_data: Optional[LinkConfigDataModel] = Field(default=None, alias="configData")
 
@@ -205,6 +211,8 @@ class NDLinkModel(NDBaseModel):
                     dst_interface_name=dict(type="str"),
                     src_switch_id=dict(type="str"),
                     dst_switch_id=dict(type="str"),
+                    src_switch_ip=dict(type="str"),
+                    dst_switch_ip=dict(type="str"),
                     link_type=dict(type="str", default="multi_cluster_planned_link"),
                     config_data=dict(
                         type="dict",
@@ -232,6 +240,10 @@ class NDLinkModel(NDBaseModel):
                         ),
                     ),
                 ),
+                required_one_of=[
+                    ["src_switch_name", "src_switch_ip", "src_switch_id"],
+                    ["dst_switch_name", "dst_switch_ip", "dst_switch_id"],
+                ],
             ),
             state=dict(
                 type="str",

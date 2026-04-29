@@ -7,79 +7,71 @@
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
   when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
 
-- name: Set test variables
+# Test variables. Override any of these via inventory or extra vars at playbook time.
+# The fabric names below are what the tests assume exist in ND. Either create fabrics
+# matching these names in ND 4.2, or override the corresponding nd_test_fabric_* var.
+- name: Set test fabric and switch variables
   ansible.builtin.set_fact:
-    test_fabric: '{{ nd_test_fabric | default("fab1") }}'
     test_switch_a: '{{ nd_test_switch_a | default("n9k-z17-62") }}'
     test_switch_b: '{{ nd_test_switch_b | default("n9k-z17-63") }}'
 
-- name: Run nd_links test suite (manage scope)
-  module_defaults:
-    cisco.nd.nd_links:
-      output_level: '{{ nd_output_level | default("debug") }}'
-      fabric_name: '{{ test_fabric }}'
-      link_scope: manage
-  block:
-    - name: Ensure test links do not exist before test starts
-      cisco.nd.nd_links:
-        config:
-          - src_fabric_name: '{{ test_fabric }}'
-            dst_fabric_name: '{{ test_fabric }}'
-            src_switch_name: '{{ test_switch_a }}'
-            dst_switch_name: '{{ test_switch_b }}'
-            src_interface_name: Ethernet1/30
-            dst_interface_name: Ethernet1/30
-          - src_fabric_name: '{{ test_fabric }}'
-            dst_fabric_name: '{{ test_fabric }}'
-            src_switch_name: '{{ test_switch_a }}'
-            dst_switch_name: '{{ test_switch_b }}'
-            src_interface_name: Ethernet1/31
-            dst_interface_name: Ethernet1/31
-          - src_fabric_name: '{{ test_fabric }}'
-            dst_fabric_name: '{{ test_fabric }}'
-            src_switch_name: '{{ test_switch_a }}'
-            dst_switch_name: '{{ test_switch_b }}'
-            src_interface_name: Ethernet1/32
-            dst_interface_name: Ethernet1/32
-        state: deleted
+    # Optional management IPs. By default per policy tests resolve switches by name.
+    # Set these (and switch each per policy file to src_switch_ip/dst_switch_ip) to
+    # exercise IP based resolution if your lab has duplicate hostnames.
+    test_switch_a_ip: '{{ nd_test_switch_a_ip | default("") }}'
+    test_switch_b_ip: '{{ nd_test_switch_b_ip | default("") }}'
 
-    - name: Test merged state bulk create
-      ansible.builtin.import_tasks: merged_create.yml
+    test_fabric_numbered: '{{ nd_test_fabric_numbered | default(nd_test_fabric | default("ansible-fab-numbered")) }}'
+    test_fabric_unnumbered: '{{ nd_test_fabric_unnumbered | default("ansible-fab-unnumbered") }}'
+    test_fabric_preprovision: '{{ nd_test_fabric_preprovision | default("ansible-fab-preprov") }}'
 
-    - name: Test merged state update existing link
-      ansible.builtin.import_tasks: merged_update.yml
+    test_fabric_l2dci_src: '{{ nd_test_fabric_l2dci_src | default("ansible-fab-l2dci-a") }}'
+    test_fabric_l2dci_dst: '{{ nd_test_fabric_l2dci_dst | default("ansible-fab-l2dci-b") }}'
 
-    - name: Test replaced state
-      ansible.builtin.import_tasks: replaced.yml
+    test_fabric_msite_src: '{{ nd_test_fabric_msite_src | default("ansible-fab-msd-a") }}'
+    test_fabric_msite_dst: '{{ nd_test_fabric_msite_dst | default("ansible-fab-msd-b") }}'
 
-    - name: Test overridden state
-      ansible.builtin.import_tasks: overridden.yml
+    test_fabric_vrflite_src: '{{ nd_test_fabric_vrflite_src | default("ansible-fab-vrflite-a") }}'
+    test_fabric_vrflite_dst: '{{ nd_test_fabric_vrflite_dst | default("ansible-fab-vrflite-b") }}'
 
-    - name: Test deleted state
-      ansible.builtin.import_tasks: deleted.yml
+    # Per policy enable flags. Numbered runs by default (matches existing CI). Flip
+    # any of these to true (via inventory or extra vars) to opt in to that policy's tests.
+    run_numbered: '{{ nd_test_run_numbered | default(true) }}'
+    run_unnumbered: '{{ nd_test_run_unnumbered | default(false) }}'
+    run_preprovision: '{{ nd_test_run_preprovision | default(false) }}'
+    run_layer2_dci: '{{ nd_test_run_layer2_dci | default(false) }}'
+    run_multisite_overlay: '{{ nd_test_run_multisite_overlay | default(false) }}'
+    run_multisite_underlay: '{{ nd_test_run_multisite_underlay | default(false) }}'
+    run_ebgp_vrf_lite: '{{ nd_test_run_ebgp_vrf_lite | default(false) }}'
 
-    - name: Test discriminated union validation
-      ansible.builtin.import_tasks: discriminated_union.yml
+- name: Run nd_links lifecycle for numbered policy
+  ansible.builtin.import_tasks: numbered.yml
+  when: run_numbered | bool
 
-    - name: Ensure test links do not exist after test run
-      cisco.nd.nd_links:
-        config:
-          - src_fabric_name: '{{ test_fabric }}'
-            dst_fabric_name: '{{ test_fabric }}'
-            src_switch_name: '{{ test_switch_a }}'
-            dst_switch_name: '{{ test_switch_b }}'
-            src_interface_name: Ethernet1/30
-            dst_interface_name: Ethernet1/30
-          - src_fabric_name: '{{ test_fabric }}'
-            dst_fabric_name: '{{ test_fabric }}'
-            src_switch_name: '{{ test_switch_a }}'
-            dst_switch_name: '{{ test_switch_b }}'
-            src_interface_name: Ethernet1/31
-            dst_interface_name: Ethernet1/31
-          - src_fabric_name: '{{ test_fabric }}'
-            dst_fabric_name: '{{ test_fabric }}'
-            src_switch_name: '{{ test_switch_a }}'
-            dst_switch_name: '{{ test_switch_b }}'
-            src_interface_name: Ethernet1/32
-            dst_interface_name: Ethernet1/32
-        state: deleted
+- name: Run nd_links lifecycle for unnumbered policy
+  ansible.builtin.import_tasks: unnumbered.yml
+  when: run_unnumbered | bool
+
+- name: Run nd_links lifecycle for preprovision policy
+  ansible.builtin.import_tasks: preprovision.yml
+  when: run_preprovision | bool
+
+- name: Run nd_links lifecycle for layer2Dci policy
+  ansible.builtin.import_tasks: layer2_dci.yml
+  when: run_layer2_dci | bool
+
+- name: Run nd_links lifecycle for multisiteOverlay policy
+  ansible.builtin.import_tasks: multisite_overlay.yml
+  when: run_multisite_overlay | bool
+
+- name: Run nd_links lifecycle for multisiteUnderlay policy
+  ansible.builtin.import_tasks: multisite_underlay.yml
+  when: run_multisite_underlay | bool
+
+- name: Run nd_links lifecycle for ebgpVrfLite policy
+  ansible.builtin.import_tasks: ebgp_vrf_lite.yml
+  when: run_ebgp_vrf_lite | bool
+
+- name: Run nd_links discriminated union (negative) tests
+  ansible.builtin.import_tasks: discriminated_union.yml
+  when: run_numbered | bool
