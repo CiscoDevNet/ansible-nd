@@ -18,7 +18,7 @@ applied consistently across model files (e.g. all `description` fields share the
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Optional  # Optional required here; see AsciiDescription comment below
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import AfterValidator
 
@@ -50,5 +50,9 @@ def ascii_only(value: str | None) -> str | None:
     return value
 
 
-AsciiDescription = Annotated[str | None, AfterValidator(ascii_only)]
+# NOTE: Optional[str] is intentional here. `str | None` is preferred elsewhere in this project, but
+# Annotated[...] is a runtime expression — `from __future__ import annotations` does not protect it.
+# ansible-test's pylint (running without a py-version hint) flags `str | None` in runtime position as
+# `unsupported-binary-operation`. Optional[str] avoids the | operator at runtime without changing semantics.
+AsciiDescription = Annotated[Optional[str], AfterValidator(ascii_only)]
 """ASCII-only `str | None`. Layer with `Field(...)` for `max_length` / `min_length` / aliases as usual."""
