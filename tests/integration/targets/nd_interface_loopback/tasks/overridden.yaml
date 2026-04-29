@@ -1,0 +1,145 @@
+---
+# Overridden state tests for nd_interface_loopback
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point loopback100, loopback101, loopback102 exist from prior tests.
+# Override will reduce the set to only what is specified in config.
+
+# --- OVERRIDDEN: REDUCE TO SINGLE INTERFACE ---
+
+- name: "OVERRIDDEN: Override to only loopback100 (check mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback100
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: "10.100.100.5"
+              description: "Overridden loopback100"
+              policy_type: loopback
+    state: overridden
+  check_mode: true
+  register: cm_overridden_single
+
+- name: "OVERRIDDEN: Override to only loopback100 (normal mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback100
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: "10.100.100.5"
+              description: "Overridden loopback100"
+              policy_type: loopback
+    state: overridden
+  register: nm_overridden_single
+
+- name: "OVERRIDDEN: Verify override removed extra interfaces"
+  ansible.builtin.assert:
+    that:
+      - cm_overridden_single is changed
+      - nm_overridden_single is changed
+      # After should contain only the overridden interface (loopback100).
+      # loopback101 and loopback102 should have been removed.
+      - nm_overridden_single.after | selectattr('interface_name', 'equalto', 'loopback100') | list | length == 1
+      - nm_overridden_single.after | selectattr('interface_name', 'equalto', 'loopback101') | list | length == 0
+      - nm_overridden_single.after | selectattr('interface_name', 'equalto', 'loopback102') | list | length == 0
+
+- name: "OVERRIDDEN: Verify overridden values"
+  vars:
+    lb100_after: "{{ nm_overridden_single.after | selectattr('interface_name', 'equalto', 'loopback100') | first }}"
+  ansible.builtin.assert:
+    that:
+      - lb100_after.config_data.network_os.policy.ip == "10.100.100.5"
+      - lb100_after.config_data.network_os.policy.description == "Overridden loopback100"
+
+# --- OVERRIDDEN: IDEMPOTENCY ---
+
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply same overridden config"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback100
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: "10.100.100.5"
+              description: "Overridden loopback100"
+              policy_type: loopback
+    state: overridden
+  register: nm_overridden_idem
+
+- name: "OVERRIDDEN IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_idem is not changed
+
+# --- OVERRIDDEN: SYSTEM LOOPBACK FILTERING ---
+# Verifies that system-provisioned loopbacks (e.g. Loopback0, Loopback1 with
+# policyType "underlayLoopback") are NOT included in the before collection and
+# therefore are NOT targeted for deletion by the overridden state.
+# If filtering is broken, this test would attempt to remove system loopbacks,
+# which ND silently rejects, and the changed flag would be incorrectly true.
+
+- name: "OVERRIDDEN SYSTEM-FILTER: Override with loopback100 only, verify system loopbacks are unaffected"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback100
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: "10.100.100.5"
+              description: "Overridden loopback100"
+              policy_type: loopback
+    state: overridden
+  register: nm_overridden_system_filter
+
+- name: "OVERRIDDEN SYSTEM-FILTER: Verify idempotent (system loopbacks not in diff)"
+  ansible.builtin.assert:
+    that:
+      # If system loopbacks were leaking into the before collection, the module
+      # would see them as "extra" and report changed. Since we just ran the same
+      # override, this MUST be idempotent.
+      - nm_overridden_system_filter is not changed
+      # Verify no system loopback interfaces appear in the before collection.
+      # System loopbacks use policyType "underlayLoopback" which should be filtered out.
+      - nm_overridden_system_filter.before | selectattr('interface_name', 'equalto', 'loopback0') | list | length == 0
+      - nm_overridden_system_filter.before | selectattr('interface_name', 'equalto', 'loopback1') | list | length == 0
+
+# --- OVERRIDDEN: REPLACE AND ADD IN ONE PASS ---
+
+- name: "OVERRIDDEN SWAP: Override to loopback101 and loopback102, removing loopback100"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_101 }}"
+      - "{{ loopback_102 }}"
+    state: overridden
+  register: nm_overridden_swap
+
+- name: "OVERRIDDEN SWAP: Verify loopback100 removed and loopback101/102 present"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_swap is changed
+      - nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'loopback100') | list | length == 0
+      - nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'loopback101') | list | length == 1
+      - nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'loopback102') | list | length == 1

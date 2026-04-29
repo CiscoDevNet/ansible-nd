@@ -17,6 +17,7 @@ __metaclass__ = type
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
     EpManageFabricsDelete,
+    EpManageFabricsDeploymentFreezeGet,
     EpManageFabricsGet,
     EpManageFabricsListGet,
     EpManageFabricsPost,
@@ -734,3 +735,96 @@ def test_endpoints_api_v1_manage_fabrics_00620():
     with pytest.raises(ValueError):
         instance = EpManageFabricsGet()
         instance.fabric_name = "a" * 65
+
+
+# =============================================================================
+# Test: EpManageFabricsDeploymentFreezeGet
+# =============================================================================
+
+
+def test_endpoints_api_v1_manage_fabrics_00700():
+    """
+    # Summary
+
+    Verify EpManageFabricsDeploymentFreezeGet basic instantiation
+
+    ## Test
+
+    - Instance can be created
+    - class_name is set correctly
+    - verb is GET
+
+    ## Classes and Methods
+
+    - EpManageFabricsDeploymentFreezeGet.__init__()
+    - EpManageFabricsDeploymentFreezeGet.verb
+    - EpManageFabricsDeploymentFreezeGet.class_name
+    """
+    with does_not_raise():
+        instance = EpManageFabricsDeploymentFreezeGet()
+    assert instance.class_name == "EpManageFabricsDeploymentFreezeGet"
+    assert instance.verb == HttpVerbEnum.GET
+
+
+def test_endpoints_api_v1_manage_fabrics_00710():
+    """
+    # Summary
+
+    Verify EpManageFabricsDeploymentFreezeGet path with fabric_name
+
+    ## Test
+
+    - path returns "/api/v1/manage/fabrics/my-fabric/deploymentFreeze" when fabric_name is set
+
+    ## Classes and Methods
+
+    - EpManageFabricsDeploymentFreezeGet.path
+    - EpManageFabricsDeploymentFreezeGet.fabric_name
+    """
+    with does_not_raise():
+        instance = EpManageFabricsDeploymentFreezeGet()
+        instance.fabric_name = "my-fabric"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/my-fabric/deploymentFreeze"
+
+
+def test_endpoints_api_v1_manage_fabrics_00720():
+    """
+    # Summary
+
+    Verify EpManageFabricsDeploymentFreezeGet path without fabric_name raises ValueError
+
+    ## Test
+
+    - Accessing path without setting fabric_name raises ValueError
+
+    ## Classes and Methods
+
+    - EpManageFabricsDeploymentFreezeGet.path
+    """
+    with pytest.raises(ValueError):
+        instance = EpManageFabricsDeploymentFreezeGet()
+        result = instance.path  # noqa: F841
+
+
+def test_endpoints_api_v1_manage_fabrics_00730():
+    """
+    # Summary
+
+    Verify EpManageFabricsDeploymentFreezeGet path with fabric_name and cluster_name query param
+
+    ## Test
+
+    - path includes clusterName query parameter when set
+
+    ## Classes and Methods
+
+    - EpManageFabricsDeploymentFreezeGet.path
+    - EpManageFabricsDeploymentFreezeGet.endpoint_params
+    """
+    with does_not_raise():
+        instance = EpManageFabricsDeploymentFreezeGet()
+        instance.fabric_name = "my-fabric"
+        instance.endpoint_params.cluster_name = "cluster1"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/my-fabric/deploymentFreeze?clusterName=cluster1"

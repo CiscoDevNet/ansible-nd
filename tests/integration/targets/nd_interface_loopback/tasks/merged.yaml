@@ -1,0 +1,191 @@
+---
+# Merged state tests for nd_interface_loopback
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- CLEANUP ---
+
+- name: "SETUP: Remove test loopback interfaces before merged tests"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback100
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback101
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback102
+    state: deleted
+  tags: always
+
+# --- MERGED CREATE ---
+
+- name: "MERGED CREATE: Create loopback100 with full config (check mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_100 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_100
+
+- name: "MERGED CREATE: Create loopback100 with full config (normal mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_100 }}"
+    state: merged
+  register: nm_merged_create_100
+
+- name: "MERGED CREATE: Verify loopback100 creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_100 is changed
+      - nm_merged_create_100 is changed
+      - nm_merged_create_100.after | length >= 1
+      - nm_merged_create_100.after | selectattr('interface_name', 'equalto', 'loopback100') | list | length == 1
+
+- name: "MERGED CREATE: Create multiple loopbacks in a single task (check mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_101 }}"
+      - "{{ loopback_102 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_multi
+
+- name: "MERGED CREATE: Create multiple loopbacks in a single task (normal mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_101 }}"
+      - "{{ loopback_102 }}"
+    state: merged
+  register: nm_merged_create_multi
+
+- name: "MERGED CREATE: Verify multiple loopback creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_multi is changed
+      - nm_merged_create_multi is changed
+      - nm_merged_create_multi.after | selectattr('interface_name', 'equalto', 'loopback101') | list | length == 1
+      - nm_merged_create_multi.after | selectattr('interface_name', 'equalto', 'loopback102') | list | length == 1
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Re-apply loopback100 creation (check mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_100 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_idem_100
+
+- name: "MERGED IDEMPOTENT: Re-apply loopback100 creation (normal mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_100 }}"
+    state: merged
+  register: nm_merged_idem_100
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_100 is not changed
+      - nm_merged_idem_100 is not changed
+
+# --- MERGED UPDATE ---
+
+- name: "MERGED UPDATE: Update loopback100 IP and description (check mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_100_updated }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_update_100
+
+- name: "MERGED UPDATE: Update loopback100 IP and description (normal mode)"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_100_updated }}"
+    state: merged
+  register: nm_merged_update_100
+
+- name: "MERGED UPDATE: Verify loopback100 was updated"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update_100 is changed
+      - nm_merged_update_100 is changed
+
+- name: "MERGED UPDATE: Verify updated values in after state"
+  vars:
+    lb100_after: "{{ nm_merged_update_100.after | selectattr('interface_name', 'equalto', 'loopback100') | first }}"
+  ansible.builtin.assert:
+    that:
+      - lb100_after.config_data.network_os.policy.ip == "10.100.100.2"
+      - lb100_after.config_data.network_os.policy.description == "Updated loopback100 description"
+      - lb100_after.config_data.network_os.policy.route_map_tag == "54321"
+
+- name: "MERGED UPDATE: Re-apply update for idempotency"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ loopback_100_updated }}"
+    state: merged
+  register: nm_merged_update_100_idem
+
+- name: "MERGED UPDATE: Verify idempotency after update"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_100_idem is not changed
+
+# --- MERGED WITH deploy: false ---
+
+- name: "MERGED NO-DEPLOY: Create with deploy disabled"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback103
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: "10.100.103.1"
+              description: "No-deploy test loopback103"
+              policy_type: loopback
+    deploy: false
+    state: merged
+  register: nm_merged_no_deploy
+
+- name: "MERGED NO-DEPLOY: Verify change was staged"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_no_deploy is changed
+
+# Clean up the no-deploy test interface
+- name: "CLEANUP: Remove loopback103"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback103
+    state: deleted
