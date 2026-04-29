@@ -1,0 +1,329 @@
+---
+# Merged state tests for nd_interface_svi
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- CLEANUP ---
+
+- name: "SETUP: Remove test SVIs before merged tests"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids: "{{ cleanup_vlan_ids }}"
+    state: deleted
+  register: setup_cleanup
+  tags: always
+
+- name: "DEBUG: Show cleanup result"
+  ansible.builtin.debug:
+    var: setup_cleanup
+  tags: always
+
+# --- MERGED CREATE: SINGLE SVI ---
+
+- name: "MERGED CREATE: Create vlan333 with full config (check mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_333 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_333
+
+- name: "MERGED CREATE: Create vlan333 with full config (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_333 }}"
+    state: merged
+  register: nm_merged_create_333
+
+- name: "DEBUG: Show merged create result"
+  ansible.builtin.debug:
+    var: nm_merged_create_333
+
+- name: "MERGED CREATE: Verify vlan333 creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_333 is changed
+      - nm_merged_create_333 is changed
+      - nm_merged_create_333.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan333') | list | length == 1
+
+# --- MERGED CREATE: FAN-OUT (MULTIPLE VLANs, SINGLE CONFIG) ---
+
+- name: "MERGED CREATE: Create vlan334 and vlan335 via fan-out (check mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_334_335 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_fanout
+
+- name: "MERGED CREATE: Create vlan334 and vlan335 via fan-out (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_334_335 }}"
+    state: merged
+  register: nm_merged_create_fanout
+
+- name: "MERGED CREATE: Verify fan-out creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_fanout is changed
+      - nm_merged_create_fanout is changed
+      - nm_merged_create_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan334') | list | length == 1
+      - nm_merged_create_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan335') | list | length == 1
+
+# --- MERGED CREATE: SEPARATE CONFIG GROUP ---
+
+- name: "MERGED CREATE: Create vlan336 as a separate config group (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_336 }}"
+    state: merged
+  register: nm_merged_create_336
+
+- name: "MERGED CREATE: Verify vlan336 creation"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_create_336 is changed
+      - nm_merged_create_336.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan336') | list | length == 1
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Re-apply vlan333 creation (check mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_333 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_idem_333
+
+- name: "MERGED IDEMPOTENT: Re-apply vlan333 creation (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_333 }}"
+    state: merged
+  register: nm_merged_idem_333
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_333 is not changed
+      - nm_merged_idem_333 is not changed
+
+- name: "MERGED IDEMPOTENT: Re-apply fan-out config for vlan334 and vlan335"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_334_335 }}"
+    state: merged
+  register: nm_merged_idem_fanout
+
+- name: "MERGED IDEMPOTENT: Verify fan-out idempotency"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_idem_fanout is not changed
+
+# --- MERGED UPDATE ---
+
+- name: "MERGED UPDATE: Update vlan333 description and other fields (check mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_333_updated }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_update_333
+
+- name: "MERGED UPDATE: Update vlan333 description and other fields (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_333_updated }}"
+    state: merged
+  register: nm_merged_update_333
+
+- name: "MERGED UPDATE: Verify vlan333 was updated"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update_333 is changed
+      - nm_merged_update_333 is changed
+
+- name: "MERGED UPDATE: Verify updated values in after state"
+  vars:
+    vlan333_after: "{{ nm_merged_update_333.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan333') | first }}"
+  ansible.builtin.assert:
+    that:
+      - vlan333_after.config_data.network_os.policy.description == "Updated vlan333 description"
+      - vlan333_after.config_data.network_os.policy.ip == "10.99.99.2"
+      - vlan333_after.config_data.network_os.policy.ip_redirects == false
+      - vlan333_after.config_data.network_os.policy.pim_sparse == true
+      - vlan333_after.config_data.network_os.policy.pim_dr_priority == 50
+      - vlan333_after.config_data.network_os.policy.advertise_subnet_in_underlay == true
+
+- name: "MERGED UPDATE: Re-apply update for idempotency"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_333_updated }}"
+    state: merged
+  register: nm_merged_update_333_idem
+
+- name: "MERGED UPDATE: Verify idempotency after update"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_333_idem is not changed
+
+# --- MERGED UPDATE: FAN-OUT UPDATE ---
+
+- name: "MERGED UPDATE: Update vlan334 and vlan335 via fan-out"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_334_335_updated }}"
+    state: merged
+  register: nm_merged_update_fanout
+
+- name: "MERGED UPDATE: Verify fan-out update"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_fanout is changed
+
+- name: "MERGED UPDATE: Verify fan-out updated values"
+  vars:
+    vlan334_after: "{{ nm_merged_update_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan334') | first }}"
+    vlan335_after: "{{ nm_merged_update_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan335') | first }}"
+  ansible.builtin.assert:
+    that:
+      - vlan334_after.config_data.network_os.policy.description == "Updated fan-out description"
+      - vlan334_after.config_data.network_os.policy.admin_state == false
+      - vlan334_after.config_data.network_os.policy.ip == "10.99.100.2"
+      - vlan335_after.config_data.network_os.policy.description == "Updated fan-out description"
+      - vlan335_after.config_data.network_os.policy.admin_state == false
+      - vlan335_after.config_data.network_os.policy.ip == "10.99.100.2"
+
+# --- MERGED: ASCII VALIDATION (CLIENT-SIDE) ---
+
+- name: "MERGED ASCII: Reject non-ASCII description (em-dash)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 333
+        config_data:
+          network_os:
+            policy:
+              description: "non-ascii em — dash"
+    state: merged
+  register: nm_merged_ascii_fail
+  ignore_errors: true
+
+- name: "MERGED ASCII: Verify the module rejected non-ASCII before any API call"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_ascii_fail.failed
+      - "'description must contain only ASCII' in nm_merged_ascii_fail.msg"
+
+# --- MERGED WITH deploy: false ---
+
+- name: "MERGED NO-DEPLOY: Create vlan337 with deploy disabled"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 337
+        config_data:
+          network_os:
+            policy:
+              policy_type: svi
+              admin_state: true
+              description: "No-deploy test vlan337"
+              ip: 10.99.103.1
+              prefix: 24
+    deploy: false
+    state: merged
+  register: nm_merged_no_deploy
+
+- name: "MERGED NO-DEPLOY: Verify change was staged"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_no_deploy is changed
+
+# Clean up the no-deploy test interface for downstream tests
+- name: "CLEANUP: Remove vlan337"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 337
+    state: deleted
+
+# --- MERGED CREATE: LARGE FAN-OUT ---
+
+- name: "MERGED CREATE: Create vlan337 and vlan338 via fan-out (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_337_338 }}"
+    state: merged
+  register: nm_merged_create_large_fanout
+
+- name: "MERGED CREATE: Verify large fan-out creation"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_create_large_fanout is changed
+      - nm_merged_create_large_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan337') | list | length == 1
+      - nm_merged_create_large_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan338') | list | length == 1
+
+- name: "MERGED CREATE: Verify both fan-out interfaces have the same config"
+  vars:
+    vlan337_after: "{{ nm_merged_create_large_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan337') | first }}"
+    vlan338_after: "{{ nm_merged_create_large_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan338') | first }}"
+  ansible.builtin.assert:
+    that:
+      - vlan337_after.config_data.network_os.policy.description == "Fan-out test SVIs"
+      - vlan337_after.config_data.network_os.policy.ip == "10.99.102.1"
+      - vlan338_after.config_data.network_os.policy.description == "Fan-out test SVIs"
+      - vlan338_after.config_data.network_os.policy.ip == "10.99.102.1"
+
+- name: "MERGED IDEMPOTENT: Re-apply large fan-out"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_337_338 }}"
+    state: merged
+  register: nm_merged_idem_large_fanout
+
+- name: "MERGED IDEMPOTENT: Verify large fan-out idempotency"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_idem_large_fanout is not changed
