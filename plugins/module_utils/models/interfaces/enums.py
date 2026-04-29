@@ -133,3 +133,13 @@ class StormControlActionEnum(str, Enum):
     SHUTDOWN = "shutdown"
     TRAP = "trap"
     DEFAULT = "default"
+
+
+class TrunkHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Policy type for trunk host interfaces.
+    """
+
+    TRUNK_HOST = "trunkHost"

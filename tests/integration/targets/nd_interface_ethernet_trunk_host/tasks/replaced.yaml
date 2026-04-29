@@ -1,0 +1,199 @@
+---
+# Replaced state tests for nd_interface_ethernet_trunk_host
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point Ethernet1/41 (updated), Ethernet1/42-43 (updated),
+# Ethernet1/44, Ethernet1/45-47 exist from merged tests.
+
+# --- REPLACED: FULL REPLACE ---
+
+- name: "REPLACED: Replace Ethernet1/41 config entirely (check mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "500-600"
+              native_vlan: 500
+              description: "Replaced Ethernet1/41"
+              policy_type: trunk_host
+    state: replaced
+  check_mode: true
+  register: cm_replaced_41
+
+- name: "REPLACED: Replace Ethernet1/41 config entirely (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "500-600"
+              native_vlan: 500
+              description: "Replaced Ethernet1/41"
+              policy_type: trunk_host
+    state: replaced
+  register: nm_replaced_41
+
+- name: "REPLACED: Verify Ethernet1/41 was replaced"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_41 is changed
+      - nm_replaced_41 is changed
+
+- name: "REPLACED: Verify replaced values"
+  vars:
+    eth41_after: "{{ nm_replaced_41.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first }}"
+  ansible.builtin.assert:
+    that:
+      - eth41_after.config_data.network_os.policy.allowed_vlans == "500-600"
+      - eth41_after.config_data.network_os.policy.native_vlan == 500
+      - eth41_after.config_data.network_os.policy.description == "Replaced Ethernet1/41"
+
+# --- REPLACED: IDEMPOTENCY ---
+
+- name: "REPLACED IDEMPOTENT: Re-apply same replaced config"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "500-600"
+              native_vlan: 500
+              description: "Replaced Ethernet1/41"
+              policy_type: trunk_host
+    state: replaced
+  register: nm_replaced_41_idem
+
+- name: "REPLACED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_41_idem is not changed
+
+# --- REPLACED: FAN-OUT REPLACE ---
+
+- name: "REPLACED FAN-OUT: Replace Ethernet1/42 and Ethernet1/43 via fan-out (check mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/42
+          - Ethernet1/43
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "600-700"
+              native_vlan: 600
+              description: "Replaced fan-out trunk ports"
+              policy_type: trunk_host
+    state: replaced
+  check_mode: true
+  register: cm_replaced_fanout
+
+- name: "REPLACED FAN-OUT: Replace Ethernet1/42 and Ethernet1/43 via fan-out (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/42
+          - Ethernet1/43
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "600-700"
+              native_vlan: 600
+              description: "Replaced fan-out trunk ports"
+              policy_type: trunk_host
+    state: replaced
+  register: nm_replaced_fanout
+
+- name: "REPLACED FAN-OUT: Verify both interfaces were replaced"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_fanout is changed
+      - nm_replaced_fanout is changed
+
+- name: "REPLACED FAN-OUT: Verify replaced values for both interfaces"
+  vars:
+    eth42_after: "{{ nm_replaced_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/42') | first }}"
+    eth43_after: "{{ nm_replaced_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/43') | first }}"
+  ansible.builtin.assert:
+    that:
+      - eth42_after.config_data.network_os.policy.allowed_vlans == "600-700"
+      - eth42_after.config_data.network_os.policy.native_vlan == 600
+      - eth42_after.config_data.network_os.policy.description == "Replaced fan-out trunk ports"
+      - eth42_after.config_data.network_os.policy.admin_state == true
+      - eth43_after.config_data.network_os.policy.allowed_vlans == "600-700"
+      - eth43_after.config_data.network_os.policy.native_vlan == 600
+      - eth43_after.config_data.network_os.policy.description == "Replaced fan-out trunk ports"
+      - eth43_after.config_data.network_os.policy.admin_state == true
+
+# --- REPLACED: MULTIPLE CONFIG GROUPS ---
+
+- name: "REPLACED MULTI: Replace Ethernet1/41 and Ethernet1/44 from separate config groups"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/41
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "700-800"
+              native_vlan: 700
+              description: "Replaced again Ethernet1/41"
+              policy_type: trunk_host
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/44
+        config_data:
+          network_os:
+            policy:
+              admin_state: false
+              allowed_vlans: "800-900"
+              native_vlan: 800
+              description: "Replaced Ethernet1/44"
+              policy_type: trunk_host
+    state: replaced
+  register: nm_replaced_multi
+
+- name: "REPLACED MULTI: Verify both config groups were replaced"
+  vars:
+    eth41_after: "{{ nm_replaced_multi.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/41') | first }}"
+    eth44_after: "{{ nm_replaced_multi.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/44') | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_multi is changed
+      - eth41_after.config_data.network_os.policy.allowed_vlans == "700-800"
+      - eth41_after.config_data.network_os.policy.description == "Replaced again Ethernet1/41"
+      - eth44_after.config_data.network_os.policy.allowed_vlans == "800-900"
+      - eth44_after.config_data.network_os.policy.admin_state == false
