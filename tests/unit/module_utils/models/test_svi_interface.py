@@ -134,15 +134,31 @@ def test_svi_interface_00100():
     assert instance.ip is None
     assert instance.prefix is None
     assert instance.ipv6 is None
-    assert instance.v6prefix is None
+    assert instance.prefixv6 is None
     assert instance.ip_redirects is None
+    assert instance.vrf_interface is None
+    assert instance.routing_tag is None
     assert instance.pim_sparse is None
     assert instance.pim_dr_priority is None
+    assert instance.hsrp is None
+    assert instance.hsrp_vip is None
+    assert instance.hsrp_vipv6 is None
     assert instance.hsrp_group is None
+    assert instance.hsrp_groupv6 is None
     assert instance.hsrp_version is None
+    assert instance.hsrp_priority is None
     assert instance.preempt is None
+    assert instance.mac is None
+    assert instance.dhcp_server_address1 is None
+    assert instance.dhcp_server_address2 is None
+    assert instance.dhcp_server_address3 is None
+    assert instance.vrf_dhcp1 is None
+    assert instance.vrf_dhcp2 is None
+    assert instance.vrf_dhcp3 is None
     assert instance.advertise_subnet_in_underlay is None
     assert instance.netflow is None
+    assert instance.netflow_monitor is None
+    assert instance.netflow_sampler is None
 
 
 def test_svi_interface_00110():
@@ -367,22 +383,34 @@ def test_svi_interface_00180(stored_value, mode, expected):
 @pytest.mark.parametrize(
     "field,value,should_raise",
     [
-        ("mtu", 576, False),
+        ("mtu", 68, False),
         ("mtu", 9216, False),
-        ("mtu", 575, True),
+        ("mtu", 67, True),
         ("mtu", 9217, True),
         ("prefix", 1, False),
         ("prefix", 31, False),
         ("prefix", 0, True),
         ("prefix", 32, True),
-        ("v6prefix", 1, False),
-        ("v6prefix", 127, False),
-        ("v6prefix", 0, True),
-        ("v6prefix", 128, True),
+        ("prefixv6", 1, False),
+        ("prefixv6", 127, False),
+        ("prefixv6", 0, True),
+        ("prefixv6", 128, True),
         ("pim_dr_priority", 1, False),
         ("pim_dr_priority", 4294967295, False),
         ("pim_dr_priority", 0, True),
         ("pim_dr_priority", 4294967296, True),
+        ("hsrp_group", 0, False),
+        ("hsrp_group", 4095, False),
+        ("hsrp_group", -1, True),
+        ("hsrp_group", 4096, True),
+        ("hsrp_groupv6", 0, False),
+        ("hsrp_groupv6", 4095, False),
+        ("hsrp_groupv6", -1, True),
+        ("hsrp_groupv6", 4096, True),
+        ("hsrp_priority", 0, False),
+        ("hsrp_priority", 255, False),
+        ("hsrp_priority", -1, True),
+        ("hsrp_priority", 256, True),
     ],
     ids=lambda v: str(v) if not isinstance(v, bool) else ("raise" if v else "ok"),
 )
@@ -695,7 +723,7 @@ def test_svi_interface_00810():
 
 
 # =============================================================================
-# Test: SviInterfaceModel — from_response strips hsrpVersion
+# Test: SviInterfaceModel — from_response round-trips hsrpVersion as int
 # =============================================================================
 
 
@@ -703,20 +731,21 @@ def test_svi_interface_00900():
     """
     # Summary
 
-    Verify `from_response` strips `hsrpVersion` (poison field) and preserves `hsrpGroup` (round-trips fine).
+    Verify `from_response` round-trips `hsrpVersion` as integer through `to_payload`.
 
-    ND's GET returns `hsrpVersion: 1` (integer) as a server-side default even when HSRP is unconfigured. Re-emitting
-    that on PUT triggers a generic 500. `hsrpGroup: 1` is benign on round-trip.
+    Lab-verified 2026-04-30: ND accepts `hsrpVersion: 1` (integer) on PUT cleanly even when `hsrp` is not set, so
+    no GET-side stripping is needed. The phase-1 strip workaround has been removed.
 
     ## Test
 
     - Response with hsrpGroup=1 and hsrpVersion=1
-    - Model has hsrp_group=1 and hsrp_version=None
-    - to_payload() includes hsrpGroup but not hsrpVersion
+    - Model has hsrp_group=1 and hsrp_version=1
+    - to_payload() includes both as integers
 
     ## Classes and Methods
 
     - SviInterfaceModel.from_response()
+    - SviInterfaceModel.to_payload()
     """
     response = copy.deepcopy(SAMPLE_API_RESPONSE)
     response["configData"]["networkOS"]["policy"]["hsrpVersion"] = 1
@@ -725,35 +754,48 @@ def test_svi_interface_00900():
     instance = SviInterfaceModel.from_response(response)
     policy = instance.config_data.network_os.policy
     assert policy.hsrp_group == 1
-    assert policy.hsrp_version is None
+    assert policy.hsrp_version == 1
 
     payload = instance.to_payload()
     policy_payload = payload["configData"]["networkOS"]["policy"]
     assert policy_payload["hsrpGroup"] == 1
-    assert "hsrpVersion" not in policy_payload
+    assert policy_payload["hsrpVersion"] == 1
 
 
-def test_svi_interface_00910():
+@pytest.mark.parametrize(
+    "value,should_raise",
+    [
+        (1, False),
+        (2, False),
+        (0, True),
+        (3, True),
+        ("1", True),  # API requires int, string-form must be rejected client-side
+    ],
+    ids=["v1_ok", "v2_ok", "below_min_rejected", "above_max_rejected", "string_rejected"],
+)
+def test_svi_interface_00910(value, should_raise):
     """
     # Summary
 
-    Verify `from_response` does not mutate the caller's input dict.
+    Verify `hsrp_version` is `Literal[1, 2]`. Strings are rejected to keep the wire format aligned with the OpenAPI
+    schema, which declares `hsrpVersion` as integer.
 
     ## Test
 
-    - Response includes hsrpVersion
-    - After from_response, response still includes hsrpVersion
+    - Integers 1 and 2 accepted
+    - Other integers and string `"1"` rejected by Pydantic
 
     ## Classes and Methods
 
-    - SviInterfaceModel.from_response()
+    - SviPolicyModel.__init__()
     """
-    response = copy.deepcopy(SAMPLE_API_RESPONSE)
-    response["configData"]["networkOS"]["policy"]["hsrpVersion"] = 1
-
-    SviInterfaceModel.from_response(response)
-    # Caller's dict must be untouched
-    assert response["configData"]["networkOS"]["policy"]["hsrpVersion"] == 1
+    if should_raise:
+        with pytest.raises(ValidationError):
+            SviPolicyModel(hsrp_version=value)
+    else:
+        with does_not_raise():
+            instance = SviPolicyModel(hsrp_version=value)
+        assert instance.hsrp_version == value
 
 
 def test_svi_interface_00920():
@@ -787,6 +829,134 @@ def test_svi_interface_00920():
         SviInterfaceModel.from_response(no_policy)
 
 
+def test_svi_interface_00930():
+    """
+    # Summary
+
+    Verify a full HSRP block round-trips through `from_response` -> `to_payload` with all fields preserved.
+
+    Mirrors the lab-verified shape: `hsrp: true` plus `hsrpGroup`, `hsrpVersion` (int), `hsrpVip`, `hsrpPriority`,
+    `preempt`, and `mac` all flow through unchanged.
+
+    ## Test
+
+    - Response includes a full HSRP block
+    - After from_response, every HSRP field is reachable on the model
+    - to_payload re-emits every HSRP field with API names
+
+    ## Classes and Methods
+
+    - SviInterfaceModel.from_response()
+    - SviInterfaceModel.to_payload()
+    """
+    response = copy.deepcopy(SAMPLE_API_RESPONSE)
+    response["configData"]["networkOS"]["policy"].update(
+        {
+            "hsrp": True,
+            "hsrpGroup": 5,
+            "hsrpVersion": 2,
+            "hsrpVip": "10.99.99.254",
+            "hsrpPriority": 110,
+            "preempt": True,
+            "mac": "0000.0c07.ac05",
+        }
+    )
+
+    instance = SviInterfaceModel.from_response(response)
+    policy = instance.config_data.network_os.policy
+    assert policy.hsrp is True
+    assert policy.hsrp_group == 5
+    assert policy.hsrp_version == 2
+    assert policy.hsrp_vip == "10.99.99.254"
+    assert policy.hsrp_priority == 110
+    assert policy.preempt is True
+    assert policy.mac == "0000.0c07.ac05"
+
+    payload_policy = instance.to_payload()["configData"]["networkOS"]["policy"]
+    assert payload_policy["hsrp"] is True
+    assert payload_policy["hsrpGroup"] == 5
+    assert payload_policy["hsrpVersion"] == 2
+    assert payload_policy["hsrpVip"] == "10.99.99.254"
+    assert payload_policy["hsrpPriority"] == 110
+    assert payload_policy["preempt"] is True
+    assert payload_policy["mac"] == "0000.0c07.ac05"
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("12345", "12345"),
+        (12345, "12345"),
+        (0, "0"),
+        (None, None),
+    ],
+    ids=["string_passthrough", "int_coerced", "zero_int_coerced", "none_passthrough"],
+)
+def test_svi_interface_00935(value, expected):
+    """
+    # Summary
+
+    Verify `routing_tag` accepts both strings (Ansible playbook side / POST/PUT request side) and integers (ND
+    GET response side). ND coerces input to int internally and returns int on GET even though OpenAPI declares
+    the field as string; the model normalizes to string for clean round-trips.
+
+    ## Test
+
+    - String values pass through unchanged
+    - Integer values are coerced to their decimal string form
+    - None passes through
+
+    ## Classes and Methods
+
+    - SviPolicyModel.coerce_routing_tag_to_string()
+    """
+    instance = SviPolicyModel(routing_tag=value)
+    assert instance.routing_tag == expected
+
+
+def test_svi_interface_00940():
+    """
+    # Summary
+
+    Verify the DHCP relay fields round-trip through `from_response` -> `to_payload` for all 3 server slots and
+    their corresponding VRF overrides.
+
+    ## Test
+
+    - Response includes dhcpServerAddress1/2/3 and vrfDhcp1/2/3
+    - Model preserves all six fields
+    - to_payload re-emits them with API aliases
+
+    ## Classes and Methods
+
+    - SviInterfaceModel.from_response()
+    - SviInterfaceModel.to_payload()
+    """
+    response = copy.deepcopy(SAMPLE_API_RESPONSE)
+    response["configData"]["networkOS"]["policy"].update(
+        {
+            "dhcpServerAddress1": "10.10.10.10",
+            "vrfDhcp1": "shared",
+            "dhcpServerAddress2": "10.10.10.11",
+            "vrfDhcp2": "default",
+            "dhcpServerAddress3": "10.10.10.12",
+            "vrfDhcp3": "mgmt",
+        }
+    )
+
+    instance = SviInterfaceModel.from_response(response)
+    policy = instance.config_data.network_os.policy
+    assert policy.dhcp_server_address1 == "10.10.10.10"
+    assert policy.vrf_dhcp1 == "shared"
+    assert policy.dhcp_server_address3 == "10.10.10.12"
+
+    payload_policy = instance.to_payload()["configData"]["networkOS"]["policy"]
+    assert payload_policy["dhcpServerAddress1"] == "10.10.10.10"
+    assert payload_policy["vrfDhcp1"] == "shared"
+    assert payload_policy["dhcpServerAddress3"] == "10.10.10.12"
+    assert payload_policy["vrfDhcp3"] == "mgmt"
+
+
 # =============================================================================
 # Test: SviInterfaceModel — round-trip from_response -> to_payload
 # =============================================================================
@@ -797,7 +967,7 @@ def test_svi_interface_01000():
     # Summary
 
     Verify a full GET response round-trips through from_response and to_payload, producing the same shape minus
-    excluded fields and stripped hsrpVersion.
+    excluded fields. All fields present in SAMPLE_API_RESPONSE must round-trip cleanly with their API aliases.
 
     ## Test
 
@@ -812,20 +982,7 @@ def test_svi_interface_01000():
     instance = SviInterfaceModel.from_response(SAMPLE_API_RESPONSE)
     payload = instance.to_payload()
 
-    expected_policy_keys = {
-        "policyType",
-        "adminState",
-        "advertiseSubnetInUnderlay",
-        "description",
-        "hsrpGroup",
-        "ip",
-        "ipRedirects",
-        "netflow",
-        "pimDrPriority",
-        "pimSparse",
-        "preempt",
-        "prefix",
-    }
+    expected_policy_keys = set(SAMPLE_API_RESPONSE["configData"]["networkOS"]["policy"].keys())
     assert set(payload["configData"]["networkOS"]["policy"].keys()) == expected_policy_keys
     assert payload["interfaceName"] == "vlan333"
     assert payload["interfaceType"] == "svi"
@@ -903,19 +1060,37 @@ def test_svi_interface_01100():
         "ip",
         "prefix",
         "ipv6",
-        "v6prefix",
+        "prefixv6",
         "ip_redirects",
+        "vrf_interface",
+        "routing_tag",
         "pim_sparse",
         "pim_dr_priority",
+        "hsrp",
+        "hsrp_vip",
+        "hsrp_vipv6",
         "hsrp_group",
+        "hsrp_groupv6",
         "hsrp_version",
+        "hsrp_priority",
         "preempt",
+        "mac",
+        "dhcp_server_address1",
+        "dhcp_server_address2",
+        "dhcp_server_address3",
+        "vrf_dhcp1",
+        "vrf_dhcp2",
+        "vrf_dhcp3",
         "advertise_subnet_in_underlay",
         "netflow",
+        "netflow_monitor",
+        "netflow_sampler",
     }
     assert set(policy_options.keys()) == expected_policy_fields
     assert policy_options["policy_type"]["choices"] == ["svi"]
     assert policy_options["policy_type"]["default"] == "svi"
+    assert policy_options["hsrp_version"]["type"] == "int"
+    assert policy_options["hsrp_version"]["choices"] == [1, 2]
 
 
 # =============================================================================

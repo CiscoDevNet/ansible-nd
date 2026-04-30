@@ -103,7 +103,7 @@ options:
                   mtu:
                     description:
                     - The MTU setting for the interface.
-                    - Valid range is 576-9216.
+                    - Valid range is 68-9216.
                     type: int
                   ip:
                     description:
@@ -118,7 +118,7 @@ options:
                     description:
                     - The IPv6 address of the SVI.
                     type: str
-                  v6prefix:
+                  prefixv6:
                     description:
                     - The IPv6 netmask length used with O(config[].config_data.network_os.policy.ipv6).
                     - Valid range is 1-127.
@@ -127,6 +127,15 @@ options:
                     description:
                     - Disable both IPv4/IPv6 redirects on the interface.
                     type: bool
+                  vrf_interface:
+                    description:
+                    - The VRF the SVI is bound to.
+                    - Use V(default) for the default VRF.
+                    type: str
+                  routing_tag:
+                    description:
+                    - Routing tag associated with the interface IP address.
+                    type: str
                   pim_sparse:
                     description:
                     - Enable PIM sparse-mode on the interface.
@@ -136,18 +145,75 @@ options:
                     - Priority for PIM DR election on the interface.
                     - Valid range is 1-4294967295.
                     type: int
+                  hsrp:
+                    description:
+                    - Enable HSRP on the interface.
+                    - When V(true), the other C(hsrp_*) and C(preempt)/C(mac) fields take effect.
+                    type: bool
+                  hsrp_vip:
+                    description:
+                    - HSRP IPv4 virtual IP address; must match on active/standby devices.
+                    type: str
+                  hsrp_vipv6:
+                    description:
+                    - HSRP IPv6 virtual IP address; must match on active/standby devices.
+                    type: str
                   hsrp_group:
                     description:
-                    - The HSRP group number for the interface.
+                    - HSRP group number.
+                    - Valid range is 0-4095.
+                    type: int
+                  hsrp_groupv6:
+                    description:
+                    - HSRP IPv6 group number.
+                    - If unset, the IPv4 group number is reused for IPv6.
+                    - Valid range is 0-4095.
                     type: int
                   hsrp_version:
                     description:
-                    - The HSRP version.
-                    type: str
+                    - HSRP protocol version.
+                    type: int
+                    choices: [1, 2]
+                  hsrp_priority:
+                    description:
+                    - HSRP priority value used for active/standby election.
+                    - Valid range is 0-255.
+                    type: int
                   preempt:
                     description:
-                    - Enable HSRP preemption.
+                    - Enable HSRP preemption (overthrow lower-priority active routers).
                     type: bool
+                  mac:
+                    description:
+                    - HSRP virtual MAC address override.
+                    type: str
+                  dhcp_server_address1:
+                    description:
+                    - Primary DHCP relay server IP address.
+                    type: str
+                  dhcp_server_address2:
+                    description:
+                    - Secondary DHCP relay server IP address.
+                    type: str
+                  dhcp_server_address3:
+                    description:
+                    - Tertiary DHCP relay server IP address.
+                    type: str
+                  vrf_dhcp1:
+                    description:
+                    - VRF used to reach DHCP server 1.
+                    - Use V(default) for the default VRF; leave blank to use the interface VRF.
+                    type: str
+                  vrf_dhcp2:
+                    description:
+                    - VRF used to reach DHCP server 2.
+                    - Use V(default) for the default VRF; leave blank to use the interface VRF.
+                    type: str
+                  vrf_dhcp3:
+                    description:
+                    - VRF used to reach DHCP server 3.
+                    - Use V(default) for the default VRF; leave blank to use the interface VRF.
+                    type: str
                   advertise_subnet_in_underlay:
                     description:
                     - Advertise the SVI subnet into the underlay routing protocol.
@@ -156,6 +222,15 @@ options:
                     description:
                     - Whether netflow is enabled on the interface.
                     type: bool
+                  netflow_monitor:
+                    description:
+                    - Layer 3 netflow monitor name.
+                    - Required when O(config[].config_data.network_os.policy.netflow=true).
+                    type: str
+                  netflow_sampler:
+                    description:
+                    - Netflow sampler name (applicable to N7K only).
+                    type: str
   deploy:
     description:
     - Whether to deploy interface changes after mutations are complete.
@@ -183,9 +258,9 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS SVI interfaces only.
-- Phase 1 of this module supports the SVI options that the ND GUI sends on create. OSPF, ISIS, BFD, and underlay
-  routing-protocol options are not yet exposed and will be added in a follow-up release.
+- This module manages NX-OS SVI interfaces with C(policyType: svi) only.
+- Other SVI policy types (e.g. C(policyType: vpcBackupSvi) for fabric/underlay SVIs with OSPF, ISIS, BFD, and
+  replication-mode options) are not yet exposed and will be added as separate variants in a follow-up release.
 """
 
 EXAMPLES = r"""
@@ -256,6 +331,49 @@ EXAMPLES = r"""
               ip: 10.99.99.1
               prefix: 24
     deploy: false
+    state: merged
+
+- name: Create an SVI with HSRP enabled
+  cisco.nd.nd_interface_svi:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        vlan_ids:
+          - 500
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              vrf_interface: tenant_a
+              ip: 10.99.5.1
+              prefix: 24
+              hsrp: true
+              hsrp_group: 5
+              hsrp_version: 2
+              hsrp_vip: 10.99.5.254
+              hsrp_priority: 110
+              preempt: true
+              mac: "0000.0c07.ac05"
+    state: merged
+
+- name: Create an SVI with DHCP relay servers
+  cisco.nd.nd_interface_svi:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        vlan_ids:
+          - 600
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: 10.99.6.1
+              prefix: 24
+              vrf_interface: tenant_b
+              dhcp_server_address1: 10.10.10.10
+              vrf_dhcp1: shared_services
+              dhcp_server_address2: 10.10.10.11
+              vrf_dhcp2: shared_services
     state: merged
 
 """

@@ -114,6 +114,70 @@ svi_337_338:
         ip: 10.99.102.1
         prefix: 24
 
+# --- HSRP / DHCP-relay / VRF / route-tag scenarios (phase 2) ---
+
+svi_500_hsrp:
+  switch_ip: "{{ test_switch_ip }}"
+  vlan_ids:
+    - 500
+  config_data:
+    network_os:
+      policy:
+        policy_type: svi
+        admin_state: true
+        description: "HSRP test vlan500"
+        vrf_interface: default
+        ip: 10.99.150.1
+        prefix: 24
+        routing_tag: "12345"
+        hsrp: true
+        hsrp_group: 5
+        hsrp_version: 2
+        hsrp_vip: 10.99.150.254
+        hsrp_priority: 110
+        preempt: true
+        mac: "0000.0c07.ac05"
+
+svi_500_hsrp_updated:
+  switch_ip: "{{ test_switch_ip }}"
+  vlan_ids:
+    - 500
+  config_data:
+    network_os:
+      policy:
+        policy_type: svi
+        admin_state: true
+        description: "HSRP test vlan500 (updated priority)"
+        vrf_interface: default
+        ip: 10.99.150.1
+        prefix: 24
+        routing_tag: "12345"
+        hsrp: true
+        hsrp_group: 5
+        hsrp_version: 2
+        hsrp_vip: 10.99.150.254
+        hsrp_priority: 200
+        preempt: true
+        mac: "0000.0c07.ac05"
+
+svi_501_dhcp:
+  switch_ip: "{{ test_switch_ip }}"
+  vlan_ids:
+    - 501
+  config_data:
+    network_os:
+      policy:
+        policy_type: svi
+        admin_state: true
+        description: "DHCP relay test vlan501"
+        vrf_interface: default
+        ip: 10.99.151.1
+        prefix: 24
+        dhcp_server_address1: 10.10.10.10
+        vrf_dhcp1: default
+        dhcp_server_address2: 10.10.10.11
+        vrf_dhcp2: default
+
 # --- Cleanup helper: all test VLAN IDs ---
 
 cleanup_vlan_ids:
@@ -123,3 +187,5 @@ cleanup_vlan_ids:
   - 336
   - 337
   - 338
+  - 500
+  - 501

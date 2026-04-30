@@ -1,0 +1,142 @@
+---
+# HSRP / DHCP-relay / VRF / route-tag tests for nd_interface_svi (phase 2 fields)
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- CLEANUP ---
+
+- name: "SETUP: Remove test SVIs before HSRP/DHCP tests"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 500
+          - 501
+    state: deleted
+  register: setup_cleanup_hsrp
+  tags: always
+
+- name: "DEBUG: Show HSRP/DHCP cleanup result"
+  ansible.builtin.debug:
+    var: setup_cleanup_hsrp
+  tags: always
+
+# --- HSRP CREATE ---
+
+- name: "MERGED CREATE: vlan500 with HSRP block (check mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_500_hsrp }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_hsrp
+
+- name: "MERGED CREATE: vlan500 with HSRP block (normal mode)"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_500_hsrp }}"
+    state: merged
+  register: nm_merged_create_hsrp
+
+- name: "DEBUG: HSRP create result"
+  ansible.builtin.debug:
+    var: nm_merged_create_hsrp
+
+- name: "MERGED CREATE: Verify HSRP fields persisted"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_hsrp is changed
+      - nm_merged_create_hsrp is changed
+      - >
+        nm_merged_create_hsrp.after
+          | selectattr('interface_name', 'equalto', 'vlan500')
+          | list | length == 1
+
+# --- HSRP IDEMPOTENCY (re-apply same config) ---
+
+- name: "MERGED IDEMPOTENT: re-apply vlan500 HSRP block"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_500_hsrp }}"
+    state: merged
+  register: nm_merged_idem_hsrp
+
+- name: "MERGED IDEMPOTENT: HSRP re-apply must not report changed"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_idem_hsrp is not changed
+
+# --- HSRP UPDATE (priority bump) ---
+
+- name: "MERGED UPDATE: change HSRP priority on vlan500"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_500_hsrp_updated }}"
+    state: merged
+  register: nm_merged_update_hsrp
+
+- name: "MERGED UPDATE: priority change reports changed"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_hsrp is changed
+
+# --- DHCP RELAY CREATE ---
+
+- name: "MERGED CREATE: vlan501 with DHCP relay block"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_501_dhcp }}"
+    state: merged
+  register: nm_merged_create_dhcp
+
+- name: "MERGED CREATE: DHCP relay create reports changed"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_create_dhcp is changed
+      - >
+        nm_merged_create_dhcp.after
+          | selectattr('interface_name', 'equalto', 'vlan501')
+          | list | length == 1
+
+# --- DHCP RELAY IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: re-apply DHCP relay vlan501"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ svi_501_dhcp }}"
+    state: merged
+  register: nm_merged_idem_dhcp
+
+- name: "MERGED IDEMPOTENT: DHCP re-apply must not report changed"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_idem_dhcp is not changed
+
+# --- CLEANUP ---
+
+- name: "TEARDOWN: Remove HSRP/DHCP test SVIs"
+  cisco.nd.nd_interface_svi:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        vlan_ids:
+          - 500
+          - 501
+    state: deleted
+  tags: always

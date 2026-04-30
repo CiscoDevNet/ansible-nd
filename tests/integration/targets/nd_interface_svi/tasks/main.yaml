@@ -46,5 +46,8 @@
 
     - name: Run nd_interface_svi deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run nd_interface_svi HSRP and DHCP-relay tests
+      ansible.builtin.include_tasks: hsrp_dhcp.yaml
   environment:
     ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
