@@ -95,8 +95,12 @@ class EthernetAccessPolicyModel(NDNestedModel):
     storm_control_action: StormControlActionEnum | None = Field(
         default=None, alias="stormControlAction", description="Storm control action on threshold violation"
     )
-    storm_control_broadcast_level: str | None = Field(
-        default=None, alias="stormControlBroadcastLevel", description="Broadcast storm control level in percentage (0.00-100.00)"
+    storm_control_broadcast_level: float | None = Field(
+        default=None,
+        alias="stormControlBroadcastLevel",
+        ge=0.0,
+        le=100.0,
+        description="Broadcast storm control level in percentage (0.00-100.00)",
     )
     storm_control_broadcast_level_pps: int | None = Field(
         default=None,
@@ -105,8 +109,12 @@ class EthernetAccessPolicyModel(NDNestedModel):
         le=200000000,
         description="Broadcast storm control level in packets per second",
     )
-    storm_control_multicast_level: str | None = Field(
-        default=None, alias="stormControlMulticastLevel", description="Multicast storm control level in percentage (0.00-100.00)"
+    storm_control_multicast_level: float | None = Field(
+        default=None,
+        alias="stormControlMulticastLevel",
+        ge=0.0,
+        le=100.0,
+        description="Multicast storm control level in percentage (0.00-100.00)",
     )
     storm_control_multicast_level_pps: int | None = Field(
         default=None,
@@ -115,8 +123,12 @@ class EthernetAccessPolicyModel(NDNestedModel):
         le=200000000,
         description="Multicast storm control level in packets per second",
     )
-    storm_control_unicast_level: str | None = Field(
-        default=None, alias="stormControlUnicastLevel", description="Unicast storm control level in percentage (0.00-100.00)"
+    storm_control_unicast_level: float | None = Field(
+        default=None,
+        alias="stormControlUnicastLevel",
+        ge=0.0,
+        le=100.0,
+        description="Unicast storm control level in percentage (0.00-100.00)",
     )
     storm_control_unicast_level_pps: int | None = Field(
         default=None,
@@ -314,11 +326,11 @@ class EthernetAccessInterfaceModel(NDBaseModel):
                                             speed=dict(type="str", choices=[e.value for e in SpeedEnum]),
                                             storm_control=dict(type="bool"),
                                             storm_control_action=dict(type="str", choices=[e.value for e in StormControlActionEnum]),
-                                            storm_control_broadcast_level=dict(type="str"),
+                                            storm_control_broadcast_level=dict(type="float"),
                                             storm_control_broadcast_level_pps=dict(type="int"),
-                                            storm_control_multicast_level=dict(type="str"),
+                                            storm_control_multicast_level=dict(type="float"),
                                             storm_control_multicast_level_pps=dict(type="int"),
-                                            storm_control_unicast_level=dict(type="str"),
+                                            storm_control_unicast_level=dict(type="float"),
                                             storm_control_unicast_level_pps=dict(type="int"),
                                         ),
                                     ),
