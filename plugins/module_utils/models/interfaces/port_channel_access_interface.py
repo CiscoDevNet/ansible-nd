@@ -1,0 +1,379 @@
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""
+Port-channel access (accessPoHost) interface Pydantic models for Nexus Dashboard.
+
+This module defines nested Pydantic models that mirror the ND Manage Interfaces API payload
+structure for port-channel accessPoHost interfaces. The playbook config uses the same nesting
+so that `to_payload()` and `from_response()` work via standard Pydantic serialization with no
+custom wrapping or flattening.
+
+The port-channel policy is the single source of truth for member configuration. Member ethernet
+interfaces inherit access-mode settings from the port-channel; users do not pre-configure members.
+
+## Model Hierarchy
+
+- `PortChannelAccessInterfaceModel` (top-level, `NDBaseModel`)
+    - `switch_ip` (composite identifier)
+    - `interface_name` (composite identifier; e.g. `port-channel501`)
+    - `interface_type` (default: "portChannel")
+    - `config_data` -> `PortChannelAccessConfigDataModel`
+        - `mode` (default: "access")
+        - `network_os` -> `PortChannelAccessNetworkOSModel`
+            - `network_os_type` (default: "nx-os")
+            - `policy` -> `PortChannelAccessPolicyModel`
+                - `admin_state`, `access_vlan`, `ports`, `port_channel_mode`,
+                  `lacp_rate`, `bpdu_guard`, `description`, `policy_type`, etc.
+"""
+
+from __future__ import annotations
+
+from typing import ClassVar, Literal
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    Field,
+    FieldSerializationInfo,
+    field_serializer,
+    field_validator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
+    AccessPoHostPolicyTypeEnum,
+    BpduFilterEnum,
+    BpduGuardEnum,
+    DuplexModeEnum,
+    LacpRateEnum,
+    MtuEnum,
+    PortChannelModeEnum,
+    SpeedEnum,
+    StormControlActionEnum,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
+
+
+class PortChannelAccessPolicyModel(NDNestedModel):
+    """
+    # Summary
+
+    Policy fields for a port-channel accessPoHost interface. Maps directly to the `configData.networkOS.policy`
+    object in the ND API.
+
+    The `ports` field carries the list of member interface names (e.g. `Ethernet1/1`). Member interfaces inherit
+    access-mode configuration from this policy; modifying a member's standalone configuration while it is a
+    port-channel member is restricted by the ethernet orchestrators.
+
+    ## Raises
+
+    None
+    """
+
+    admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
+    access_vlan: int | None = Field(default=None, alias="accessVlan", ge=1, le=4094, description="VLAN for this access port-channel")
+    bpdu_filter: BpduFilterEnum | None = Field(default=None, alias="bpduFilter", description="Configure spanning-tree BPDU filter")
+    bpdu_guard: BpduGuardEnum | None = Field(default=None, alias="bpduGuard", description="Enable spanning-tree BPDU guard")
+    cdp: bool | None = Field(default=None, alias="cdp", description="Enable CDP on the interface")
+    copy_description: bool | None = Field(
+        default=None, alias="copyDescription", description="Propagate the port-channel description to all member interfaces"
+    )
+    description: AsciiDescription = Field(default=None, alias="description", max_length=254, description="Interface description")
+    duplex_mode: DuplexModeEnum | None = Field(default=None, alias="duplexMode", description="Port duplex mode")
+    extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
+    lacp_port_priority: int | None = Field(
+        default=None, alias="lacpPortPriority", ge=1, le=65535, description="LACP port priority (1-65535, default 32768)"
+    )
+    lacp_rate: LacpRateEnum | None = Field(default=None, alias="lacpRate", description="LACP rate (normal=30s, fast=1s)")
+    lacp_suspend: bool | None = Field(default=None, alias="lacpSuspend", description="Suspend port if LACP PDUs not received")
+    monitor: bool | None = Field(default=None, alias="monitor", description="Enable switchport monitor for SPAN/ERSPAN")
+    mtu: MtuEnum | None = Field(default=None, alias="mtu", description="Interface MTU")
+    netflow: bool | None = Field(default=None, alias="netflow", description="Enable Netflow on the interface")
+    netflow_monitor: str | None = Field(default=None, alias="netflowMonitor", description="Layer 2 Netflow monitor name")
+    netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
+    policy_type: AccessPoHostPolicyTypeEnum | None = Field(default=None, alias="policyType", description="Interface policy type")
+    port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
+    ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['Ethernet1/1', 'Ethernet1/2'])")
+    qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
+    qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
+    queuing_policy: str | None = Field(default=None, alias="queuingPolicy", description="Custom queuing policy name")
+    speed: SpeedEnum | None = Field(default=None, alias="speed", description="Interface speed")
+    storm_control: bool | None = Field(default=None, alias="stormControl", description="Enable traffic storm control")
+    storm_control_action: StormControlActionEnum | None = Field(
+        default=None, alias="stormControlAction", description="Storm control action on threshold violation"
+    )
+    storm_control_broadcast_level: float | None = Field(
+        default=None,
+        alias="stormControlBroadcastLevel",
+        ge=0.0,
+        le=100.0,
+        description="Broadcast storm control level in percentage (0.00-100.00)",
+    )
+    storm_control_broadcast_level_pps: int | None = Field(
+        default=None,
+        alias="stormControlBroadcastLevelPps",
+        ge=0,
+        le=200000000,
+        description="Broadcast storm control level in packets per second",
+    )
+    storm_control_multicast_level: float | None = Field(
+        default=None,
+        alias="stormControlMulticastLevel",
+        ge=0.0,
+        le=100.0,
+        description="Multicast storm control level in percentage (0.00-100.00)",
+    )
+    storm_control_multicast_level_pps: int | None = Field(
+        default=None,
+        alias="stormControlMulticastLevelPps",
+        ge=0,
+        le=200000000,
+        description="Multicast storm control level in packets per second",
+    )
+    storm_control_unicast_level: float | None = Field(
+        default=None,
+        alias="stormControlUnicastLevel",
+        ge=0.0,
+        le=100.0,
+        description="Unicast storm control level in percentage (0.00-100.00)",
+    )
+    storm_control_unicast_level_pps: int | None = Field(
+        default=None,
+        alias="stormControlUnicastLevelPps",
+        ge=0,
+        le=200000000,
+        description="Unicast storm control level in packets per second",
+    )
+
+    # --- Validators ---
+
+    @field_validator("policy_type", mode="before")
+    @classmethod
+    def normalize_policy_type(cls, value):
+        """
+        # Summary
+
+        Accept `policy_type` in either Ansible (`access_po_host`) or API (`accessPoHost`) format, normalizing to the
+        API value for enum validation.
+
+        ## Raises
+
+        None
+        """
+        if value is None:
+            return value
+        ansible_to_api = {e.name.lower(): e.value for e in AccessPoHostPolicyTypeEnum}
+        return ansible_to_api.get(value, value)
+
+    @field_validator("ports", mode="before")
+    @classmethod
+    def normalize_ports(cls, value):
+        """
+        # Summary
+
+        Normalize each member interface name to ND API convention (e.g. `ethernet1/1` -> `Ethernet1/1`).
+
+        ## Raises
+
+        None
+        """
+        if value is None:
+            return value
+        if not isinstance(value, list):
+            return value
+        normalized = []
+        for name in value:
+            if isinstance(name, str) and name:
+                normalized.append(name[0].upper() + name[1:])
+            else:
+                normalized.append(name)
+        return normalized
+
+    # --- Serializers ---
+
+    @field_serializer("policy_type")
+    def serialize_policy_type(self, value: str | None, info: FieldSerializationInfo) -> str | None:
+        """
+        # Summary
+
+        Serialize `policy_type` to the API's camelCase value in payload mode, or the Ansible-friendly name in config mode.
+
+        With `use_enum_values=True`, the stored value is the enum's `.value` string (e.g. `"accessPoHost"`).
+
+        ## Raises
+
+        None
+        """
+        if value is None:
+            return None
+        mode = (info.context or {}).get("mode", "payload")
+        if mode == "config":
+            reverse = {e.value: e.name.lower() for e in AccessPoHostPolicyTypeEnum}
+            return reverse.get(value, value)
+        return value
+
+
+class PortChannelAccessNetworkOSModel(NDNestedModel):
+    """
+    # Summary
+
+    Network OS container for a port-channel accessPoHost interface. Maps to `configData.networkOS` in the ND API.
+
+    ## Raises
+
+    None
+    """
+
+    network_os_type: str = Field(default="nx-os", alias="networkOSType")
+    policy: PortChannelAccessPolicyModel | None = Field(default=None, alias="policy")
+
+
+class PortChannelAccessConfigDataModel(NDNestedModel):
+    """
+    # Summary
+
+    Config data container for a port-channel accessPoHost interface. Maps to `configData` in the ND API.
+
+    ## Raises
+
+    None
+    """
+
+    mode: str = Field(default="access", alias="mode")
+    network_os: PortChannelAccessNetworkOSModel = Field(alias="networkOS")
+
+
+class PortChannelAccessInterfaceModel(NDBaseModel):
+    """
+    # Summary
+
+    Port-channel accessPoHost interface configuration for Nexus Dashboard.
+
+    Uses a composite identifier (`switch_ip`, `interface_name`). The nested model structure mirrors the ND Manage
+    Interfaces API payload, so `to_payload()` and `from_response()` work via standard Pydantic serialization.
+
+    The `interface_name` is the port-channel's own name (e.g. `port-channel501`), not a member interface. Member
+    interfaces are listed in `config_data.network_os.policy.ports`.
+
+    ## Raises
+
+    None
+    """
+
+    # --- Identifier Configuration ---
+
+    identifiers: ClassVar[list[str] | None] = ["switch_ip", "interface_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
+
+    # --- Serialization Configuration ---
+
+    payload_exclude_fields: ClassVar[set[str]] = {"switch_ip"}
+
+    # --- Fields ---
+
+    switch_ip: str = Field(alias="switchIp")
+    interface_name: str = Field(alias="interfaceName")
+    interface_type: str = Field(default="portChannel", alias="interfaceType")
+    config_data: PortChannelAccessConfigDataModel | None = Field(default=None, alias="configData")
+
+    @field_validator("interface_name", mode="before")
+    @classmethod
+    def normalize_interface_name(cls, value):
+        """
+        # Summary
+
+        Normalize the port-channel interface name to lowercase to match ND API convention (e.g. `Port-Channel501` ->
+        `port-channel501`).
+
+        ## Raises
+
+        None
+        """
+        if isinstance(value, str):
+            return value.lower()
+        return value
+
+    # --- Argument Spec ---
+
+    @classmethod
+    def get_argument_spec(cls) -> dict:
+        """
+        # Summary
+
+        Return the Ansible argument spec for the `nd_interface_port_channel_access` module.
+
+        ## Raises
+
+        None
+        """
+        return dict(
+            fabric_name=dict(type="str", required=True),
+            config=dict(
+                type="list",
+                elements="dict",
+                required=True,
+                options=dict(
+                    switch_ip=dict(type="str", required=True),
+                    interface_name=dict(type="str", required=True),
+                    interface_type=dict(type="str", default="portChannel"),
+                    config_data=dict(
+                        type="dict",
+                        options=dict(
+                            mode=dict(type="str", default="access"),
+                            network_os=dict(
+                                type="dict",
+                                options=dict(
+                                    network_os_type=dict(type="str", default="nx-os"),
+                                    policy=dict(
+                                        type="dict",
+                                        options=dict(
+                                            admin_state=dict(type="bool"),
+                                            access_vlan=dict(type="int"),
+                                            bpdu_filter=dict(type="str", choices=[e.value for e in BpduFilterEnum]),
+                                            bpdu_guard=dict(type="str", choices=[e.value for e in BpduGuardEnum]),
+                                            cdp=dict(type="bool"),
+                                            copy_description=dict(type="bool"),
+                                            description=dict(type="str"),
+                                            duplex_mode=dict(type="str", choices=[e.value for e in DuplexModeEnum]),
+                                            extra_config=dict(type="str"),
+                                            lacp_port_priority=dict(type="int"),
+                                            lacp_rate=dict(type="str", choices=[e.value for e in LacpRateEnum]),
+                                            lacp_suspend=dict(type="bool"),
+                                            monitor=dict(type="bool"),
+                                            mtu=dict(type="str", choices=[e.value for e in MtuEnum]),
+                                            netflow=dict(type="bool"),
+                                            netflow_monitor=dict(type="str"),
+                                            netflow_sampler=dict(type="str"),
+                                            policy_type=dict(
+                                                type="str",
+                                                choices=[e.name.lower() for e in AccessPoHostPolicyTypeEnum],
+                                                default="access_po_host",
+                                            ),
+                                            port_channel_mode=dict(type="str", choices=[e.value for e in PortChannelModeEnum]),
+                                            ports=dict(type="list", elements="str"),
+                                            qos=dict(type="bool"),
+                                            qos_policy=dict(type="str"),
+                                            queuing_policy=dict(type="str"),
+                                            speed=dict(type="str", choices=[e.value for e in SpeedEnum]),
+                                            storm_control=dict(type="bool"),
+                                            storm_control_action=dict(type="str", choices=[e.value for e in StormControlActionEnum]),
+                                            storm_control_broadcast_level=dict(type="float"),
+                                            storm_control_broadcast_level_pps=dict(type="int"),
+                                            storm_control_multicast_level=dict(type="float"),
+                                            storm_control_multicast_level_pps=dict(type="int"),
+                                            storm_control_unicast_level=dict(type="float"),
+                                            storm_control_unicast_level_pps=dict(type="int"),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            state=dict(
+                type="str",
+                default="merged",
+                choices=["merged", "replaced", "overridden", "deleted"],
+            ),
+        )

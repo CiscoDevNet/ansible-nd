@@ -1,0 +1,132 @@
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""
+# Summary
+
+Shared enum definitions for interface models.
+
+These enums are derived from ND config templates (e.g. `int_port_channel_access_host`,
+`int_port_channel_trunk_host`) and constrain policy fields across multiple interface types.
+Each enum's member values match the API's expected strings exactly.
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+
+
+class AccessPoHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Policy type for port-channel access host interfaces.
+    """
+
+    ACCESS_PO_HOST = "accessPoHost"
+
+
+class BpduFilterEnum(str, Enum):
+    """
+    # Summary
+
+    Spanning-tree BPDU filter settings.
+    """
+
+    ENABLE = "enable"
+    DISABLE = "disable"
+    DEFAULT = "default"
+
+
+class BpduGuardEnum(str, Enum):
+    """
+    # Summary
+
+    Spanning-tree BPDU guard settings.
+    """
+
+    ENABLE = "enable"
+    DISABLE = "disable"
+    DEFAULT = "default"
+
+
+class DuplexModeEnum(str, Enum):
+    """
+    # Summary
+
+    Port duplex mode settings.
+    """
+
+    AUTO = "auto"
+    FULL = "full"
+    HALF = "half"
+
+
+class LacpRateEnum(str, Enum):
+    """
+    # Summary
+
+    LACP rate (PDU transmit interval).
+    """
+
+    NORMAL = "normal"
+    FAST = "fast"
+
+
+class MtuEnum(str, Enum):
+    """
+    # Summary
+
+    Interface MTU setting.
+    """
+
+    DEFAULT = "default"
+    JUMBO = "jumbo"
+
+
+class PortChannelModeEnum(str, Enum):
+    """
+    # Summary
+
+    Port-channel mode.
+    """
+
+    ON = "on"
+    ACTIVE = "active"
+    PASSIVE = "passive"
+
+
+class SpeedEnum(str, Enum):
+    """
+    # Summary
+
+    Interface speed setting.
+    """
+
+    AUTO = "auto"
+    TEN_MB = "10Mb"
+    HUNDRED_MB = "100Mb"
+    ONE_GB = "1Gb"
+    TWO_POINT_FIVE_GB = "2.5Gb"
+    FIVE_GB = "5Gb"
+    TEN_GB = "10Gb"
+    TWENTY_FIVE_GB = "25Gb"
+    FORTY_GB = "40Gb"
+    FIFTY_GB = "50Gb"
+    HUNDRED_GB = "100Gb"
+    TWO_HUNDRED_GB = "200Gb"
+    FOUR_HUNDRED_GB = "400Gb"
+    EIGHT_HUNDRED_GB = "800Gb"
+
+
+class StormControlActionEnum(str, Enum):
+    """
+    # Summary
+
+    Storm control action on threshold violation.
+    """
+
+    SHUTDOWN = "shutdown"
+    TRAP = "trap"
+    DEFAULT = "default"

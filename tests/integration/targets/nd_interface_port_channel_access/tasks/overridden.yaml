@@ -1,0 +1,133 @@
+---
+# Overridden state tests for nd_interface_port_channel_access
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point port-channel501 (replaced), port-channel502 (replaced), port-channel503 (replaced) exist.
+# Override will reduce the set to only what is specified in config.
+
+# --- OVERRIDDEN: REDUCE TO SINGLE PORT-CHANNEL ---
+
+- name: "OVERRIDDEN: Override to only port-channel501 (check mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 175
+              ports:
+                - "{{ test_pc_member_a }}"
+              description: "Overridden port-channel501"
+              policy_type: access_po_host
+    state: overridden
+  check_mode: true
+  register: cm_overridden_single
+
+- name: "OVERRIDDEN: Override to only port-channel501 (normal mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 175
+              ports:
+                - "{{ test_pc_member_a }}"
+              description: "Overridden port-channel501"
+              policy_type: access_po_host
+    state: overridden
+  register: nm_overridden_single
+
+- name: "OVERRIDDEN: Verify override removed extra port-channels"
+  vars:
+    pc501_after: "{{ nm_overridden_single.after | selectattr('interface_name', 'equalto', 'port-channel501') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_overridden_single is changed
+      - nm_overridden_single is changed
+      # After should contain only port-channel501. port-channel502 and 503 should have been removed.
+      - nm_overridden_single.after | selectattr('interface_name', 'equalto', 'port-channel501') | list | length == 1
+      - nm_overridden_single.after | selectattr('interface_name', 'equalto', 'port-channel502') | list | length == 0
+      - nm_overridden_single.after | selectattr('interface_name', 'equalto', 'port-channel503') | list | length == 0
+      - pc501_after.config_data.network_os.policy.access_vlan == 175
+      - pc501_after.config_data.network_os.policy.description == "Overridden port-channel501"
+
+# --- OVERRIDDEN: IDEMPOTENCY ---
+
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply same overridden config"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 175
+              ports:
+                - "{{ test_pc_member_a }}"
+              description: "Overridden port-channel501"
+              policy_type: access_po_host
+    state: overridden
+  register: nm_overridden_idem
+
+- name: "OVERRIDDEN IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_idem is not changed
+
+# --- OVERRIDDEN: SWAP ---
+# Restore port-channel502 and port-channel503 to a known baseline by overriding to a new set.
+
+- name: "OVERRIDDEN SWAP: Override to port-channel502 and port-channel503, removing port-channel501"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_502 }}"
+      - "{{ test_pc_503 }}"
+    state: overridden
+  register: nm_overridden_swap
+
+- name: "OVERRIDDEN SWAP: Verify port-channel501 removed and port-channel502/503 present"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_swap is changed
+      - nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'port-channel501') | list | length == 0
+      - nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'port-channel502') | list | length == 1
+      - nm_overridden_swap.after | selectattr('interface_name', 'equalto', 'port-channel503') | list | length == 1
+
+# --- OVERRIDDEN: NON-PORT-CHANNEL FILTERING ---
+# Verifies that overridden state only operates on portChannel interfaces with managed policy types.
+# Standalone ethernet interfaces and other interface types must NOT be touched by this module.
+
+- name: "OVERRIDDEN FILTER: Re-apply prior swap config to confirm idempotency / no leakage"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_502 }}"
+      - "{{ test_pc_503 }}"
+    state: overridden
+  register: nm_overridden_filter
+
+- name: "OVERRIDDEN FILTER: Verify only port-channel interfaces appear in before collection"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_filter is not changed
+      # Before collection must contain only portChannel interfaces; non-PC types would
+      # indicate the orchestrator's interfaceType filter is broken.
+      - nm_overridden_filter.before | rejectattr('interface_type', 'equalto', 'portChannel') | list | length == 0

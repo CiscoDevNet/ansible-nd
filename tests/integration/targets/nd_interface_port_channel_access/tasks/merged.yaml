@@ -1,0 +1,255 @@
+---
+# Merged state tests for nd_interface_port_channel_access
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Test order: single-PC tests first, then multi-PC. The MEMBER ADD test pulls
+# `test_pc_member_c` into port-channel501, so it must run BEFORE PC 502 (which
+# claims member_c) is created — ND rejects adding a port to a PC if it's
+# already a member of another. After MEMBER REMOVE, all members except a are
+# free, so the multi-create that follows succeeds.
+
+# --- CLEANUP ---
+
+- name: "SETUP: Remove test port-channels before merged tests"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel502
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel503
+    state: deleted
+  tags: always
+
+# --- MERGED CREATE: SINGLE PC ---
+
+- name: "MERGED CREATE: Create port-channel501 with two members (check mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_501
+
+- name: "MERGED CREATE: Create port-channel501 with two members (normal mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501 }}"
+    state: merged
+  register: nm_merged_create_501
+
+- name: "MERGED CREATE: Verify port-channel501 creation"
+  vars:
+    pc501_after: "{{ nm_merged_create_501.after | selectattr('interface_name', 'equalto', 'port-channel501') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_501 is changed
+      - nm_merged_create_501 is changed
+      - nm_merged_create_501.after | selectattr('interface_name', 'equalto', 'port-channel501') | list | length == 1
+      - pc501_after.config_data.network_os.policy.access_vlan == 100
+      - pc501_after.config_data.network_os.policy.port_channel_mode == "active"
+      - pc501_after.config_data.network_os.policy.lacp_rate == "fast"
+      - pc501_after.config_data.network_os.policy.ports | length == 2
+      - test_pc_member_a in pc501_after.config_data.network_os.policy.ports
+      - test_pc_member_b in pc501_after.config_data.network_os.policy.ports
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Re-apply port-channel501 creation (check mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_idem_501
+
+- name: "MERGED IDEMPOTENT: Re-apply port-channel501 creation (normal mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501 }}"
+    state: merged
+  register: nm_merged_idem_501
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem_501 is not changed
+      - nm_merged_idem_501 is not changed
+
+# --- MERGED UPDATE: change access_vlan ---
+
+- name: "MERGED UPDATE: Change port-channel501 access_vlan and description (check mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501_updated_vlan }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_update_501
+
+- name: "MERGED UPDATE: Change port-channel501 access_vlan and description (normal mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501_updated_vlan }}"
+    state: merged
+  register: nm_merged_update_501
+
+- name: "MERGED UPDATE: Verify port-channel501 was updated"
+  vars:
+    pc501_after: "{{ nm_merged_update_501.after | selectattr('interface_name', 'equalto', 'port-channel501') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_update_501 is changed
+      - nm_merged_update_501 is changed
+      - pc501_after.config_data.network_os.policy.access_vlan == 150
+      - pc501_after.config_data.network_os.policy.description == "Ansible integration test PC 501 updated"
+
+- name: "MERGED UPDATE: Re-apply update for idempotency"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501_updated_vlan }}"
+    state: merged
+  register: nm_merged_update_501_idem
+
+- name: "MERGED UPDATE: Verify idempotency after update"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_update_501_idem is not changed
+
+# --- MERGED MEMBERSHIP: add a third member ---
+# Must run BEFORE PC 502/503 are created, so the third member (member_c) is free.
+
+- name: "SETUP: Reset port-channel501 to baseline before membership tests"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501 }}"
+    state: merged
+
+- name: "MERGED MEMBER ADD: Add a third member to port-channel501 (normal mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501_added_member }}"
+    state: merged
+  register: nm_merged_add_member
+
+- name: "MERGED MEMBER ADD: Verify member was added"
+  vars:
+    pc501_after: "{{ nm_merged_add_member.after | selectattr('interface_name', 'equalto', 'port-channel501') | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_add_member is changed
+      - pc501_after.config_data.network_os.policy.ports | length == 3
+      - test_pc_member_c in pc501_after.config_data.network_os.policy.ports
+
+# --- MERGED MEMBERSHIP: remove members ---
+
+- name: "MERGED MEMBER REMOVE: Reduce port-channel501 to a single member (normal mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501_removed_member }}"
+    state: merged
+  register: nm_merged_remove_member
+
+- name: "MERGED MEMBER REMOVE: Verify members were removed"
+  vars:
+    pc501_after: "{{ nm_merged_remove_member.after | selectattr('interface_name', 'equalto', 'port-channel501') | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_remove_member is changed
+      - pc501_after.config_data.network_os.policy.ports | length == 1
+      - test_pc_member_a in pc501_after.config_data.network_os.policy.ports
+      - test_pc_member_b not in pc501_after.config_data.network_os.policy.ports
+      - test_pc_member_c not in pc501_after.config_data.network_os.policy.ports
+
+# --- MERGED CREATE: MULTIPLE PCs ---
+# Runs AFTER membership tests so that member_c (used by PC 502) and member_d
+# (used by PC 503) are not currently claimed by PC 501.
+
+- name: "MERGED CREATE: Create multiple port-channels in a single task (check mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_502 }}"
+      - "{{ test_pc_503 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create_multi
+
+- name: "MERGED CREATE: Create multiple port-channels in a single task (normal mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_502 }}"
+      - "{{ test_pc_503 }}"
+    state: merged
+  register: nm_merged_create_multi
+
+- name: "MERGED CREATE: Verify multiple port-channel creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create_multi is changed
+      - nm_merged_create_multi is changed
+      - nm_merged_create_multi.after | selectattr('interface_name', 'equalto', 'port-channel502') | list | length == 1
+      - nm_merged_create_multi.after | selectattr('interface_name', 'equalto', 'port-channel503') | list | length == 1
+
+# --- MERGED WITH deploy: false ---
+
+- name: "MERGED NO-DEPLOY: Stage a port-channel without deploying"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel504
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 400
+              ports: []
+              description: "No-deploy test port-channel504"
+              policy_type: access_po_host
+    deploy: false
+    state: merged
+  register: nm_merged_no_deploy
+
+- name: "MERGED NO-DEPLOY: Verify change was staged"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_no_deploy is changed
+
+# Cleanup the no-deploy test port-channel
+- name: "CLEANUP: Remove port-channel504"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel504
+    state: deleted
