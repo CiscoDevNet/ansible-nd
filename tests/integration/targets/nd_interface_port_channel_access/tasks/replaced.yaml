@@ -1,0 +1,131 @@
+---
+# Replaced state tests for nd_interface_port_channel_access
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point port-channel501 (single member, vlan 100), port-channel502, port-channel503 exist from merged tests.
+
+# --- REPLACED: FULL REPLACE ---
+
+- name: "REPLACED: Replace port-channel501 with a minimal config (check mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 250
+              ports:
+                - "{{ test_pc_member_a }}"
+              description: "Replaced port-channel501"
+              policy_type: access_po_host
+    state: replaced
+  check_mode: true
+  register: cm_replaced_501
+
+- name: "REPLACED: Replace port-channel501 with a minimal config (normal mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 250
+              ports:
+                - "{{ test_pc_member_a }}"
+              description: "Replaced port-channel501"
+              policy_type: access_po_host
+    state: replaced
+  register: nm_replaced_501
+
+- name: "REPLACED: Verify port-channel501 was replaced"
+  vars:
+    pc501_after: "{{ nm_replaced_501.after | selectattr('interface_name', 'equalto', 'port-channel501') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_501 is changed
+      - nm_replaced_501 is changed
+      - pc501_after.config_data.network_os.policy.access_vlan == 250
+      - pc501_after.config_data.network_os.policy.description == "Replaced port-channel501"
+      - pc501_after.config_data.network_os.policy.ports | length == 1
+      - test_pc_member_a in pc501_after.config_data.network_os.policy.ports
+
+# --- REPLACED: IDEMPOTENCY ---
+
+- name: "REPLACED IDEMPOTENT: Re-apply same replaced config"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 250
+              ports:
+                - "{{ test_pc_member_a }}"
+              description: "Replaced port-channel501"
+              policy_type: access_po_host
+    state: replaced
+  register: nm_replaced_501_idem
+
+- name: "REPLACED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_501_idem is not changed
+
+# --- REPLACED: MULTIPLE PORT-CHANNELS ---
+
+- name: "REPLACED MULTI: Replace port-channel502 and port-channel503 (normal mode)"
+  cisco.nd.nd_interface_port_channel_access:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel502
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 222
+              ports:
+                - "{{ test_pc_member_c }}"
+              description: "Replaced port-channel502"
+              policy_type: access_po_host
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel503
+        config_data:
+          network_os:
+            policy:
+              admin_state: false
+              access_vlan: 333
+              ports:
+                - "{{ test_pc_member_d }}"
+              description: "Replaced port-channel503"
+              policy_type: access_po_host
+    state: replaced
+  register: nm_replaced_multi
+
+- name: "REPLACED MULTI: Verify both port-channels were replaced"
+  vars:
+    pc502_after: "{{ nm_replaced_multi.after | selectattr('interface_name', 'equalto', 'port-channel502') | first }}"
+    pc503_after: "{{ nm_replaced_multi.after | selectattr('interface_name', 'equalto', 'port-channel503') | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_multi is changed
+      - pc502_after.config_data.network_os.policy.access_vlan == 222
+      - pc502_after.config_data.network_os.policy.description == "Replaced port-channel502"
+      - pc503_after.config_data.network_os.policy.access_vlan == 333
+      - pc503_after.config_data.network_os.policy.admin_state == false

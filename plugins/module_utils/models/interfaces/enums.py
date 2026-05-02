@@ -5,10 +5,10 @@
 """
 # Summary
 
-Shared enum definitions for ethernet interface models.
+Shared enum definitions for interface models.
 
-These enums are derived from ND config templates (e.g. `int_access_host`, `int_trunk_host`) and constrain policy
-fields across multiple interface types. Each enum's member values match the API's expected strings exactly.
+These enums are derived from ND interface config templates and constrain policy fields across multiple interface types.
+Each enum's member values match the API's expected strings exactly.
 """
 
 from __future__ import annotations
@@ -24,6 +24,16 @@ class AccessHostPolicyTypeEnum(str, Enum):
     """
 
     ACCESS_HOST = "accessHost"
+
+
+class AccessPoHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Policy type for port-channel access host interfaces.
+    """
+
+    ACCESS_PO_HOST = "accessPoHost"
 
 
 class BpduFilterEnum(str, Enum):
@@ -77,6 +87,17 @@ class FecEnum(str, Enum):
     RS_IEEE = "rsIEEE"
 
 
+class LacpRateEnum(str, Enum):
+    """
+    # Summary
+
+    LACP rate (PDU transmit interval).
+    """
+
+    NORMAL = "normal"
+    FAST = "fast"
+
+
 class LinkTypeEnum(str, Enum):
     """
     # Summary
@@ -98,6 +119,18 @@ class MtuEnum(str, Enum):
 
     DEFAULT = "default"
     JUMBO = "jumbo"
+
+
+class PortChannelModeEnum(str, Enum):
+    """
+    # Summary
+
+    Port-channel mode.
+    """
+
+    ON = "on"
+    ACTIVE = "active"
+    PASSIVE = "passive"
 
 
 class SpeedEnum(str, Enum):
