@@ -4,6 +4,8 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+"""Ansible module for managing port-channel trunkPoHost interfaces on Cisco Nexus Dashboard."""
+
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
 DOCUMENTATION = r"""
@@ -407,6 +409,7 @@ EXAMPLES = r"""
 RETURN = r"""
 """
 
+# pylint: disable=wrong-import-position
 import logging
 import traceback
 
@@ -439,7 +442,7 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(PortChannelTrunkHostInterfaceModel.get_argument_spec())
     argument_spec.update(
-        deploy=dict(type="bool", default=True),
+        deploy={"type": "bool", "default": True},
     )
 
     module = AnsibleModule(
