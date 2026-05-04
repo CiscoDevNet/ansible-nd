@@ -48,6 +48,7 @@ def sender_file_fixture():
     instance.gen = ResponseGenerator(responses())
     return instance
 
+
 @pytest.fixture(name="log")
 def log_fixture():
     """
