@@ -20,7 +20,6 @@ svi_333:
   config_data:
     network_os:
       policy:
-        policy_type: svi
         admin_state: true
         description: "Ansible integration test vlan333"
         ip: 10.99.99.1
@@ -39,7 +38,6 @@ svi_334_335:
   config_data:
     network_os:
       policy:
-        policy_type: svi
         admin_state: true
         description: "Ansible integration test fan-out"
         ip: 10.99.100.1
@@ -57,7 +55,6 @@ svi_336:
   config_data:
     network_os:
       policy:
-        policy_type: svi
         admin_state: true
         description: "Ansible integration test vlan336"
         ip: 10.99.101.1
@@ -72,7 +69,6 @@ svi_333_updated:
   config_data:
     network_os:
       policy:
-        policy_type: svi
         admin_state: true
         description: "Updated vlan333 description"
         ip: 10.99.99.2
@@ -91,7 +87,6 @@ svi_334_335_updated:
   config_data:
     network_os:
       policy:
-        policy_type: svi
         admin_state: false
         description: "Updated fan-out description"
         ip: 10.99.100.2
@@ -108,7 +103,6 @@ svi_337_338:
   config_data:
     network_os:
       policy:
-        policy_type: svi
         admin_state: true
         description: "Fan-out test SVIs"
         ip: 10.99.102.1
@@ -123,7 +117,6 @@ svi_500_hsrp:
   config_data:
     network_os:
       policy:
-        policy_type: svi
         admin_state: true
         description: "HSRP test vlan500"
         vrf_interface: default
@@ -145,7 +138,6 @@ svi_500_hsrp_updated:
   config_data:
     network_os:
       policy:
-        policy_type: svi
         admin_state: true
         description: "HSRP test vlan500 (updated priority)"
         vrf_interface: default
@@ -167,7 +159,6 @@ svi_501_dhcp:
   config_data:
     network_os:
       policy:
-        policy_type: svi
         admin_state: true
         description: "DHCP relay test vlan501"
         vrf_interface: default

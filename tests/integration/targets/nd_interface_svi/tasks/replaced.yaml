@@ -21,7 +21,6 @@
         config_data:
           network_os:
             policy:
-              policy_type: svi
               admin_state: true
               description: "Replaced vlan333"
               ip: 10.99.150.1
@@ -41,7 +40,6 @@
         config_data:
           network_os:
             policy:
-              policy_type: svi
               admin_state: true
               description: "Replaced vlan333"
               ip: 10.99.150.1
@@ -70,7 +68,6 @@
         config_data:
           network_os:
             policy:
-              policy_type: svi
               admin_state: true
               description: "Replaced vlan333"
               ip: 10.99.150.1
@@ -97,7 +94,6 @@
         config_data:
           network_os:
             policy:
-              policy_type: svi
               admin_state: true
               description: "Replaced fan-out"
               ip: 10.99.151.1
@@ -129,7 +125,6 @@
         config_data:
           network_os:
             policy:
-              policy_type: svi
               admin_state: true
               description: "Replaced fan-out"
               ip: 10.99.151.1

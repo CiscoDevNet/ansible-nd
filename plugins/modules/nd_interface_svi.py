@@ -80,12 +80,6 @@ options:
                 - The policy configuration for the SVI.
                 type: dict
                 suboptions:
-                  policy_type:
-                    description:
-                    - The policy template type for the interface.
-                    type: str
-                    choices: [ svi ]
-                    default: svi
                   admin_state:
                     description:
                     - The administrative state of the interface.

@@ -260,7 +260,6 @@
         config_data:
           network_os:
             policy:
-              policy_type: svi
               admin_state: true
               description: "No-deploy test vlan337"
               ip: 10.99.103.1

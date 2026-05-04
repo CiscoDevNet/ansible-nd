@@ -183,13 +183,13 @@ def test_svi_interface_00110():
             ip="10.0.0.1",
             prefix=24,
             mtu=9216,
-            policy_type="svi",
         )
     assert instance.admin_state is True
     assert instance.description == "test"
     assert instance.ip == "10.0.0.1"
     assert instance.prefix == 24
     assert instance.mtu == 9216
+    # Hardcoded model default; user no longer supplies this field.
     assert instance.policy_type == "svi"
 
 
@@ -277,102 +277,6 @@ def test_svi_interface_00130(value, should_raise):
         with does_not_raise():
             instance = SviPolicyModel(description=value)
         assert instance.description == value
-
-
-# =============================================================================
-# Test: SviPolicyModel — policy_type normalize and serialize
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "value,expected,raises",
-    [
-        ("svi", "svi", False),
-        ("unknown_value", None, True),
-        (None, None, True),
-    ],
-    ids=[
-        "ansible_name_passthrough",
-        "unknown_rejected_by_enum",
-        "none_rejected_field_required_with_default",
-    ],
-)
-def test_svi_interface_00170(value, expected, raises):
-    """
-    # Summary
-
-    Verify `normalize_policy_type` accepts the Ansible/API name and rejects unknown values. `None` is also rejected
-    because `policy_type` is a non-optional field carrying a default — the API requires it on every PUT/POST.
-
-    ## Test
-
-    - "svi" passes through
-    - Unknown values fail enum validation
-    - None is rejected (field is required-with-default, not Optional)
-
-    ## Classes and Methods
-
-    - SviPolicyModel.normalize_policy_type()
-    """
-    if raises:
-        with pytest.raises(ValidationError):
-            SviPolicyModel(policy_type=value)
-    else:
-        with does_not_raise():
-            instance = SviPolicyModel(policy_type=value)
-        assert instance.policy_type == expected
-
-
-@pytest.mark.parametrize(
-    "stored_value,mode,expected",
-    [
-        ("svi", "payload", "svi"),
-        ("svi", "config", "svi"),
-        ("svi", None, "svi"),
-        (None, "payload", None),
-    ],
-    ids=[
-        "payload_mode",
-        "config_mode",
-        "default_mode_payload",
-        "none_value",
-    ],
-)
-def test_svi_interface_00180(stored_value, mode, expected):
-    """
-    # Summary
-
-    Verify `serialize_policy_type` returns the API value in payload mode and the Ansible name in config mode. For SVI
-    these happen to be identical, but the validator-serializer pair is preserved for symmetry with ethernet models.
-
-    ## Test
-
-    - payload mode returns API value
-    - config mode returns Ansible name
-    - None passes through
-
-    ## Classes and Methods
-
-    - SviPolicyModel.serialize_policy_type()
-    """
-    instance = SviPolicyModel(policy_type=stored_value) if stored_value else SviPolicyModel()
-    if stored_value is None:
-        # field default kicks in; result is "svi" not None — adjust expectation
-        if mode == "payload":
-            data = instance.model_dump(by_alias=True, context={"mode": "payload"})
-        else:
-            data = instance.model_dump(by_alias=False, context={"mode": "config"})
-        assert data.get("policyType" if mode == "payload" else "policy_type") == "svi"
-        return
-    if mode == "payload":
-        data = instance.model_dump(by_alias=True, context={"mode": "payload"})
-        assert data["policyType"] == expected
-    elif mode == "config":
-        data = instance.model_dump(by_alias=False, context={"mode": "config"})
-        assert data["policy_type"] == expected
-    else:
-        data = instance.model_dump(by_alias=True)
-        assert data["policyType"] == expected
 
 
 # =============================================================================
@@ -1052,7 +956,6 @@ def test_svi_interface_01100():
 
     policy_options = config_options["config_data"]["options"]["network_os"]["options"]["policy"]["options"]
     expected_policy_fields = {
-        "policy_type",
         "admin_state",
         "description",
         "extra_config",
@@ -1087,8 +990,7 @@ def test_svi_interface_01100():
         "netflow_sampler",
     }
     assert set(policy_options.keys()) == expected_policy_fields
-    assert policy_options["policy_type"]["choices"] == ["svi"]
-    assert policy_options["policy_type"]["default"] == "svi"
+    assert "policy_type" not in policy_options
     assert policy_options["hsrp_version"]["type"] == "int"
     assert policy_options["hsrp_version"]["choices"] == [1, 2]
 

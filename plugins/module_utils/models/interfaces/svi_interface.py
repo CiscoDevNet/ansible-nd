@@ -35,8 +35,6 @@ from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
-    FieldSerializationInfo,
-    field_serializer,
     field_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -128,47 +126,6 @@ class SviPolicyModel(NDNestedModel):
         """
         if isinstance(value, int) and not isinstance(value, bool):
             return str(value)
-        return value
-
-    @field_validator("policy_type", mode="before")
-    @classmethod
-    def normalize_policy_type(cls, value):
-        """
-        # Summary
-
-        Accept `policy_type` in either Ansible (`svi`) or API (`svi`) format. They are identical for SVI so this is a
-        no-op today, but the validator is kept for symmetry with the ethernet policy models in case the API ever
-        diverges from the Ansible-side name.
-
-        ## Raises
-
-        None
-        """
-        if value is None:
-            return value
-        ansible_to_api = {e.name.lower(): e.value for e in SviPolicyTypeEnum}
-        return ansible_to_api.get(value, value)
-
-    # --- Serializers ---
-
-    @field_serializer("policy_type")
-    def serialize_policy_type(self, value: str | None, info: FieldSerializationInfo) -> str | None:
-        """
-        # Summary
-
-        Serialize `policy_type` to the API's value in payload mode, or the Ansible-friendly name in config mode. With
-        `use_enum_values=True`, the stored value is the enum's `.value` string (e.g. `"svi"`).
-
-        ## Raises
-
-        None
-        """
-        if value is None:
-            return None
-        mode = (info.context or {}).get("mode", "payload")
-        if mode == "config":
-            reverse = {e.value: e.name.lower() for e in SviPolicyTypeEnum}
-            return reverse.get(value, value)
         return value
 
 
@@ -318,11 +275,6 @@ class SviInterfaceModel(NDBaseModel):
                                     policy=dict(
                                         type="dict",
                                         options=dict(
-                                            policy_type=dict(
-                                                type="str",
-                                                choices=[e.name.lower() for e in SviPolicyTypeEnum],
-                                                default="svi",
-                                            ),
                                             admin_state=dict(type="bool"),
                                             description=dict(type="str"),
                                             extra_config=dict(type="str"),
