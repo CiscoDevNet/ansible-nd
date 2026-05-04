@@ -1,0 +1,75 @@
+---
+# Test code for the nd_interface_port_channel_trunk_host module
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
+# --- Usage ---
+#
+# Run the test suite with ansible-test:
+#
+#   ansible-test network-integration nd_interface_port_channel_trunk_host
+#
+# --- Required testbed configuration ---
+#
+# In tests/integration/inventory.networking [nd:vars]:
+#
+#   nd_test_fabric_name=<your fabric>
+#   nd_test_switch_ip=<switch IP within that fabric>
+#   nd_test_pc_member_a=Ethernet1/10
+#   nd_test_pc_member_b=Ethernet1/11
+#   nd_test_pc_member_c=Ethernet1/12
+#   nd_test_pc_member_d=Ethernet1/13
+#
+# Members must exist on the target switch and must not already be in another
+# port-channel. The cleanup at the start of merged.yaml resets them.
+#
+# --- Optional test variables ---
+#
+# nd_logging_config (str, default: "")
+#   Path to a JSON file conforming to logging.config.dictConfig (see
+#   plugins/module_utils/common/log.py for an example).
+#
+# nd_test_platform (str, default: "9000v")
+#   Identifies the testbed platform. When "9000v", the vlan_mapping test block
+#   is skipped because virtual switches reject `switchport vlan mapping ... dot1q-tunnel`
+#   (ND surfaces this as HTTP 400 from the trunkPoHost validator).
+
+- name: Test that we have a Nexus Dashboard host, username and password
+  ansible.builtin.fail:
+    msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
+  when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+
+- name: Set vars
+  ansible.builtin.set_fact:
+    nd_info:
+      output_level: '{{ api_key_output_level | default("debug") }}'
+
+- name: Run nd_interface_port_channel_trunk_host state tests with optional logging env
+  # The `timeout` module arg propagates via sender_nd.set_params() into the
+  # httpapi plugin, which calls connection.set_option("persistent_command_timeout", ...).
+  # 300s gives the switch enough time to build the PC bundle, pull members,
+  # and apply LACP on slow testbeds (e.g. 9000v) where the default 30s is too
+  # short. Scoped to this test target via module_defaults so we don't modify
+  # shared argspec defaults.
+  module_defaults:
+    cisco.nd.nd_interface_port_channel_trunk_host:
+      timeout: 300
+  block:
+    - name: Run nd_interface_port_channel_trunk_host merged state tests
+      ansible.builtin.include_tasks: merged.yaml
+
+    - name: Run nd_interface_port_channel_trunk_host replaced state tests
+      ansible.builtin.include_tasks: replaced.yaml
+
+    - name: Run nd_interface_port_channel_trunk_host overridden state tests
+      ansible.builtin.include_tasks: overridden.yaml
+
+    - name: Run nd_interface_port_channel_trunk_host deleted state tests
+      ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run nd_interface_port_channel_trunk_host vlan_mapping tests (non-9000v only)
+      ansible.builtin.include_tasks: vlan_mapping.yaml
+      when: nd_test_platform | default('9000v') != '9000v'
+  environment:
+    ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
