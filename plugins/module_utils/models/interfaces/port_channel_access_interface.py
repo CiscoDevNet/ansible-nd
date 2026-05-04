@@ -34,8 +34,6 @@ from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
-    FieldSerializationInfo,
-    field_serializer,
     field_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -91,7 +89,9 @@ class PortChannelAccessPolicyModel(NDNestedModel):
     netflow: bool | None = Field(default=None, alias="netflow", description="Enable Netflow on the interface")
     netflow_monitor: str | None = Field(default=None, alias="netflowMonitor", description="Layer 2 Netflow monitor name")
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
-    policy_type: AccessPoHostPolicyTypeEnum | None = Field(default=None, alias="policyType", description="Interface policy type")
+    policy_type: AccessPoHostPolicyTypeEnum = Field(
+        default=AccessPoHostPolicyTypeEnum.ACCESS_PO_HOST, alias="policyType", description="Interface policy type"
+    )
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
     ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['Ethernet1/1', 'Ethernet1/2'])")
     qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
@@ -147,24 +147,6 @@ class PortChannelAccessPolicyModel(NDNestedModel):
 
     # --- Validators ---
 
-    @field_validator("policy_type", mode="before")
-    @classmethod
-    def normalize_policy_type(cls, value):
-        """
-        # Summary
-
-        Accept `policy_type` in either Ansible (`access_po_host`) or API (`accessPoHost`) format, normalizing to the
-        API value for enum validation.
-
-        ## Raises
-
-        None
-        """
-        if value is None:
-            return value
-        ansible_to_api = {e.name.lower(): e.value for e in AccessPoHostPolicyTypeEnum}
-        return ansible_to_api.get(value, value)
-
     @field_validator("ports", mode="before")
     @classmethod
     def normalize_ports(cls, value):
@@ -188,29 +170,6 @@ class PortChannelAccessPolicyModel(NDNestedModel):
             else:
                 normalized.append(name)
         return normalized
-
-    # --- Serializers ---
-
-    @field_serializer("policy_type")
-    def serialize_policy_type(self, value: str | None, info: FieldSerializationInfo) -> str | None:
-        """
-        # Summary
-
-        Serialize `policy_type` to the API's camelCase value in payload mode, or the Ansible-friendly name in config mode.
-
-        With `use_enum_values=True`, the stored value is the enum's `.value` string (e.g. `"accessPoHost"`).
-
-        ## Raises
-
-        None
-        """
-        if value is None:
-            return None
-        mode = (info.context or {}).get("mode", "payload")
-        if mode == "config":
-            reverse = {e.value: e.name.lower() for e in AccessPoHostPolicyTypeEnum}
-            return reverse.get(value, value)
-        return value
 
 
 class PortChannelAccessNetworkOSModel(NDNestedModel):
@@ -344,11 +303,6 @@ class PortChannelAccessInterfaceModel(NDBaseModel):
                                             netflow=dict(type="bool"),
                                             netflow_monitor=dict(type="str"),
                                             netflow_sampler=dict(type="str"),
-                                            policy_type=dict(
-                                                type="str",
-                                                choices=[e.name.lower() for e in AccessPoHostPolicyTypeEnum],
-                                                default="access_po_host",
-                                            ),
                                             port_channel_mode=dict(type="str", choices=[e.value for e in PortChannelModeEnum]),
                                             ports=dict(type="list", elements="str"),
                                             qos=dict(type="bool"),

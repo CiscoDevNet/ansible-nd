@@ -22,7 +22,6 @@ from contextlib import contextmanager
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
-    AccessPoHostPolicyTypeEnum,
     BpduFilterEnum,
     BpduGuardEnum,
     DuplexModeEnum,
@@ -97,7 +96,7 @@ SAMPLE_ANSIBLE_CONFIG = {
                 "bpdu_guard": "enable",
                 "bpdu_filter": "disable",
                 "description": "uplink to host",
-                "policy_type": "access_po_host",
+                "policy_type": "accessPoHost",
                 "speed": "10Gb",
                 "duplex_mode": "auto",
                 "mtu": "jumbo",
@@ -147,7 +146,7 @@ def test_port_channel_access_interface_00100():
     assert instance.netflow is None
     assert instance.netflow_monitor is None
     assert instance.netflow_sampler is None
-    assert instance.policy_type is None
+    assert instance.policy_type == "accessPoHost"
     assert instance.port_channel_mode is None
     assert instance.ports is None
     assert instance.qos is None
@@ -187,7 +186,6 @@ def test_port_channel_access_interface_00110():
             port_channel_mode="active",
             lacp_rate="fast",
             description="test",
-            policy_type="access_po_host",
             speed="10Gb",
         )
     assert instance.admin_state is True
@@ -196,7 +194,7 @@ def test_port_channel_access_interface_00110():
     assert instance.port_channel_mode == "active"
     assert instance.lacp_rate == "fast"
     assert instance.description == "test"
-    # After normalize + use_enum_values the stored value is the API string.
+    # Hardcoded model default; user no longer supplies this field.
     assert instance.policy_type == "accessPoHost"
     assert instance.speed == "10Gb"
 
@@ -240,47 +238,6 @@ def test_port_channel_access_interface_00120():
 # =============================================================================
 # Test: PortChannelAccessPolicyModel — validators
 # =============================================================================
-
-
-@pytest.mark.parametrize(
-    "value,expected,raises",
-    [
-        ("access_po_host", "accessPoHost", False),
-        ("accessPoHost", "accessPoHost", False),
-        (None, None, False),
-        ("unknown_value", None, True),
-    ],
-    ids=[
-        "ansible_name",
-        "api_value_passthrough",
-        "none_passthrough",
-        "unknown_rejected_by_enum",
-    ],
-)
-def test_port_channel_access_interface_00170(value, expected, raises):
-    """
-    # Summary
-
-    Verify `normalize_policy_type` maps Ansible names to API values and passes through API values unchanged.
-
-    ## Test
-
-    - "access_po_host" normalizes to "accessPoHost"
-    - "accessPoHost" passes through
-    - None passes through
-    - Unknown values fail enum validation
-
-    ## Classes and Methods
-
-    - PortChannelAccessPolicyModel.normalize_policy_type()
-    """
-    if raises:
-        with pytest.raises(ValidationError):
-            PortChannelAccessPolicyModel(policy_type=value)
-    else:
-        with does_not_raise():
-            instance = PortChannelAccessPolicyModel(policy_type=value)
-        assert instance.policy_type == expected
 
 
 @pytest.mark.parametrize(
@@ -548,41 +505,6 @@ def test_port_channel_access_interface_00240(field, enum_cls):
 
     with pytest.raises(ValidationError):
         PortChannelAccessPolicyModel(**{field: "not_a_real_value"})
-
-
-# =============================================================================
-# Test: PortChannelAccessPolicyModel — serializer
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "stored_value,mode,expected",
-    [
-        ("accessPoHost", "payload", "accessPoHost"),
-        ("accessPoHost", "config", "access_po_host"),
-        (None, "payload", None),
-        (None, "config", None),
-    ],
-    ids=["payload_known", "config_known", "payload_none", "config_none"],
-)
-def test_port_channel_access_interface_00300(stored_value, mode, expected):
-    """
-    # Summary
-
-    Verify `serialize_policy_type` emits API value in payload mode and Ansible name in config mode.
-
-    ## Test
-
-    - model_dump with context={"mode": "payload"} returns camelCase API value
-    - model_dump with context={"mode": "config"} returns Ansible-friendly snake_case
-
-    ## Classes and Methods
-
-    - PortChannelAccessPolicyModel.serialize_policy_type()
-    """
-    instance = PortChannelAccessPolicyModel(policy_type=stored_value) if stored_value is not None else PortChannelAccessPolicyModel()
-    dumped = instance.model_dump(context={"mode": mode}, exclude_none=False)
-    assert dumped["policy_type"] == expected
 
 
 # =============================================================================
@@ -905,12 +827,11 @@ def test_port_channel_access_interface_00620():
 
     ## Test
 
-    - policy_type="access_po_host" in config -> "accessPoHost" in payload
+    - Hardcoded model default for `policy_type` serializes as `"accessPoHost"` under the `policyType` alias.
 
     ## Classes and Methods
 
     - PortChannelAccessInterfaceModel.to_payload()
-    - PortChannelAccessPolicyModel.serialize_policy_type()
     """
     instance = PortChannelAccessInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
     result = instance.to_payload()
@@ -998,20 +919,19 @@ def test_port_channel_access_interface_00710():
     """
     # Summary
 
-    Verify `policy_type` is normalized back to the Ansible-friendly name in config mode.
+    Verify `policy_type` round-trips as the API value in config output.
 
     ## Test
 
-    - Stored "accessPoHost" -> output "access_po_host"
+    - Stored "accessPoHost" -> output "accessPoHost" (no Ansible↔API translation; field is hardcoded by the model)
 
     ## Classes and Methods
 
     - PortChannelAccessInterfaceModel.to_config()
-    - PortChannelAccessPolicyModel.serialize_policy_type()
     """
     instance = PortChannelAccessInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
     result = instance.to_config()
-    assert result["config_data"]["network_os"]["policy"]["policy_type"] == "access_po_host"
+    assert result["config_data"]["network_os"]["policy"]["policy_type"] == "accessPoHost"
 
 
 def test_port_channel_access_interface_00720():
@@ -1163,16 +1083,15 @@ def test_port_channel_access_interface_00910():
     """
     # Summary
 
-    Verify Ansible `policy_type: "access_po_host"` is normalized to API value internally.
+    Verify model hardcodes the `accessPoHost` policy type regardless of input.
 
     ## Test
 
-    - After from_config, stored policy_type is the API value "accessPoHost"
+    - After from_config (no policy_type in input), stored policy_type is the API value "accessPoHost"
 
     ## Classes and Methods
 
     - PortChannelAccessInterfaceModel.from_config()
-    - PortChannelAccessPolicyModel.normalize_policy_type()
     """
     instance = PortChannelAccessInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
     assert instance.config_data.network_os.policy.policy_type == "accessPoHost"
@@ -1409,7 +1328,7 @@ def test_port_channel_access_interface_01100():
     - switch_ip is under config.options, not top-level
     - config.type == "list", elements == "dict"
     - state choices and default
-    - policy_type default is "access_po_host"
+    - policy_type is not exposed in the argspec (hardcoded by the model)
 
     ## Classes and Methods
 
@@ -1426,7 +1345,7 @@ def test_port_channel_access_interface_01100():
     assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
     assert spec["state"]["default"] == "merged"
     policy_spec = spec["config"]["options"]["config_data"]["options"]["network_os"]["options"]["policy"]["options"]
-    assert policy_spec["policy_type"]["default"] == "access_po_host"
+    assert "policy_type" not in policy_spec
 
 
 def test_port_channel_access_interface_01110():
@@ -1458,7 +1377,6 @@ def test_port_channel_access_interface_01110():
         ("port_channel_mode", PortChannelModeEnum, "value"),
         ("speed", SpeedEnum, "value"),
         ("storm_control_action", StormControlActionEnum, "value"),
-        ("policy_type", AccessPoHostPolicyTypeEnum, "name"),
     ],
     ids=[
         "bpdu_filter",
@@ -1469,7 +1387,6 @@ def test_port_channel_access_interface_01110():
         "port_channel_mode",
         "speed",
         "storm_control_action",
-        "policy_type",
     ],
 )
 def test_port_channel_access_interface_01120(field, enum_cls, key):
@@ -1480,7 +1397,7 @@ def test_port_channel_access_interface_01120(field, enum_cls, key):
 
     ## Test
 
-    - Each enum field's choices list exactly matches the enum values (or Ansible names for policy_type)
+    - Each enum field's choices list exactly matches the enum values
 
     ## Classes and Methods
 

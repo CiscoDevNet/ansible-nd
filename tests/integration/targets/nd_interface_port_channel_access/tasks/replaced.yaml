@@ -24,7 +24,6 @@
               ports:
                 - "{{ test_pc_member_a }}"
               description: "Replaced port-channel501"
-              policy_type: access_po_host
     state: replaced
   check_mode: true
   register: cm_replaced_501
@@ -44,7 +43,6 @@
               ports:
                 - "{{ test_pc_member_a }}"
               description: "Replaced port-channel501"
-              policy_type: access_po_host
     state: replaced
   register: nm_replaced_501
 
@@ -77,7 +75,6 @@
               ports:
                 - "{{ test_pc_member_a }}"
               description: "Replaced port-channel501"
-              policy_type: access_po_host
     state: replaced
   register: nm_replaced_501_idem
 
@@ -103,7 +100,6 @@
               ports:
                 - "{{ test_pc_member_c }}"
               description: "Replaced port-channel502"
-              policy_type: access_po_host
       - switch_ip: "{{ test_switch_ip }}"
         interface_name: port-channel503
         config_data:
@@ -114,7 +110,6 @@
               ports:
                 - "{{ test_pc_member_d }}"
               description: "Replaced port-channel503"
-              policy_type: access_po_host
     state: replaced
   register: nm_replaced_multi
 

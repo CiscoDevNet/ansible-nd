@@ -25,7 +25,6 @@
               ports:
                 - "{{ test_pc_member_a }}"
               description: "Overridden port-channel501"
-              policy_type: access_po_host
     state: overridden
   check_mode: true
   register: cm_overridden_single
@@ -45,7 +44,6 @@
               ports:
                 - "{{ test_pc_member_a }}"
               description: "Overridden port-channel501"
-              policy_type: access_po_host
     state: overridden
   register: nm_overridden_single
 
@@ -80,7 +78,6 @@
               ports:
                 - "{{ test_pc_member_a }}"
               description: "Overridden port-channel501"
-              policy_type: access_po_host
     state: overridden
   register: nm_overridden_idem
 
