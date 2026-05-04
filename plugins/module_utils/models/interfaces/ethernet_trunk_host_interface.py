@@ -32,8 +32,6 @@ from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
-    FieldSerializationInfo,
-    field_serializer,
     field_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -119,7 +117,9 @@ class EthernetTrunkHostPolicyModel(NDNestedModel):
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
     orphan_port: bool | None = Field(default=None, alias="orphanPort", description="Enable vPC orphan port")
     pfc: bool | None = Field(default=None, alias="pfc", description="Enable priority flow control")
-    policy_type: TrunkHostPolicyTypeEnum | None = Field(default=None, alias="policyType", description="Interface policy type")
+    policy_type: TrunkHostPolicyTypeEnum = Field(
+        default=TrunkHostPolicyTypeEnum.TRUNK_HOST, alias="policyType", description="Interface policy type"
+    )
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Enable spanning-tree edge port behavior")
     qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
     qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
@@ -199,46 +199,6 @@ class EthernetTrunkHostPolicyModel(NDNestedModel):
             value = str(value)
         if not isinstance(value, str) or not re.match(ALLOWED_VLANS_PATTERN, value):
             raise ValueError(f"allowed_vlans must be 'none', 'all', or a comma-separated list of VLAN ids or ranges (e.g., '1-200,500-2000'), got: {value!r}")
-        return value
-
-    @field_validator("policy_type", mode="before")
-    @classmethod
-    def normalize_policy_type(cls, value):
-        """
-        # Summary
-
-        Accept `policy_type` in either Ansible (`trunk_host`) or API (`trunkHost`) format, normalizing to the API value for enum validation.
-
-        ## Raises
-
-        None
-        """
-        if value is None:
-            return value
-        ansible_to_api = {e.name.lower(): e.value for e in TrunkHostPolicyTypeEnum}
-        return ansible_to_api.get(value, value)
-
-    # --- Serializers ---
-
-    @field_serializer("policy_type")
-    def serialize_policy_type(self, value: str | None, info: FieldSerializationInfo) -> str | None:
-        """
-        # Summary
-
-        Serialize `policy_type` to the API's camelCase value in payload mode, or the Ansible-friendly name in config mode.
-
-        With `use_enum_values=True`, the stored value is the enum's `.value` string (e.g. `"trunkHost"`).
-
-        ## Raises
-
-        None
-        """
-        if value is None:
-            return None
-        mode = (info.context or {}).get("mode", "payload")
-        if mode == "config":
-            reverse = {e.value: e.name.lower() for e in TrunkHostPolicyTypeEnum}
-            return reverse.get(value, value)
         return value
 
 
@@ -376,11 +336,6 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
                                             netflow_sampler=dict(type="str"),
                                             orphan_port=dict(type="bool"),
                                             pfc=dict(type="bool"),
-                                            policy_type=dict(
-                                                type="str",
-                                                choices=[e.name.lower() for e in TrunkHostPolicyTypeEnum],
-                                                default="trunk_host",
-                                            ),
                                             port_type_edge_trunk=dict(type="bool"),
                                             qos=dict(type="bool"),
                                             qos_policy=dict(type="str"),

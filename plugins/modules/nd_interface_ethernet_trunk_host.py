@@ -194,13 +194,6 @@ options:
                     description:
                     - Whether Priority Flow Control is enabled on the interface.
                     type: bool
-                  policy_type:
-                    description:
-                    - The policy template type for the interface.
-                    - V(trunk_host) is the standard trunkHost policy.
-                    type: str
-                    choices: [ trunk_host ]
-                    default: trunk_host
                   port_type_edge_trunk:
                     description:
                     - Whether spanning-tree edge port behavior (PortFast) is enabled on the trunk.

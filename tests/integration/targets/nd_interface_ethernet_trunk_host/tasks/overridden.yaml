@@ -29,7 +29,6 @@
               allowed_vlans: "900-950"
               native_vlan: 900
               description: "Overridden Ethernet1/41"
-              policy_type: trunk_host
       - switch_ip: "{{ test_switch_ip }}"
         interface_names:
           - Ethernet1/42
@@ -40,7 +39,6 @@
               allowed_vlans: "901-951"
               native_vlan: 901
               description: "Overridden Ethernet1/42"
-              policy_type: trunk_host
     state: overridden
   check_mode: true
   register: cm_overridden_reduce
@@ -60,7 +58,6 @@
               allowed_vlans: "900-950"
               native_vlan: 900
               description: "Overridden Ethernet1/41"
-              policy_type: trunk_host
       - switch_ip: "{{ test_switch_ip }}"
         interface_names:
           - Ethernet1/42
@@ -71,7 +68,6 @@
               allowed_vlans: "901-951"
               native_vlan: 901
               description: "Overridden Ethernet1/42"
-              policy_type: trunk_host
     state: overridden
   register: nm_overridden_reduce
 
@@ -111,7 +107,6 @@
               allowed_vlans: "900-950"
               native_vlan: 900
               description: "Overridden Ethernet1/41"
-              policy_type: trunk_host
       - switch_ip: "{{ test_switch_ip }}"
         interface_names:
           - Ethernet1/42
@@ -122,7 +117,6 @@
               allowed_vlans: "901-951"
               native_vlan: 901
               description: "Overridden Ethernet1/42"
-              policy_type: trunk_host
     state: overridden
   register: nm_overridden_idem
 

@@ -30,7 +30,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
     MtuEnum,
     SpeedEnum,
     StormControlActionEnum,
-    TrunkHostPolicyTypeEnum,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
     EthernetTrunkHostConfigDataModel,
@@ -98,7 +97,7 @@ SAMPLE_ANSIBLE_CONFIG = {
                 "allowed_vlans": "1-100",
                 "native_vlan": 10,
                 "description": "uplink to spine",
-                "policy_type": "trunk_host",
+                "policy_type": "trunkHost",
                 "speed": "10Gb",
                 "duplex_mode": "auto",
                 "mtu": "jumbo",
@@ -296,7 +295,7 @@ def test_ethernet_trunk_host_interface_00100():
     assert instance.netflow_sampler is None
     assert instance.orphan_port is None
     assert instance.pfc is None
-    assert instance.policy_type is None
+    assert instance.policy_type == "trunkHost"
     assert instance.port_type_edge_trunk is None
     assert instance.qos is None
     assert instance.qos_policy is None
@@ -335,14 +334,13 @@ def test_ethernet_trunk_host_interface_00110():
             allowed_vlans="1-100",
             native_vlan=10,
             description="test",
-            policy_type="trunk_host",
             speed="10Gb",
         )
     assert instance.admin_state is True
     assert instance.allowed_vlans == "1-100"
     assert instance.native_vlan == 10
     assert instance.description == "test"
-    # After normalize + use_enum_values the stored value is the API string.
+    # Hardcoded model default; user no longer supplies this field.
     assert instance.policy_type == "trunkHost"
     assert instance.speed == "10Gb"
 
@@ -492,47 +490,6 @@ def test_ethernet_trunk_host_interface_00160(value):
     """
     with pytest.raises(ValidationError, match=r"allowed_vlans must be 'none', 'all'"):
         EthernetTrunkHostPolicyModel(allowed_vlans=value)
-
-
-@pytest.mark.parametrize(
-    "value,expected,raises",
-    [
-        ("trunk_host", "trunkHost", False),
-        ("trunkHost", "trunkHost", False),
-        (None, None, False),
-        ("unknown_value", None, True),
-    ],
-    ids=[
-        "ansible_name",
-        "api_value_passthrough",
-        "none_passthrough",
-        "unknown_rejected_by_enum",
-    ],
-)
-def test_ethernet_trunk_host_interface_00170(value, expected, raises):
-    """
-    # Summary
-
-    Verify `normalize_policy_type` maps Ansible names to API values and passes through API values unchanged.
-
-    ## Test
-
-    - "trunk_host" normalizes to "trunkHost"
-    - "trunkHost" passes through
-    - None passes through
-    - Unknown values fail enum validation
-
-    ## Classes and Methods
-
-    - EthernetTrunkHostPolicyModel.normalize_policy_type()
-    """
-    if raises:
-        with pytest.raises(ValidationError):
-            EthernetTrunkHostPolicyModel(policy_type=value)
-    else:
-        with does_not_raise():
-            instance = EthernetTrunkHostPolicyModel(policy_type=value)
-        assert instance.policy_type == expected
 
 
 # =============================================================================
@@ -709,41 +666,6 @@ def test_ethernet_trunk_host_interface_00240(field, enum_cls):
 
     with pytest.raises(ValidationError):
         EthernetTrunkHostPolicyModel(**{field: "not_a_real_value"})
-
-
-# =============================================================================
-# Test: EthernetTrunkHostPolicyModel — serializer
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "stored_value,mode,expected",
-    [
-        ("trunkHost", "payload", "trunkHost"),
-        ("trunkHost", "config", "trunk_host"),
-        (None, "payload", None),
-        (None, "config", None),
-    ],
-    ids=["payload_known", "config_known", "payload_none", "config_none"],
-)
-def test_ethernet_trunk_host_interface_00300(stored_value, mode, expected):
-    """
-    # Summary
-
-    Verify `serialize_policy_type` emits API value in payload mode and Ansible name in config mode.
-
-    ## Test
-
-    - model_dump with context={"mode": "payload"} returns camelCase API value
-    - model_dump with context={"mode": "config"} returns Ansible-friendly snake_case
-
-    ## Classes and Methods
-
-    - EthernetTrunkHostPolicyModel.serialize_policy_type()
-    """
-    instance = EthernetTrunkHostPolicyModel(policy_type=stored_value) if stored_value is not None else EthernetTrunkHostPolicyModel()
-    dumped = instance.model_dump(context={"mode": mode}, exclude_none=False)
-    assert dumped["policy_type"] == expected
 
 
 # =============================================================================
@@ -1064,12 +986,11 @@ def test_ethernet_trunk_host_interface_00620():
 
     ## Test
 
-    - policy_type="trunk_host" in config -> "trunkHost" in payload
+    - Hardcoded model default for `policy_type` serializes as `"trunkHost"` under the `policyType` alias.
 
     ## Classes and Methods
 
     - EthernetTrunkHostInterfaceModel.to_payload()
-    - EthernetTrunkHostPolicyModel.serialize_policy_type()
     """
     instance = EthernetTrunkHostInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
     result = instance.to_payload()
@@ -1158,20 +1079,19 @@ def test_ethernet_trunk_host_interface_00710():
     """
     # Summary
 
-    Verify `policy_type` is normalized back to the Ansible-friendly name in config mode.
+    Verify `policy_type` round-trips as the API value in config output.
 
     ## Test
 
-    - Stored "trunkHost" -> output "trunk_host"
+    - Stored "trunkHost" -> output "trunkHost" (no Ansible↔API translation; field is hardcoded by the model)
 
     ## Classes and Methods
 
     - EthernetTrunkHostInterfaceModel.to_config()
-    - EthernetTrunkHostPolicyModel.serialize_policy_type()
     """
     instance = EthernetTrunkHostInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
     result = instance.to_config()
-    assert result["config_data"]["network_os"]["policy"]["policy_type"] == "trunk_host"
+    assert result["config_data"]["network_os"]["policy"]["policy_type"] == "trunkHost"
 
 
 def test_ethernet_trunk_host_interface_00720():
@@ -1321,16 +1241,15 @@ def test_ethernet_trunk_host_interface_00910():
     """
     # Summary
 
-    Verify Ansible `policy_type: "trunk_host"` is normalized to API value internally.
+    Verify model hardcodes the `trunkHost` policy type regardless of input.
 
     ## Test
 
-    - After from_config, stored policy_type is the API value "trunkHost"
+    - After from_config (no policy_type in input), stored policy_type is the API value "trunkHost"
 
     ## Classes and Methods
 
     - EthernetTrunkHostInterfaceModel.from_config()
-    - EthernetTrunkHostPolicyModel.normalize_policy_type()
     """
     instance = EthernetTrunkHostInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
     assert instance.config_data.network_os.policy.policy_type == "trunkHost"
@@ -1567,7 +1486,7 @@ def test_ethernet_trunk_host_interface_01100():
     - switch_ip is under config.options, not top-level
     - config.type == "list", elements == "dict"
     - state choices and default
-    - policy_type default is "trunk_host"
+    - policy_type is not exposed in the argspec (hardcoded by the model)
 
     ## Classes and Methods
 
@@ -1584,7 +1503,7 @@ def test_ethernet_trunk_host_interface_01100():
     assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
     assert spec["state"]["default"] == "merged"
     policy_spec = spec["config"]["options"]["config_data"]["options"]["network_os"]["options"]["policy"]["options"]
-    assert policy_spec["policy_type"]["default"] == "trunk_host"
+    assert "policy_type" not in policy_spec
 
 
 @pytest.mark.parametrize(
@@ -1598,7 +1517,6 @@ def test_ethernet_trunk_host_interface_01100():
         ("mtu", MtuEnum, "value"),
         ("speed", SpeedEnum, "value"),
         ("storm_control_action", StormControlActionEnum, "value"),
-        ("policy_type", TrunkHostPolicyTypeEnum, "name"),
     ],
     ids=[
         "bpdu_filter",
@@ -1609,7 +1527,6 @@ def test_ethernet_trunk_host_interface_01100():
         "mtu",
         "speed",
         "storm_control_action",
-        "policy_type",
     ],
 )
 def test_ethernet_trunk_host_interface_01120(field, enum_cls, key):
@@ -1620,7 +1537,7 @@ def test_ethernet_trunk_host_interface_01120(field, enum_cls, key):
 
     ## Test
 
-    - Each enum field's choices list exactly matches the enum values (or Ansible names for policy_type)
+    - Each enum field's choices list exactly matches the enum values
 
     ## Classes and Methods
 

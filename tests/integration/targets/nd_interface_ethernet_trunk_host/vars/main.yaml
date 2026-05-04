@@ -27,7 +27,6 @@ ethernet_41:
         cdp: true
         description: "Ansible integration test Ethernet1/41"
         speed: auto
-        policy_type: trunk_host
 
 ethernet_42_43:
   switch_ip: "{{ test_switch_ip }}"
@@ -44,7 +43,6 @@ ethernet_42_43:
         cdp: true
         description: "Ansible integration test trunk ports"
         speed: auto
-        policy_type: trunk_host
 
 ethernet_44:
   switch_ip: "{{ test_switch_ip }}"
@@ -57,7 +55,6 @@ ethernet_44:
         allowed_vlans: all
         native_vlan: 300
         description: "Ansible integration test Ethernet1/44"
-        policy_type: trunk_host
 
 # --- Updated configs for merge/replace tests ---
 
@@ -75,7 +72,6 @@ ethernet_41_updated:
         cdp: false
         description: "Updated Ethernet1/41 description"
         speed: auto
-        policy_type: trunk_host
 
 ethernet_42_43_updated:
   switch_ip: "{{ test_switch_ip }}"
@@ -89,7 +85,6 @@ ethernet_42_43_updated:
         allowed_vlans: "250-350"
         native_vlan: 250
         description: "Updated trunk ports description"
-        policy_type: trunk_host
 
 # --- Fan-out test: multiple interfaces sharing one config ---
 
@@ -110,7 +105,6 @@ ethernet_45_46_47:
         description: "Fan-out test trunk ports"
         mtu: jumbo
         speed: auto
-        policy_type: trunk_host
 
 # --- VLAN mapping test config ---
 
@@ -125,7 +119,6 @@ ethernet_48_vlan_mapping:
         allowed_vlans: "100-200"
         native_vlan: 1
         description: "VLAN mapping test Ethernet1/48"
-        policy_type: trunk_host
         vlan_mapping: true
         vlan_mapping_entries:
           - customer_vlan_id: ["10"]
