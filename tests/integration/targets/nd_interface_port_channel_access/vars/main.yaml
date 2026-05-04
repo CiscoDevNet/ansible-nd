@@ -31,7 +31,6 @@ test_pc_501:
         port_channel_mode: active
         lacp_rate: fast
         description: "Ansible integration test PC 501"
-        policy_type: access_po_host
 
 test_pc_502:
   switch_ip: "{{ test_switch_ip }}"
@@ -45,7 +44,6 @@ test_pc_502:
           - "{{ test_pc_member_c }}"
         port_channel_mode: active
         description: "Ansible integration test PC 502"
-        policy_type: access_po_host
 
 test_pc_503:
   switch_ip: "{{ test_switch_ip }}"
@@ -59,7 +57,6 @@ test_pc_503:
           - "{{ test_pc_member_d }}"
         port_channel_mode: passive
         description: "Ansible integration test PC 503"
-        policy_type: access_po_host
 
 # Updated variants for merge/replace tests
 
@@ -77,7 +74,6 @@ test_pc_501_updated_vlan:
         port_channel_mode: active
         lacp_rate: fast
         description: "Ansible integration test PC 501 updated"
-        policy_type: access_po_host
 
 test_pc_501_added_member:
   switch_ip: "{{ test_switch_ip }}"
@@ -94,7 +90,6 @@ test_pc_501_added_member:
         port_channel_mode: active
         lacp_rate: fast
         description: "Ansible integration test PC 501"
-        policy_type: access_po_host
 
 test_pc_501_removed_member:
   switch_ip: "{{ test_switch_ip }}"
@@ -109,4 +104,3 @@ test_pc_501_removed_member:
         port_channel_mode: active
         lacp_rate: fast
         description: "Ansible integration test PC 501"
-        policy_type: access_po_host

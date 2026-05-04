@@ -157,13 +157,6 @@ options:
                     description:
                     - The netflow Layer-2 sampler name for the port-channel.
                     type: str
-                  policy_type:
-                    description:
-                    - The policy template type for the port-channel.
-                    - V(access_po_host) is the standard accessPoHost policy.
-                    type: str
-                    choices: [ access_po_host ]
-                    default: access_po_host
                   port_channel_mode:
                     description:
                     - The port-channel mode.
