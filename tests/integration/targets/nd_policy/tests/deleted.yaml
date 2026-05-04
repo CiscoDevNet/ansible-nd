@@ -15,7 +15,7 @@
 
     - name: "DELETED SETUP - Create policies on switch1"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -57,7 +57,7 @@
               CONF: "as-format asdot"
 
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
 
       register: setup_result
       tags: deleted
@@ -75,13 +75,13 @@
     # TC-1: Delete a single policy by template name
     - name: "DELETED TC1 - Delete clock_timezone policy with deploy"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
         config:
           - name: clock_timezone
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: deleted
 
@@ -94,13 +94,13 @@
     # TC-2: Idempotence - delete same policy again
     - name: "DELETED TC2 - Idempotence - delete clock_timezone again"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
         config:
           - name: clock_timezone
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: deleted
 
@@ -113,14 +113,14 @@
     # TC-3: Delete multiple policies by template name in one task
     - name: "DELETED TC3 - Delete multiple policies"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
         config:
           - name: clock_summertime
           - name: switch_freeform
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: deleted
 
@@ -133,14 +133,14 @@
     # TC-4: Verify switch1 is clean via gathered
     - name: "DELETED TC4 - Gather policies on switch1 after delete"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
           - name: clock_timezone
           - name: clock_summertime
           - name: switch_freeform
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: gathered_result
       tags: deleted
 
@@ -153,7 +153,7 @@
     # TC-5: Delete with deploy=false (markDelete only)
     - name: "DELETED TC5 SETUP - Create a policy for markDelete test"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -166,19 +166,19 @@
               HOUR_OFFSET: 1
               MINUTE_OFFSET: 0
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: setup_result
       tags: deleted
 
     - name: "DELETED TC5 - Delete with deploy=false (markDelete only)"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: false
         config:
           - name: clock_timezone
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: deleted
 
@@ -191,7 +191,7 @@
     # TC-6: Delete using use_desc_as_key
     - name: "DELETED TC6 SETUP - Create policy with unique description"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         use_desc_as_key: true
@@ -203,19 +203,19 @@
             template_inputs:
               CONF: "system vlan long-name"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       tags: deleted
 
     - name: "DELETED TC6 - Delete by description"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
         use_desc_as_key: true
         config:
           - description: "Delete me by description"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: deleted
 

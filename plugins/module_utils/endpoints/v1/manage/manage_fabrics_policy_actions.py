@@ -10,7 +10,6 @@ in the ND Manage API.
 Endpoints covered:
 - POST /fabrics/{fabricName}/policyActions/markDelete  - Mark-delete policies
 - POST /fabrics/{fabricName}/policyActions/pushConfig   - Deploy policy configs
-- POST /fabrics/{fabricName}/policyActions/remove       - Remove policies in bulk
 """
 
 from __future__ import annotations
@@ -54,7 +53,6 @@ class PolicyActionMutationEndpointParams(EndpointQueryParams):
     ``clusterName`` and ``ticketId``:
 
     - POST /policyActions/markDelete
-    - POST /policyActions/remove
 
     ## Parameters
 
@@ -251,70 +249,6 @@ class EpManagePolicyActionsPushConfigPost(_EpManagePolicyActionsBase):
     def path(self) -> str:
         """Build the endpoint path with optional query string."""
         base = self._action_path("pushConfig")
-        qs = self.endpoint_params.to_query_string()
-        return f"{base}?{qs}" if qs else base
-
-    @property
-    def verb(self) -> HttpVerbEnum:
-        """Return the HTTP verb for this endpoint."""
-        return HttpVerbEnum.POST
-
-
-# ============================================================================
-# POST /fabrics/{fabricName}/policyActions/remove
-# ============================================================================
-
-
-class EpManagePolicyActionsRemovePost(_EpManagePolicyActionsBase):
-    """
-    # Summary
-
-    ND Manage Policy Actions — Remove Endpoint
-
-    ## Description
-
-    Remove (permanently delete) policies in bulk.
-
-    ## Path
-
-    - /api/v1/manage/fabrics/{fabricName}/policyActions/remove
-
-    ## Verb
-
-    - POST
-
-    ## Usage
-
-    ```python
-    ep = EpManagePolicyActionsRemovePost()
-    ep.fabric_name = "my-fabric"
-    path = ep.path
-    verb = ep.verb
-    ```
-
-    ## Request Body Example
-
-    ```json
-    {
-        "policyIds": ["POLICY-121110", "POLICY-121120"]
-    }
-    ```
-    """
-
-    class_name: Literal["EpManagePolicyActionsRemovePost"] = Field(
-        default="EpManagePolicyActionsRemovePost",
-        frozen=True,
-        description="Class name for backward compatibility",
-    )
-    endpoint_params: PolicyActionMutationEndpointParams = Field(
-        default_factory=PolicyActionMutationEndpointParams,
-        description="Query parameters: clusterName, ticketId",
-    )
-
-    @property
-    def path(self) -> str:
-        """Build the endpoint path with optional query string."""
-        base = self._action_path("remove")
         qs = self.endpoint_params.to_query_string()
         return f"{base}?{qs}" if qs else base
 

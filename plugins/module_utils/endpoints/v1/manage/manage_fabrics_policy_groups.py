@@ -17,15 +17,11 @@ Endpoints covered:
 - DELETE /fabrics/{fabricName}/policyGroups/{policyGroupId}    - Delete a policy group
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
+from __future__ import annotations
 
 __author__ = "L Nikhil Sri Krishna"
 
-from typing import Literal, Optional
+from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
@@ -72,7 +68,7 @@ class PolicyGroupsGetEndpointParams(EndpointQueryParams):
 
     model_config = ConfigDict(extra="forbid")
 
-    cluster_name: Optional[str] = Field(
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Target cluster name for multi-cluster deployments",
@@ -102,12 +98,12 @@ class PolicyGroupMutationEndpointParams(EndpointQueryParams):
 
     model_config = ConfigDict(extra="forbid")
 
-    cluster_name: Optional[str] = Field(
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Target cluster name for multi-cluster deployments",
     )
-    ticket_id: Optional[str] = Field(
+    ticket_id: str | None = Field(
         default=None,
         min_length=1,
         max_length=64,

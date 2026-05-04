@@ -14,7 +14,6 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policy_actions import (
     EpManagePolicyActionsMarkDeletePost,
     EpManagePolicyActionsPushConfigPost,
-    EpManagePolicyActionsRemovePost,
     PolicyActionMutationEndpointParams,
     PolicyPushConfigEndpointParams,
 )
@@ -333,97 +332,3 @@ def test_manage_policy_actions_00230():
         instance.endpoint_params.cluster_name = "cluster1"
         result = instance.path
     assert result == ("/api/v1/manage/fabrics/my-fabric/policyActions/pushConfig?clusterName=cluster1")
-
-
-# =============================================================================
-# Test: EpManagePolicyActionsRemovePost
-# =============================================================================
-
-
-def test_manage_policy_actions_00300():
-    """
-    # Summary
-
-    Verify EpManagePolicyActionsRemovePost basic instantiation
-
-    ## Test
-
-    - Instance can be created
-    - class_name is set correctly
-    - verb is POST
-
-    ## Classes and Methods
-
-    - EpManagePolicyActionsRemovePost.__init__()
-    - EpManagePolicyActionsRemovePost.class_name
-    - EpManagePolicyActionsRemovePost.verb
-    """
-    with does_not_raise():
-        instance = EpManagePolicyActionsRemovePost()
-    assert instance.class_name == "EpManagePolicyActionsRemovePost"
-    assert instance.verb == HttpVerbEnum.POST
-
-
-def test_manage_policy_actions_00310():
-    """
-    # Summary
-
-    Verify EpManagePolicyActionsRemovePost raises ValueError when fabric_name is not set
-
-    ## Test
-
-    - Accessing path raises ValueError when fabric_name is None
-
-    ## Classes and Methods
-
-    - EpManagePolicyActionsRemovePost.path
-    """
-    instance = EpManagePolicyActionsRemovePost()
-    with pytest.raises(ValueError):
-        instance.path
-
-
-def test_manage_policy_actions_00320():
-    """
-    # Summary
-
-    Verify EpManagePolicyActionsRemovePost path without query params
-
-    ## Test
-
-    - path returns correct endpoint path
-
-    ## Classes and Methods
-
-    - EpManagePolicyActionsRemovePost.path
-    """
-    with does_not_raise():
-        instance = EpManagePolicyActionsRemovePost()
-        instance.fabric_name = "my-fabric"
-        result = instance.path
-    assert result == "/api/v1/manage/fabrics/my-fabric/policyActions/remove"
-
-
-def test_manage_policy_actions_00330():
-    """
-    # Summary
-
-    Verify EpManagePolicyActionsRemovePost path with query params
-
-    ## Test
-
-    - path includes clusterName and ticketId in query string
-
-    ## Classes and Methods
-
-    - EpManagePolicyActionsRemovePost.path
-    """
-    with does_not_raise():
-        instance = EpManagePolicyActionsRemovePost()
-        instance.fabric_name = "my-fabric"
-        instance.endpoint_params.cluster_name = "cluster1"
-        instance.endpoint_params.ticket_id = "MyTicket1234"
-        result = instance.path
-    assert result.startswith("/api/v1/manage/fabrics/my-fabric/policyActions/remove?")
-    assert "clusterName=cluster1" in result
-    assert "ticketId=MyTicket1234" in result

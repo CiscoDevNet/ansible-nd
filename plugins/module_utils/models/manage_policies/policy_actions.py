@@ -4,12 +4,11 @@
 """
 Pydantic model for policy bulk-action request bodies.
 
-This module provides ``PolicyIds``, the request body used by all three
+This module provides ``PolicyIds``, the request body used by the
 policy action endpoints:
 
 - POST /api/v1/manage/fabrics/{fabricName}/policyActions/markDelete
 - POST /api/v1/manage/fabrics/{fabricName}/policyActions/pushConfig
-- POST /api/v1/manage/fabrics/{fabricName}/policyActions/remove
 
 ## Schema origin
 
@@ -88,14 +87,13 @@ class PolicyIds(NDNestedModel):
 
     ## Description
 
-    Used for markDelete, pushConfig, and remove policy actions.
+    Used for markDelete and pushConfig policy actions.
     Contains a list of policy IDs to perform the action on.
 
     ## API Endpoints
 
     - POST /api/v1/manage/fabrics/{fabricName}/policyActions/markDelete
     - POST /api/v1/manage/fabrics/{fabricName}/policyActions/pushConfig
-    - POST /api/v1/manage/fabrics/{fabricName}/policyActions/remove
 
     ## Request Body Schema
 
@@ -115,10 +113,6 @@ class PolicyIds(NDNestedModel):
 
     # Push config for policies
     body = PolicyIds(policy_ids=["POLICY-121110"])
-    payload = body.to_request_dict()
-
-    # Remove/delete policies
-    body = PolicyIds(policy_ids=["POLICY-121110", "POLICY-121120", "POLICY-121130"])
     payload = body.to_request_dict()
     ```
     """

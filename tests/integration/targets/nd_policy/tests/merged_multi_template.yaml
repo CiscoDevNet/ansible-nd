@@ -16,7 +16,7 @@
     # TC-1: Create multiple policies with different templates in one task
     - name: "MERGED_MULTI_TEMPLATE TC1 - Create five policies across different templates"
       cisco.nd.nd_policy: &multi_tmpl
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -58,7 +58,7 @@
               CONF: "as-format asdot"
 
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged_multi_template
 
@@ -83,11 +83,11 @@
     # TC-3: Verify via gathered
     - name: "MERGED_MULTI_TEMPLATE TC3 - Gather and verify policies"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: gathered_result
       tags: merged_multi_template
 

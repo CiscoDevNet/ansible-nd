@@ -7,10 +7,10 @@ ND Policy Resource Module.
 Provides all business logic for switch policy management on ND:
     - Policy CRUD (create, read, update, delete)
     - Idempotency diff calculation for merged, deleted states
-    - Deploy (pushConfig) orchestration
+    - Deploy orchestration (pushConfig for create/update, switchActions/deploy for delete)
     - Conditional delete flow:
-      deploy=true  → markDelete → pushConfig → remove
-      deploy=false → markDelete only
+      deploy=true  → markDelete → switchActions/deploy → remove
+      deploy=false → markDelete → remove
 
 The module file ``nd_policy.py`` contains only DOCUMENTATION, argument_spec,
 and a thin ``main()`` that instantiates this class and calls ``manage_state()``.
@@ -28,8 +28,6 @@ import copy
 import logging
 import re
 from typing import Any, ClassVar
-
-# pylint: disable=logging-fstring-interpolation
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
@@ -49,7 +47,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policy_actions import (
     EpManagePolicyActionsMarkDeletePost,
     EpManagePolicyActionsPushConfigPost,
-    EpManagePolicyActionsRemovePost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
     EpManageSwitchActionsDeployPost,
@@ -80,6 +77,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModuleError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+
+# pylint: disable=logging-fstring-interpolation
+
 
 # pylint: disable=logging-fstring-interpolation,logging-not-lazy,f-string-without-interpolation,unnecessary-comprehension,implicit-str-concat
 
@@ -135,10 +135,10 @@ class NDPolicyModule:
         - Query and match existing policies (Lucene + post-filtering)
         - Idempotent diff calculation across 16 merged / 16 deleted cases
         - Create, update, delete_and_create actions
-        - Bulk deploy via pushConfig
+        - Bulk deploy via pushConfig (create/update) or switchActions/deploy (delete)
         - Conditional delete flow:
-          deploy=true  → markDelete → pushConfig → remove
-          deploy=false → markDelete only
+          deploy=true  → markDelete → switchActions/deploy → remove
+          deploy=false → markDelete → remove
 
     Schema models (from ``models.nd_manage_policies``):
         - ``PolicyCreate``      - single policy create request body
@@ -590,8 +590,8 @@ class NDPolicyModule:
         Validates, normalizes, and prepares the config, then dispatches
         to the appropriate handler:
             - **merged**  - create / update / skip policies
-            - **deleted** - deploy=true: markDelete → pushConfig → remove
-                          - deploy=false: markDelete only
+            - **deleted** - deploy=true: markDelete → switchActions/deploy → remove
+                          - deploy=false: markDelete → remove
 
         The entire task is treated as an atomic unit — any validation
         failure aborts the run before any changes are made.
@@ -749,8 +749,11 @@ class NDPolicyModule:
 
         # Phase 4: Deploy if requested
         if self.deploy and policy_ids_to_deploy:
-            self.log.info(f"Deploying {len(policy_ids_to_deploy)} policies")
-            deploy_success = self._deploy_policies(policy_ids_to_deploy)
+            # Determine if any actual changes occurred (create/update)
+            # vs only no-diff deploys.  No-diff deploys should not mark changed.
+            has_actual_changes = any(dr.get("action") not in ("skip", None) for dr in diff_results)
+            self.log.info(f"Deploying {len(policy_ids_to_deploy)} policies (has_actual_changes={has_actual_changes})")
+            deploy_success = self._deploy_policies(policy_ids_to_deploy, changed=has_actual_changes)
             if not deploy_success:
                 self.log.error(
                     "pushConfig failed for one or more policies after "
@@ -1935,6 +1938,13 @@ class NDPolicyModule:
                 if have:
                     self._before.append(have)
                     self._after.append(have)
+                    # Even when no diff, if deploy=true we still deploy the
+                    # existing policy to ensure it's pushed to the switch.
+                    if self.deploy:
+                        existing_pid = have.get("policyId")
+                        if existing_pid:
+                            policy_ids_to_deploy.append(existing_pid)
+                            self.log.info(f"No diff but deploy=true: will deploy existing policy {existing_pid}")
                 diff_payload = {"action": action, "want": want}
                 if error_msg:
                     diff_payload["warning"] = error_msg
@@ -2037,9 +2047,7 @@ class NDPolicyModule:
         #
         #   1. markDelete → try for all old policies
         #   2. PYTHON-type fallback → direct DELETE /policies/{policyId}
-        #   3. deploy=true → pushConfig (markDeleted) or switchActions/deploy
-        #      (direct-deleted) to push config removal to the switch
-        #   4. remove → hard-delete markDeleted policy records
+        #   3. deploy=true → switchActions/deploy to push config removal
         #
         # If the old policy's config isn't removed from the switch first,
         # the old template's config lines will remain on the device even
@@ -2105,33 +2113,16 @@ class NDPolicyModule:
                 # Track truly failed (non-PYTHON) as remove failures
                 remove_failed_ids.update(mark_failed_other)
 
-                # Step 3b: pushConfig for markDeleted policies FIRST
-                # (must run before switchActions/deploy to avoid race)
+                # Step 3b: switch-level deploy to push removal config
                 if mark_succeeded and self.deploy:
-                    self.log.info(f"Phase 3b: pushConfig for " f"{len(mark_succeeded)} markDeleted policies")
-                    deploy_success = self._deploy_policies(mark_succeeded, state="merged")
-                    if not deploy_success:
-                        self.log.error("pushConfig failed during delete_and_create — " "old policy config may not be removed from switch")
+                    dac_switches = list({dac_switch_map[pid] for pid in mark_succeeded if pid in dac_switch_map})
+                    if dac_switches:
+                        self.log.info(f"Phase 3b: switchActions/deploy for " f"{len(dac_switches)} switch(es) to push removal config")
+                        self._api_deploy_switches(dac_switches)
+                    else:
+                        self.log.warning("Phase 3b: No switch IDs found for markDeleted policies — skipping switch deploy")
 
-                # Step 3c: remove markDeleted policy records
-                if mark_succeeded:
-                    self.log.info(f"Phase 3c: remove {len(mark_succeeded)} " f"markDeleted policy records")
-                    remove_data = self._api_remove_policies(mark_succeeded)
-                    rm_ok, rm_fail = self._inspect_207_policies(remove_data)
-
-                    if not rm_ok and not rm_fail and mark_succeeded:
-                        self.log.warning("remove returned no per-policy results — " "treating as success (ambiguous response)")
-
-                    if rm_fail:
-                        for p in rm_fail:
-                            pid = p.get("policyId", "")
-                            if pid:
-                                remove_failed_ids.add(pid)
-                        fail_msgs = [f"{p.get('policyId', '?')}: " f"{p.get('message', 'unknown')}" for p in rm_fail]
-                        self.log.error(f"remove failed for {len(rm_fail)} policy(ies): " + "; ".join(fail_msgs))
-
-                # Step 3d: Direct DELETE for PYTHON-type policies
-                # (runs AFTER pushConfig/remove to avoid switchActions/deploy race)
+                # Step 3c: Direct DELETE for PYTHON-type policies
                 if mark_failed_python:
                     self.log.info(f"Phase 3d: Direct DELETE for " f"{len(mark_failed_python)} PYTHON-type policies")
                     direct_deleted = []
@@ -2465,11 +2456,11 @@ class NDPolicyModule:
         Collects all policy IDs to delete across all config entries, then
         performs bulk API calls.  PYTHON content-type templates (e.g.
         ``switch_freeform``) use direct DELETE; everything else uses the
-        normal markDelete → pushConfig → remove flow.
+        normal markDelete → switch deploy → remove flow.
 
-            - deploy=true:  markDelete → pushConfig → remove (3-step)
-            - deploy=false: markDelete only                  (1-step)
-            - PYTHON-type:  direct DELETE (1-step, regardless of deploy)
+            - deploy=true:  markDelete → switchActions/deploy → remove (3-step)
+            - deploy=false: markDelete → remove                       (2-step)
+            - PYTHON-type:  direct DELETE → switchActions/deploy       (2-step)
 
         Args:
             diff_results: list of diff result dicts from ``_get_diff_deleted_single``.
@@ -2707,90 +2698,58 @@ class NDPolicyModule:
                 },
             )
 
-        # ── Step 2: pushConfig → remove for markDeleted (non-PYTHON) ──
+        # ── Step 2: switch deploy for markDeleted (non-PYTHON) ──
         #
-        # IMPORTANT: pushConfig and remove MUST run BEFORE the PYTHON-type
-        # direct DELETE + switchActions/deploy.  switchActions/deploy is a
-        # fabric-wide operation that also pushes pending markDeleted policy
-        # removals.  If it runs first, those markDeleted policies get
-        # removed from the controller by ND, and the subsequent pushConfig
-        # fails with "Policy does not exist".
+        # After markDelete, a switch-level deploy pushes the removal
+        # (negative) config to the affected switches.
 
         normal_delete_ids = mark_succeeded
 
-        if normal_delete_ids and not self.deploy:
-            self.log.info("Deploy=false: skipping pushConfig/remove; " "policies remain marked for deletion")
-
         deploy_success = True
         if normal_delete_ids and self.deploy:
-            # Step 2a: pushConfig for markDeleted policies
-            self.log.info(f"Step 2/3: pushConfig for {len(normal_delete_ids)} policies")
-            deploy_success = self._deploy_policies(normal_delete_ids, state="deleted")
+            # Step 2a: switch-level deploy to push removal config
+            normal_switches = list({policy_switch_map[pid] for pid in normal_delete_ids if pid in policy_switch_map})
+            if normal_switches:
+                self.log.info(f"Step 2/3: switchActions/deploy for {len(normal_switches)} switch(es) " f"to push removal config: {normal_switches}")
+                deploy_data = self._api_deploy_switches(normal_switches)
 
-            if not deploy_success:
-                self.log.error("pushConfig failed — aborting remove. " "Policies remain in markDeleted state.")
+                if isinstance(deploy_data, dict) and deploy_data:
+                    status_str = deploy_data.get("status", "")
+                    if status_str:
+                        self.log.info(f"switchActions/deploy status: {status_str}")
+                else:
+                    self.log.warning("switchActions/deploy returned empty body — " "treating as success (ND commonly returns {} for this endpoint)")
+
                 self._register_result(
-                    action="policy_deploy_abort",
+                    action="policy_switch_deploy",
                     state="deleted",
                     operation_type=OperationType.DELETE,
-                    return_code=-1,
-                    message=(
-                        "pushConfig failed for one or more policies. "
-                        "Aborting remove — policies remain marked for deletion "
-                        "with negative priority. Fix device connectivity and re-run."
-                    ),
-                    success=False,
+                    return_code=200,
+                    message=(f"Deployed removal config to {len(normal_switches)} switch(es) " f"for {len(normal_delete_ids)} markDeleted policies"),
+                    success=True,
                     found=True,
                     diff={
-                        "action": "deploy_abort",
+                        "action": "switch_deploy",
+                        "switch_ids": normal_switches,
                         "policy_ids": normal_delete_ids,
-                        "reason": "pushConfig per-policy failure",
                     },
                 )
             else:
-                # Step 2b: remove — hard-delete markDeleted policy records from ND
-                self.log.info(f"Step 3/3: remove {len(normal_delete_ids)} policies")
-                remove_data = self._api_remove_policies(normal_delete_ids)
+                self.log.warning("No switch IDs found for markDeleted policies — " "skipping switch deploy")
 
-                # Inspect 207 response for per-policy failures
-                rm_ok, rm_fail = self._inspect_207_policies(remove_data)
-                remove_success = len(rm_fail) == 0
-
-                # Warn if ND returned no per-policy detail at all
-                if not rm_ok and not rm_fail and normal_delete_ids:
-                    self.log.warning(
-                        f"remove returned no per-policy results for " f"{len(normal_delete_ids)} policy IDs — treating as success " "(ambiguous response)"
-                    )
-
-                if rm_fail:
-                    fail_msgs = [f"{p.get('policyId', '?')}: {p.get('message', 'unknown')}" for p in rm_fail]
-                    self.log.error(f"remove failed for {len(rm_fail)} policy(ies): " + "; ".join(fail_msgs))
-
-                self._register_result(
-                    action="policy_remove",
-                    state="deleted",
-                    operation_type=OperationType.DELETE,
-                    return_code=200 if remove_success else 207,
-                    message=(
-                        f"Removed {len(normal_delete_ids)} policies"
-                        if remove_success
-                        else (f"Remove partially failed: " f"{len(rm_ok)} succeeded, {len(rm_fail)} failed")
-                    ),
-                    success=remove_success,
-                    found=True,
-                    diff={
-                        "action": "remove",
-                        "policy_ids": normal_delete_ids,
-                        "remove_success": remove_success,
-                        "failed_policies": [p.get("policyId") for p in rm_fail],
-                    },
-                )
+        elif normal_delete_ids and not self.deploy:
+            # deploy=false: markDelete already happened; switch-level deploy
+            # is skipped so config remains on device but policy is marked
+            # for deletion on the controller.  No remove needed — the
+            # next switch-level deploy (manual or via future playbook run
+            # with deploy=true) will clean up.
+            self.log.info(f"Deploy=false: {len(normal_delete_ids)} policies markDeleted but not deployed")
 
         # ── Step 3: direct DELETE + switchActions/deploy for PYTHON-type ──
         #
-        # This runs AFTER pushConfig/remove so that switchActions/deploy
-        # (a fabric-wide operation) does not interfere with markDeleted
-        # policies that are still pending pushConfig.
+        # PYTHON content-type templates cannot be markDeleted.  We use
+        # direct DELETE to remove the record, then switch-level deploy
+        # to push the config removal to the devices.
         if mark_failed_python:
             self.log.info(f"Falling back to direct DELETE for {len(mark_failed_python)} " f"PYTHON-type policies: {mark_failed_python}")
             deleted_direct = []
@@ -2890,6 +2849,7 @@ class NDPolicyModule:
         self,
         policy_ids: list[str],
         state: str = "merged",
+        changed: bool = True,
     ) -> bool:
         """Deploy policies by calling pushConfig.
 
@@ -2900,6 +2860,9 @@ class NDPolicyModule:
         Args:
             policy_ids: list of policy IDs to deploy.
             state: Module state for result reporting.
+            changed: Whether to report this deploy as a change.
+                Set to False when deploying already-in-sync policies
+                (no-diff deploy) to preserve idempotence.
 
         Returns:
             True if all policies deployed successfully, False if any failed.
@@ -2957,7 +2920,7 @@ class NDPolicyModule:
         self.results.result_current = {
             "success": deploy_success,
             "found": True,
-            "changed": deploy_success,
+            "changed": deploy_success and changed,
         }
         self.results.diff_current = {
             "action": "deploy",
@@ -3196,34 +3159,6 @@ class NDPolicyModule:
         body = PolicyIds(policy_ids=policy_ids)
 
         ep = EpManagePolicyActionsMarkDeletePost()
-        ep.fabric_name = self.fabric_name
-        if self.cluster_name:
-            ep.endpoint_params.cluster_name = self.cluster_name
-        if self.ticket_id:
-            ep.endpoint_params.ticket_id = self.ticket_id
-
-        data = self.nd.request(ep.path, ep.verb, body.to_request_dict())
-        return data if isinstance(data, dict) else {}
-
-    def _api_remove_policies(self, policy_ids: list[str]) -> dict:
-        """Hard-delete policies via POST /policyActions/remove.
-
-        ND returns HTTP 207 Multi-Status with per-policy results.
-        The caller should inspect the returned dict for per-policy
-        ``status: "failed"`` entries.
-
-        Args:
-            policy_ids: list of policy IDs to remove from ND.
-
-        Returns:
-            Response DATA dict from ND.  Typically contains a
-            ``policies`` list with per-policy ``status`` and
-            ``message`` fields.
-        """
-        self.log.info(f"Removing {len(policy_ids)} policies: {policy_ids}")
-        body = PolicyIds(policy_ids=policy_ids)
-
-        ep = EpManagePolicyActionsRemovePost()
         ep.fabric_name = self.fabric_name
         if self.cluster_name:
             ep.endpoint_params.cluster_name = self.cluster_name

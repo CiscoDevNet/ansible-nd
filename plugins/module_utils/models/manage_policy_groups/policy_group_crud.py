@@ -17,15 +17,11 @@ This module provides ``PolicyGroupCreateBulk`` (bulk create wrapper) and
 - ``PolicyGroupUpdate``     ← ``putPolicyGroup`` (identical to ``createPolicyGroup``)
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
+from __future__ import annotations
 
 __author__ = "L Nikhil Sri Krishna"
 
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -82,16 +78,16 @@ class PolicyGroupCreateBulk(NDNestedModel):
     ```
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
-    policy_groups: List[PolicyGroupCreate] = Field(
+    policy_groups: list[PolicyGroupCreate] = Field(
         default_factory=list,
         min_length=1,
         alias="policyGroups",
         description="List of policy groups to create",
     )
 
-    def to_request_dict(self) -> Dict[str, Any]:
+    def to_request_dict(self) -> dict[str, Any]:
         """
         Convert to API request dictionary.
 

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
@@ -18,15 +16,9 @@ The ``PolicyEntityType`` enum is reused from ``models.manage_policies.enums``.
 - ``PolicyGroupCreate``  ← ``createPolicyGroup`` (extends ``createBasePolicy`` + switchIds)
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
-
-__author__ = "L Nikhil Sri Krishna"
-
-from typing import Any, ClassVar, Dict, List, Literal, Optional
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -91,15 +83,22 @@ class PolicyGroupCreate(NDBaseModel):
     """
 
     # --- NDBaseModel ClassVars ---
-    identifiers: ClassVar[List[str]] = ["switch_ids", "template_name", "description"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "composite"
-    exclude_from_diff: ClassVar[set] = {"source"}
+    identifiers: ClassVar[list[str]] = ["description", "template_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
+    exclude_from_diff: ClassVar[set] = {"source", "policy_id", "priority", "create_additional_policy"}
+    payload_exclude_fields: ClassVar[set] = {"policy_id", "create_additional_policy"}
+
+    # Server-generated policy group ID (populated from API responses)
+    policy_id: str | None = Field(
+        default=None,
+        alias="policyId",
+        description="Server-generated policy group ID (e.g., POLICY-GROUP-143310). Not sent in create/update payloads.",
+    )
 
     # Required fields from createPolicyGroup schema
-    switch_ids: List[str] = Field(
-        ...,
+    switch_ids: list[str] = Field(
+        default_factory=list,
         alias="switchIds",
-        min_length=1,
         description="List of switch serial numbers (e.g., ['FDO25031SY4', 'FDO245206N5'])",
     )
     template_name: str = Field(
@@ -109,45 +108,51 @@ class PolicyGroupCreate(NDBaseModel):
         description="Name of the policy template",
     )
     entity_type: PolicyEntityType = Field(
-        ...,
+        default=PolicyEntityType.SWITCH,
         alias="entityType",
         description="Type of the entity (switch, configProfile, interface)",
     )
     entity_name: str = Field(
-        ...,
+        default="SWITCH",
         max_length=255,
         alias="entityName",
         description="Name of the entity. Use 'SWITCH' for switch-level, or interface name for interface-level",
     )
 
     # Optional fields from createBasePolicy
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None,
         max_length=255,
         description="Description of the policy group",
     )
-    priority: Optional[int] = Field(
+    priority: int | None = Field(
         default=500,
-        ge=1,
+        ge=0,
         le=2000,
         description="Priority of the policy group (1-2000)",
     )
-    source: Optional[str] = Field(
+    source: str | None = Field(
         default="",
         max_length=255,
         description="Source of the policy (UNDERLAY, OVERLAY, LINK, etc.). Empty means any source can update.",
     )
-    template_inputs: Optional[Dict[str, Any]] = Field(
+    template_inputs: dict[str, Any] | None = Field(
         default=None,
         alias="templateInputs",
         description="Name/value parameter list passed to the template",
     )
-    secondary_entity_name: Optional[str] = Field(
+    secondary_entity_name: str | None = Field(
         default=None,
         alias="secondaryEntityName",
         description="Name of the secondary entity (e.g., overlay name for configProfile)",
     )
-    secondary_entity_type: Optional[PolicyEntityType] = Field(
+
+    # Module-only field (not sent to API)
+    create_additional_policy: bool = Field(
+        default=False,
+        description="When True, always create a new policy group even if an identical one exists. Skips idempotency checks.",
+    )
+    secondary_entity_type: PolicyEntityType | None = Field(
         default=None,
         alias="secondaryEntityType",
         description="Type of the secondary entity",
@@ -155,16 +160,71 @@ class PolicyGroupCreate(NDBaseModel):
 
     @field_validator("switch_ids")
     @classmethod
-    def validate_switch_ids(cls, v: List[str]) -> List[str]:
+    def validate_switch_ids(cls, v: list[str]) -> list[str]:
         """Validate that all switch IDs are non-empty strings."""
         if not v:
-            raise ValueError("switch_ids must contain at least one switch ID")
+            return v
         for sid in v:
             if not isinstance(sid, str) or not sid.strip():
                 raise ValueError(f"Invalid switch ID: {sid!r}. Must be a non-empty string.")
         return v
 
-    def to_request_dict(self) -> Dict[str, Any]:
+    @classmethod
+    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "PolicyGroupCreate":
+        """Create model instance from Ansible config dict.
+
+        Handles the ``name`` → ``template_name`` translation so the user-facing
+        arg_spec can use ``name`` while the model uses ``template_name``.
+
+        Strips keys where Ansible injected default placeholders (None, 0, empty
+        list) so that Pydantic's own defaults are used and ``model_fields_set``
+        accurately reflects only user-provided fields.
+        """
+        config = dict(ansible_config)
+        if "name" in config and "template_name" not in config:
+            config["template_name"] = config.pop("name")
+        # Remove Ansible-injected defaults so Pydantic defaults take effect.
+        # Ansible injects None for unset str/dict/list, and 0 for unset int.
+        config = {
+            k: v for k, v in config.items()
+            if v is not None and v != 0 and v != [] and v != {}
+        }
+        # Controller stringifies all templateInputs values after deploy
+        # (e.g., int 5 → "5"). Normalize here so diff comparison works.
+        if "template_inputs" in config and isinstance(config["template_inputs"], dict):
+            config["template_inputs"] = {
+                k: str(v) if not isinstance(v, str) else v
+                for k, v in config["template_inputs"].items()
+            }
+        return cls.model_validate(config, by_name=True, **kwargs)
+
+    @classmethod
+    def get_argument_spec(cls) -> dict[str, Any]:
+        """Return the Ansible argument spec for nd_policy_group.
+
+        Uses suboptions with no defaults for optional fields so that
+        Ansible does not inject default values and Pydantic's
+        ``model_fields_set`` accurately tracks user-provided fields.
+        """
+        return dict(
+            fabric_name=dict(type="str", required=True, aliases=["fabric"]),
+            deploy=dict(type="bool", default=True),
+            config=dict(
+                type="list",
+                elements="dict",
+                options=dict(
+                    name=dict(type="str"),
+                    description=dict(type="str"),
+                    switch_ids=dict(type="list", elements="str"),
+                    priority=dict(type="int"),
+                    template_inputs=dict(type="dict"),
+                    create_additional_policy=dict(type="bool", default=False),
+                ),
+            ),
+            state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),
+        )
+
+    def to_request_dict(self) -> dict[str, Any]:
         """
         Convert model to API request dictionary with camelCase keys.
 

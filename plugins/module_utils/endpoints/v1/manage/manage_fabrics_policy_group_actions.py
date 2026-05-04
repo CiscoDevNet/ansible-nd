@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -11,20 +9,21 @@ in the ND Manage API.
 
 Endpoints covered:
 - POST /fabrics/{fabricName}/policyGroups/actions/markDelete  - Mark-delete policy groups
-- POST /fabrics/{fabricName}/policyGroups/actions/remove       - Remove policy groups in bulk
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
-__metaclass__ = type
-# pylint: enable=invalid-name
+from __future__ import annotations
 
 __author__ = "L Nikhil Sri Krishna"
 
-from typing import Literal, Optional
+from typing import Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
+    Field,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     FabricNameMixin,
 )
@@ -34,13 +33,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params im
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    ConfigDict,
-    Field,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
-    NDEndpointBaseModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 # ============================================================================
 # Query parameter classes
@@ -59,7 +52,6 @@ class PolicyGroupActionMutationEndpointParams(EndpointQueryParams):
     ``clusterName`` and ``ticketId``:
 
     - POST /policyGroups/actions/markDelete
-    - POST /policyGroups/actions/remove
 
     ## Parameters
 
@@ -69,12 +61,12 @@ class PolicyGroupActionMutationEndpointParams(EndpointQueryParams):
 
     model_config = ConfigDict(extra="forbid")
 
-    cluster_name: Optional[str] = Field(
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Target cluster name for multi-cluster deployments",
     )
-    ticket_id: Optional[str] = Field(
+    ticket_id: str | None = Field(
         default=None,
         min_length=1,
         max_length=64,
@@ -159,70 +151,6 @@ class EpManagePolicyGroupActionsMarkDeletePost(_EpManagePolicyGroupActionsBase):
     def path(self) -> str:
         """Build the endpoint path with optional query string."""
         base = self._action_path("markDelete")
-        qs = self.endpoint_params.to_query_string()
-        return f"{base}?{qs}" if qs else base
-
-    @property
-    def verb(self) -> HttpVerbEnum:
-        """Return the HTTP verb for this endpoint."""
-        return HttpVerbEnum.POST
-
-
-# ============================================================================
-# POST /fabrics/{fabricName}/policyGroups/actions/remove
-# ============================================================================
-
-
-class EpManagePolicyGroupActionsRemovePost(_EpManagePolicyGroupActionsBase):
-    """
-    # Summary
-
-    ND Manage Policy Group Actions — Remove Endpoint
-
-    ## Description
-
-    Remove (permanently delete) policy groups in bulk.
-
-    ## Path
-
-    - /api/v1/manage/fabrics/{fabricName}/policyGroups/actions/remove
-
-    ## Verb
-
-    - POST
-
-    ## Usage
-
-    ```python
-    ep = EpManagePolicyGroupActionsRemovePost()
-    ep.fabric_name = "my-fabric"
-    path = ep.path
-    verb = ep.verb
-    ```
-
-    ## Request Body Example
-
-    ```json
-    {
-        "policyIds": ["POLICY-GROUP-143310", "POLICY-GROUP-143320"]
-    }
-    ```
-    """
-
-    class_name: Literal["EpManagePolicyGroupActionsRemovePost"] = Field(
-        default="EpManagePolicyGroupActionsRemovePost",
-        frozen=True,
-        description="Class name for backward compatibility",
-    )
-    endpoint_params: PolicyGroupActionMutationEndpointParams = Field(
-        default_factory=PolicyGroupActionMutationEndpointParams,
-        description="Query parameters: clusterName, ticketId",
-    )
-
-    @property
-    def path(self) -> str:
-        """Build the endpoint path with optional query string."""
-        base = self._action_path("remove")
         qs = self.endpoint_params.to_query_string()
         return f"{base}?{qs}" if qs else base
 

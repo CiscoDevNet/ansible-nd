@@ -16,7 +16,7 @@
     # TC-1: Banner with multiline template_inputs
     - name: "MERGED_WITH_VARS TC1 - Create banner policy with multiline input"
       cisco.nd.nd_policy: &banner_pol
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -33,7 +33,7 @@
               BANNERDELIMITER: "_"
               TYPE: "motd"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged_with_vars
 
@@ -58,7 +58,7 @@
     # TC-3: vrf_route_tracking with specific inputs
     - name: "MERGED_WITH_VARS TC3 - Create vrf_route_tracking policy"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -71,7 +71,7 @@
               IP_PREFIX: "10.0.0.1/31"
               VRF_NAME: "vrf-prod-11234"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged_with_vars
 
@@ -89,7 +89,7 @@
 
     - name: "MERGED_WITH_VARS TC4 - Create syslog policy from file"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -99,7 +99,7 @@
             priority: 220
             template_inputs: "{{ syslog_vars }}"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged_with_vars
 
@@ -117,7 +117,7 @@
 
     - name: "MERGED_WITH_VARS TC5 - Create spanning-tree policy from file"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -127,7 +127,7 @@
             priority: 225
             template_inputs: "{{ spanning_tree_vars }}"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged_with_vars
 
@@ -145,7 +145,7 @@
 
     - name: "MERGED_WITH_VARS TC6 - Create alias policy from file"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -155,7 +155,7 @@
             priority: 230
             template_inputs: "{{ alias_vars }}"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged_with_vars
 
@@ -168,7 +168,7 @@
     # TC-7: switch_freeform with inline multiline CONF (OSPF best practices)
     - name: "MERGED_WITH_VARS TC7 - Create OSPF best practices policy"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -183,7 +183,7 @@
                   auto-cost reference-bandwidth 800 Gbps
                   log-adjacency-changes
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged_with_vars
 

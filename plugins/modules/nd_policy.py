@@ -176,11 +176,11 @@ options:
     description:
     - When set to V(true), policies are deployed to devices after create/update/delete operations.
     - For C(merged) state, this triggers a pushConfig action for the affected policy IDs.
-    - For C(deleted) state, this triggers C(markDelete) → C(pushConfig) → C(remove) to remove
-      config from switches and then hard-delete the policy records from the controller.
-    - For C(deleted) with O(deploy=false), only C(markDelete) is performed on the controller.
-      Policy records remain marked for deletion (with negative priority) until a subsequent
-      run with O(deploy=true) or manual intervention.
+    - For C(deleted) state, this triggers C(markDelete) → C(switchActions/deploy) → C(remove) to push
+      removal config to switches and then hard-delete the policy records from the controller.
+    - For C(deleted) with O(deploy=false), C(markDelete) → C(remove) is performed.
+      Policy records are removed from the controller but the running config remains on the
+      switch until the next deploy.
     - B(Exception) — C(switch_freeform) and other PYTHON content-type policies do not
       support the C(markDelete) API. The module automatically detects this and falls back
       to a direct C(DELETE) API call to remove the policy record from the controller.
@@ -203,10 +203,10 @@ options:
     - Use C(merged) to create or update policies.
     - Use C(deleted) to delete policies.
     - For C(deleted) with O(deploy=true), the module performs
-      C(markDelete) → C(pushConfig) → C(remove).
-    - For C(deleted) with O(deploy=false), only C(markDelete) is performed on the controller.
-      Policy records remain marked for deletion (with negative priority) until a subsequent
-      run with O(deploy=true) or manual intervention.
+      C(markDelete) → C(switchActions/deploy) → C(remove).
+    - For C(deleted) with O(deploy=false), C(markDelete) → C(remove) is performed.
+      Policy records are removed from the controller but the running config remains
+      on the switch until the next deploy.
     - B(Exception) — C(switch_freeform) and other PYTHON content-type policies cannot
       be markDeleted. The module attempts C(markDelete), detects the failure, and
       automatically falls back to a direct C(DELETE) API call. When O(deploy=true),

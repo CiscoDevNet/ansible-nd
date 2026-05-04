@@ -2,20 +2,30 @@
 # Runner playbook for nd_policy integration tests.
 #
 # Usage:
-#   source .env.sh
-#   ansible-playbook -i inventory/hosts.yml tests/integration/targets/nd_policy/run_tests.yaml
+#   ansible-playbook -i tests/integration/inventory.networking \
+#     tests/integration/targets/nd_policy/run_tests.yaml \
+#     -e testcase=merged \
+#     -e @tests/integration/integration_config.yml
 #
-# To run a specific test file:
-#   ansible-playbook -i inventory/hosts.yml tests/integration/targets/nd_policy/run_tests.yaml -e testcase=merged
-#   ansible-playbook -i inventory/hosts.yml tests/integration/targets/nd_policy/run_tests.yaml -e testcase=deleted
-#   ansible-playbook -i inventory/hosts.yml tests/integration/targets/nd_policy/run_tests.yaml -e testcase=sanity
-#
-# To override switches/fabric at runtime:
-#   ansible-playbook -i inventory/hosts.yml tests/integration/targets/nd_policy/run_tests.yaml \
-#     -e ansible_it_fabric=my_fabric -e ansible_switch1=FDO12345678 -e ansible_switch2=FDO87654321
+# To override fabric/switch at runtime:
+#   ansible-playbook -i tests/integration/inventory.networking \
+#     tests/integration/targets/nd_policy/run_tests.yaml \
+#     -e testcase=merged \
+#     -e fabric_name=my_fabric \
+#     -e switch_serial_1=FDO12345678
 
 - name: ND Policy Integration Tests
   hosts: nd
   gather_facts: false
+  environment:
+    ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
+  pre_tasks:
+    - name: Truncate log file for fresh run
+      ansible.builtin.copy:
+        content: ""
+        dest: "{{ nd_logging_config | default('') | dirname }}/../nd_policy.log"
+      delegate_to: localhost
+      when: nd_logging_config is defined and nd_logging_config != ''
+      ignore_errors: true
   roles:
     - role: "{{ playbook_dir }}"

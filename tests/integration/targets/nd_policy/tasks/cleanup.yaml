@@ -4,7 +4,7 @@
 
 - name: "CLEANUP - Delete all test policies from switches"
   cisco.nd.nd_policy:
-    fabric_name: "{{ ansible_it_fabric }}"
+    fabric_name: "{{ fabric_name }}"
     state: deleted
     deploy: true
     config:
@@ -15,7 +15,7 @@
       - name: vrf_route_tracking
       - name: feature_enable
       - switch:
-          - serial_number: "{{ ansible_switch1 }}"
-          - serial_number: "{{ ansible_switch2 }}"
+          - serial_number: "{{ switch_serial_1 }}"
+          - serial_number: "{{ switch_serial_2 }}"
   register: cleanup_result
   ignore_errors: true

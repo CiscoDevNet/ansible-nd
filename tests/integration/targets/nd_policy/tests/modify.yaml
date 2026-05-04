@@ -15,7 +15,7 @@
 
     - name: "MODIFY SETUP - Create initial policies for modification tests"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         use_desc_as_key: true
@@ -44,7 +44,7 @@
               CONF: "bfd interval 250 min_rx 250 multiplier 3"
 
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: setup_result
       tags: modify
 
@@ -61,7 +61,7 @@
     # TC-1: Modify priority of an existing policy using use_desc_as_key
     - name: "MODIFY TC1 - Update priority using use_desc_as_key"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         use_desc_as_key: true
@@ -75,7 +75,7 @@
               HOUR_OFFSET: 1
               MINUTE_OFFSET: 0
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: modify
 
@@ -88,7 +88,7 @@
     # TC-2: Idempotence after modification
     - name: "MODIFY TC2 - Idempotence after priority update"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         use_desc_as_key: true
@@ -102,7 +102,7 @@
               HOUR_OFFSET: 1
               MINUTE_OFFSET: 0
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: modify
 
@@ -115,7 +115,7 @@
     # TC-3: Modify template_inputs of an existing policy
     - name: "MODIFY TC3 - Update template_inputs using use_desc_as_key"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         use_desc_as_key: true
@@ -127,7 +127,7 @@
             template_inputs:
               CONF: "bfd interval 500 min_rx 500 multiplier 5"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: modify
 
@@ -140,12 +140,12 @@
     # TC-4: Modify using policy ID (gathered first to get ID)
     - name: "MODIFY TC4 - Gather policies to get policy IDs"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
           - name: clock_timezone
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: gathered_result
       tags: modify
 
@@ -157,7 +157,7 @@
 
     - name: "MODIFY TC4 - Modify policy by ID"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -169,7 +169,7 @@
               HOUR_OFFSET: 1
               MINUTE_OFFSET: 0
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       when: policy_id is defined
       tags: modify
@@ -184,11 +184,11 @@
     # TC-5: Verify modifications via gathered
     - name: "MODIFY TC5 - Gather all policies and verify modifications"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: gathered_result
       tags: modify
 

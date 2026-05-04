@@ -16,7 +16,7 @@
     # TC-1: Create policies on two switches simultaneously
     - name: "MERGED_MULTI_SWITCH TC1 - Create policy on two switches"
       cisco.nd.nd_policy: &multi_sw_merge
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -35,8 +35,8 @@
             template_inputs:
               CONF: "system vlan long-name"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
-              - serial_number: "{{ ansible_switch2 }}"
+              - serial_number: "{{ switch_serial_1 }}"
+              - serial_number: "{{ switch_serial_2 }}"
       register: result
       tags: merged_multi_switch
 
@@ -61,7 +61,7 @@
     # TC-3: Per-switch policy override - different priorities per switch
     - name: "MERGED_MULTI_SWITCH TC3 - Per-switch policy overrides"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -72,7 +72,7 @@
             template_inputs:
               CONF: "bfd interval 250 min_rx 250 multiplier 3"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
                 policies:
                   - name: switch_freeform
                     description: "BFD timers - custom priority sw1"
@@ -80,7 +80,7 @@
                     create_additional_policy: false
                     template_inputs:
                       CONF: "bfd interval 250 min_rx 250 multiplier 3"
-              - serial_number: "{{ ansible_switch2 }}"
+              - serial_number: "{{ switch_serial_2 }}"
       register: result
       tags: merged_multi_switch
 

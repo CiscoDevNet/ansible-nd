@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
@@ -49,11 +47,9 @@ Usage in nd_policy_group.py main()::
         )
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
-
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -121,9 +117,9 @@ class PlaybookPolicyGroupConfig(NDNestedModel):
         - priority: 1–2000 (createBasePolicy.priority)
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
-    name: Optional[str] = Field(
+    name: str | None = Field(
         default=None,
         max_length=255,
         description=(
@@ -149,11 +145,11 @@ class PlaybookPolicyGroupConfig(NDNestedModel):
         le=2000,
         description="Policy priority (1–2000, default 500)",
     )
-    template_inputs: Optional[Dict[str, Any]] = Field(
+    template_inputs: dict[str, Any] | None = Field(
         default_factory=dict,
         description="Name/value pairs passed to the policy template",
     )
-    switch_ids: Optional[List[str]] = Field(
+    switch_ids: list[str] | None = Field(
         default=None,
         description=(
             "List of target switch serial numbers, management IPs, or hostnames "
@@ -164,7 +160,7 @@ class PlaybookPolicyGroupConfig(NDNestedModel):
 
     @field_validator("switch_ids")
     @classmethod
-    def validate_switch_ids(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+    def validate_switch_ids(cls, v: list[str] | None) -> list[str] | None:
         """Validate that switch IDs, when provided, are non-empty strings.
 
         Args:
@@ -246,7 +242,7 @@ class PlaybookPolicyGroupConfig(NDNestedModel):
         return self
 
     @classmethod
-    def get_argument_spec(cls) -> Dict[str, Any]:
+    def get_argument_spec(cls) -> dict[str, Any]:
         """Return the Ansible argument spec for nd_policy_group.
 
         Returns:

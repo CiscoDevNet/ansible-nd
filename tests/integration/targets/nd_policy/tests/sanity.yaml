@@ -23,7 +23,7 @@
             template_inputs:
               CONF: "system vlan long-name"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       ignore_errors: true
       tags: sanity
@@ -37,7 +37,7 @@
     # TC-2: Missing config for merged state should fail
     - name: "SANITY TC2 - Merged state without config"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
       register: result
@@ -53,7 +53,7 @@
     # TC-3: Duplicate descriptions with use_desc_as_key should fail atomically
     - name: "SANITY TC3 - Duplicate descriptions with use_desc_as_key"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         use_desc_as_key: true
@@ -67,7 +67,7 @@
             template_inputs:
               CONF: "bfd interval 250 min_rx 250 multiplier 3"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       ignore_errors: true
       tags: sanity
@@ -81,7 +81,7 @@
     # TC-4: Empty description with use_desc_as_key should fail
     - name: "SANITY TC4 - Empty description with use_desc_as_key"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         use_desc_as_key: true
@@ -91,7 +91,7 @@
             template_inputs:
               CONF: "system vlan long-name"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       ignore_errors: true
       tags: sanity
@@ -105,7 +105,7 @@
     # TC-5: Invalid template name should fail
     - name: "SANITY TC5 - Non-existent template name"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -113,7 +113,7 @@
             template_inputs:
               CONF: "test"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       ignore_errors: true
       tags: sanity
@@ -127,7 +127,7 @@
     # TC-6: Create, delete, re-create cycle (full lifecycle)
     - name: "SANITY TC6a - Create a policy"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -138,7 +138,7 @@
             template_inputs:
               CONF: "ip tcp path-mtu-discovery"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: sanity
 
@@ -150,13 +150,13 @@
 
     - name: "SANITY TC6b - Delete the policy"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
         config:
           - name: switch_freeform
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: sanity
 
@@ -168,7 +168,7 @@
 
     - name: "SANITY TC6c - Re-create the policy"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -179,7 +179,7 @@
             template_inputs:
               CONF: "ip tcp path-mtu-discovery"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: sanity
 
@@ -192,7 +192,7 @@
     # TC-7: Invalid switch serial number should fail
     - name: "SANITY TC7 - Non-existent switch serial"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:

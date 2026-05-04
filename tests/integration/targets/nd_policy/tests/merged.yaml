@@ -16,7 +16,7 @@
     # TC-1: Create a single policy with clock_timezone template
     - name: "MERGED TC1 - Create clock_timezone policy"
       cisco.nd.nd_policy: &merged_clock_tz
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -29,7 +29,7 @@
               HOUR_OFFSET: 1
               MINUTE_OFFSET: 0
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged
 
@@ -54,7 +54,7 @@
     # TC-3: Create policy with clock_summertime template
     - name: "MERGED TC3 - Create clock_summertime policy"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -65,7 +65,7 @@
             template_inputs:
               SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged
 
@@ -78,7 +78,7 @@
     # TC-4: Create policy with switch_freeform - simple one-liner
     - name: "MERGED TC4 - Create switch_freeform policy (system vlan long-name)"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -89,7 +89,7 @@
             template_inputs:
               CONF: "system vlan long-name"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged
 
@@ -102,7 +102,7 @@
     # TC-5: Create policy with no description (default empty)
     - name: "MERGED TC5 - Create bfd_timers policy with no description"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -112,7 +112,7 @@
             template_inputs:
               CONF: "bfd interval 250 min_rx 250 multiplier 3"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged
 
@@ -125,11 +125,11 @@
     # TC-6: Verify all created policies via gathered
     - name: "MERGED TC6 - Gather all policies on switch1"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: gathered_result
       tags: merged
 
@@ -143,7 +143,7 @@
     # TC-7: Create additional policy even when identical exists (create_additional_policy: true)
     - name: "MERGED TC7 - Create duplicate policy with create_additional_policy true"
       cisco.nd.nd_policy:
-        fabric_name: "{{ ansible_it_fabric }}"
+        fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
         config:
@@ -154,7 +154,7 @@
             template_inputs:
               CONF: "system vlan long-name"
           - switch:
-              - serial_number: "{{ ansible_switch1 }}"
+              - serial_number: "{{ switch_serial_1 }}"
       register: result
       tags: merged
 
