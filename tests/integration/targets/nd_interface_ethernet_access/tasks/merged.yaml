@@ -33,7 +33,6 @@
         config_data:
           network_os:
             policy:
-              policy_type: access_host
     state: merged
   check_mode: true
   register: debug_requery
@@ -263,7 +262,6 @@
               admin_state: true
               access_vlan: 999
               description: "No-deploy test Ethernet1/48"
-              policy_type: access_host
     deploy: false
     state: merged
   register: nm_merged_no_deploy

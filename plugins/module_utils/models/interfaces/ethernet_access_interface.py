@@ -27,8 +27,6 @@ from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
-    FieldSerializationInfo,
-    field_serializer,
     field_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -85,7 +83,9 @@ class EthernetAccessPolicyModel(NDNestedModel):
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
     orphan_port: bool | None = Field(default=None, alias="orphanPort", description="Enable vPC orphan port")
     pfc: bool | None = Field(default=None, alias="pfc", description="Enable priority flow control")
-    policy_type: AccessHostPolicyTypeEnum | None = Field(default=None, alias="policyType", description="Interface policy type")
+    policy_type: AccessHostPolicyTypeEnum = Field(
+        default=AccessHostPolicyTypeEnum.ACCESS_HOST, alias="policyType", description="Interface policy type"
+    )
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Enable spanning-tree edge port behavior")
     qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
     qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
@@ -137,48 +137,6 @@ class EthernetAccessPolicyModel(NDNestedModel):
         le=200000000,
         description="Unicast storm control level in packets per second",
     )
-
-    # --- Validators ---
-
-    @field_validator("policy_type", mode="before")
-    @classmethod
-    def normalize_policy_type(cls, value):
-        """
-        # Summary
-
-        Accept `policy_type` in either Ansible (`access_host`) or API (`accessHost`) format, normalizing to the API value for enum validation.
-
-        ## Raises
-
-        None
-        """
-        if value is None:
-            return value
-        ansible_to_api = {e.name.lower(): e.value for e in AccessHostPolicyTypeEnum}
-        return ansible_to_api.get(value, value)
-
-    # --- Serializers ---
-
-    @field_serializer("policy_type")
-    def serialize_policy_type(self, value: str | None, info: FieldSerializationInfo) -> str | None:
-        """
-        # Summary
-
-        Serialize `policy_type` to the API's camelCase value in payload mode, or the Ansible-friendly name in config mode.
-
-        With `use_enum_values=True`, the stored value is the enum's `.value` string (e.g. `"accessHost"`).
-
-        ## Raises
-
-        None
-        """
-        if value is None:
-            return None
-        mode = (info.context or {}).get("mode", "payload")
-        if mode == "config":
-            reverse = {e.value: e.name.lower() for e in AccessHostPolicyTypeEnum}
-            return reverse.get(value, value)
-        return value
 
 
 class EthernetAccessNetworkOSModel(NDNestedModel):
@@ -314,11 +272,6 @@ class EthernetAccessInterfaceModel(NDBaseModel):
                                             netflow_sampler=dict(type="str"),
                                             orphan_port=dict(type="bool"),
                                             pfc=dict(type="bool"),
-                                            policy_type=dict(
-                                                type="str",
-                                                choices=[e.name.lower() for e in AccessHostPolicyTypeEnum],
-                                                default="access_host",
-                                            ),
                                             port_type_edge_trunk=dict(type="bool"),
                                             qos=dict(type="bool"),
                                             qos_policy=dict(type="str"),

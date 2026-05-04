@@ -24,7 +24,6 @@
               admin_state: true
               access_vlan: 500
               description: "Replaced Ethernet1/41"
-              policy_type: access_host
     state: replaced
   check_mode: true
   register: cm_replaced_41
@@ -43,7 +42,6 @@
               admin_state: true
               access_vlan: 500
               description: "Replaced Ethernet1/41"
-              policy_type: access_host
     state: replaced
   register: nm_replaced_41
 
@@ -77,7 +75,6 @@
               admin_state: true
               access_vlan: 500
               description: "Replaced Ethernet1/41"
-              policy_type: access_host
     state: replaced
   register: nm_replaced_41_idem
 
@@ -103,7 +100,6 @@
               admin_state: true
               access_vlan: 600
               description: "Replaced fan-out access ports"
-              policy_type: access_host
     state: replaced
   check_mode: true
   register: cm_replaced_fanout
@@ -123,7 +119,6 @@
               admin_state: true
               access_vlan: 600
               description: "Replaced fan-out access ports"
-              policy_type: access_host
     state: replaced
   register: nm_replaced_fanout
 
@@ -162,7 +157,6 @@
               admin_state: true
               access_vlan: 700
               description: "Replaced again Ethernet1/41"
-              policy_type: access_host
       - switch_ip: "{{ test_switch_ip }}"
         interface_names:
           - Ethernet1/44
@@ -172,7 +166,6 @@
               admin_state: false
               access_vlan: 800
               description: "Replaced Ethernet1/44"
-              policy_type: access_host
     state: replaced
   register: nm_replaced_multi
 

@@ -22,7 +22,6 @@ from contextlib import contextmanager
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
-    AccessHostPolicyTypeEnum,
     BpduFilterEnum,
     BpduGuardEnum,
     DuplexModeEnum,
@@ -87,7 +86,7 @@ SAMPLE_ANSIBLE_CONFIG = {
                 "admin_state": True,
                 "access_vlan": 20,
                 "description": "host port",
-                "policy_type": "access_host",
+                "policy_type": "accessHost",
                 "speed": "1Gb",
                 "duplex_mode": "auto",
                 "mtu": "default",
@@ -145,7 +144,7 @@ def test_ethernet_access_interface_00100():
     assert instance.netflow_sampler is None
     assert instance.orphan_port is None
     assert instance.pfc is None
-    assert instance.policy_type is None
+    assert instance.policy_type == "accessHost"
     assert instance.port_type_edge_trunk is None
     assert instance.qos is None
     assert instance.qos_policy is None
@@ -181,13 +180,12 @@ def test_ethernet_access_interface_00110():
             admin_state=True,
             access_vlan=20,
             description="test",
-            policy_type="access_host",
             speed="1Gb",
         )
     assert instance.admin_state is True
     assert instance.access_vlan == 20
     assert instance.description == "test"
-    # After normalize + use_enum_values the stored value is the API string.
+    # Hardcoded model default; user no longer supplies this field.
     assert instance.policy_type == "accessHost"
     assert instance.speed == "1Gb"
 
@@ -222,52 +220,6 @@ def test_ethernet_access_interface_00120():
     assert instance.bpdu_guard == "enable"
     assert instance.duplex_mode == "full"
     assert instance.port_type_edge_trunk is True
-
-
-# =============================================================================
-# Test: EthernetAccessPolicyModel — validators
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "value,expected,raises",
-    [
-        ("access_host", "accessHost", False),
-        ("accessHost", "accessHost", False),
-        (None, None, False),
-        ("unknown_value", None, True),
-    ],
-    ids=[
-        "ansible_name",
-        "api_value_passthrough",
-        "none_passthrough",
-        "unknown_rejected_by_enum",
-    ],
-)
-def test_ethernet_access_interface_00170(value, expected, raises):
-    """
-    # Summary
-
-    Verify `normalize_policy_type` maps Ansible names to API values and passes through API values unchanged.
-
-    ## Test
-
-    - "access_host" normalizes to "accessHost"
-    - "accessHost" passes through
-    - None passes through
-    - Unknown values fail enum validation
-
-    ## Classes and Methods
-
-    - EthernetAccessPolicyModel.normalize_policy_type()
-    """
-    if raises:
-        with pytest.raises(ValidationError):
-            EthernetAccessPolicyModel(policy_type=value)
-    else:
-        with does_not_raise():
-            instance = EthernetAccessPolicyModel(policy_type=value)
-        assert instance.policy_type == expected
 
 
 # =============================================================================
@@ -444,41 +396,6 @@ def test_ethernet_access_interface_00240(field, enum_cls):
 
     with pytest.raises(ValidationError):
         EthernetAccessPolicyModel(**{field: "not_a_real_value"})
-
-
-# =============================================================================
-# Test: EthernetAccessPolicyModel — serializer
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "stored_value,mode,expected",
-    [
-        ("accessHost", "payload", "accessHost"),
-        ("accessHost", "config", "access_host"),
-        (None, "payload", None),
-        (None, "config", None),
-    ],
-    ids=["payload_known", "config_known", "payload_none", "config_none"],
-)
-def test_ethernet_access_interface_00300(stored_value, mode, expected):
-    """
-    # Summary
-
-    Verify `serialize_policy_type` emits API value in payload mode and Ansible name in config mode.
-
-    ## Test
-
-    - model_dump with context={"mode": "payload"} returns camelCase API value
-    - model_dump with context={"mode": "config"} returns Ansible-friendly snake_case
-
-    ## Classes and Methods
-
-    - EthernetAccessPolicyModel.serialize_policy_type()
-    """
-    instance = EthernetAccessPolicyModel(policy_type=stored_value) if stored_value is not None else EthernetAccessPolicyModel()
-    dumped = instance.model_dump(context={"mode": mode}, exclude_none=False)
-    assert dumped["policy_type"] == expected
 
 
 # =============================================================================
@@ -797,12 +714,11 @@ def test_ethernet_access_interface_00620():
 
     ## Test
 
-    - policy_type="access_host" in config -> "accessHost" in payload
+    - Hardcoded model default for `policy_type` serializes as `"accessHost"` under the `policyType` alias.
 
     ## Classes and Methods
 
     - EthernetAccessInterfaceModel.to_payload()
-    - EthernetAccessPolicyModel.serialize_policy_type()
     """
     instance = EthernetAccessInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
     result = instance.to_payload()
@@ -865,20 +781,19 @@ def test_ethernet_access_interface_00710():
     """
     # Summary
 
-    Verify `policy_type` is normalized back to the Ansible-friendly name in config mode.
+    Verify `policy_type` round-trips as the API value in config output.
 
     ## Test
 
-    - Stored "accessHost" -> output "access_host"
+    - Stored "accessHost" -> output "accessHost" (no Ansible↔API translation; field is hardcoded by the model)
 
     ## Classes and Methods
 
     - EthernetAccessInterfaceModel.to_config()
-    - EthernetAccessPolicyModel.serialize_policy_type()
     """
     instance = EthernetAccessInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
     result = instance.to_config()
-    assert result["config_data"]["network_os"]["policy"]["policy_type"] == "access_host"
+    assert result["config_data"]["network_os"]["policy"]["policy_type"] == "accessHost"
 
 
 def test_ethernet_access_interface_00720():
@@ -1026,16 +941,15 @@ def test_ethernet_access_interface_00910():
     """
     # Summary
 
-    Verify Ansible `policy_type: "access_host"` is normalized to API value internally.
+    Verify model hardcodes the `accessHost` policy type regardless of input.
 
     ## Test
 
-    - After from_config, stored policy_type is the API value "accessHost"
+    - After from_config (no policy_type in input), stored policy_type is the API value "accessHost"
 
     ## Classes and Methods
 
     - EthernetAccessInterfaceModel.from_config()
-    - EthernetAccessPolicyModel.normalize_policy_type()
     """
     instance = EthernetAccessInterfaceModel.from_config(copy.deepcopy(SAMPLE_ANSIBLE_CONFIG))
     assert instance.config_data.network_os.policy.policy_type == "accessHost"
@@ -1272,7 +1186,7 @@ def test_ethernet_access_interface_01100():
     - switch_ip is under config.options, not top-level
     - config.type == "list", elements == "dict"
     - state choices and default
-    - policy_type default is "access_host"
+    - policy_type is not exposed in the argspec (hardcoded by the model)
     - mode default is "access"
 
     ## Classes and Methods
@@ -1293,7 +1207,7 @@ def test_ethernet_access_interface_01100():
     config_data_spec = spec["config"]["options"]["config_data"]["options"]
     assert config_data_spec["mode"]["default"] == "access"
     policy_spec = config_data_spec["network_os"]["options"]["policy"]["options"]
-    assert policy_spec["policy_type"]["default"] == "access_host"
+    assert "policy_type" not in policy_spec
 
 
 @pytest.mark.parametrize(
@@ -1307,7 +1221,6 @@ def test_ethernet_access_interface_01100():
         ("mtu", MtuEnum, "value"),
         ("speed", SpeedEnum, "value"),
         ("storm_control_action", StormControlActionEnum, "value"),
-        ("policy_type", AccessHostPolicyTypeEnum, "name"),
     ],
     ids=[
         "bpdu_filter",
@@ -1318,7 +1231,6 @@ def test_ethernet_access_interface_01100():
         "mtu",
         "speed",
         "storm_control_action",
-        "policy_type",
     ],
 )
 def test_ethernet_access_interface_01120(field, enum_cls, key):
@@ -1329,7 +1241,7 @@ def test_ethernet_access_interface_01120(field, enum_cls, key):
 
     ## Test
 
-    - Each enum field's choices list exactly matches the enum values (or Ansible names for policy_type)
+    - Each enum field's choices list exactly matches the enum values
 
     ## Classes and Methods
 

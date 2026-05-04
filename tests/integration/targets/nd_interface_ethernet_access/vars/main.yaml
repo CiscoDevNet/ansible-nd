@@ -26,7 +26,6 @@ ethernet_41:
         cdp: true
         description: "Ansible integration test Ethernet1/41"
         speed: auto
-        policy_type: access_host
 
 ethernet_42_43:
   switch_ip: "{{ test_switch_ip }}"
@@ -42,7 +41,6 @@ ethernet_42_43:
         cdp: true
         description: "Ansible integration test access ports"
         speed: auto
-        policy_type: access_host
 
 ethernet_44:
   switch_ip: "{{ test_switch_ip }}"
@@ -54,7 +52,6 @@ ethernet_44:
         admin_state: true
         access_vlan: 300
         description: "Ansible integration test Ethernet1/44"
-        policy_type: access_host
 
 # --- Updated configs for merge/replace tests ---
 
@@ -71,7 +68,6 @@ ethernet_41_updated:
         cdp: false
         description: "Updated Ethernet1/41 description"
         speed: auto
-        policy_type: access_host
 
 ethernet_42_43_updated:
   switch_ip: "{{ test_switch_ip }}"
@@ -84,7 +80,6 @@ ethernet_42_43_updated:
         admin_state: false
         access_vlan: 250
         description: "Updated access ports description"
-        policy_type: access_host
 
 # --- Fan-out test: multiple interfaces sharing one config ---
 
@@ -104,7 +99,6 @@ ethernet_45_46_47:
         description: "Fan-out test access ports"
         mtu: jumbo
         speed: auto
-        policy_type: access_host
 
 # --- Cleanup helper: all test interfaces ---
 

@@ -141,13 +141,6 @@ options:
                     description:
                     - Whether Priority Flow Control is enabled on the interface.
                     type: bool
-                  policy_type:
-                    description:
-                    - The policy template type for the interface.
-                    - V(access_host) is the standard accessHost policy.
-                    type: str
-                    choices: [ access_host ]
-                    default: access_host
                   port_type_edge_trunk:
                     description:
                     - Whether spanning-tree edge port (PortFast) is enabled.

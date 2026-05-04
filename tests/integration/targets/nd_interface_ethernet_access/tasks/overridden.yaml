@@ -24,7 +24,6 @@
               admin_state: true
               access_vlan: 900
               description: "Overridden Ethernet1/41"
-              policy_type: access_host
       - switch_ip: "{{ test_switch_ip }}"
         interface_names:
           - Ethernet1/42
@@ -34,7 +33,6 @@
               admin_state: true
               access_vlan: 901
               description: "Overridden Ethernet1/42"
-              policy_type: access_host
     state: overridden
   check_mode: true
   register: cm_overridden_reduce
@@ -53,7 +51,6 @@
               admin_state: true
               access_vlan: 900
               description: "Overridden Ethernet1/41"
-              policy_type: access_host
       - switch_ip: "{{ test_switch_ip }}"
         interface_names:
           - Ethernet1/42
@@ -63,7 +60,6 @@
               admin_state: true
               access_vlan: 901
               description: "Overridden Ethernet1/42"
-              policy_type: access_host
     state: overridden
   register: nm_overridden_reduce
 
@@ -109,7 +105,6 @@
               admin_state: true
               access_vlan: 900
               description: "Overridden Ethernet1/41"
-              policy_type: access_host
       - switch_ip: "{{ test_switch_ip }}"
         interface_names:
           - Ethernet1/42
@@ -119,7 +114,6 @@
               admin_state: true
               access_vlan: 901
               description: "Overridden Ethernet1/42"
-              policy_type: access_host
     state: overridden
   register: nm_overridden_idem
 
@@ -153,7 +147,6 @@
               admin_state: true
               access_vlan: 900
               description: "Overridden Ethernet1/41"
-              policy_type: access_host
       - switch_ip: "{{ test_switch_ip }}"
         interface_names:
           - Ethernet1/42
@@ -163,7 +156,6 @@
               admin_state: true
               access_vlan: 901
               description: "Overridden Ethernet1/42"
-              policy_type: access_host
     state: overridden
   register: nm_overridden_filter
 
