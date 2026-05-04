@@ -1,0 +1,82 @@
+---
+# vlan_mapping tests for nd_interface_port_channel_trunk_host (non-9000v testbeds only)
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# This file is included from main.yaml only when nd_test_platform != "9000v".
+# Virtual switches reject `switchport vlan mapping ... dot1q-tunnel`; ND surfaces
+# this as HTTP 400 from the trunkPoHost validator
+# ("Validation failed for following fields: [vlanMappingEntries-dot1qTunnel]").
+
+# --- SETUP ---
+
+- name: "SETUP: Remove test port-channels before vlan_mapping tests"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+    state: deleted
+
+# --- VLAN_MAPPING CREATE ---
+
+- name: "VLAN_MAPPING: Create port-channel501 with vlan_mapping enabled (check mode)"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501_with_vlan_mapping }}"
+    state: merged
+  check_mode: true
+  register: cm_vlan_mapping_create
+
+- name: "VLAN_MAPPING: Create port-channel501 with vlan_mapping enabled (normal mode)"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501_with_vlan_mapping }}"
+    state: merged
+  register: nm_vlan_mapping_create
+
+- name: "VLAN_MAPPING: Verify vlan_mapping was applied"
+  vars:
+    pc501_after: "{{ nm_vlan_mapping_create.after | selectattr('interface_name', 'equalto', 'port-channel501') | first }}"
+    entries: "{{ pc501_after.config_data.network_os.policy.vlan_mapping_entries }}"
+  ansible.builtin.assert:
+    that:
+      - cm_vlan_mapping_create is changed
+      - nm_vlan_mapping_create is changed
+      - pc501_after.config_data.network_os.policy.vlan_mapping == true
+      - entries | length == 1
+      - entries[0].provider_vlan_id == 1100
+      - entries[0].dot1q_tunnel == true
+
+# --- VLAN_MAPPING IDEMPOTENCY ---
+
+- name: "VLAN_MAPPING IDEMPOTENT: Re-apply same vlan_mapping config"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501_with_vlan_mapping }}"
+    state: merged
+  register: nm_vlan_mapping_idem
+
+- name: "VLAN_MAPPING IDEMPOTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_vlan_mapping_idem is not changed
+
+# --- CLEANUP ---
+
+- name: "CLEANUP: Remove vlan_mapping test port-channel"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+    state: deleted

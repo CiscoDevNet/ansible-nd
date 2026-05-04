@@ -27,6 +27,16 @@ class AccessPoHostPolicyTypeEnum(str, Enum):
     ACCESS_PO_HOST = "accessPoHost"
 
 
+class TrunkPoHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Policy type for port-channel trunk host interfaces.
+    """
+
+    TRUNK_PO_HOST = "trunkPoHost"
+
+
 class BpduFilterEnum(str, Enum):
     """
     # Summary
@@ -72,6 +82,18 @@ class LacpRateEnum(str, Enum):
 
     NORMAL = "normal"
     FAST = "fast"
+
+
+class LinkTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Spanning-tree link type.
+    """
+
+    AUTO = "auto"
+    POINT_TO_POINT = "pointToPoint"
+    SHARED = "shared"
 
 
 class MtuEnum(str, Enum):

@@ -1,0 +1,151 @@
+---
+# Deleted state tests for nd_interface_port_channel_trunk_host
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point port-channel502 and port-channel503 exist from overridden tests.
+
+# --- DELETED: SINGLE PORT-CHANNEL ---
+
+- name: "DELETED: Delete port-channel502 (check mode)"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel502
+    state: deleted
+  check_mode: true
+  register: cm_deleted_502
+
+- name: "DELETED: Delete port-channel502 (normal mode)"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel502
+    state: deleted
+  register: nm_deleted_502
+
+- name: "DELETED: Verify port-channel502 was deleted"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_502 is changed
+      - nm_deleted_502 is changed
+      - nm_deleted_502.after | selectattr('interface_name', 'equalto', 'port-channel502') | list | length == 0
+
+# --- DELETED: IDEMPOTENCY ---
+
+- name: "DELETED IDEMPOTENT: Delete port-channel502 again"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel502
+    state: deleted
+  register: nm_deleted_502_idem
+
+- name: "DELETED IDEMPOTENT: Verify no change when already absent"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_502_idem is not changed
+
+# --- DELETED: MEMBER REVERT ---
+# After deleting a port-channel, its former member ethernet interfaces should be reverted
+# to fabric defaults. We can't directly assert that here without the ethernet module,
+# but we verify the port-channel itself is gone and that the API accepted the remove.
+
+- name: "DELETED MEMBER REVERT: Recreate port-channel501 with two members"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501 }}"
+    state: merged
+
+- name: "DELETED MEMBER REVERT: Delete port-channel501"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+    state: deleted
+  register: nm_deleted_501_with_members
+
+- name: "DELETED MEMBER REVERT: Verify port-channel501 was removed"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_501_with_members is changed
+      - nm_deleted_501_with_members.after | selectattr('interface_name', 'equalto', 'port-channel501') | list | length == 0
+
+# --- DELETED: MULTIPLE PORT-CHANNELS ---
+
+# Recreate port-channel501 and port-channel502 so we can test multi-delete
+- name: "SETUP: Recreate port-channel501 and port-channel502 for multi-delete test"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ test_pc_501 }}"
+      - "{{ test_pc_502 }}"
+    state: merged
+
+- name: "DELETED MULTI: Delete port-channel501, port-channel502, port-channel503 (check mode)"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel502
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel503
+    state: deleted
+  check_mode: true
+  register: cm_deleted_multi
+
+- name: "DELETED MULTI: Delete port-channel501, port-channel502, port-channel503 (normal mode)"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel501
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel502
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel503
+    state: deleted
+  register: nm_deleted_multi
+
+- name: "DELETED MULTI: Verify all test port-channels were deleted"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_multi is changed
+      - nm_deleted_multi is changed
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'port-channel501') | list | length == 0
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'port-channel502') | list | length == 0
+      - nm_deleted_multi.after | selectattr('interface_name', 'equalto', 'port-channel503') | list | length == 0
+
+# --- DELETED: NON-EXISTENT PORT-CHANNEL ---
+
+- name: "DELETED NON-EXISTENT: Delete port-channel that does not exist"
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: port-channel599
+    state: deleted
+  register: nm_deleted_nonexistent
+
+- name: "DELETED NON-EXISTENT: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_nonexistent is not changed
