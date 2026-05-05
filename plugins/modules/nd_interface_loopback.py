@@ -4,6 +4,8 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+"""Ansible module for managing loopback interfaces on Cisco Nexus Dashboard."""
+
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
 DOCUMENTATION = r"""
@@ -227,6 +229,7 @@ EXAMPLES = r"""
 
 RETURN = r"""
 """
+# pylint: disable=wrong-import-position
 
 import logging
 import traceback
@@ -306,7 +309,7 @@ def main():
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         module_log.exception("Unhandled exception during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module failed: {str(e)}"
