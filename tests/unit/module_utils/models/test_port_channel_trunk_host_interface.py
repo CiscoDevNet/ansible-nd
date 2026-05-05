@@ -339,8 +339,11 @@ def test_port_channel_trunk_host_interface_00190():
     [
         ("none", False),
         ("all", False),
+        ("1", False),
+        ("4094", False),
         ("100", False),
         ("100-200", False),
+        ("1-4094", False),
         ("1-200,500-2000,3000", False),
         ("1,2,3,4-10", False),
         ("", False),
@@ -350,12 +353,22 @@ def test_port_channel_trunk_host_interface_00190():
         ("100-200,", True),
         ("None", True),  # case-sensitive
         ("ALL", True),
+        ("0", True),  # below valid VLAN range
+        ("4095", True),  # above valid VLAN range
+        ("5000", True),  # above valid VLAN range
+        ("1-4095", True),  # range end out of bounds
+        ("0-100", True),  # range start out of bounds
+        ("200-100", True),  # reversed range
+        ("4094-1", True),  # reversed range
     ],
     ids=[
         "none_keyword",
         "all_keyword",
+        "min_vlan_id",
+        "max_vlan_id",
         "single_id",
         "single_range",
+        "full_range",
         "multiple_ranges",
         "mixed_ids_ranges",
         "empty_passthrough",
@@ -365,23 +378,33 @@ def test_port_channel_trunk_host_interface_00190():
         "trailing_comma_rejected",
         "case_none_rejected",
         "case_all_rejected",
+        "vlan_zero_rejected",
+        "vlan_4095_rejected",
+        "vlan_5000_rejected",
+        "range_end_out_of_bounds_rejected",
+        "range_start_out_of_bounds_rejected",
+        "reversed_range_rejected",
+        "reversed_range_max_rejected",
     ],
 )
 def test_port_channel_trunk_host_interface_00200(value, should_raise):
     """
     # Summary
 
-    Verify `allowed_vlans` regex validator accepts `none`, `all`, or comma-separated VLAN ids/ranges and
-    rejects malformed input.
+    Verify `allowed_vlans` validator accepts `none`, `all`, or comma-separated VLAN ids/ranges where every id is in 1..4094 and every range start <= end,
+    and rejects malformed input or out-of-range values.
 
     ## Test
 
-    - Valid forms are accepted
-    - Invalid strings raise ValidationError
+    - Valid forms (including 1 and 4094 boundary values) are accepted
+    - Out-of-range ids (0, 4095+) raise ValidationError
+    - Out-of-range range bounds raise ValidationError
+    - Reversed ranges raise ValidationError
+    - Shape-invalid strings raise ValidationError
 
     ## Classes and Methods
 
-    - PortChannelTrunkHostPolicyModel.validate_allowed_vlans()
+    - port_channel_trunk_host_interface._validate_allowed_vlans()
     """
     if should_raise:
         with pytest.raises(ValidationError, match=r"allowed_vlans"):
@@ -390,6 +413,44 @@ def test_port_channel_trunk_host_interface_00200(value, should_raise):
         with does_not_raise():
             instance = PortChannelTrunkHostPolicyModel(allowed_vlans=value)
         assert instance.allowed_vlans == value
+
+
+@pytest.mark.parametrize(
+    "value,match",
+    [
+        ("0", r"out of bounds"),
+        ("4095", r"out of bounds"),
+        ("1-4095", r"out of bounds"),
+        ("0-100", r"out of bounds"),
+        ("200-100", r"start greater than end"),
+        ("abc", r"comma-separated list"),
+    ],
+    ids=[
+        "vlan_zero_message",
+        "vlan_4095_message",
+        "range_end_out_of_bounds_message",
+        "range_start_out_of_bounds_message",
+        "reversed_range_message",
+        "shape_error_message",
+    ],
+)
+def test_port_channel_trunk_host_interface_00202(value, match):
+    """
+    # Summary
+
+    Verify `allowed_vlans` validator raises `ValueError` with a specific, actionable message identifying
+    the failure mode (out-of-bounds id, out-of-bounds range, reversed range, or shape mismatch).
+
+    ## Test
+
+    - Each failure mode surfaces a distinguishable message substring
+
+    ## Classes and Methods
+
+    - port_channel_trunk_host_interface._validate_allowed_vlans()
+    """
+    with pytest.raises(ValidationError, match=match):
+        PortChannelTrunkHostPolicyModel(allowed_vlans=value)
 
 
 @pytest.mark.parametrize(
@@ -737,6 +798,120 @@ def test_port_channel_trunk_host_interface_00310(field, value, should_raise):
         with does_not_raise():
             instance = PortChannelTrunkHostVlanMappingEntryModel(**{field: value})
         assert getattr(instance, field) == value
+
+
+@pytest.mark.parametrize(
+    "value,should_raise",
+    [
+        (None, False),
+        ([], False),
+        (["1"], False),
+        (["4094"], False),
+        (["100"], False),
+        (["100", "200"], False),
+        (["100-200"], False),
+        (["1-4094", "500"], False),
+        (["100-200", "300", "500-600"], False),
+        (["0"], True),
+        (["4095"], True),
+        (["5000"], True),
+        (["1-4095"], True),
+        (["0-100"], True),
+        (["200-100"], True),
+        (["abc"], True),
+        (["1-"], True),
+        (["100,200"], True),  # comma not allowed inside list element
+        ([""], True),
+        ([100], True),  # non-string entry rejected
+    ],
+    ids=[
+        "none_passthrough",
+        "empty_list",
+        "min_vlan_id",
+        "max_vlan_id",
+        "single_id",
+        "multiple_ids",
+        "single_range",
+        "range_and_id",
+        "ranges_and_ids",
+        "vlan_zero_rejected",
+        "vlan_4095_rejected",
+        "vlan_5000_rejected",
+        "range_end_out_of_bounds_rejected",
+        "range_start_out_of_bounds_rejected",
+        "reversed_range_rejected",
+        "non_numeric_rejected",
+        "trailing_dash_rejected",
+        "comma_in_element_rejected",
+        "empty_string_rejected",
+        "non_string_entry_rejected",
+    ],
+)
+def test_port_channel_trunk_host_interface_00315(value, should_raise):
+    """
+    # Summary
+
+    Verify `customer_vlan_id` validator accepts a list of VLAN id or range strings where every id is in 1..4094 and every range start <= end,
+    and rejects malformed entries, out-of-range values, reversed ranges, comma-joined elements, empty strings, and non-string entries.
+
+    ## Test
+
+    - Valid entries (boundary values, ids, ranges, mixed) are accepted
+    - Out-of-range ids and range bounds raise ValidationError
+    - Reversed ranges raise ValidationError
+    - Shape-invalid entries raise ValidationError
+
+    ## Classes and Methods
+
+    - port_channel_trunk_host_interface._validate_customer_vlan_id_list()
+    """
+    if should_raise:
+        with pytest.raises(ValidationError, match=r"customer_vlan_id"):
+            PortChannelTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+    else:
+        with does_not_raise():
+            instance = PortChannelTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+        assert instance.customer_vlan_id == value
+
+
+@pytest.mark.parametrize(
+    "value,match",
+    [
+        (["0"], r"out of bounds"),
+        (["4095"], r"out of bounds"),
+        (["1-4095"], r"out of bounds"),
+        (["200-100"], r"start greater than end"),
+        (["abc"], r"VLAN id or range"),
+        ([""], r"non-empty strings"),
+        ([42], r"non-empty strings"),
+    ],
+    ids=[
+        "vlan_zero_message",
+        "vlan_4095_message",
+        "range_out_of_bounds_message",
+        "reversed_range_message",
+        "shape_error_message",
+        "empty_string_message",
+        "non_string_message",
+    ],
+)
+def test_port_channel_trunk_host_interface_00316(value, match):
+    """
+    # Summary
+
+    Verify `customer_vlan_id` validator raises `ValueError` with a specific, actionable message identifying the failure mode (out-of-bounds id,
+    out-of-bounds range, reversed range, shape mismatch, empty string, or non-string entry).
+
+    ## Test
+
+    - Each failure mode surfaces a distinguishable message substring
+
+    ## Classes and Methods
+
+    - port_channel_trunk_host_interface._validate_customer_vlan_id_list()
+    """
+    with pytest.raises(ValidationError, match=match):
+        PortChannelTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
 
 
 def test_port_channel_trunk_host_interface_00320():

@@ -32,9 +32,10 @@ interfaces inherit trunk-mode settings from the port-channel; users do not pre-c
 from __future__ import annotations
 
 import re
-from typing import ClassVar, Literal
+from typing import Annotated, ClassVar, Literal, Optional  # Optional needed for Annotated runtime expr (see types.py)
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    BeforeValidator,
     Field,
     field_validator,
 )
@@ -54,8 +55,114 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
-# Accepts: "none", "all", or comma-separated VLAN ids/ranges (e.g. "1-200,500-2000,3000").
-ALLOWED_VLANS_PATTERN = re.compile(r"^(none|all|(\d+(-\d+)?)(,\d+(-\d+)?)*)$")
+# Shape regex: "none", "all", or comma-separated VLAN ids/ranges. Range bounds are validated separately.
+_ALLOWED_VLANS_SHAPE = re.compile(r"^(none|all|(\d+(-\d+)?)(,\d+(-\d+)?)*)$")
+# Single VLAN id or range token (e.g. "100" or "100-200"). Range bounds are validated separately.
+_VLAN_ID_OR_RANGE_SHAPE = re.compile(r"^\d+(-\d+)?$")
+
+
+def _validate_vlan_id_or_range(token: str, field_name: str) -> None:
+    """
+    # Summary
+
+    Validate a single VLAN id or range token (e.g. `"100"` or `"100-200"`) and confirm every id is in 1..4094 and any range has start <= end.
+
+    Shared helper used by `_validate_allowed_vlans` (per comma-split token) and `_validate_customer_vlan_id_list` (per list element).
+    `field_name` is interpolated into error messages so callers see which field surfaced the failure.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `token` does not match `\\d+(-\\d+)?`.
+    - If any VLAN id is outside 1..4094.
+    - If a range has start greater than end.
+    """
+    if not _VLAN_ID_OR_RANGE_SHAPE.match(token):
+        raise ValueError(f"{field_name} entry {token!r} must be a VLAN id or range (e.g. '100' or '100-200')")
+    if "-" in token:
+        start_str, end_str = token.split("-", 1)
+        start, end = int(start_str), int(end_str)
+        if not 1 <= start <= 4094 or not 1 <= end <= 4094:
+            raise ValueError(f"{field_name} range {token!r} is out of bounds; VLAN ids must be in 1..4094")
+        if start > end:
+            raise ValueError(f"{field_name} range {token!r} has start greater than end")
+    else:
+        vid = int(token)
+        if not 1 <= vid <= 4094:
+            raise ValueError(f"{field_name} id {vid} is out of bounds; VLAN ids must be in 1..4094")
+
+
+def _validate_allowed_vlans(value):
+    """
+    # Summary
+
+    Validate `allowed_vlans` matches `"none"`, `"all"`, or a comma-separated list of VLAN ids/ranges where every id is in 1..4094 and every range start <= end.
+    ND returns single-id values as JSON ints (e.g. `250`) but accepts both forms on input; this validator coerces int -> str so round-trips and idempotency
+    comparisons are stable.
+
+    Used as the `BeforeValidator` payload for the `AllowedVlans` Annotated type.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `value` is a non-empty string that does not match the expected shape.
+    - If any VLAN id is outside 1..4094.
+    - If any range has start greater than end.
+    """
+    if value is None or value == "":
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        value = str(value)
+    if not isinstance(value, str):
+        return value
+    if value in ("none", "all"):
+        return value
+    if not _ALLOWED_VLANS_SHAPE.match(value):
+        raise ValueError(f"allowed_vlans must be 'none', 'all', or a comma-separated list of VLAN ids/ranges (e.g. '1-200,500-2000,3000'); got {value!r}")
+    for token in value.split(","):
+        _validate_vlan_id_or_range(token, "allowed_vlans")
+    return value
+
+
+def _validate_customer_vlan_id_list(value):
+    """
+    # Summary
+
+    Validate `customer_vlan_id` is a list of non-empty VLAN id or range strings where every id is in 1..4094 and every range start <= end.
+    Used in `vlanMappingEntries` to identify which customer VLAN ids map to a provider VLAN id.
+
+    Used as the `BeforeValidator` payload for the `CustomerVlanIdList` Annotated type.
+
+    ## Raises
+
+    ### ValueError
+
+    - If any list entry is not a non-empty string.
+    - If any entry is not a VLAN id or range, has an id outside 1..4094, or has a reversed range.
+    """
+    if value is None:
+        return value
+    if not isinstance(value, list):
+        return value
+    for entry in value:
+        if not isinstance(entry, str) or not entry:
+            raise ValueError(f"customer_vlan_id entries must be non-empty strings (VLAN id or range); got {entry!r}")
+        _validate_vlan_id_or_range(entry, "customer_vlan_id")
+    return value
+
+
+# TODO: After all per-policy interface modules (ethernet_trunk_host, svi, ...) merge to develop, consolidate
+# AllowedVlans and CustomerVlanIdList (and the _validate_vlan_id_or_range helper) into models/types.py so the
+# sibling modules can share a single source of truth. Each branch currently carries its own copy because adding
+# VLAN-specific code to the loopback base branch (where types.py lives) is out of that branch's scope.
+# See AsciiDescription comment in models/types.py for why Optional[...] is used at runtime instead of `... | None`.
+AllowedVlans = Annotated[Optional[str], BeforeValidator(_validate_allowed_vlans)]
+"""Trunk allowed-VLANs spec (`str | None`): 'none', 'all', or comma-separated VLAN ids/ranges in 1..4094."""
+
+CustomerVlanIdList = Annotated[Optional[list[str]], BeforeValidator(_validate_customer_vlan_id_list)]
+"""Customer VLAN id list (`list[str] | None`): each entry is a VLAN id or range in 1..4094 (e.g. `['100', '200-300']`)."""
 
 
 class PortChannelTrunkHostVlanMappingEntryModel(NDNestedModel):
@@ -74,7 +181,11 @@ class PortChannelTrunkHostVlanMappingEntryModel(NDNestedModel):
     customer_inner_vlan_id: int | None = Field(
         default=None, alias="customerInnerVlanId", ge=1, le=4094, description="Inner customer VLAN id (selective dot1q-tunnel only)"
     )
-    customer_vlan_id: list[str] | None = Field(default=None, alias="customerVlanId", description="Customer VLAN id list (single id or range strings)")
+    customer_vlan_id: CustomerVlanIdList = Field(
+        default=None,
+        alias="customerVlanId",
+        description="Customer VLAN id list; each entry is a VLAN id or range string in 1..4094 (e.g. ['100', '200-300'])",
+    )
     dot1q_tunnel: bool | None = Field(default=None, alias="dot1qTunnel", description="Use selective dot1q-tunnel mode for this entry")
     provider_vlan_id: int | None = Field(default=None, alias="providerVlanId", ge=1, le=4094, description="Provider VLAN id")
 
@@ -98,10 +209,10 @@ class PortChannelTrunkHostPolicyModel(NDNestedModel):
     """
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    allowed_vlans: str | None = Field(
+    allowed_vlans: AllowedVlans = Field(
         default=None,
         alias="allowedVlans",
-        description="Trunk allowed VLANs ('none', 'all', or comma-separated VLAN ids/ranges, e.g. '100-200,300')",
+        description="Trunk allowed VLANs ('none', 'all', or comma-separated VLAN ids/ranges in 1..4094, e.g. '100-200,300')",
     )
     bandwidth: int | None = Field(default=None, alias="bandwidth", ge=1, le=100000000, description="Interface bandwidth in kilobits per second")
     bpdu_filter: BpduFilterEnum | None = Field(default=None, alias="bpduFilter", description="Configure spanning-tree BPDU filter")
@@ -191,32 +302,6 @@ class PortChannelTrunkHostPolicyModel(NDNestedModel):
     )
 
     # --- Validators ---
-
-    @field_validator("allowed_vlans", mode="before")
-    @classmethod
-    def validate_allowed_vlans(cls, value):
-        """
-        # Summary
-
-        Coerce int responses to str, then validate `allowed_vlans` matches `"none"`, `"all"`, or a comma-separated
-        list of VLAN ids/ranges. ND returns single-id values as JSON ints (e.g. `250`) but accepts both forms on
-        input; the model normalizes on str so round-trips and idempotency comparisons are stable.
-
-        ## Raises
-
-        ### ValueError
-
-        - If `value` is a non-empty string that does not match the expected pattern.
-        """
-        if value is None or value == "":
-            return value
-        if isinstance(value, int) and not isinstance(value, bool):
-            value = str(value)
-        if not isinstance(value, str):
-            return value
-        if not ALLOWED_VLANS_PATTERN.match(value):
-            raise ValueError(f"allowed_vlans must be 'none', 'all', or a comma-separated list of VLAN ids/ranges (e.g. '1-200,500-2000,3000'); got {value!r}")
-        return value
 
     @field_validator("ports", mode="before")
     @classmethod
