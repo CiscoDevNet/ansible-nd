@@ -382,6 +382,40 @@ EXAMPLES = r"""
                   dot1q_tunnel: true
     state: merged
 
+- name: Replace a port-channel configuration
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: port-channel501
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "all"
+              ports:
+                - Ethernet1/1
+              port_channel_mode: active
+              description: Replaced port-channel configuration
+    state: replaced
+
+- name: Override all port-channels in the fabric to match this configuration
+  cisco.nd.nd_interface_port_channel_trunk_host:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: port-channel501
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "100-200"
+              ports:
+                - Ethernet1/1
+                - Ethernet1/2
+              port_channel_mode: active
+    state: overridden
+
 - name: Delete a port-channel
   cisco.nd.nd_interface_port_channel_trunk_host:
     fabric_name: my_fabric
