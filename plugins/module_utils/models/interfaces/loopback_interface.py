@@ -25,7 +25,6 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
 
 from __future__ import annotations
 
-import ipaddress
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -37,7 +36,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4CIDR, IPv6CIDR
 
 LOOPBACK_POLICY_TYPE_MAPPING = NDConstantMapping(
     {
@@ -60,8 +59,8 @@ class LoopbackPolicyModel(NDNestedModel):
     """
 
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
-    ip: str | None = Field(default=None, alias="ip", description="Loopback IPv4 address in CIDR notation (e.g. 10.1.1.1/32)")
-    ipv6: str | None = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
+    ip: IPv4CIDR = Field(default=None, alias="ip", description="Loopback IPv4 address in CIDR notation (e.g. 10.1.1.1/32)")
+    ipv6: IPv6CIDR = Field(default=None, alias="ipv6", description="Loopback IPv6 address in CIDR notation")
     vrf: str | None = Field(default=None, alias="vrfInterface", min_length=1, max_length=32, description="Interface VRF name")
     route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
@@ -125,50 +124,6 @@ class LoopbackPolicyModel(NDNestedModel):
         if value is None:
             return value
         return str(value)
-
-    @field_validator("ip", mode="before")
-    @classmethod
-    def validate_ipv4(cls, value):
-        """
-        # Summary
-
-        Validate that `ip` is a valid IPv4 interface address in CIDR notation.
-
-        ## Raises
-
-        ### ValueError
-
-        - If `value` is not a valid IPv4 interface address in CIDR notation
-        """
-        if value is None:
-            return value
-        try:
-            ipaddress.IPv4Interface(value)
-        except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError) as err:
-            raise ValueError(f"Invalid IPv4 address: {value!r}. Expected CIDR notation (e.g. '10.1.1.1/32').") from err
-        return value
-
-    @field_validator("ipv6", mode="before")
-    @classmethod
-    def validate_ipv6(cls, value):
-        """
-        # Summary
-
-        Validate that `ipv6` is a valid IPv6 interface address in CIDR notation.
-
-        ## Raises
-
-        ### ValueError
-
-        - If `value` is not a valid IPv6 interface address in CIDR notation
-        """
-        if value is None:
-            return value
-        try:
-            ipaddress.IPv6Interface(value)
-        except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError) as err:
-            raise ValueError(f"Invalid IPv6 address: {value!r}. Expected CIDR notation (e.g. '2001:db8::1/128').") from err
-        return value
 
 
 class LoopbackNetworkOSModel(NDNestedModel):

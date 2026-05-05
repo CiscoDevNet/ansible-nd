@@ -670,7 +670,7 @@ def test_loopback_interface_00080():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.validate_ipv4()
+    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
     """
     with does_not_raise():
         instance = LoopbackPolicyModel(ip="10.1.1.1/32")
@@ -690,7 +690,7 @@ def test_loopback_interface_00081():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.validate_ipv4()
+    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
     """
     with does_not_raise():
         instance = LoopbackPolicyModel(ip="10.1.1.0/24")
@@ -710,7 +710,7 @@ def test_loopback_interface_00082():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.validate_ipv4()
+    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
     """
     with pytest.raises(ValidationError, match="Invalid IPv4 address"):
         LoopbackPolicyModel(ip="999.999.999.999/32")
@@ -729,7 +729,7 @@ def test_loopback_interface_00083():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.validate_ipv4()
+    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
     """
     with does_not_raise():
         instance = LoopbackPolicyModel(ip="10.1.1.1")
@@ -749,7 +749,7 @@ def test_loopback_interface_00084():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.validate_ipv4()
+    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
     """
     with pytest.raises(ValidationError, match="Invalid IPv4 address"):
         LoopbackPolicyModel(ip="not-an-ip")
@@ -768,7 +768,7 @@ def test_loopback_interface_00085():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.validate_ipv4()
+    - LoopbackPolicyModel.ip (IPv4CIDR Annotated type)
     """
     with pytest.raises(ValidationError, match="Invalid IPv4 address"):
         LoopbackPolicyModel(ip="2001:db8::1/128")
@@ -792,7 +792,7 @@ def test_loopback_interface_00086():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.validate_ipv6()
+    - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with does_not_raise():
         instance = LoopbackPolicyModel(ipv6="2001:db8::1/128")
@@ -812,7 +812,7 @@ def test_loopback_interface_00087():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.validate_ipv6()
+    - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with does_not_raise():
         instance = LoopbackPolicyModel(ipv6="2001:db8::/64")
@@ -832,7 +832,7 @@ def test_loopback_interface_00088():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.validate_ipv6()
+    - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with pytest.raises(ValidationError, match="Invalid IPv6 address"):
         LoopbackPolicyModel(ipv6="not-an-ipv6")
@@ -851,7 +851,7 @@ def test_loopback_interface_00089():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.validate_ipv6()
+    - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with pytest.raises(ValidationError, match="Invalid IPv6 address"):
         LoopbackPolicyModel(ipv6="10.1.1.1/32")
@@ -870,7 +870,7 @@ def test_loopback_interface_00090():
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.validate_ipv6()
+    - LoopbackPolicyModel.ipv6 (IPv6CIDR Annotated type)
     """
     with does_not_raise():
         instance = LoopbackPolicyModel(ipv6="2001:db8::1")

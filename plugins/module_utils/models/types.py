@@ -14,13 +14,16 @@ applied consistently across model files (e.g. all `description` fields share the
   on any policy model that maps to an ND CLI-generated config line. The Cisco backend pipes these descriptions
   through CLI generators that fail with a generic 500 ("unexpected error during policy execution") when given
   UTF-8 input. Catching this client-side gives users a clear error instead of a confusing server fault.
+- `IPv4CIDR` — `str | None` validated as an IPv4 interface address in CIDR notation (e.g. `10.1.1.1/32`).
+- `IPv6CIDR` — `str | None` validated as an IPv6 interface address in CIDR notation (e.g. `2001:db8::1/128`).
 """
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Annotated, Optional  # Optional required here; see AsciiDescription comment below
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import AfterValidator
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import AfterValidator, BeforeValidator
 
 
 def ascii_only(value: str | None) -> str | None:
@@ -56,3 +59,57 @@ def ascii_only(value: str | None) -> str | None:
 # `unsupported-binary-operation`. Optional[str] avoids the | operator at runtime without changing semantics.
 AsciiDescription = Annotated[Optional[str], AfterValidator(ascii_only)]
 """ASCII-only `str | None`. Layer with `Field(...)` for `max_length` / `min_length` / aliases as usual."""
+
+
+def validate_ipv4_cidr(value: str | None) -> str | None:
+    """
+    # Summary
+
+    Validate that `value` is an IPv4 interface address in CIDR notation. Returns the value unchanged on success.
+
+    Used as the `BeforeValidator` payload for the `IPv4CIDR` Annotated type.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `value` is not a valid IPv4 interface address in CIDR notation.
+    """
+    if value is None:
+        return value
+    try:
+        ipaddress.IPv4Interface(value)
+    except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError) as err:
+        raise ValueError(f"Invalid IPv4 address: {value!r}. Expected CIDR notation (e.g. '10.1.1.1/32').") from err
+    return value
+
+
+def validate_ipv6_cidr(value: str | None) -> str | None:
+    """
+    # Summary
+
+    Validate that `value` is an IPv6 interface address in CIDR notation. Returns the value unchanged on success.
+
+    Used as the `BeforeValidator` payload for the `IPv6CIDR` Annotated type.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `value` is not a valid IPv6 interface address in CIDR notation.
+    """
+    if value is None:
+        return value
+    try:
+        ipaddress.IPv6Interface(value)
+    except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError) as err:
+        raise ValueError(f"Invalid IPv6 address: {value!r}. Expected CIDR notation (e.g. '2001:db8::1/128').") from err
+    return value
+
+
+# See AsciiDescription comment above for why Optional[str] is used at runtime instead of `str | None`.
+IPv4CIDR = Annotated[Optional[str], BeforeValidator(validate_ipv4_cidr)]
+"""IPv4 interface address in CIDR notation (`str | None`). Layer with `Field(...)` for alias/description as usual."""
+
+IPv6CIDR = Annotated[Optional[str], BeforeValidator(validate_ipv6_cidr)]
+"""IPv6 interface address in CIDR notation (`str | None`). Layer with `Field(...)` for alias/description as usual."""
