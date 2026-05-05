@@ -4,7 +4,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""Ansible module for managing port-channel trunkPoHost interfaces on Cisco Nexus Dashboard."""
+"""Ansible module for managing port-channel (trunkPoHost) interfaces on Cisco Nexus Dashboard."""
 
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
@@ -12,10 +12,10 @@ DOCUMENTATION = r"""
 ---
 module: nd_interface_port_channel_trunk_host
 version_added: "1.4.0"
-short_description: Manage port-channel trunkPoHost interfaces on Cisco Nexus Dashboard
+short_description: Manage port-channel (trunkPoHost) interfaces on Cisco Nexus Dashboard
 description:
-- Manage port-channel trunkPoHost interfaces on Cisco Nexus Dashboard.
-- It supports creating, updating, and deleting trunkPoHost port-channel configurations on switches within a fabric.
+- Manage port-channel (trunkPoHost) interfaces on Cisco Nexus Dashboard.
+- It supports creating, updating, and deleting (trunkPoHost) port-channel configurations on switches within a fabric.
 - Each config item represents one port-channel interface. Member ethernet interfaces are listed in
   O(config[].config_data.network_os.policy.ports) and inherit trunk-mode configuration from the port-channel policy.
 - Member interface field mutability is restricted while members of a port-channel; only description, admin_state, and
