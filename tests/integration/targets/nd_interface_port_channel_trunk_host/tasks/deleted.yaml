@@ -10,7 +10,7 @@
 # --- DELETED: SINGLE PORT-CHANNEL ---
 
 - name: "DELETED: Delete port-channel502 (check mode)"
-  cisco.nd.nd_interface_port_channel_trunk_host:
+  cisco.nd.nd_interface_port_channel_trunk_host: &delete_pc502
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -21,13 +21,7 @@
   register: cm_deleted_502
 
 - name: "DELETED: Delete port-channel502 (normal mode)"
-  cisco.nd.nd_interface_port_channel_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel502
-    state: deleted
+  cisco.nd.nd_interface_port_channel_trunk_host: *delete_pc502
   register: nm_deleted_502
 
 - name: "DELETED: Verify port-channel502 was deleted"
@@ -40,13 +34,7 @@
 # --- DELETED: IDEMPOTENCY ---
 
 - name: "DELETED IDEMPOTENT: Delete port-channel502 again"
-  cisco.nd.nd_interface_port_channel_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel502
-    state: deleted
+  cisco.nd.nd_interface_port_channel_trunk_host: *delete_pc502
   register: nm_deleted_502_idem
 
 - name: "DELETED IDEMPOTENT: Verify no change when already absent"
@@ -96,7 +84,7 @@
     state: merged
 
 - name: "DELETED MULTI: Delete port-channel501, port-channel502, port-channel503 (check mode)"
-  cisco.nd.nd_interface_port_channel_trunk_host:
+  cisco.nd.nd_interface_port_channel_trunk_host: &delete_multi
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -111,17 +99,7 @@
   register: cm_deleted_multi
 
 - name: "DELETED MULTI: Delete port-channel501, port-channel502, port-channel503 (normal mode)"
-  cisco.nd.nd_interface_port_channel_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel501
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel502
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel503
-    state: deleted
+  cisco.nd.nd_interface_port_channel_trunk_host: *delete_multi
   register: nm_deleted_multi
 
 - name: "DELETED MULTI: Verify all test port-channels were deleted"
