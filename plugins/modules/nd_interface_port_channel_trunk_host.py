@@ -90,6 +90,7 @@ options:
                     description:
                     - Trunk allowed VLANs.
                     - Accepts V(none), V(all), or a comma-separated list of VLAN ids/ranges (e.g. V(100-200,300)).
+                    - VLAN ids must be in the range 1-4094.
                     type: str
                   bandwidth:
                     description:
@@ -282,7 +283,8 @@ options:
                         type: int
                       customer_vlan_id:
                         description:
-                        - Customer VLAN id list (single id or range strings).
+                        - Customer VLAN id list (single id or range strings, e.g. V(["100", "200-300"])).
+                        - VLAN ids must be in the range 1-4094.
                         type: list
                         elements: str
                       dot1q_tunnel:
