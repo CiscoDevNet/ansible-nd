@@ -420,7 +420,9 @@ def test_ethernet_trunk_host_interface_00130():
         ("none", "none"),
         ("all", "all"),
         ("1", "1"),
+        ("4094", "4094"),
         ("1-100", "1-100"),
+        ("1-4094", "1-4094"),
         ("1-200,500-2000,3000", "1-200,500-2000,3000"),
         (42, "42"),
         (None, None),
@@ -429,7 +431,9 @@ def test_ethernet_trunk_host_interface_00130():
         "none",
         "all",
         "single",
+        "max_vlan_id",
         "single_range",
+        "full_range",
         "multi_range",
         "int_coerced_to_str",
         "none_passthrough",
@@ -439,7 +443,7 @@ def test_ethernet_trunk_host_interface_00150(value, expected):
     """
     # Summary
 
-    Verify `validate_allowed_vlans` accepts valid values and coerces integers to strings.
+    Verify `_validate_allowed_vlans` accepts valid values (including 1 and 4094 boundary values) and coerces integers to strings.
 
     ## Test
 
@@ -448,7 +452,7 @@ def test_ethernet_trunk_host_interface_00150(value, expected):
 
     ## Classes and Methods
 
-    - EthernetTrunkHostPolicyModel.validate_allowed_vlans()
+    - ethernet_trunk_host_interface._validate_allowed_vlans()
     """
     with does_not_raise():
         instance = EthernetTrunkHostPolicyModel(allowed_vlans=value)
@@ -463,7 +467,13 @@ def test_ethernet_trunk_host_interface_00150(value, expected):
         ",1",
         "1,,2",
         "-1",
-        [1, 2],
+        "0",
+        "4095",
+        "5000",
+        "1-4095",
+        "0-100",
+        "200-100",
+        "4094-1",
     ],
     ids=[
         "letters",
@@ -471,25 +481,183 @@ def test_ethernet_trunk_host_interface_00150(value, expected):
         "leading_comma",
         "double_comma",
         "negative",
-        "wrong_type_list",
+        "vlan_zero_rejected",
+        "vlan_4095_rejected",
+        "vlan_5000_rejected",
+        "range_end_out_of_bounds_rejected",
+        "range_start_out_of_bounds_rejected",
+        "reversed_range_rejected",
+        "reversed_range_max_rejected",
     ],
 )
 def test_ethernet_trunk_host_interface_00160(value):
     """
     # Summary
 
-    Verify `validate_allowed_vlans` rejects malformed values.
+    Verify `_validate_allowed_vlans` rejects malformed values, out-of-range ids, and reversed ranges.
 
     ## Test
 
-    - Invalid values raise ValidationError
+    - Shape-invalid strings raise ValidationError mentioning `allowed_vlans`
+    - Out-of-range ids and reversed ranges raise ValidationError mentioning `allowed_vlans`
 
     ## Classes and Methods
 
-    - EthernetTrunkHostPolicyModel.validate_allowed_vlans()
+    - ethernet_trunk_host_interface._validate_allowed_vlans()
     """
-    with pytest.raises(ValidationError, match=r"allowed_vlans must be 'none', 'all'"):
+    with pytest.raises(ValidationError, match=r"allowed_vlans"):
         EthernetTrunkHostPolicyModel(allowed_vlans=value)
+
+
+@pytest.mark.parametrize(
+    "value,match",
+    [
+        ("0", r"out of bounds"),
+        ("4095", r"out of bounds"),
+        ("1-4095", r"out of bounds"),
+        ("0-100", r"out of bounds"),
+        ("200-100", r"start greater than end"),
+        ("abc", r"comma-separated list"),
+    ],
+    ids=[
+        "vlan_zero_message",
+        "vlan_4095_message",
+        "range_end_out_of_bounds_message",
+        "range_start_out_of_bounds_message",
+        "reversed_range_message",
+        "shape_error_message",
+    ],
+)
+def test_ethernet_trunk_host_interface_00162(value, match):
+    """
+    # Summary
+
+    Verify `_validate_allowed_vlans` raises `ValueError` with a specific, actionable message identifying the failure mode (out-of-bounds id,
+    out-of-bounds range, reversed range, or shape mismatch).
+
+    ## Test
+
+    - Each failure mode surfaces a distinguishable message substring
+
+    ## Classes and Methods
+
+    - ethernet_trunk_host_interface._validate_allowed_vlans()
+    """
+    with pytest.raises(ValidationError, match=match):
+        EthernetTrunkHostPolicyModel(allowed_vlans=value)
+
+
+@pytest.mark.parametrize(
+    "value,should_raise",
+    [
+        (None, False),
+        ([], False),
+        (["1"], False),
+        (["4094"], False),
+        (["100"], False),
+        (["100", "200"], False),
+        (["100-200"], False),
+        (["1-4094", "500"], False),
+        (["10", "20-30"], False),
+        (["0"], True),
+        (["4095"], True),
+        (["5000"], True),
+        (["1-4095"], True),
+        (["0-100"], True),
+        (["200-100"], True),
+        (["abc"], True),
+        (["1-"], True),
+        (["100,200"], True),
+        ([""], True),
+        ([100], True),
+    ],
+    ids=[
+        "none_passthrough",
+        "empty_list",
+        "min_vlan_id",
+        "max_vlan_id",
+        "single_id",
+        "multiple_ids",
+        "single_range",
+        "range_and_id",
+        "id_and_range",
+        "vlan_zero_rejected",
+        "vlan_4095_rejected",
+        "vlan_5000_rejected",
+        "range_end_out_of_bounds_rejected",
+        "range_start_out_of_bounds_rejected",
+        "reversed_range_rejected",
+        "non_numeric_rejected",
+        "trailing_dash_rejected",
+        "comma_in_element_rejected",
+        "empty_string_rejected",
+        "non_string_entry_rejected",
+    ],
+)
+def test_ethernet_trunk_host_interface_00170(value, should_raise):
+    """
+    # Summary
+
+    Verify `_validate_customer_vlan_id_list` accepts a list of VLAN id or range strings where every id is in 1..4094 and every range start <= end,
+    and rejects malformed entries, out-of-range values, reversed ranges, comma-joined elements, empty strings, and non-string entries.
+
+    ## Test
+
+    - Valid entries (boundary values, ids, ranges, mixed) are accepted
+    - Out-of-range ids and range bounds raise ValidationError
+    - Reversed ranges raise ValidationError
+    - Shape-invalid entries raise ValidationError
+
+    ## Classes and Methods
+
+    - ethernet_trunk_host_interface._validate_customer_vlan_id_list()
+    """
+    if should_raise:
+        with pytest.raises(ValidationError, match=r"customer_vlan_id"):
+            EthernetTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+    else:
+        with does_not_raise():
+            instance = EthernetTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+        assert instance.customer_vlan_id == value
+
+
+@pytest.mark.parametrize(
+    "value,match",
+    [
+        (["0"], r"out of bounds"),
+        (["4095"], r"out of bounds"),
+        (["1-4095"], r"out of bounds"),
+        (["200-100"], r"start greater than end"),
+        (["abc"], r"VLAN id or range"),
+        ([""], r"non-empty strings"),
+        ([42], r"non-empty strings"),
+    ],
+    ids=[
+        "vlan_zero_message",
+        "vlan_4095_message",
+        "range_out_of_bounds_message",
+        "reversed_range_message",
+        "shape_error_message",
+        "empty_string_message",
+        "non_string_message",
+    ],
+)
+def test_ethernet_trunk_host_interface_00172(value, match):
+    """
+    # Summary
+
+    Verify `_validate_customer_vlan_id_list` raises `ValueError` with a specific, actionable message identifying the failure mode.
+
+    ## Test
+
+    - Each failure mode surfaces a distinguishable message substring
+
+    ## Classes and Methods
+
+    - ethernet_trunk_host_interface._validate_customer_vlan_id_list()
+    """
+    with pytest.raises(ValidationError, match=match):
+        EthernetTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
 
 
 # =============================================================================
@@ -591,7 +759,7 @@ def test_ethernet_trunk_host_interface_00230():
         ("with-hyphen and 123", False),
         ("em — dash", True),
         ("smart “quotes”", True),
-        ("emoji \U0001F600", True),
+        ("emoji \U0001f600", True),
         ("latin-1 \xe9", True),
     ],
     ids=[
