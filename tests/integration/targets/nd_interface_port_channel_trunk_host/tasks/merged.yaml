@@ -10,22 +10,6 @@
 # already a member of another. After MEMBER REMOVE, all members except a are
 # free, so the multi-create that follows succeeds.
 
-# --- CLEANUP ---
-
-- name: "SETUP: Remove test port-channels before merged tests"
-  cisco.nd.nd_interface_port_channel_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel501
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel502
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel503
-    state: deleted
-  tags: always
-
 # --- MERGED CREATE: SINGLE PC ---
 
 - name: "MERGED CREATE: Create port-channel501 with two members (check mode)"
