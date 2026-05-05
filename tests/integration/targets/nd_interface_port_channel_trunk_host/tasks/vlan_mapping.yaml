@@ -12,7 +12,7 @@
 # --- SETUP ---
 
 - name: "SETUP: Remove test port-channels before vlan_mapping tests"
-  cisco.nd.nd_interface_port_channel_trunk_host:
+  cisco.nd.nd_interface_port_channel_trunk_host: &delete_pc501
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -23,7 +23,7 @@
 # --- VLAN_MAPPING CREATE ---
 
 - name: "VLAN_MAPPING: Create port-channel501 with vlan_mapping enabled (check mode)"
-  cisco.nd.nd_interface_port_channel_trunk_host:
+  cisco.nd.nd_interface_port_channel_trunk_host: &merge_pc501_vlan_mapping
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -33,12 +33,7 @@
   register: cm_vlan_mapping_create
 
 - name: "VLAN_MAPPING: Create port-channel501 with vlan_mapping enabled (normal mode)"
-  cisco.nd.nd_interface_port_channel_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ test_pc_501_with_vlan_mapping }}"
-    state: merged
+  cisco.nd.nd_interface_port_channel_trunk_host: *merge_pc501_vlan_mapping
   register: nm_vlan_mapping_create
 
 - name: "VLAN_MAPPING: Verify vlan_mapping was applied"
@@ -57,12 +52,7 @@
 # --- VLAN_MAPPING IDEMPOTENCY ---
 
 - name: "VLAN_MAPPING IDEMPOTENT: Re-apply same vlan_mapping config"
-  cisco.nd.nd_interface_port_channel_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ test_pc_501_with_vlan_mapping }}"
-    state: merged
+  cisco.nd.nd_interface_port_channel_trunk_host: *merge_pc501_vlan_mapping
   register: nm_vlan_mapping_idem
 
 - name: "VLAN_MAPPING IDEMPOTENT: Verify no change"
@@ -73,10 +63,4 @@
 # --- CLEANUP ---
 
 - name: "CLEANUP: Remove vlan_mapping test port-channel"
-  cisco.nd.nd_interface_port_channel_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel501
-    state: deleted
+  cisco.nd.nd_interface_port_channel_trunk_host: *delete_pc501

@@ -10,7 +10,7 @@
 # --- REPLACED: FULL REPLACE ---
 
 - name: "REPLACED: Replace port-channel501 with a minimal config (check mode)"
-  cisco.nd.nd_interface_port_channel_trunk_host:
+  cisco.nd.nd_interface_port_channel_trunk_host: &replace_pc501
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -30,22 +30,7 @@
   register: cm_replaced_501
 
 - name: "REPLACED: Replace port-channel501 with a minimal config (normal mode)"
-  cisco.nd.nd_interface_port_channel_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel501
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              allowed_vlans: "250"
-              native_vlan: 50
-              ports:
-                - "{{ test_pc_member_a }}"
-              description: "Replaced port-channel501"
-    state: replaced
+  cisco.nd.nd_interface_port_channel_trunk_host: *replace_pc501
   register: nm_replaced_501
 
 - name: "REPLACED: Verify port-channel501 was replaced"
@@ -64,22 +49,7 @@
 # --- REPLACED: IDEMPOTENCY ---
 
 - name: "REPLACED IDEMPOTENT: Re-apply same replaced config"
-  cisco.nd.nd_interface_port_channel_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel501
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              allowed_vlans: "250"
-              native_vlan: 50
-              ports:
-                - "{{ test_pc_member_a }}"
-              description: "Replaced port-channel501"
-    state: replaced
+  cisco.nd.nd_interface_port_channel_trunk_host: *replace_pc501
   register: nm_replaced_501_idem
 
 - name: "REPLACED IDEMPOTENT: Verify no change on second run"
