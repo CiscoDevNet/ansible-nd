@@ -11,7 +11,7 @@
 # --- REPLACED: FULL REPLACE ---
 
 - name: "REPLACED: Replace Ethernet1/41 config entirely (check mode)"
-  cisco.nd.nd_interface_ethernet_trunk_host:
+  cisco.nd.nd_interface_ethernet_trunk_host: &replace_eth41
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -30,21 +30,7 @@
   register: cm_replaced_41
 
 - name: "REPLACED: Replace Ethernet1/41 config entirely (normal mode)"
-  cisco.nd.nd_interface_ethernet_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/41
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              allowed_vlans: "500-600"
-              native_vlan: 500
-              description: "Replaced Ethernet1/41"
-    state: replaced
+  cisco.nd.nd_interface_ethernet_trunk_host: *replace_eth41
   register: nm_replaced_41
 
 - name: "REPLACED: Verify Ethernet1/41 was replaced"
@@ -65,21 +51,7 @@
 # --- REPLACED: IDEMPOTENCY ---
 
 - name: "REPLACED IDEMPOTENT: Re-apply same replaced config"
-  cisco.nd.nd_interface_ethernet_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/41
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              allowed_vlans: "500-600"
-              native_vlan: 500
-              description: "Replaced Ethernet1/41"
-    state: replaced
+  cisco.nd.nd_interface_ethernet_trunk_host: *replace_eth41
   register: nm_replaced_41_idem
 
 - name: "REPLACED IDEMPOTENT: Verify no change on second run"
@@ -90,7 +62,7 @@
 # --- REPLACED: FAN-OUT REPLACE ---
 
 - name: "REPLACED FAN-OUT: Replace Ethernet1/42 and Ethernet1/43 via fan-out (check mode)"
-  cisco.nd.nd_interface_ethernet_trunk_host:
+  cisco.nd.nd_interface_ethernet_trunk_host: &replace_eth42_43
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -110,22 +82,7 @@
   register: cm_replaced_fanout
 
 - name: "REPLACED FAN-OUT: Replace Ethernet1/42 and Ethernet1/43 via fan-out (normal mode)"
-  cisco.nd.nd_interface_ethernet_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/42
-          - Ethernet1/43
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              allowed_vlans: "600-700"
-              native_vlan: 600
-              description: "Replaced fan-out trunk ports"
-    state: replaced
+  cisco.nd.nd_interface_ethernet_trunk_host: *replace_eth42_43
   register: nm_replaced_fanout
 
 - name: "REPLACED FAN-OUT: Verify both interfaces were replaced"

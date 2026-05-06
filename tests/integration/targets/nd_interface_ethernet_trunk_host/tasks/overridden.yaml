@@ -15,7 +15,7 @@
 # --- OVERRIDDEN: REDUCE TO A FEW INTERFACES ---
 
 - name: "OVERRIDDEN: Override to only Ethernet1/41 and Ethernet1/42 (check mode)"
-  cisco.nd.nd_interface_ethernet_trunk_host:
+  cisco.nd.nd_interface_ethernet_trunk_host: &override_eth41_42
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -44,31 +44,7 @@
   register: cm_overridden_reduce
 
 - name: "OVERRIDDEN: Override to only Ethernet1/41 and Ethernet1/42 (normal mode)"
-  cisco.nd.nd_interface_ethernet_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/41
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              allowed_vlans: "900-950"
-              native_vlan: 900
-              description: "Overridden Ethernet1/41"
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/42
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              allowed_vlans: "901-951"
-              native_vlan: 901
-              description: "Overridden Ethernet1/42"
-    state: overridden
+  cisco.nd.nd_interface_ethernet_trunk_host: *override_eth41_42
   register: nm_overridden_reduce
 
 - name: "OVERRIDDEN: Verify override changed state"
@@ -93,31 +69,7 @@
 # --- OVERRIDDEN: IDEMPOTENCY ---
 
 - name: "OVERRIDDEN IDEMPOTENT: Re-apply same overridden config"
-  cisco.nd.nd_interface_ethernet_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/41
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              allowed_vlans: "900-950"
-              native_vlan: 900
-              description: "Overridden Ethernet1/41"
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/42
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              allowed_vlans: "901-951"
-              native_vlan: 901
-              description: "Overridden Ethernet1/42"
-    state: overridden
+  cisco.nd.nd_interface_ethernet_trunk_host: *override_eth41_42
   register: nm_overridden_idem
 
 - name: "DEBUG: Show overridden idem result"
