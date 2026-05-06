@@ -10,7 +10,7 @@
 # --- DELETED: SINGLE INTERFACE ---
 
 - name: "DELETED: Delete loopback101 (check mode)"
-  cisco.nd.nd_interface_loopback:
+  cisco.nd.nd_interface_loopback: &delete_lb101
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -21,13 +21,7 @@
   register: cm_deleted_101
 
 - name: "DELETED: Delete loopback101 (normal mode)"
-  cisco.nd.nd_interface_loopback:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback101
-    state: deleted
+  cisco.nd.nd_interface_loopback: *delete_lb101
   register: nm_deleted_101
 
 - name: "DELETED: Verify loopback101 was deleted"
@@ -40,13 +34,7 @@
 # --- DELETED: IDEMPOTENCY ---
 
 - name: "DELETED IDEMPOTENT: Delete loopback101 again"
-  cisco.nd.nd_interface_loopback:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback101
-    state: deleted
+  cisco.nd.nd_interface_loopback: *delete_lb101
   register: nm_deleted_101_idem
 
 - name: "DELETED IDEMPOTENT: Verify no change when already absent"
@@ -67,7 +55,7 @@
     state: merged
 
 - name: "DELETED MULTI: Delete loopback100, loopback101, and loopback102 (check mode)"
-  cisco.nd.nd_interface_loopback:
+  cisco.nd.nd_interface_loopback: &delete_multi
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -82,17 +70,7 @@
   register: cm_deleted_multi
 
 - name: "DELETED MULTI: Delete loopback100, loopback101, and loopback102 (normal mode)"
-  cisco.nd.nd_interface_loopback:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback100
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback101
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback102
-    state: deleted
+  cisco.nd.nd_interface_loopback: *delete_multi
   register: nm_deleted_multi
 
 - name: "DELETED MULTI: Verify all test loopbacks were deleted"

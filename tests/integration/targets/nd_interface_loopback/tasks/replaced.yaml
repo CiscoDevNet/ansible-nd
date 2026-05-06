@@ -10,7 +10,7 @@
 # --- REPLACED: FULL REPLACE ---
 
 - name: "REPLACED: Replace loopback100 config entirely (check mode)"
-  cisco.nd.nd_interface_loopback:
+  cisco.nd.nd_interface_loopback: &replace_lb100
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -28,20 +28,7 @@
   register: cm_replaced_100
 
 - name: "REPLACED: Replace loopback100 config entirely (normal mode)"
-  cisco.nd.nd_interface_loopback:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback100
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              ip: "10.100.100.3"
-              description: "Replaced loopback100"
-              policy_type: loopback
-    state: replaced
+  cisco.nd.nd_interface_loopback: *replace_lb100
   register: nm_replaced_100
 
 - name: "REPLACED: Verify loopback100 was replaced"
@@ -61,20 +48,7 @@
 # --- REPLACED: IDEMPOTENCY ---
 
 - name: "REPLACED IDEMPOTENT: Re-apply same replaced config"
-  cisco.nd.nd_interface_loopback:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback100
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              ip: "10.100.100.3"
-              description: "Replaced loopback100"
-              policy_type: loopback
-    state: replaced
+  cisco.nd.nd_interface_loopback: *replace_lb100
   register: nm_replaced_100_idem
 
 - name: "REPLACED IDEMPOTENT: Verify no change on second run"
@@ -85,7 +59,7 @@
 # --- REPLACED: MULTIPLE INTERFACES ---
 
 - name: "REPLACED MULTI: Replace loopback100 and loopback101 (check mode)"
-  cisco.nd.nd_interface_loopback:
+  cisco.nd.nd_interface_loopback: &replace_lb100_101
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -104,21 +78,7 @@
   register: cm_replaced_multi
 
 - name: "REPLACED MULTI: Replace loopback100 and loopback101 (normal mode)"
-  cisco.nd.nd_interface_loopback:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback100
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              ip: "10.100.100.4"
-              description: "Replaced again loopback100"
-              policy_type: loopback
-      - "{{ loopback_101_updated }}"
-    state: replaced
+  cisco.nd.nd_interface_loopback: *replace_lb100_101
   register: nm_replaced_multi
 
 - name: "REPLACED MULTI: Verify both interfaces were replaced"
