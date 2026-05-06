@@ -245,6 +245,101 @@ def test_fabric_context_00130() -> None:
 
 
 # =============================================================================
+# Test: fabric_is_local
+# =============================================================================
+
+
+def test_fabric_context_00140() -> None:
+    """
+    # Summary
+
+    Verify `fabric_is_local` returns True when the summary reports `local: true`.
+
+    ## Test
+
+    - GET (summary) returns 200 with `local: true`
+    - `fabric_is_local()` returns True
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_is_local
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+        result = instance.fabric_is_local()
+
+    assert result is True
+
+
+def test_fabric_context_00150() -> None:
+    """
+    # Summary
+
+    Verify `fabric_is_local` returns False when the summary reports `local: false` (fabric owned by a different controller in the cluster).
+
+    ## Test
+
+    - GET (summary) returns 200 with `local: false`
+    - `fabric_is_local()` returns False
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_is_local
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+        result = instance.fabric_is_local()
+
+    assert result is False
+
+
+def test_fabric_context_00160() -> None:
+    """
+    # Summary
+
+    Verify `fabric_is_local` defaults to True when the `local` field is absent from the summary (older API / single-controller setup).
+
+    ## Test
+
+    - GET (summary) returns 200 without a `local` field
+    - `fabric_is_local()` returns True
+
+    ## Classes and Methods
+
+    - FabricContext.fabric_is_local
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+        result = instance.fabric_is_local()
+
+    assert result is True
+
+
+# =============================================================================
 # Test: switch_map / get_switch_id
 # =============================================================================
 
@@ -390,14 +485,12 @@ def test_fabric_context_00300() -> None:
     """
     # Summary
 
-    Verify `validate_for_mutation` is a no-op when the fabric exists and is not in deployment freeze mode.
+    Verify `validate_for_mutation` is a no-op when the fabric exists, is local, and is not in deployment freeze mode.
 
     ## Test
 
-    - GET (summary) returns 200 with `fabricStatus: "default"` -> fabric exists and is not frozen
+    - GET (summary) returns 200 with `local: true` and `fabricStatus: "default"`
     - `validate_for_mutation` does not raise
-
-    Note: `fabric_is_local` is a stub and is intentionally not invoked by `validate_for_mutation`.
 
     ## Classes and Methods
 
@@ -472,5 +565,35 @@ def test_fabric_context_00320() -> None:
 
     instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
     match = r"Fabric 'fabric_1' is in deployment freeze mode"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_for_mutation()
+
+
+def test_fabric_context_00330() -> None:
+    """
+    # Summary
+
+    Verify `validate_for_mutation` raises `RuntimeError` when the fabric is owned by a different controller in the cluster.
+
+    ## Test
+
+    - GET (summary) returns 200 with `local: false`
+    - `validate_for_mutation` raises with a message that mentions a different controller and the fabric name
+
+    ## Classes and Methods
+
+    - FabricContext.validate_for_mutation
+    - FabricContext.fabric_is_local
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_context(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = FabricContext(rest_send=rest_send, fabric_name="fabric_1")
+    match = r"Fabric 'fabric_1' is owned by a different controller"
     with pytest.raises(RuntimeError, match=match):
         instance.validate_for_mutation()

@@ -8,12 +8,8 @@ Reusable fabric context for pre-flight validation and switch resolution.
 Provides `FabricContext`, a lazy-loaded cache of fabric metadata and switch mappings
 that orchestrators use to validate preconditions before CRUD operations.
 
-Uses the `/api/v1/manage/fabrics/{fabric_name}` endpoint to verify fabric existence.
-
-NOTE: `fabric_is_local` is stubbed to always return True until we identify the correct response
-field from the fabric detail endpoint. Read-only state is covered by `fabric_is_deployment_frozen`,
-which checks the dedicated `/deploymentFreeze` endpoint (the `fabricStatus` field in the summary
-response carries the same information: "frozen" vs "default").
+Uses the `/api/v1/manage/fabrics/{fabric_name}/summary` endpoint to verify fabric existence and read
+the `local` and `fabricStatus` fields used by the pre-flight checks.
 """
 
 from __future__ import annotations
@@ -36,10 +32,6 @@ class FabricContext:
     Lazily fetches fabric summary and switch inventory on first access. Provides simple
     boolean checks and a `validate_for_mutation` method that raises `RuntimeError` with
     a clear message when the fabric cannot be modified.
-
-    TODO: `fabric_is_local` is a stub. The `GET /api/v1/manage/fabrics/{fabricName}` response does not currently expose
-    a `local` field, so the check is intentionally excluded from `validate_for_mutation`. Re-add it once the underlying
-    field or alternative endpoint is identified.
 
     ## Raises
 
@@ -136,19 +128,23 @@ class FabricContext:
         """
         # Summary
 
-        Check whether the fabric is local to the target ND node.
+        Check whether the fabric is owned by the controller this `RestSend` is logged in to.
 
-        TODO: The `GET /api/v1/manage/fabrics/{fabricName}` response does not include a `local` field. This check needs
-        to be reimplemented once the correct field or endpoint is identified. Currently returns `True` if the fabric exists.
+        Reads the `local` boolean from the cached `fabric_summary`. In a multi-controller cluster, the same fabric is
+        visible from every node but mutations must be issued against its owning controller — `local: false` means we
+        are connected to a non-owner. If the field is absent (single-controller setups or older API variants), this
+        method assumes the fabric is local rather than blocking valid operations.
+
+        Returns `False` if the fabric does not exist.
 
         ## Raises
 
         None
         """
-        if not self.fabric_exists():
+        summary = self.fabric_summary
+        if summary is None:
             return False
-        # TODO: Implement local check once the correct response field is identified
-        return True
+        return bool(summary.get("local", True))
 
     def fabric_is_deployment_frozen(self) -> bool:
         """
@@ -292,20 +288,24 @@ class FabricContext:
         ## Checks
 
         1. Fabric exists (on any node in the cluster).
-        2. Fabric is not in deployment freeze mode.
-
-        See the class-level TODO: `fabric_is_local` is intentionally not invoked here while its underlying implementation
-        is a stub. It will be re-added once the relevant field is exposed by the API.
+        2. Fabric is owned by the controller this `RestSend` is connected to.
+        3. Fabric is not in deployment freeze mode.
 
         ## Raises
 
         ### RuntimeError
 
         - If the fabric does not exist.
+        - If the fabric is owned by a different controller in the cluster.
         - If the fabric is in deployment freeze mode.
         """
         if not self.fabric_exists():
             raise RuntimeError(f"Fabric '{self._fabric_name}' not found. Verify the fabric name and ensure you are targeting the correct ND node.")
+        if not self.fabric_is_local():
+            raise RuntimeError(
+                f"Fabric '{self._fabric_name}' is owned by a different controller in this cluster. "
+                "Connect to the controller that owns this fabric to make configuration changes."
+            )
         if self.fabric_is_deployment_frozen():
             raise RuntimeError(
                 f"Fabric '{self._fabric_name}' is in deployment freeze mode. Configuration changes cannot be deployed to switches "

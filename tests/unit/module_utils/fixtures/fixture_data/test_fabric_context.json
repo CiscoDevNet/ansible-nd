@@ -47,6 +47,41 @@
             "fabricStatus": "default"
         }
     },
+    "test_fabric_context_00140a": {
+        "TEST_NOTES": ["fabric_is_local: True (local field is true in summary)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a",
+            "local": true
+        }
+    },
+    "test_fabric_context_00150a": {
+        "TEST_NOTES": ["fabric_is_local: False (local field is false in summary)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_b",
+            "local": false
+        }
+    },
+    "test_fabric_context_00160a": {
+        "TEST_NOTES": ["fabric_is_local: True when local field is missing (older API / single-controller default)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a"
+        }
+    },
     "test_fabric_context_00200a": {
         "TEST_NOTES": ["Switch list: two switches in fabric"],
         "RETURN_CODE": 200,
@@ -120,7 +155,7 @@
         }
     },
     "test_fabric_context_00300a": {
-        "TEST_NOTES": ["Fabric summary: fabric exists, fabricStatus=default (validate_for_mutation success)"],
+        "TEST_NOTES": ["Fabric summary: fabric exists, local=true, fabricStatus=default (validate_for_mutation success)"],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
@@ -128,6 +163,7 @@
         "DATA": {
             "name": "fabric_1",
             "ownerCluster": "cluster_a",
+            "local": true,
             "fabricStatus": "default"
         }
     },
@@ -140,7 +176,7 @@
         "DATA": {}
     },
     "test_fabric_context_00320a": {
-        "TEST_NOTES": ["Fabric summary: fabric exists, fabricStatus=frozen (validate_for_mutation must raise)"],
+        "TEST_NOTES": ["Fabric summary: fabric exists, local=true, fabricStatus=frozen (validate_for_mutation must raise on freeze)"],
         "RETURN_CODE": 200,
         "METHOD": "GET",
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
@@ -148,7 +184,21 @@
         "DATA": {
             "name": "fabric_1",
             "ownerCluster": "cluster_a",
+            "local": true,
             "fabricStatus": "frozen"
+        }
+    },
+    "test_fabric_context_00330a": {
+        "TEST_NOTES": ["Fabric summary: fabric exists, local=false (validate_for_mutation must raise on non-local)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_b",
+            "local": false,
+            "fabricStatus": "default"
         }
     }
 }
