@@ -1,0 +1,23 @@
+---
+# Pre-test cleanup for nd_interface_loopback
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Called from main.yaml before the merged/replaced/overridden/deleted state
+# blocks. Ensures no test loopback interfaces exist on the target switch
+# before the state tests run.
+
+- name: "SETUP: Remove test loopback interfaces before state tests"
+  cisco.nd.nd_interface_loopback:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback100
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback101
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: loopback102
+    state: deleted
+  tags: always

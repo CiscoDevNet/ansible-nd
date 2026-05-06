@@ -38,6 +38,9 @@
 
 - name: Run nd_interface_loopback state tests with optional logging env
   block:
+    - name: Pre-test cleanup
+      ansible.builtin.include_tasks: setup.yaml
+
     - name: Run nd_interface_loopback merged state tests
       ansible.builtin.include_tasks: merged.yaml
 

@@ -4,22 +4,6 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# --- CLEANUP ---
-
-- name: "SETUP: Remove test loopback interfaces before merged tests"
-  cisco.nd.nd_interface_loopback:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback100
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback101
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: loopback102
-    state: deleted
-  tags: always
-
 # --- MERGED CREATE ---
 
 - name: "MERGED CREATE: Create loopback100 with full config (check mode)"
