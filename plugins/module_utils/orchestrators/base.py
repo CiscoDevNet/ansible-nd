@@ -146,14 +146,14 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         try:
             api_endpoint = self.query_one_endpoint()
             api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, operation_type=OperationType.QUERY)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
         except Exception as e:
             raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
     def query_all(self, model_instance: Optional[ModelType] = None, **kwargs) -> ResponseType:
         try:
             api_endpoint = self.query_all_endpoint()
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True, operation_type=OperationType.QUERY)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
