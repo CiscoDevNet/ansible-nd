@@ -4,44 +4,6 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# --- CLEANUP ---
-
-- name: "SETUP: Remove test ethernet interfaces before merged tests"
-  cisco.nd.nd_interface_ethernet_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names: "{{ cleanup_interface_names }}"
-    state: deleted
-  register: setup_cleanup
-  tags: always
-
-- name: "DEBUG: Show cleanup result"
-  ansible.builtin.debug:
-    var: setup_cleanup
-  tags: always
-
-- name: "DEBUG: Re-query to see if interfaces are still present after cleanup"
-  cisco.nd.nd_interface_ethernet_trunk_host:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/41
-        config_data:
-          network_os:
-            policy:
-    state: merged
-  check_mode: true
-  register: debug_requery
-
-- name: "DEBUG: Show re-query result (check before list)"
-  ansible.builtin.debug:
-    msg: "Before count: {{ debug_requery.before | length }}, Eth1/41 in before: {{ debug_requery.before | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/41') |
-  list | length }}"
-
 # --- MERGED CREATE: SINGLE INTERFACE ---
 
 - name: "MERGED CREATE: Create Ethernet1/41 with full config (check mode)"
