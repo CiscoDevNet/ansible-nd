@@ -12,7 +12,7 @@
 # --- DELETED: SINGLE SVI ---
 
 - name: "DELETED: Delete vlan333 (check mode)"
-  cisco.nd.nd_interface_svi:
+  cisco.nd.nd_interface_svi: &delete_vlan333
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -24,14 +24,7 @@
   register: cm_deleted_333
 
 - name: "DELETED: Delete vlan333 (normal mode)"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 333
-    state: deleted
+  cisco.nd.nd_interface_svi: *delete_vlan333
   register: nm_deleted_333
 
 - name: "DELETED: Verify vlan333 was removed"
@@ -46,14 +39,7 @@
 # --- DELETED: IDEMPOTENCY ---
 
 - name: "DELETED IDEMPOTENT: Delete vlan333 again"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 333
-    state: deleted
+  cisco.nd.nd_interface_svi: *delete_vlan333
   register: nm_deleted_333_idem
 
 - name: "DELETED IDEMPOTENT: Verify no change when SVI already gone"
@@ -64,7 +50,7 @@
 # --- DELETED: FAN-OUT DELETE ---
 
 - name: "DELETED FAN-OUT: Delete vlan334 and vlan335 via fan-out (check mode)"
-  cisco.nd.nd_interface_svi:
+  cisco.nd.nd_interface_svi: &delete_vlan334_335
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -77,15 +63,7 @@
   register: cm_deleted_fanout
 
 - name: "DELETED FAN-OUT: Delete vlan334 and vlan335 via fan-out (normal mode)"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 334
-          - 335
-    state: deleted
+  cisco.nd.nd_interface_svi: *delete_vlan334_335
   register: nm_deleted_fanout
 
 - name: "DELETED FAN-OUT: Verify both SVIs removed"

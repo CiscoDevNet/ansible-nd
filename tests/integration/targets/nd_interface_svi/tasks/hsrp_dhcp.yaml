@@ -27,7 +27,7 @@
 # --- HSRP CREATE ---
 
 - name: "MERGED CREATE: vlan500 with HSRP block (check mode)"
-  cisco.nd.nd_interface_svi:
+  cisco.nd.nd_interface_svi: &merge_vlan500_hsrp
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -37,12 +37,7 @@
   register: cm_merged_create_hsrp
 
 - name: "MERGED CREATE: vlan500 with HSRP block (normal mode)"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ svi_500_hsrp }}"
-    state: merged
+  cisco.nd.nd_interface_svi: *merge_vlan500_hsrp
   register: nm_merged_create_hsrp
 
 - name: "DEBUG: HSRP create result"
@@ -62,12 +57,7 @@
 # --- HSRP IDEMPOTENCY (re-apply same config) ---
 
 - name: "MERGED IDEMPOTENT: re-apply vlan500 HSRP block"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ svi_500_hsrp }}"
-    state: merged
+  cisco.nd.nd_interface_svi: *merge_vlan500_hsrp
   register: nm_merged_idem_hsrp
 
 - name: "MERGED IDEMPOTENT: HSRP re-apply must not report changed"
@@ -94,7 +84,7 @@
 # --- DHCP RELAY CREATE ---
 
 - name: "MERGED CREATE: vlan501 with DHCP relay block"
-  cisco.nd.nd_interface_svi:
+  cisco.nd.nd_interface_svi: &merge_vlan501_dhcp
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -114,12 +104,7 @@
 # --- DHCP RELAY IDEMPOTENCY ---
 
 - name: "MERGED IDEMPOTENT: re-apply DHCP relay vlan501"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ svi_501_dhcp }}"
-    state: merged
+  cisco.nd.nd_interface_svi: *merge_vlan501_dhcp
   register: nm_merged_idem_dhcp
 
 - name: "MERGED IDEMPOTENT: DHCP re-apply must not report changed"

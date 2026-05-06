@@ -25,7 +25,7 @@
 # --- MERGED CREATE: SINGLE SVI ---
 
 - name: "MERGED CREATE: Create vlan333 with full config (check mode)"
-  cisco.nd.nd_interface_svi:
+  cisco.nd.nd_interface_svi: &merge_vlan333
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -35,12 +35,7 @@
   register: cm_merged_create_333
 
 - name: "MERGED CREATE: Create vlan333 with full config (normal mode)"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ svi_333 }}"
-    state: merged
+  cisco.nd.nd_interface_svi: *merge_vlan333
   register: nm_merged_create_333
 
 - name: "DEBUG: Show merged create result"
@@ -57,7 +52,7 @@
 # --- MERGED CREATE: FAN-OUT (MULTIPLE VLANs, SINGLE CONFIG) ---
 
 - name: "MERGED CREATE: Create vlan334 and vlan335 via fan-out (check mode)"
-  cisco.nd.nd_interface_svi:
+  cisco.nd.nd_interface_svi: &merge_vlan334_335
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -67,12 +62,7 @@
   register: cm_merged_create_fanout
 
 - name: "MERGED CREATE: Create vlan334 and vlan335 via fan-out (normal mode)"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ svi_334_335 }}"
-    state: merged
+  cisco.nd.nd_interface_svi: *merge_vlan334_335
   register: nm_merged_create_fanout
 
 - name: "MERGED CREATE: Verify fan-out creation"
@@ -103,22 +93,12 @@
 # --- MERGED IDEMPOTENCY ---
 
 - name: "MERGED IDEMPOTENT: Re-apply vlan333 creation (check mode)"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ svi_333 }}"
-    state: merged
+  cisco.nd.nd_interface_svi: *merge_vlan333
   check_mode: true
   register: cm_merged_idem_333
 
 - name: "MERGED IDEMPOTENT: Re-apply vlan333 creation (normal mode)"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ svi_333 }}"
-    state: merged
+  cisco.nd.nd_interface_svi: *merge_vlan333
   register: nm_merged_idem_333
 
 - name: "MERGED IDEMPOTENT: Verify no change on second run"
@@ -128,12 +108,7 @@
       - nm_merged_idem_333 is not changed
 
 - name: "MERGED IDEMPOTENT: Re-apply fan-out config for vlan334 and vlan335"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ svi_334_335 }}"
-    state: merged
+  cisco.nd.nd_interface_svi: *merge_vlan334_335
   register: nm_merged_idem_fanout
 
 - name: "MERGED IDEMPOTENT: Verify fan-out idempotency"
@@ -144,7 +119,7 @@
 # --- MERGED UPDATE ---
 
 - name: "MERGED UPDATE: Update vlan333 description and other fields (check mode)"
-  cisco.nd.nd_interface_svi:
+  cisco.nd.nd_interface_svi: &merge_vlan333_updated
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -154,12 +129,7 @@
   register: cm_merged_update_333
 
 - name: "MERGED UPDATE: Update vlan333 description and other fields (normal mode)"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ svi_333_updated }}"
-    state: merged
+  cisco.nd.nd_interface_svi: *merge_vlan333_updated
   register: nm_merged_update_333
 
 - name: "MERGED UPDATE: Verify vlan333 was updated"
@@ -181,12 +151,7 @@
       - vlan333_after.config_data.network_os.policy.advertise_subnet_in_underlay == true
 
 - name: "MERGED UPDATE: Re-apply update for idempotency"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ svi_333_updated }}"
-    state: merged
+  cisco.nd.nd_interface_svi: *merge_vlan333_updated
   register: nm_merged_update_333_idem
 
 - name: "MERGED UPDATE: Verify idempotency after update"
@@ -287,7 +252,7 @@
 # --- MERGED CREATE: LARGE FAN-OUT ---
 
 - name: "MERGED CREATE: Create vlan337 and vlan338 via fan-out (normal mode)"
-  cisco.nd.nd_interface_svi:
+  cisco.nd.nd_interface_svi: &merge_vlan337_338
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -314,12 +279,7 @@
       - vlan338_after.config_data.network_os.policy.ip == "10.99.102.1"
 
 - name: "MERGED IDEMPOTENT: Re-apply large fan-out"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ svi_337_338 }}"
-    state: merged
+  cisco.nd.nd_interface_svi: *merge_vlan337_338
   register: nm_merged_idem_large_fanout
 
 - name: "MERGED IDEMPOTENT: Verify large fan-out idempotency"
