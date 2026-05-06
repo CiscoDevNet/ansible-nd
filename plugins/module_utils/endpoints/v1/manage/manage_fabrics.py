@@ -538,7 +538,7 @@ class EpManageFabricsDeploymentFreezeGet(_EpManageFabricsBase):
     """
 
     class_name: Literal["EpManageFabricsDeploymentFreezeGet"] = Field(
-        default="EpManageFabricsDeploymentFreezeGet", description="Class name for backward compatibility"
+        default="EpManageFabricsDeploymentFreezeGet", frozen=True, description="Class name for backward compatibility"
     )
 
     _path_suffix: ClassVar[Optional[str]] = "deploymentFreeze"
