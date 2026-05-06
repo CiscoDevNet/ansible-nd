@@ -10,7 +10,7 @@
 # --- DELETED: SINGLE INTERFACE ---
 
 - name: "DELETED: Delete Ethernet1/45 (check mode)"
-  cisco.nd.nd_interface_ethernet_access:
+  cisco.nd.nd_interface_ethernet_access: &delete_eth45
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -22,14 +22,7 @@
   register: cm_deleted_45
 
 - name: "DELETED: Delete Ethernet1/45 (normal mode)"
-  cisco.nd.nd_interface_ethernet_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/45
-    state: deleted
+  cisco.nd.nd_interface_ethernet_access: *delete_eth45
   register: nm_deleted_45
 
 - name: "DELETED: Verify Ethernet1/45 was deleted"
@@ -42,14 +35,7 @@
 # --- DELETED: IDEMPOTENCY ---
 
 - name: "DELETED IDEMPOTENT: Delete Ethernet1/45 again"
-  cisco.nd.nd_interface_ethernet_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/45
-    state: deleted
+  cisco.nd.nd_interface_ethernet_access: *delete_eth45
   register: nm_deleted_45_idem
 
 - name: "DELETED IDEMPOTENT: Verify no change when already absent"
@@ -60,7 +46,7 @@
 # --- DELETED: FAN-OUT DELETE ---
 
 - name: "DELETED FAN-OUT: Delete Ethernet1/46 and Ethernet1/47 via fan-out (check mode)"
-  cisco.nd.nd_interface_ethernet_access:
+  cisco.nd.nd_interface_ethernet_access: &delete_eth46_47
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -73,15 +59,7 @@
   register: cm_deleted_fanout
 
 - name: "DELETED FAN-OUT: Delete Ethernet1/46 and Ethernet1/47 via fan-out (normal mode)"
-  cisco.nd.nd_interface_ethernet_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/46
-          - Ethernet1/47
-    state: deleted
+  cisco.nd.nd_interface_ethernet_access: *delete_eth46_47
   register: nm_deleted_fanout
 
 - name: "DELETED FAN-OUT: Verify both interfaces were deleted"
@@ -105,7 +83,7 @@
     state: merged
 
 - name: "DELETED MULTI: Delete from multiple config groups (check mode)"
-  cisco.nd.nd_interface_ethernet_access:
+  cisco.nd.nd_interface_ethernet_access: &delete_multi
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -121,18 +99,7 @@
   register: cm_deleted_multi
 
 - name: "DELETED MULTI: Delete from multiple config groups (normal mode)"
-  cisco.nd.nd_interface_ethernet_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/41
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/42
-          - Ethernet1/43
-    state: deleted
+  cisco.nd.nd_interface_ethernet_access: *delete_multi
   register: nm_deleted_multi
 
 - name: "DELETED MULTI: Verify all test interfaces were deleted"

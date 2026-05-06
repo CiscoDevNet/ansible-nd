@@ -11,7 +11,7 @@
 # --- OVERRIDDEN: REDUCE TO A FEW INTERFACES ---
 
 - name: "OVERRIDDEN: Override to only Ethernet1/41 and Ethernet1/42 (check mode)"
-  cisco.nd.nd_interface_ethernet_access:
+  cisco.nd.nd_interface_ethernet_access: &override_eth41_42
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -38,29 +38,7 @@
   register: cm_overridden_reduce
 
 - name: "OVERRIDDEN: Override to only Ethernet1/41 and Ethernet1/42 (normal mode)"
-  cisco.nd.nd_interface_ethernet_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/41
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              access_vlan: 900
-              description: "Overridden Ethernet1/41"
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/42
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              access_vlan: 901
-              description: "Overridden Ethernet1/42"
-    state: overridden
+  cisco.nd.nd_interface_ethernet_access: *override_eth41_42
   register: nm_overridden_reduce
 
 - name: "OVERRIDDEN: Verify override removed extra interfaces"
@@ -92,29 +70,7 @@
 # --- OVERRIDDEN: IDEMPOTENCY ---
 
 - name: "OVERRIDDEN IDEMPOTENT: Re-apply same overridden config"
-  cisco.nd.nd_interface_ethernet_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/41
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              access_vlan: 900
-              description: "Overridden Ethernet1/41"
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/42
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              access_vlan: 901
-              description: "Overridden Ethernet1/42"
-    state: overridden
+  cisco.nd.nd_interface_ethernet_access: *override_eth41_42
   register: nm_overridden_idem
 
 - name: "DEBUG: Show overridden idem result"
@@ -134,29 +90,7 @@
 # and the changed flag would be incorrectly true.
 
 - name: "OVERRIDDEN FILTER: Override with same config, verify non-accessHost interfaces are unaffected"
-  cisco.nd.nd_interface_ethernet_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/41
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              access_vlan: 900
-              description: "Overridden Ethernet1/41"
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_names:
-          - Ethernet1/42
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              access_vlan: 901
-              description: "Overridden Ethernet1/42"
-    state: overridden
+  cisco.nd.nd_interface_ethernet_access: *override_eth41_42
   register: nm_overridden_filter
 
 - name: "OVERRIDDEN FILTER: Verify idempotent (non-accessHost interfaces not in diff)"
