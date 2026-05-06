@@ -29,7 +29,7 @@
 # --- MERGED CREATE: SINGLE PC ---
 
 - name: "MERGED CREATE: Create port-channel501 with two members (check mode)"
-  cisco.nd.nd_interface_port_channel_access:
+  cisco.nd.nd_interface_port_channel_access: &merge_pc501
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -39,12 +39,7 @@
   register: cm_merged_create_501
 
 - name: "MERGED CREATE: Create port-channel501 with two members (normal mode)"
-  cisco.nd.nd_interface_port_channel_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ test_pc_501 }}"
-    state: merged
+  cisco.nd.nd_interface_port_channel_access: *merge_pc501
   register: nm_merged_create_501
 
 - name: "MERGED CREATE: Verify port-channel501 creation"
@@ -65,22 +60,12 @@
 # --- MERGED IDEMPOTENCY ---
 
 - name: "MERGED IDEMPOTENT: Re-apply port-channel501 creation (check mode)"
-  cisco.nd.nd_interface_port_channel_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ test_pc_501 }}"
-    state: merged
+  cisco.nd.nd_interface_port_channel_access: *merge_pc501
   check_mode: true
   register: cm_merged_idem_501
 
 - name: "MERGED IDEMPOTENT: Re-apply port-channel501 creation (normal mode)"
-  cisco.nd.nd_interface_port_channel_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ test_pc_501 }}"
-    state: merged
+  cisco.nd.nd_interface_port_channel_access: *merge_pc501
   register: nm_merged_idem_501
 
 - name: "MERGED IDEMPOTENT: Verify no change on second run"
@@ -92,7 +77,7 @@
 # --- MERGED UPDATE: change access_vlan ---
 
 - name: "MERGED UPDATE: Change port-channel501 access_vlan and description (check mode)"
-  cisco.nd.nd_interface_port_channel_access:
+  cisco.nd.nd_interface_port_channel_access: &merge_pc501_updated
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -102,12 +87,7 @@
   register: cm_merged_update_501
 
 - name: "MERGED UPDATE: Change port-channel501 access_vlan and description (normal mode)"
-  cisco.nd.nd_interface_port_channel_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ test_pc_501_updated_vlan }}"
-    state: merged
+  cisco.nd.nd_interface_port_channel_access: *merge_pc501_updated
   register: nm_merged_update_501
 
 - name: "MERGED UPDATE: Verify port-channel501 was updated"
@@ -121,12 +101,7 @@
       - pc501_after.config_data.network_os.policy.description == "Ansible integration test PC 501 updated"
 
 - name: "MERGED UPDATE: Re-apply update for idempotency"
-  cisco.nd.nd_interface_port_channel_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ test_pc_501_updated_vlan }}"
-    state: merged
+  cisco.nd.nd_interface_port_channel_access: *merge_pc501_updated
   register: nm_merged_update_501_idem
 
 - name: "MERGED UPDATE: Verify idempotency after update"
@@ -138,12 +113,7 @@
 # Must run BEFORE PC 502/503 are created, so the third member (member_c) is free.
 
 - name: "SETUP: Reset port-channel501 to baseline before membership tests"
-  cisco.nd.nd_interface_port_channel_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ test_pc_501 }}"
-    state: merged
+  cisco.nd.nd_interface_port_channel_access: *merge_pc501
 
 - name: "MERGED MEMBER ADD: Add a third member to port-channel501 (normal mode)"
   cisco.nd.nd_interface_port_channel_access:
@@ -190,7 +160,7 @@
 # (used by PC 503) are not currently claimed by PC 501.
 
 - name: "MERGED CREATE: Create multiple port-channels in a single task (check mode)"
-  cisco.nd.nd_interface_port_channel_access:
+  cisco.nd.nd_interface_port_channel_access: &merge_pc502_503
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -201,13 +171,7 @@
   register: cm_merged_create_multi
 
 - name: "MERGED CREATE: Create multiple port-channels in a single task (normal mode)"
-  cisco.nd.nd_interface_port_channel_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ test_pc_502 }}"
-      - "{{ test_pc_503 }}"
-    state: merged
+  cisco.nd.nd_interface_port_channel_access: *merge_pc502_503
   register: nm_merged_create_multi
 
 - name: "MERGED CREATE: Verify multiple port-channel creation"
