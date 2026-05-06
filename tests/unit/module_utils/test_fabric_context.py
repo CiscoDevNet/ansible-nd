@@ -183,13 +183,13 @@ def test_fabric_context_00120() -> None:
     """
     # Summary
 
-    Verify `fabric_is_deployment_frozen` returns True when the deploymentFreeze endpoint reports the fabric is frozen.
+    Verify `fabric_is_deployment_frozen` returns True when `fabricStatus` in the summary is "frozen".
 
     ## Test
 
-    - First GET (summary) returns 200 so the fabric is considered to exist
-    - Second GET (deploymentFreeze) returns `{"deploymentFreeze": true}`
+    - GET (summary) returns 200 with `fabricStatus: "frozen"`
     - `fabric_is_deployment_frozen()` returns True
+    - No additional API call is made (state is read from the cached summary)
 
     ## Classes and Methods
 
@@ -199,7 +199,6 @@ def test_fabric_context_00120() -> None:
 
     def responses():
         yield responses_fabric_context(f"{method_name}a")
-        yield responses_fabric_context(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -215,13 +214,14 @@ def test_fabric_context_00130() -> None:
     """
     # Summary
 
-    Verify `fabric_is_deployment_frozen` returns False and caches the result so subsequent calls do not re-fetch.
+    Verify `fabric_is_deployment_frozen` returns False when `fabricStatus` is "default" and the summary cache prevents
+    a second fetch on subsequent calls.
 
     ## Test
 
-    - First GET (summary) returns 200, second GET (deploymentFreeze) returns `{"deploymentFreeze": false}`
+    - GET (summary) returns 200 with `fabricStatus: "default"`
     - `fabric_is_deployment_frozen()` returns False
-    - A second call returns False without consuming another response (cache hit)
+    - A second call returns False without consuming another response (summary cache hit)
 
     ## Classes and Methods
 
@@ -231,7 +231,6 @@ def test_fabric_context_00130() -> None:
 
     def responses():
         yield responses_fabric_context(f"{method_name}a")
-        yield responses_fabric_context(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -395,11 +394,10 @@ def test_fabric_context_00300() -> None:
 
     ## Test
 
-    - First GET (summary) returns 200 -> `fabric_exists` is True
-    - Second GET (deploymentFreeze) returns `{"deploymentFreeze": false}`
+    - GET (summary) returns 200 with `fabricStatus: "default"` -> fabric exists and is not frozen
     - `validate_for_mutation` does not raise
 
-    Note: `fabric_is_local` and `fabric_is_read_only` are stubs and are intentionally not invoked by `validate_for_mutation`.
+    Note: `fabric_is_local` is a stub and is intentionally not invoked by `validate_for_mutation`.
 
     ## Classes and Methods
 
@@ -409,7 +407,6 @@ def test_fabric_context_00300() -> None:
 
     def responses():
         yield responses_fabric_context(f"{method_name}a")
-        yield responses_fabric_context(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -457,8 +454,7 @@ def test_fabric_context_00320() -> None:
 
     ## Test
 
-    - First GET (summary) returns 200 so the fabric exists
-    - Second GET (deploymentFreeze) returns `{"deploymentFreeze": true}`
+    - GET (summary) returns 200 with `fabricStatus: "frozen"`
     - `validate_for_mutation` raises with a message that mentions deployment freeze and the fabric name
 
     ## Classes and Methods
@@ -470,7 +466,6 @@ def test_fabric_context_00320() -> None:
 
     def responses():
         yield responses_fabric_context(f"{method_name}a")
-        yield responses_fabric_context(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)

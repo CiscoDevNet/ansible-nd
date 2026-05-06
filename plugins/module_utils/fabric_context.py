@@ -10,18 +10,15 @@ that orchestrators use to validate preconditions before CRUD operations.
 
 Uses the `/api/v1/manage/fabrics/{fabric_name}` endpoint to verify fabric existence.
 
-NOTE: The `fabric_is_local` and `fabric_is_read_only` checks are stubbed to always return
-True / False respectively until we identify the correct response fields from the fabric
-detail endpoint. The fabric detail response does not include `local` or `meta.allowedActions`
-fields that the original implementation assumed.
+NOTE: `fabric_is_local` is stubbed to always return True until we identify the correct response
+field from the fabric detail endpoint. Read-only state is covered by `fabric_is_deployment_frozen`,
+which checks the dedicated `/deploymentFreeze` endpoint (the `fabricStatus` field in the summary
+response carries the same information: "frozen" vs "default").
 """
 
 from __future__ import annotations
 
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
-    EpManageFabricsDeploymentFreezeGet,
-    EpManageFabricsSummaryGet,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import EpManageFabricsSummaryGet
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -40,11 +37,9 @@ class FabricContext:
     boolean checks and a `validate_for_mutation` method that raises `RuntimeError` with
     a clear message when the fabric cannot be modified.
 
-    TODO: `fabric_is_local` and `fabric_is_read_only` are stubs. The `GET /api/v1/manage/fabrics/{fabricName}` response does
-    not currently expose the fields the original implementation expected (`local`, `meta.allowedActions`). Until the correct
-    fields or alternative endpoints are identified, these checks are intentionally excluded from `validate_for_mutation` to
-    avoid silently passing pre-flight checks. Re-add them to `validate_for_mutation` once the underlying checks return
-    real data.
+    TODO: `fabric_is_local` is a stub. The `GET /api/v1/manage/fabrics/{fabricName}` response does not currently expose
+    a `local` field, so the check is intentionally excluded from `validate_for_mutation`. Re-add it once the underlying
+    field or alternative endpoint is identified.
 
     ## Raises
 
@@ -68,7 +63,6 @@ class FabricContext:
         self._rest_send = rest_send
         self._fabric_name = fabric_name
         self._fabric_summary = _NOT_FETCHED
-        self._deployment_freeze: object | bool = _NOT_FETCHED
         self._switch_map: dict[str, str] | None = None
         self._switch_map_by_id: dict[str, str] | None = None
 
@@ -156,25 +150,6 @@ class FabricContext:
         # TODO: Implement local check once the correct response field is identified
         return True
 
-    def fabric_is_read_only(self) -> bool:
-        """
-        # Summary
-
-        Check whether the fabric is in a read-only state that prevents mutations.
-
-        TODO: The `GET /api/v1/manage/fabrics/{fabricName}` response does not include `meta.allowedActions`. This check
-        needs to be reimplemented once the correct field or endpoint is identified. Currently returns `False` (not
-        read-only) if the fabric exists.
-
-        ## Raises
-
-        None
-        """
-        if not self.fabric_exists():
-            return False
-        # TODO: Implement read-only check once the correct response field is identified
-        return False
-
     def fabric_is_deployment_frozen(self) -> bool:
         """
         # Summary
@@ -182,39 +157,33 @@ class FabricContext:
         Check whether the fabric is in deployment freeze mode. When deployment freeze is enabled, configuration changes cannot be
         deployed from the controller to switches.
 
-        Lazily fetches `/api/v1/manage/fabrics/{fabric_name}/deploymentFreeze` on first access and caches the result.
+        Reads `fabricStatus` from the cached `fabric_summary` (`"frozen"` -> True, `"default"` -> False). The dedicated
+        `/api/v1/manage/fabrics/{fabric_name}/deploymentFreeze` endpoint carries the same information but is reserved for
+        callers that need a focused query or a corresponding PUT (e.g. a future `nd_fabric_deployment_freeze` module).
 
         Returns `False` if the fabric does not exist (the fabric-existence error is surfaced separately by `validate_for_mutation`).
 
         ## Raises
 
-        ### RuntimeError
-
-        - If the deploymentFreeze endpoint returns a non-success status other than 404.
+        None
         """
-        if self._deployment_freeze is _NOT_FETCHED:
-            if not self.fabric_exists():
-                self._deployment_freeze = False
-            else:
-                ep = EpManageFabricsDeploymentFreezeGet()
-                ep.fabric_name = self._fabric_name
-                result = self._query_get(ep.path)
-                self._deployment_freeze = bool(result.get("deploymentFreeze", False)) if result else False
-        return bool(self._deployment_freeze)
+        summary = self.fabric_summary
+        if summary is None:
+            return False
+        return summary.get("fabricStatus") == "frozen"
 
     def invalidate(self) -> None:
         """
         # Summary
 
-        Drop all cached state so the next access to `fabric_summary`, `fabric_is_deployment_frozen`, `switch_map`, or
-        `switch_map_by_id` re-fetches from the API. Useful after a mutation that should be reflected on subsequent reads.
+        Drop all cached state so the next access to `fabric_summary`, `switch_map`, or `switch_map_by_id` re-fetches from the API.
+        Useful after a mutation that should be reflected on subsequent reads.
 
         ## Raises
 
         None
         """
         self._fabric_summary = _NOT_FETCHED
-        self._deployment_freeze = _NOT_FETCHED
         self._switch_map = None
         self._switch_map_by_id = None
 
@@ -325,8 +294,8 @@ class FabricContext:
         1. Fabric exists (on any node in the cluster).
         2. Fabric is not in deployment freeze mode.
 
-        See the class-level TODO: `fabric_is_local` and `fabric_is_read_only` are intentionally not invoked here while their
-        underlying implementations are stubs. They will be re-added once the relevant fields are exposed by the API.
+        See the class-level TODO: `fabric_is_local` is intentionally not invoked here while its underlying implementation
+        is a stub. It will be re-added once the relevant field is exposed by the API.
 
         ## Raises
 
