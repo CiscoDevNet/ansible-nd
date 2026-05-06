@@ -4,24 +4,6 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# --- CLEANUP ---
-
-- name: "SETUP: Remove test SVIs before merged tests"
-  cisco.nd.nd_interface_svi:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids: "{{ cleanup_vlan_ids }}"
-    state: deleted
-  register: setup_cleanup
-  tags: always
-
-- name: "DEBUG: Show cleanup result"
-  ansible.builtin.debug:
-    var: setup_cleanup
-  tags: always
-
 # --- MERGED CREATE: SINGLE SVI ---
 
 - name: "MERGED CREATE: Create vlan333 with full config (check mode)"
