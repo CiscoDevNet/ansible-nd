@@ -63,11 +63,8 @@ class NDOutput:
             return output
 
         # Build the final aggregated result if not already built.
-        try:
-            final = results.final_result
-        except ValueError:
-            results.build_final_result()
-            final = results.final_result
+        results.build_final_result()
+        final = results.final_result
 
         # Merge changed/failed from Results (API-level) with NDOutput (config-level).
         if final.get("changed"):
