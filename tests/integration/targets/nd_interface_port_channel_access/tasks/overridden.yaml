@@ -11,7 +11,7 @@
 # --- OVERRIDDEN: REDUCE TO SINGLE PORT-CHANNEL ---
 
 - name: "OVERRIDDEN: Override to only port-channel501 (check mode)"
-  cisco.nd.nd_interface_port_channel_access:
+  cisco.nd.nd_interface_port_channel_access: &override_pc501
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -30,21 +30,7 @@
   register: cm_overridden_single
 
 - name: "OVERRIDDEN: Override to only port-channel501 (normal mode)"
-  cisco.nd.nd_interface_port_channel_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel501
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              access_vlan: 175
-              ports:
-                - "{{ test_pc_member_a }}"
-              description: "Overridden port-channel501"
-    state: overridden
+  cisco.nd.nd_interface_port_channel_access: *override_pc501
   register: nm_overridden_single
 
 - name: "OVERRIDDEN: Verify override removed extra port-channels"
@@ -64,21 +50,7 @@
 # --- OVERRIDDEN: IDEMPOTENCY ---
 
 - name: "OVERRIDDEN IDEMPOTENT: Re-apply same overridden config"
-  cisco.nd.nd_interface_port_channel_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        interface_name: port-channel501
-        config_data:
-          network_os:
-            policy:
-              admin_state: true
-              access_vlan: 175
-              ports:
-                - "{{ test_pc_member_a }}"
-              description: "Overridden port-channel501"
-    state: overridden
+  cisco.nd.nd_interface_port_channel_access: *override_pc501
   register: nm_overridden_idem
 
 - name: "OVERRIDDEN IDEMPOTENT: Verify no change on second run"
@@ -90,7 +62,7 @@
 # Restore port-channel502 and port-channel503 to a known baseline by overriding to a new set.
 
 - name: "OVERRIDDEN SWAP: Override to port-channel502 and port-channel503, removing port-channel501"
-  cisco.nd.nd_interface_port_channel_access:
+  cisco.nd.nd_interface_port_channel_access: &override_pc502_503
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
@@ -112,13 +84,7 @@
 # Standalone ethernet interfaces and other interface types must NOT be touched by this module.
 
 - name: "OVERRIDDEN FILTER: Re-apply prior swap config to confirm idempotency / no leakage"
-  cisco.nd.nd_interface_port_channel_access:
-    output_level: "{{ nd_info.output_level }}"
-    fabric_name: "{{ test_fabric_name }}"
-    config:
-      - "{{ test_pc_502 }}"
-      - "{{ test_pc_503 }}"
-    state: overridden
+  cisco.nd.nd_interface_port_channel_access: *override_pc502_503
   register: nm_overridden_filter
 
 - name: "OVERRIDDEN FILTER: Verify only port-channel interfaces appear in before collection"
