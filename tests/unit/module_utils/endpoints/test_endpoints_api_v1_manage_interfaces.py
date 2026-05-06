@@ -20,6 +20,7 @@ from contextlib import contextmanager
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
+    EpManageInterfacesDelete,
     EpManageInterfacesDeploy,
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
@@ -477,6 +478,85 @@ def test_ep_manage_interfaces_00320():
 
 
 # =============================================================================
+# Test: EpManageInterfacesDelete
+# =============================================================================
+
+
+def test_ep_manage_interfaces_00400():
+    """
+    # Summary
+
+    Verify EpManageInterfacesDelete basic instantiation.
+
+    ## Test
+
+    - Instance can be created
+    - class_name is set correctly
+    - verb is DELETE
+    - All mixin params default to None
+
+    ## Classes and Methods
+
+    - EpManageInterfacesDelete.__init__()
+    - EpManageInterfacesDelete.verb
+    - EpManageInterfacesDelete.class_name
+    """
+    with does_not_raise():
+        instance = EpManageInterfacesDelete()
+    assert instance.class_name == "EpManageInterfacesDelete"
+    assert instance.verb == HttpVerbEnum.DELETE
+    assert instance.fabric_name is None
+    assert instance.switch_sn is None
+    assert instance.interface_name is None
+
+
+def test_ep_manage_interfaces_00410():
+    """
+    # Summary
+
+    Verify path requires interface_name — ValueError when missing.
+
+    ## Test
+
+    - fabric_name and switch_sn set, interface_name not set
+    - Accessing path raises ValueError (via inherited path property)
+
+    ## Classes and Methods
+
+    - EpManageInterfacesDelete.path
+    """
+    instance = EpManageInterfacesDelete()
+    instance.fabric_name = "fab1"
+    instance.switch_sn = "SN123"
+    with pytest.raises(ValueError, match="interface_name must be set"):
+        result = instance.path  # pylint: disable=unused-variable
+
+
+def test_ep_manage_interfaces_00420():
+    """
+    # Summary
+
+    Verify path returns correct URL with all params set.
+
+    ## Test
+
+    - All params set
+    - path returns expected URL via inherited base class
+
+    ## Classes and Methods
+
+    - EpManageInterfacesDelete.path
+    """
+    with does_not_raise():
+        instance = EpManageInterfacesDelete()
+        instance.fabric_name = "fab1"
+        instance.switch_sn = "SN123"
+        instance.interface_name = "loopback0"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/fab1/switches/SN123/interfaces/loopback0"
+
+
+# =============================================================================
 # Test: EpManageInterfacesDeploy
 # =============================================================================
 
@@ -845,3 +925,94 @@ def test_ep_manage_interfaces_00730():
     remove = EpManageInterfacesRemove()
     remove.fabric_name = "fab/odd"
     assert remove.path == "/api/v1/manage/fabrics/fab%2Fodd/interfaceActions/remove"
+
+
+# =============================================================================
+# Test: EpManageInterfacesNormalize
+# =============================================================================
+
+
+def test_ep_manage_interfaces_00800():
+    """
+    # Summary
+
+    Verify EpManageInterfacesNormalize basic instantiation.
+
+    ## Test
+
+    - Instance can be created
+    - class_name is set correctly
+    - verb is POST
+
+    ## Classes and Methods
+
+    - EpManageInterfacesNormalize.__init__()
+    - EpManageInterfacesNormalize.verb
+    - EpManageInterfacesNormalize.class_name
+    """
+    with does_not_raise():
+        instance = EpManageInterfacesNormalize()
+    assert instance.class_name == "EpManageInterfacesNormalize"
+    assert instance.verb == HttpVerbEnum.POST
+
+
+def test_ep_manage_interfaces_00810():
+    """
+    # Summary
+
+    Verify path raises ValueError when fabric_name is None.
+
+    ## Test
+
+    - fabric_name not set
+    - Accessing path raises ValueError
+
+    ## Classes and Methods
+
+    - EpManageInterfacesNormalize.path
+    """
+    instance = EpManageInterfacesNormalize()
+    with pytest.raises(ValueError, match="fabric_name must be set"):
+        result = instance.path  # pylint: disable=unused-variable
+
+
+def test_ep_manage_interfaces_00820():
+    """
+    # Summary
+
+    Verify path returns correct normalize URL.
+
+    ## Test
+
+    - fabric_name set
+    - path returns /api/v1/manage/fabrics/fab1/interfaceActions/normalize
+
+    ## Classes and Methods
+
+    - EpManageInterfacesNormalize.path
+    """
+    with does_not_raise():
+        instance = EpManageInterfacesNormalize()
+        instance.fabric_name = "fab1"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/fab1/interfaceActions/normalize"
+
+
+def test_ep_manage_interfaces_00830():
+    """
+    # Summary
+
+    Verify Normalize does NOT have switch_sn or interface_name attributes.
+
+    ## Test
+
+    - EpManageInterfacesNormalize only has FabricNameMixin
+    - Accessing switch_sn or interface_name raises AttributeError
+
+    ## Classes and Methods
+
+    - EpManageInterfacesNormalize.__init__()
+    """
+    instance = EpManageInterfacesNormalize()
+    assert not hasattr(instance, "switch_sn")
+    assert not hasattr(instance, "interface_name")
