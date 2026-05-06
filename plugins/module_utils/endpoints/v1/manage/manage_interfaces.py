@@ -407,7 +407,7 @@ class EpManageInterfacesNormalize(FabricNameMixin, NDEndpointBaseModel):
         """
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", self.fabric_name, "interfaceActions", "normalize")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "normalize")
 
     @property
     def verb(self) -> HttpVerbEnum:

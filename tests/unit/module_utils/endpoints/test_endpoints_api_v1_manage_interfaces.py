@@ -23,6 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesDeploy,
     EpManageInterfacesGet,
     EpManageInterfacesListGet,
+    EpManageInterfacesNormalize,
     EpManageInterfacesPost,
     EpManageInterfacesPut,
     EpManageInterfacesRemove,
@@ -820,21 +821,26 @@ def test_ep_manage_interfaces_00730():
     """
     # Summary
 
-    Verify fabric_name is encoded in the deploy/remove paths (interfaceActions endpoints).
+    Verify fabric_name is encoded in the deploy/normalize/remove paths (interfaceActions endpoints).
 
     ## Test
 
     - fabric_name = "fab/odd"
-    - Deploy and Remove paths both encode the slash
+    - Deploy, Normalize, and Remove paths all encode the slash
 
     ## Classes and Methods
 
     - EpManageInterfacesDeploy.path
+    - EpManageInterfacesNormalize.path
     - EpManageInterfacesRemove.path
     """
     deploy = EpManageInterfacesDeploy()
     deploy.fabric_name = "fab/odd"
     assert deploy.path == "/api/v1/manage/fabrics/fab%2Fodd/interfaceActions/deploy"
+
+    normalize = EpManageInterfacesNormalize()
+    normalize.fabric_name = "fab/odd"
+    assert normalize.path == "/api/v1/manage/fabrics/fab%2Fodd/interfaceActions/normalize"
 
     remove = EpManageInterfacesRemove()
     remove.fabric_name = "fab/odd"
