@@ -26,6 +26,7 @@ in the ND Manage API.
 from __future__ import annotations
 
 from typing import ClassVar, Literal
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -65,7 +66,9 @@ class _EpManageInterfacesBase(FabricNameMixin, SwitchSerialNumberMixin, Interfac
         """
         # Summary
 
-        Build the endpoint path for manage interfaces operations.
+        Build the endpoint path for manage interfaces operations. Each path-segment value is percent-encoded with `safe=""`
+        so reserved characters (notably `/` in interface names like `Ethernet1/41`) survive routing intact. ND normalizes
+        `%2F` back to `/` during route resolution; verified equivalent to literal slashes via live API testing.
 
         ## Raises
 
@@ -82,9 +85,9 @@ class _EpManageInterfacesBase(FabricNameMixin, SwitchSerialNumberMixin, Interfac
         if self._require_interface_name and self.interface_name is None:
             raise ValueError(f"{type(self).__name__}.path: interface_name must be set before accessing path.")
 
-        segments = ["fabrics", self.fabric_name, "switches", self.switch_sn, "interfaces"]
+        segments = ["fabrics", quote(self.fabric_name, safe=""), "switches", quote(self.switch_sn, safe=""), "interfaces"]
         if self.interface_name is not None:
-            segments.append(self.interface_name)
+            segments.append(quote(self.interface_name, safe=""))
         return BasePath.path(*segments)
 
     def set_identifiers(self, identifier: IdentifierKey = None):
@@ -274,7 +277,7 @@ class EpManageInterfacesDeploy(FabricNameMixin, NDEndpointBaseModel):
         """
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", self.fabric_name, "interfaceActions", "deploy")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "deploy")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -326,7 +329,7 @@ class EpManageInterfacesRemove(FabricNameMixin, NDEndpointBaseModel):
         """
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", self.fabric_name, "interfaceActions", "remove")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "interfaceActions", "remove")
 
     @property
     def verb(self) -> HttpVerbEnum:

@@ -711,3 +711,98 @@ def test_ep_manage_interfaces_00630():
     """
     with pytest.raises(ValueError):
         EpManageInterfacesGet(interface_name="")
+
+
+# =============================================================================
+# Test: URL encoding of path-segment values
+# =============================================================================
+
+
+def test_ep_manage_interfaces_00700():
+    """
+    # Summary
+
+    Verify slashes in interface_name are percent-encoded in the path.
+
+    ## Test
+
+    - interface_name = "Ethernet1/41"
+    - path contains "Ethernet1%2F41" (slash is reserved and must be encoded)
+
+    ## Classes and Methods
+
+    - EpManageInterfacesGet.path
+    """
+    instance = EpManageInterfacesGet()
+    instance.fabric_name = "fab1"
+    instance.switch_sn = "SN123"
+    instance.interface_name = "Ethernet1/41"
+    assert instance.path == "/api/v1/manage/fabrics/fab1/switches/SN123/interfaces/Ethernet1%2F41"
+
+
+def test_ep_manage_interfaces_00710():
+    """
+    # Summary
+
+    Verify subinterface names with both slash and dot are encoded correctly. Dot is unreserved and must remain literal.
+
+    ## Test
+
+    - interface_name = "Ethernet1/1.100"
+    - path contains "Ethernet1%2F1.100" (slash encoded, dot unchanged)
+
+    ## Classes and Methods
+
+    - EpManageInterfacesPut.path
+    """
+    instance = EpManageInterfacesPut()
+    instance.fabric_name = "fab1"
+    instance.switch_sn = "SN123"
+    instance.interface_name = "Ethernet1/1.100"
+    assert instance.path == "/api/v1/manage/fabrics/fab1/switches/SN123/interfaces/Ethernet1%2F1.100"
+
+
+def test_ep_manage_interfaces_00720():
+    """
+    # Summary
+
+    Verify alphanumeric segment values are unchanged by encoding (no false-positive encoding).
+
+    ## Test
+
+    - All segments alphanumeric; underscores and digits preserved as-is
+
+    ## Classes and Methods
+
+    - EpManageInterfacesGet.path
+    """
+    instance = EpManageInterfacesGet()
+    instance.fabric_name = "fabric_1"
+    instance.switch_sn = "FDO12345ABC"
+    instance.interface_name = "loopback100"
+    assert instance.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/loopback100"
+
+
+def test_ep_manage_interfaces_00730():
+    """
+    # Summary
+
+    Verify fabric_name is encoded in the deploy/remove paths (interfaceActions endpoints).
+
+    ## Test
+
+    - fabric_name = "fab/odd"
+    - Deploy and Remove paths both encode the slash
+
+    ## Classes and Methods
+
+    - EpManageInterfacesDeploy.path
+    - EpManageInterfacesRemove.path
+    """
+    deploy = EpManageInterfacesDeploy()
+    deploy.fabric_name = "fab/odd"
+    assert deploy.path == "/api/v1/manage/fabrics/fab%2Fodd/interfaceActions/deploy"
+
+    remove = EpManageInterfacesRemove()
+    remove.fabric_name = "fab/odd"
+    assert remove.path == "/api/v1/manage/fabrics/fab%2Fodd/interfaceActions/remove"
