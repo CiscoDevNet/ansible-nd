@@ -51,6 +51,9 @@
     cisco.nd.nd_interface_port_channel_access:
       timeout: 300
   block:
+    - name: Pre-test cleanup
+      ansible.builtin.include_tasks: setup.yaml
+
     - name: Run nd_interface_port_channel_access merged state tests
       ansible.builtin.include_tasks: merged.yaml
 
