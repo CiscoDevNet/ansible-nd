@@ -243,7 +243,7 @@ class PortChannelTrunkHostPolicyModel(NDNestedModel):
         default=None, alias="orphanPort", description="Configure as a vPC orphan port (suspended by secondary peer on vPC failure)"
     )
     pfc: bool | None = Field(default=None, alias="pfc", description="Enable Priority Flow Control")
-    policy_type: TrunkPoHostPolicyTypeEnum = Field(default=TrunkPoHostPolicyTypeEnum.TRUNK_PO_HOST, alias="policyType", description="Interface policy type")
+    policy_type: TrunkPoHostPolicyTypeEnum = Field(default=TrunkPoHostPolicyTypeEnum.TRUNK_PO_HOST, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)")
     port_channel_id: str | None = Field(default=None, alias="portChannelId", description="Port-channel id (response-only echo of interface_name)")
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Configure as edge trunk port (PortFast on trunk)")
@@ -342,7 +342,7 @@ class PortChannelTrunkHostNetworkOSModel(NDNestedModel):
     None
     """
 
-    network_os_type: str = Field(default="nx-os", alias="networkOSType")
+    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
     policy: PortChannelTrunkHostPolicyModel | None = Field(default=None, alias="policy")
 
 
@@ -357,7 +357,7 @@ class PortChannelTrunkHostConfigDataModel(NDNestedModel):
     None
     """
 
-    mode: str = Field(default="trunk", alias="mode")
+    mode: Literal["trunk"] = Field(default="trunk", alias="mode", frozen=True)
     network_os: PortChannelTrunkHostNetworkOSModel = Field(alias="networkOS")
 
 
@@ -391,7 +391,7 @@ class PortChannelTrunkHostInterfaceModel(NDBaseModel):
 
     switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
-    interface_type: str = Field(default="portChannel", alias="interfaceType")
+    interface_type: Literal["portChannel"] = Field(default="portChannel", alias="interfaceType", frozen=True)
     config_data: PortChannelTrunkHostConfigDataModel | None = Field(default=None, alias="configData")
 
     @field_validator("interface_name", mode="before")
@@ -433,15 +433,12 @@ class PortChannelTrunkHostInterfaceModel(NDBaseModel):
                 options=dict(
                     switch_ip=dict(type="str", required=True),
                     interface_name=dict(type="str", required=True),
-                    interface_type=dict(type="str", default="portChannel"),
                     config_data=dict(
                         type="dict",
                         options=dict(
-                            mode=dict(type="str", default="trunk"),
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", default="nx-os"),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
