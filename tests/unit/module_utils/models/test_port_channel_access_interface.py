@@ -560,20 +560,23 @@ def test_port_channel_access_interface_00420():
     """
     # Summary
 
-    Verify camelCase alias `networkOSType` populates network_os_type.
+    Verify camelCase alias `networkOSType` populates network_os_type, and that the field is locked to `nx-os`.
 
     ## Test
 
-    - Construct with camelCase alias
-    - Python field accessible
+    - Construct with camelCase alias and the only valid value
+    - Construct with a non-nx-os value raises ValidationError (Literal lock)
 
     ## Classes and Methods
 
     - PortChannelAccessNetworkOSModel.__init__()
     """
     with does_not_raise():
-        instance = PortChannelAccessNetworkOSModel(networkOSType="ios-xe")
-    assert instance.network_os_type == "ios-xe"
+        instance = PortChannelAccessNetworkOSModel(networkOSType="nx-os")
+    assert instance.network_os_type == "nx-os"
+
+    with pytest.raises(ValidationError, match="Input should be 'nx-os'"):
+        PortChannelAccessNetworkOSModel(networkOSType="ios-xe")
 
 
 # =============================================================================
@@ -1344,7 +1347,14 @@ def test_port_channel_access_interface_01100():
     assert spec["config"]["elements"] == "dict"
     assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
     assert spec["state"]["default"] == "merged"
-    policy_spec = spec["config"]["options"]["config_data"]["options"]["network_os"]["options"]["policy"]["options"]
+    # interface_type, mode, and network_os_type are hardcoded in the Pydantic model
+    # and intentionally absent from the user-facing argument spec.
+    config_options = spec["config"]["options"]
+    assert "interface_type" not in config_options
+    config_data_spec = config_options["config_data"]["options"]
+    assert "mode" not in config_data_spec
+    assert "network_os_type" not in config_data_spec["network_os"]["options"]
+    policy_spec = config_data_spec["network_os"]["options"]["policy"]["options"]
     assert "policy_type" not in policy_spec
 
 
@@ -1352,18 +1362,21 @@ def test_port_channel_access_interface_01110():
     """
     # Summary
 
-    Verify `interface_type` default is "portChannel" in the argument spec.
+    Verify `interface_type` is hardcoded on the Pydantic model and absent from the user-facing argument spec.
 
     ## Test
 
-    - config.options.interface_type.default == "portChannel"
+    - Model field default is "portChannel"
+    - argument spec does not expose interface_type as a user option
 
     ## Classes and Methods
 
     - PortChannelAccessInterfaceModel.get_argument_spec()
     """
     spec = PortChannelAccessInterfaceModel.get_argument_spec()
-    assert spec["config"]["options"]["interface_type"]["default"] == "portChannel"
+    assert "interface_type" not in spec["config"]["options"]
+    instance = PortChannelAccessInterfaceModel(switch_ip="1.2.3.4", interface_name="port-channel501")
+    assert instance.interface_type == "portChannel"
 
 
 @pytest.mark.parametrize(
