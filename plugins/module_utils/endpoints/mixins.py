@@ -11,11 +11,13 @@ fields to endpoint models without duplication.
 
 from __future__ import absolute_import, annotations, division, print_function
 
+
+from typing import Optional
+from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
     Field,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
 
 
 class ClusterNameMixin(BaseModel):
@@ -90,10 +92,10 @@ class OffsetMixin(BaseModel):
     offset: int | None = Field(default=None, ge=0, description="Pagination offset")
 
 
-class NodeNameMixin(BaseModel):
-    """Mixin for endpoints that require node_name parameter."""
+class SwitchIdMixin(BaseModel):
+    """Mixin for endpoints that require switch_id parameter."""
 
-    node_name: str | None = Field(default=None, min_length=1, description="Node name")
+    switch_id: str | None = Field(default=None, min_length=1, description="Switch serial number or ID")
 
 
 class SwitchSerialNumberMixin(BaseModel):
@@ -108,22 +110,16 @@ class TicketIdMixin(BaseModel):
     ticket_id: str | None = Field(default=None, min_length=1, description="Change control ticket ID")
 
 
-class UpdateGroupNameMixin(BaseModel):
-    """Mixin for endpoints that require update_group_name parameter."""
+class TenantNameMixin(BaseModel):
+    """Mixin for endpoints that require tenant_name parameter."""
 
-    update_group_name: str | None = Field(default=None, min_length=1, description="Update group name")
+    tenant_name: str | None = Field(default=None, min_length=1, description="Tenant name")
 
 
 class VrfNameMixin(BaseModel):
     """Mixin for endpoints that require vrf_name parameter."""
 
     vrf_name: str | None = Field(default=None, min_length=1, max_length=64, description="VRF name")
-
-
-class SwitchIdMixin(BaseModel):
-    """Mixin for endpoints that require switch_id parameter."""
-
-    switch_id: str | None = Field(default=None, min_length=1, description="Switch serial number")
 
 
 class PeerSwitchIdMixin(BaseModel):
@@ -157,3 +153,8 @@ class ViewMixin(BaseModel):
     """Mixin for endpoints that support view parameter."""
 
     view: str | None = Field(default=None, description="Optional view type for filtering results")
+
+class NodeNameMixin(BaseModel):
+    """Mixin for endpoints that require node_name parameter."""
+
+    node_name: str | None = Field(default=None, min_length=1, description="Node name")
