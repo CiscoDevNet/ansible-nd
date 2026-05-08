@@ -189,6 +189,28 @@ EXAMPLES = r"""
         interface_name: loopback0
     state: deleted
 
+- name: Override loopback interfaces on a fabric (single source of truth)
+  # Any loopback interface managed by this module that exists on the fabric
+  # but is NOT listed in `config` will be DELETED. Use with extra caution.
+  cisco.nd.nd_interface_loopback:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: loopback0
+        config_data:
+          network_os:
+            policy:
+              ip: 10.1.1.1
+              description: Router ID loopback
+      - switch_ip: 192.168.1.2
+        interface_name: loopback0
+        config_data:
+          network_os:
+            policy:
+              ip: 10.1.1.2
+              description: Router ID loopback on switch 2
+    state: overridden
+
 - name: Create loopback interfaces without deploying (for batching)
   cisco.nd.nd_interface_loopback:
     fabric_name: my_fabric
