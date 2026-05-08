@@ -55,7 +55,7 @@ class LoopbackPolicyModel(NDNestedModel):
     route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    policy_type: Literal["loopback"] = Field(default="loopback", alias="policyType", description="Loopback policy template (hardcoded for this module)")
+    policy_type: Literal["loopback"] = Field(default="loopback", alias="policyType", frozen=True, description="Loopback policy template (hardcoded for this module)")
 
     # --- Validators ---
 
@@ -90,7 +90,7 @@ class LoopbackNetworkOSModel(NDNestedModel):
     None
     """
 
-    network_os_type: str = Field(default="nx-os", alias="networkOSType")
+    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
     policy: LoopbackPolicyModel | None = Field(default=None, alias="policy")
 
 
@@ -105,7 +105,7 @@ class LoopbackConfigDataModel(NDNestedModel):
     None
     """
 
-    mode: str = Field(default="managed", alias="mode")
+    mode: Literal["managed"] = Field(default="managed", alias="mode", frozen=True)
     network_os: LoopbackNetworkOSModel = Field(alias="networkOS")
 
 
@@ -136,7 +136,7 @@ class LoopbackInterfaceModel(NDBaseModel):
 
     switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
-    interface_type: str = Field(default="loopback", alias="interfaceType")
+    interface_type: Literal["loopback"] = Field(default="loopback", alias="interfaceType", frozen=True)
     config_data: LoopbackConfigDataModel | None = Field(default=None, alias="configData")
 
     @field_validator("interface_name", mode="before")
