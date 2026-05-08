@@ -51,7 +51,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
     EpManageSwitchActionsDeployPost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import (
     PlaybookPolicyConfig,
 )
@@ -199,6 +199,20 @@ class NDPolicyModule:
         self._after: list[dict] = []
         self._proposed: list[dict] = []
         self._gathered: list[dict] = []
+
+        # Sticky stash for the path/verb/payload of the most recent (or
+        # would-be) HTTP request.  _record_call() is invoked by the _api_*
+        # helpers (and check-mode would-be sites) immediately before the
+        # request is built; _register_result() reads this stash and stamps
+        # Results.{path,verb,payload}_current so the final output's
+        # ``path`` / ``payload`` arrays are populated alongside ``response``.
+        # The stash is intentionally NOT auto-cleared after stamping so a
+        # single bulk POST can be associated with multiple per-entry result
+        # rows.  Synthetic register sites (no preceding API call) call
+        # _clear_call() to avoid inheriting stale values.
+        self._call_path: str | None = None
+        self._call_verb: HttpVerbEnum | None = None
+        self._call_payload: dict | None = None
 
         self.log.info(f"Initialized NDPolicyModule for fabric: {self.fabric_name}, state: {self.state}")
 
@@ -492,6 +506,12 @@ class NDPolicyModule:
         rest_send.save_settings()
         rest_send.check_mode = False
         try:
+            # Stamp stash so any synthetic register that follows an empty
+            # switch list reflects this GET.  No ep object here, so set
+            # path/verb directly; payload is None for GETs.
+            self._call_path = path
+            self._call_verb = HttpVerbEnum.GET
+            self._call_payload = None
             response = self.nd.request(path)
         finally:
             rest_send.restore_settings()
@@ -816,6 +836,10 @@ class NDPolicyModule:
 
             # Phase 2: Compute delete result
             diff_entry = self._get_diff_deleted_single(want, have_list)
+            # Capture the GET stash from _build_have so Phase 3 can stamp
+            # skip/fail rows with the actual lookup path/verb (payload=None).
+            diff_entry["query_path"] = self._call_path
+            diff_entry["query_verb"] = self._call_verb
             self.log.debug(f"Delete diff for {want.get('templateName', want.get('policyId', 'switch-only'))}: " f"action={diff_entry['action']}")
             diff_results.append(diff_entry)
 
@@ -858,6 +882,8 @@ class NDPolicyModule:
 
                 if error_msg:
                     self.log.warning(f"Gathered: build_have error: {error_msg}")
+                    # Keep the GET stash from _build_have so the failed
+                    # lookup path/verb is reflected on the result row.
                     self._register_result(
                         action="policy_gathered",
                         state="gathered",
@@ -877,6 +903,8 @@ class NDPolicyModule:
             switches = self._get_fabric_switches()
             if not switches:
                 self.log.warning("No switches found in fabric")
+                # Keep the GET stash from _query_fabric_switches so the
+                # "no switches" row carries the actual lookup path/verb.
                 self._register_result(
                     action="policy_gathered",
                     state="gathered",
@@ -899,6 +927,9 @@ class NDPolicyModule:
 
         if not policies:
             self.log.info("Gathered: no policies found")
+            # Keep the most recent GET stash (from _build_have or
+            # _query_policies per-switch) so the row reflects a real
+            # lookup that returned empty.
             self._register_result(
                 action="policy_gathered",
                 state="gathered",
@@ -950,6 +981,8 @@ class NDPolicyModule:
                 config_entry["template_inputs"] = self._clean_template_inputs(template_name, raw_inputs)
             self._gathered.append(config_entry)
 
+        # Keep the most recent GET stash so the success row carries the
+        # last lookup path/verb (no payload for GETs).
         self._register_result(
             action="policy_gathered",
             state="gathered",
@@ -1279,6 +1312,7 @@ class NDPolicyModule:
         # Default page size is 10 which causes missed matches.
         ep.lucene_params.max = 10000
 
+        self._record_call(ep, None)
         data = self.nd.request(ep.path, ep.verb)
         if isinstance(data, dict):
             policies = data.get("policies", [])
@@ -1365,6 +1399,7 @@ class NDPolicyModule:
             ep.endpoint_params.cluster_name = self.cluster_name
 
         try:
+            self._record_call(ep, None)
             data = self.nd.request(ep.path, ep.verb)
             if isinstance(data, dict) and data:
                 # The controller may return a 200 with an error body when the
@@ -1472,6 +1507,7 @@ class NDPolicyModule:
         ep.template_name = template_name
 
         try:
+            self._record_call(ep, None)
             data = self.nd.request(ep.path, ep.verb)
         except Exception as exc:
             self.log.warning(f"Failed to fetch template '{template_name}' parameters: {exc}. " "Skipping template input validation.")
@@ -1943,6 +1979,7 @@ class NDPolicyModule:
 
             if action == "fail":
                 self._proposed.append(want)
+                self._clear_call()
                 self._register_result(
                     action="policy_merged",
                     operation_type=OperationType.QUERY,
@@ -1969,6 +2006,7 @@ class NDPolicyModule:
                 diff_payload = {"action": action, "want": want}
                 if error_msg:
                     diff_payload["warning"] = error_msg
+                self._clear_call()
                 self._register_result(
                     action="policy_merged",
                     operation_type=OperationType.QUERY,
@@ -2001,6 +2039,7 @@ class NDPolicyModule:
                 want = diff_entry["want"]
                 self._proposed.append(want)
                 self._after.append(self._strip_internal(want))
+                self._record_call(self._wouldbe_create_ep(), {"policies": [self._strip_internal(want)]})
                 self._register_result(
                     action="policy_create",
                     operation_type=OperationType.CREATE,
@@ -2017,6 +2056,7 @@ class NDPolicyModule:
                 self._before.append(have)
                 after_proj = self._strip_internal({**have, **want})
                 self._after.append(after_proj)
+                self._record_call(self._wouldbe_update_ep(diff_entry["policy_id"]), after_proj)
                 self._register_result(
                     action="policy_update",
                     operation_type=OperationType.UPDATE,
@@ -2041,6 +2081,7 @@ class NDPolicyModule:
                 self._before.append(have)
                 after_proj = self._strip_internal(want)
                 self._after.append(after_proj)
+                self._record_call(self._wouldbe_create_ep(), {"policies": [after_proj]})
                 self._register_result(
                     action="policy_replace",
                     operation_type=OperationType.UPDATE,
@@ -2193,6 +2234,7 @@ class NDPolicyModule:
                 self._proposed.append(want)
                 if d.get("have"):
                     self._before.append(d["have"])
+                self._clear_call()
                 self._register_result(
                     action="policy_replace",
                     operation_type=OperationType.UPDATE,
@@ -2543,6 +2585,11 @@ class NDPolicyModule:
             if action == "fail":
                 self.log.warning(f"Delete failed: {error_msg}")
                 self._proposed.append(want)
+                # Restore the GET path/verb captured in Phase 1 so the row
+                # reflects the actual lookup that surfaced this failure.
+                self._clear_call()
+                self._call_path = diff_entry.get("query_path")
+                self._call_verb = diff_entry.get("query_verb")
                 self._register_result(
                     action="policy_deleted",
                     state="deleted",
@@ -2559,6 +2606,11 @@ class NDPolicyModule:
             if action == "skip":
                 self.log.info(f"Policy not found for deletion: " f"{want.get('templateName', want.get('policyId', 'switch-only'))}")
                 self._proposed.append(want)
+                # Restore the GET path/verb captured in Phase 1 so the
+                # "already absent" row shows the actual lookup we made.
+                self._clear_call()
+                self._call_path = diff_entry.get("query_path")
+                self._call_verb = diff_entry.get("query_verb")
                 self._register_result(
                     action="policy_deleted",
                     state="deleted",
@@ -2606,6 +2658,7 @@ class NDPolicyModule:
                     }
                     if warning:
                         diff_payload["warning"] = warning
+                    self._record_call(self._wouldbe_mark_delete_ep(), {"policyIds": policy_ids})
                     self._register_result(
                         action="policy_deleted",
                         state="deleted",
@@ -2618,27 +2671,12 @@ class NDPolicyModule:
                     )
                     continue
 
-                # Register intent — actual API calls happen in bulk below
-                diff_payload = {
-                    "action": action,
-                    "want": want,
-                    "before": policies,
-                    "after": None,
-                    "policy_ids": policy_ids,
-                    "match_count": match_count,
-                }
-                if warning:
-                    diff_payload["warning"] = warning
-                self._register_result(
-                    action="policy_deleted",
-                    state="deleted",
-                    operation_type=OperationType.DELETE,
-                    return_code=200,
-                    message="Pending bulk delete",
-                    success=True,
-                    found=True,
-                    diff=diff_payload,
-                )
+                # Real mode: do NOT register a per-entry "Pending bulk
+                # delete" intent row.  The real bulk markDelete (Phase B)
+                # produces a single row with the deduplicated policyIds
+                # list and the real path/payload, which is the source of
+                # truth.  Emitting an intent row here would only duplicate
+                # that information and confuse the output.
                 continue
 
         # Phase B: Execute bulk API calls (skip if check_mode or nothing to delete)
@@ -2924,6 +2962,17 @@ class NDPolicyModule:
         self.results.check_mode = self.check_mode
         self.results.operation_type = OperationType.UPDATE
 
+        # Build the pushConfig endpoint + payload up front so both check-mode
+        # (would-be) and real branches can stamp Results.{path,verb,payload}_current.
+        push_body = PolicyIds(policy_ids=policy_ids)
+        push_payload = push_body.to_request_dict()
+
+        ep = EpManagePolicyActionsPushConfigPost()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        # NOTE: pushConfig does NOT accept ticketId per ND API specification
+
         if self.check_mode:
             self.log.info(f"Check mode: would deploy {len(policy_ids)} policies")
             self.results.response_current = {
@@ -2936,18 +2985,14 @@ class NDPolicyModule:
                 "action": "deploy",
                 "policy_ids": policy_ids,
             }
+            self.results.path_current = ep.path
+            self.results.verb_current = ep.verb
+            self.results.payload_current = push_payload
             self.results.register_api_call()
             return True
 
-        push_body = PolicyIds(policy_ids=policy_ids)
-
-        ep = EpManagePolicyActionsPushConfigPost()
-        ep.fabric_name = self.fabric_name
-        if self.cluster_name:
-            ep.endpoint_params.cluster_name = self.cluster_name
-        # NOTE: pushConfig does NOT accept ticketId per ND API specification
-
-        data = self.nd.request(ep.path, ep.verb, push_body.to_request_dict())
+        self._record_call(ep, push_payload)
+        data = self.nd.request(ep.path, ep.verb, push_payload)
 
         # Inspect 207 body for per-policy failures
         succeeded_policies, failed_policies = self._inspect_207_policies(data)
@@ -2974,6 +3019,7 @@ class NDPolicyModule:
             "deploy_success": deploy_success,
             "failed_policies": [p.get("policyId") for p in failed_policies],
         }
+        self._apply_stashed_call()
         self.results.register_api_call()
         return deploy_success
 
@@ -3102,6 +3148,7 @@ class NDPolicyModule:
         if self.ticket_id:
             ep.endpoint_params.ticket_id = self.ticket_id
 
+        self._record_call(ep, payload)
         data = self.nd.request(ep.path, ep.verb, payload)
 
         # Parse per-policy results from the 207 response.
@@ -3178,6 +3225,7 @@ class NDPolicyModule:
         if self.ticket_id:
             ep.endpoint_params.ticket_id = self.ticket_id
 
+        self._record_call(ep, payload)
         self.nd.request(ep.path, ep.verb, payload)
 
     def _api_mark_delete(self, policy_ids: list[str]) -> dict:
@@ -3211,7 +3259,9 @@ class NDPolicyModule:
         if self.ticket_id:
             ep.endpoint_params.ticket_id = self.ticket_id
 
-        data = self.nd.request(ep.path, ep.verb, body.to_request_dict())
+        mark_payload = body.to_request_dict()
+        self._record_call(ep, mark_payload)
+        data = self.nd.request(ep.path, ep.verb, mark_payload)
         return data if isinstance(data, dict) else {}
 
     def _api_delete_policy(self, policy_id: str) -> None:
@@ -3236,6 +3286,7 @@ class NDPolicyModule:
         if self.ticket_id:
             ep.endpoint_params.ticket_id = self.ticket_id
 
+        self._record_call(ep, None)
         self.nd.request(ep.path, ep.verb)
 
     def _api_deploy_switches(self, switch_ids: list[str]) -> dict:
@@ -3263,12 +3314,99 @@ class NDPolicyModule:
         if self.cluster_name:
             ep.endpoint_params.cluster_name = self.cluster_name
 
-        data = self.nd.request(ep.path, ep.verb, body.to_request_dict())
+        deploy_payload = body.to_request_dict()
+        self._record_call(ep, deploy_payload)
+        data = self.nd.request(ep.path, ep.verb, deploy_payload)
         return data if isinstance(data, dict) else {}
 
     # =========================================================================
     # Results Helper
     # =========================================================================
+
+    def _record_call(self, ep: Any, payload: dict | None = None) -> None:
+        """Stash the path/verb/payload of the call about to be (or just) made.
+
+        Called by every mutating ``_api_*`` helper immediately before
+        ``self.nd.request(...)``, and by check-mode would-be branches
+        that need to surface what *would* have been sent.  The stash is
+        consumed by ``_register_result()`` (and the inline registers in
+        ``_deploy_policies``) which copy it into
+        ``Results.{path,verb,payload}_current``.
+
+        Args:
+            ep:      Endpoint instance exposing ``.path`` and ``.verb``.
+            payload: Optional request body (DELETE-style calls pass None).
+        """
+        try:
+            self._call_path = ep.path
+            self._call_verb = ep.verb
+        except AttributeError:
+            self._call_path = None
+            self._call_verb = None
+        self._call_payload = payload if isinstance(payload, dict) else None
+
+    def _clear_call(self) -> None:
+        """Drop any stashed path/verb/payload.
+
+        Called immediately before a synthetic ``_register_result()`` site
+        (i.e., one that is NOT preceded by a real or would-be HTTP call)
+        so that the result row does not inherit stale call info from a
+        previous iteration.
+        """
+        self._call_path = None
+        self._call_verb = None
+        self._call_payload = None
+
+    def _apply_stashed_call(self) -> None:
+        """Stamp the currently-stashed call info onto Results.*_current.
+
+        No-op if nothing is stashed.  Safe to invoke from any register
+        site.  Does NOT clear the stash so that one bulk call can be
+        attributed to multiple per-entry register rows.
+        """
+        if self._call_path is not None:
+            self.results.path_current = self._call_path
+        if self._call_verb is not None:
+            self.results.verb_current = self._call_verb
+        # payload_current setter accepts None — only stamp when we have one
+        if self._call_payload is not None:
+            self.results.payload_current = self._call_payload
+
+    # -------------------------------------------------------------------------
+    # Would-be endpoint builders (used by check-mode register sites so the
+    # output's path/verb/payload arrays reflect what *would* have been sent).
+    # -------------------------------------------------------------------------
+
+    def _wouldbe_create_ep(self) -> Any:
+        """Return a configured EpManagePoliciesPost for check-mode would-be."""
+        ep = EpManagePoliciesPost()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if self.ticket_id:
+            ep.endpoint_params.ticket_id = self.ticket_id
+        return ep
+
+    def _wouldbe_update_ep(self, policy_id: str) -> Any:
+        """Return a configured EpManagePoliciesPut for check-mode would-be."""
+        ep = EpManagePoliciesPut()
+        ep.fabric_name = self.fabric_name
+        ep.policy_id = policy_id
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if self.ticket_id:
+            ep.endpoint_params.ticket_id = self.ticket_id
+        return ep
+
+    def _wouldbe_mark_delete_ep(self) -> Any:
+        """Return a configured EpManagePolicyActionsMarkDeletePost for check-mode would-be."""
+        ep = EpManagePolicyActionsMarkDeletePost()
+        ep.fabric_name = self.fabric_name
+        if self.cluster_name:
+            ep.endpoint_params.cluster_name = self.cluster_name
+        if self.ticket_id:
+            ep.endpoint_params.ticket_id = self.ticket_id
+        return ep
 
     def _register_result(
         self,
@@ -3315,4 +3453,5 @@ class NDPolicyModule:
             result_dict["changed"] = False
         self.results.result_current = result_dict
         self.results.diff_current = diff
+        self._apply_stashed_call()
         self.results.register_api_call()
