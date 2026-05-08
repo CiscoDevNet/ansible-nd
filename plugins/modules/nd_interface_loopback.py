@@ -201,6 +201,25 @@ EXAMPLES = r"""
               ip: 10.1.1.1
     deploy: false
     state: merged
+
+- name: Create a loopback interface with extra CLI configuration
+  cisco.nd.nd_interface_loopback:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: loopback0
+        config_data:
+          network_os:
+            policy:
+              ip: 10.1.1.1
+              ipv6: 2001:db8::1/128
+              description: Loopback with PIM and OSPF tuning
+              vrf: default
+              extra_config: |
+                ip pim sparse-mode
+                ip ospf network point-to-point
+                no ip redirects
+    state: merged
 """
 
 RETURN = r"""
