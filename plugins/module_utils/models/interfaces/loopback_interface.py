@@ -14,13 +14,14 @@ work via standard Pydantic serialization with no custom wrapping or flattening.
 - `LoopbackInterfaceModel` (top-level, `NDBaseModel`)
     - `switch_ip` (composite identifier)
     - `interface_name` (composite identifier)
-    - `interface_type` (default: "loopback")
+    - `interface_type` (hardcoded: "loopback")
     - `config_data` -> `LoopbackConfigDataModel`
-        - `mode` (default: "managed")
+        - `mode` (hardcoded: "managed")
         - `network_os` -> `LoopbackNetworkOSModel`
-            - `network_os_type` (default: "nx-os")
+            - `network_os_type` (hardcoded: "nx-os")
             - `policy` -> `LoopbackPolicyModel`
-                - `admin_state`, `ip`, `ipv6`, `vrf`, `policy_type`, etc.
+                - `admin_state`, `ip`, `ipv6`, `vrf`, etc. (`policy_type` is hardcoded to "loopback";
+                  `ipfmLoopback` and `userDefined` policy types will get dedicated modules)
 """
 
 from __future__ import annotations
@@ -29,22 +30,11 @@ from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
-    FieldSerializationInfo,
-    field_serializer,
     field_validator,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.constants import NDConstantMapping
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription, IPv4CIDR, IPv6CIDR
-
-LOOPBACK_POLICY_TYPE_MAPPING = NDConstantMapping(
-    {
-        "loopback": "loopback",
-        "ipfm_loopback": "ipfmLoopback",
-        "user_defined": "userDefined",
-    }
-)
 
 
 class LoopbackPolicyModel(NDNestedModel):
@@ -65,46 +55,9 @@ class LoopbackPolicyModel(NDNestedModel):
     route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    policy_type: str | None = Field(default=None, alias="policyType", description="Interface policy type")
-
-    # --- Serializers ---
-
-    @field_serializer("policy_type")
-    def serialize_policy_type(self, value: str | None, info: FieldSerializationInfo) -> str | None:
-        """
-        # Summary
-
-        Serialize `policy_type` to the API's camelCase value in payload mode, or keep the Ansible name in config mode.
-
-        ## Raises
-
-        None
-        """
-        if value is None:
-            return None
-        mode = (info.context or {}).get("mode", "payload")
-        if mode == "config":
-            return value
-        return LOOPBACK_POLICY_TYPE_MAPPING.get_dict().get(value, value)
+    policy_type: Literal["loopback"] = Field(default="loopback", alias="policyType", description="Loopback policy template (hardcoded for this module)")
 
     # --- Validators ---
-
-    @field_validator("policy_type", mode="before")
-    @classmethod
-    def normalize_policy_type(cls, value):
-        """
-        # Summary
-
-        Accept `policy_type` in either Ansible (`ipfm_loopback`) or API (`ipfmLoopback`) format, normalizing to Ansible names.
-
-        ## Raises
-
-        None
-        """
-        if value is None:
-            return value
-        reverse_mapping = {api: ansible for ansible, api in LOOPBACK_POLICY_TYPE_MAPPING.data.items() if ansible != api}
-        return reverse_mapping.get(value, value)
 
     # TODO(ND 4.3): Remove this coercion once the ND 4.3 GET-side type drift is fixed.
     # ND 4.2 returns `routeMapTag` as an integer even though the template defines it as a string.
@@ -224,15 +177,12 @@ class LoopbackInterfaceModel(NDBaseModel):
                 options=dict(
                     switch_ip=dict(type="str", required=True),
                     interface_name=dict(type="str", required=True),
-                    interface_type=dict(type="str", default="loopback"),
                     config_data=dict(
                         type="dict",
                         options=dict(
-                            mode=dict(type="str", default="managed"),
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", default="nx-os"),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
@@ -243,11 +193,6 @@ class LoopbackInterfaceModel(NDBaseModel):
                                             route_map_tag=dict(type="str"),
                                             description=dict(type="str"),
                                             extra_config=dict(type="str"),
-                                            policy_type=dict(
-                                                type="str",
-                                                choices=LOOPBACK_POLICY_TYPE_MAPPING.get_original_data(),
-                                                default="loopback",
-                                            ),
                                         ),
                                     ),
                                 ),

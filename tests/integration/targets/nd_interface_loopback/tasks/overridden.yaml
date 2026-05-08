@@ -23,7 +23,6 @@
               admin_state: true
               ip: "10.100.100.5"
               description: "Overridden loopback100"
-              policy_type: loopback
     state: overridden
   check_mode: true
   register: cm_overridden_single

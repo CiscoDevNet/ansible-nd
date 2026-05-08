@@ -17,7 +17,6 @@ from contextlib import contextmanager
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
-    LOOPBACK_POLICY_TYPE_MAPPING,
     LoopbackConfigDataModel,
     LoopbackInterfaceModel,
     LoopbackNetworkOSModel,
@@ -78,53 +77,6 @@ SAMPLE_ANSIBLE_CONFIG = {
 
 
 # =============================================================================
-# Test: LOOPBACK_POLICY_TYPE_MAPPING
-# =============================================================================
-
-
-def test_loopback_interface_00000():
-    """
-    # Summary
-
-    Verify get_original_data() returns the expected list.
-
-    ## Test
-
-    - get_original_data() returns ["loopback", "ipfm_loopback", "user_defined"]
-
-    ## Classes and Methods
-
-    - NDConstantMapping.get_original_data()
-    """
-    result = LOOPBACK_POLICY_TYPE_MAPPING.get_original_data()
-    assert result == ["loopback", "ipfm_loopback", "user_defined"]
-
-
-def test_loopback_interface_00001():
-    """
-    # Summary
-
-    Verify get_dict() maps correctly.
-
-    ## Test
-
-    - ipfm_loopback -> ipfmLoopback
-    - user_defined -> userDefined
-    - Reverse mapping also present
-
-    ## Classes and Methods
-
-    - NDConstantMapping.get_dict()
-    """
-    mapping = LOOPBACK_POLICY_TYPE_MAPPING.get_dict()
-    assert mapping["ipfm_loopback"] == "ipfmLoopback"
-    assert mapping["user_defined"] == "userDefined"
-    assert mapping["loopback"] == "loopback"
-    assert mapping["ipfmLoopback"] == "ipfm_loopback"
-    assert mapping["userDefined"] == "user_defined"
-
-
-# =============================================================================
 # Test: LoopbackPolicyModel
 # =============================================================================
 
@@ -133,12 +85,13 @@ def test_loopback_interface_00010():
     """
     # Summary
 
-    Verify all fields default to None.
+    Verify field defaults: user-facing fields default to None; `policy_type` is hardcoded to "loopback".
 
     ## Test
 
     - Instantiate with no arguments
-    - All fields are None
+    - User-facing fields are None
+    - `policy_type` defaults to "loopback" (hardcoded scaffolding, not user-exposed)
 
     ## Classes and Methods
 
@@ -153,7 +106,7 @@ def test_loopback_interface_00010():
     assert instance.route_map_tag is None
     assert instance.description is None
     assert instance.extra_config is None
-    assert instance.policy_type is None
+    assert instance.policy_type == "loopback"
 
 
 def test_loopback_interface_00020():
@@ -222,177 +175,25 @@ def test_loopback_interface_00040():
     """
     # Summary
 
-    Verify normalize_policy_type converts API "ipfmLoopback" to "ipfm_loopback".
+    Verify `policy_type` is constrained to "loopback" only.
 
     ## Test
 
-    - Construct with policyType="ipfmLoopback"
-    - policy_type is normalized to "ipfm_loopback"
+    - Construct with policy_type="ipfm_loopback" raises ValidationError
+    - Construct with policy_type="user_defined" raises ValidationError
+    - Construct with policy_type="loopback" succeeds
 
     ## Classes and Methods
 
-    - LoopbackPolicyModel.normalize_policy_type()
+    - LoopbackPolicyModel.__init__()
     """
-    instance = LoopbackPolicyModel(policyType="ipfmLoopback")
-    assert instance.policy_type == "ipfm_loopback"
-
-
-def test_loopback_interface_00041():
-    """
-    # Summary
-
-    Verify normalize_policy_type passes through "ipfm_loopback" unchanged.
-
-    ## Test
-
-    - Construct with policy_type="ipfm_loopback"
-    - Value passes through unchanged (already in Ansible format)
-
-    ## Classes and Methods
-
-    - LoopbackPolicyModel.normalize_policy_type()
-    """
-    instance = LoopbackPolicyModel(policy_type="ipfm_loopback")
-    assert instance.policy_type == "ipfm_loopback"
-
-
-def test_loopback_interface_00042():
-    """
-    # Summary
-
-    Verify normalize_policy_type converts "userDefined" to "user_defined".
-
-    ## Test
-
-    - Construct with policyType="userDefined"
-    - policy_type is normalized to "user_defined"
-
-    ## Classes and Methods
-
-    - LoopbackPolicyModel.normalize_policy_type()
-    """
-    instance = LoopbackPolicyModel(policyType="userDefined")
-    assert instance.policy_type == "user_defined"
-
-
-def test_loopback_interface_00043():
-    """
-    # Summary
-
-    Verify normalize_policy_type passes through None.
-
-    ## Test
-
-    - Construct with policy_type=None (default)
-    - Value is None
-
-    ## Classes and Methods
-
-    - LoopbackPolicyModel.normalize_policy_type()
-    """
-    instance = LoopbackPolicyModel()
-    assert instance.policy_type is None
-
-
-def test_loopback_interface_00044():
-    """
-    # Summary
-
-    Verify normalize_policy_type passes through unknown values unchanged.
-
-    ## Test
-
-    - Construct with policy_type="custom_unknown"
-    - Value passes through unchanged
-
-    ## Classes and Methods
-
-    - LoopbackPolicyModel.normalize_policy_type()
-    """
-    instance = LoopbackPolicyModel(policy_type="custom_unknown")
-    assert instance.policy_type == "custom_unknown"
-
-
-def test_loopback_interface_00050():
-    """
-    # Summary
-
-    Verify serialize_policy_type in payload mode produces camelCase.
-
-    ## Test
-
-    - model_dump with payload context
-    - policy_type serialized to camelCase
-
-    ## Classes and Methods
-
-    - LoopbackPolicyModel.serialize_policy_type()
-    """
-    instance = LoopbackPolicyModel(policy_type="ipfm_loopback")
-    result = instance.model_dump(by_alias=True, exclude_none=True, context={"mode": "payload"})
-    assert result["policyType"] == "ipfmLoopback"
-
-
-def test_loopback_interface_00051():
-    """
-    # Summary
-
-    Verify serialize_policy_type in config mode keeps ansible name.
-
-    ## Test
-
-    - model_dump with config context
-    - policy_type stays as ansible name
-
-    ## Classes and Methods
-
-    - LoopbackPolicyModel.serialize_policy_type()
-    """
-    instance = LoopbackPolicyModel(policy_type="ipfm_loopback")
-    result = instance.model_dump(by_alias=False, exclude_none=True, context={"mode": "config"})
-    assert result["policy_type"] == "ipfm_loopback"
-
-
-def test_loopback_interface_00052():
-    """
-    # Summary
-
-    Verify serialize_policy_type with None returns None in both modes.
-
-    ## Test
-
-    - policy_type is None
-    - Serialization in both modes returns None
-
-    ## Classes and Methods
-
-    - LoopbackPolicyModel.serialize_policy_type()
-    """
-    instance = LoopbackPolicyModel()
-    payload_result = instance.model_dump(by_alias=True, context={"mode": "payload"})
-    config_result = instance.model_dump(by_alias=False, context={"mode": "config"})
-    assert payload_result["policyType"] is None
-    assert config_result["policy_type"] is None
-
-
-def test_loopback_interface_00053():
-    """
-    # Summary
-
-    Verify default serialization (no context) uses payload mode (camelCase).
-
-    ## Test
-
-    - model_dump with no context
-    - policy_type serialized to camelCase (default is payload)
-
-    ## Classes and Methods
-
-    - LoopbackPolicyModel.serialize_policy_type()
-    """
-    instance = LoopbackPolicyModel(policy_type="user_defined")
-    result = instance.model_dump(by_alias=True, exclude_none=True)
-    assert result["policyType"] == "userDefined"
+    with pytest.raises(ValidationError):
+        LoopbackPolicyModel(policy_type="ipfm_loopback")
+    with pytest.raises(ValidationError):
+        LoopbackPolicyModel(policy_type="user_defined")
+    with does_not_raise():
+        instance = LoopbackPolicyModel(policy_type="loopback")
+    assert instance.policy_type == "loopback"
 
 
 def test_loopback_interface_00060():
@@ -405,6 +206,7 @@ def test_loopback_interface_00060():
 
     - Only ip is set
     - exclude_none=True omits all None fields
+    - `policy_type` defaults to "loopback" (not None) so it remains in output
 
     ## Classes and Methods
 
@@ -415,7 +217,7 @@ def test_loopback_interface_00060():
     assert "ip" in result
     assert "admin_state" not in result
     assert "vrf" not in result
-    assert "policy_type" not in result
+    assert result["policy_type"] == "loopback"
 
 
 # =============================================================================
@@ -928,30 +730,29 @@ def test_loopback_interface_00120():
     """
     # Summary
 
-    Verify construction from camelCase dict with nested policy normalization.
+    Verify construction from camelCase dict with nested policy.
 
     ## Test
 
     - Construct from API-style camelCase dict
-    - Nested policy_type is normalized
+    - Nested policy fields populate correctly
 
     ## Classes and Methods
 
     - LoopbackNetworkOSModel.__init__()
-    - LoopbackPolicyModel.normalize_policy_type()
     """
     data = {
         "networkOSType": "nx-os",
         "policy": {
             "adminState": True,
-            "policyType": "ipfmLoopback",
+            "policyType": "loopback",
         },
     }
     with does_not_raise():
         instance = LoopbackNetworkOSModel(**data)
     assert instance.network_os_type == "nx-os"
     assert instance.policy.admin_state is True
-    assert instance.policy.policy_type == "ipfm_loopback"
+    assert instance.policy.policy_type == "loopback"
 
 
 # =============================================================================
@@ -1225,28 +1026,6 @@ def test_loopback_interface_00320():
     assert "routeMapTag" in policy
 
 
-def test_loopback_interface_00330():
-    """
-    # Summary
-
-    Verify policy_type serialized to camelCase in payload: ipfm_loopback -> ipfmLoopback.
-
-    ## Test
-
-    - policy_type="ipfm_loopback" becomes "ipfmLoopback" in payload
-
-    ## Classes and Methods
-
-    - LoopbackInterfaceModel.to_payload()
-    - LoopbackPolicyModel.serialize_policy_type()
-    """
-    config = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
-    config["config_data"]["network_os"]["policy"]["policy_type"] = "ipfm_loopback"
-    instance = LoopbackInterfaceModel.from_config(config)
-    result = instance.to_payload()
-    assert result["configData"]["networkOS"]["policy"]["policyType"] == "ipfmLoopback"
-
-
 # =============================================================================
 # Test: LoopbackInterfaceModel — to_config
 # =============================================================================
@@ -1320,28 +1099,6 @@ def test_loopback_interface_00360():
     assert "route_map_tag" in policy
 
 
-def test_loopback_interface_00370():
-    """
-    # Summary
-
-    Verify policy_type stays as ansible name in config mode.
-
-    ## Test
-
-    - policy_type="ipfm_loopback" stays as "ipfm_loopback" in config output
-
-    ## Classes and Methods
-
-    - LoopbackInterfaceModel.to_config()
-    - LoopbackPolicyModel.serialize_policy_type()
-    """
-    config = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
-    config["config_data"]["network_os"]["policy"]["policy_type"] = "ipfm_loopback"
-    instance = LoopbackInterfaceModel.from_config(config)
-    result = instance.to_config()
-    assert result["config_data"]["network_os"]["policy"]["policy_type"] == "ipfm_loopback"
-
-
 # =============================================================================
 # Test: LoopbackInterfaceModel — from_response
 # =============================================================================
@@ -1396,21 +1153,22 @@ def test_loopback_interface_00420():
     """
     # Summary
 
-    Verify from_response normalizes "ipfmLoopback" to "ipfm_loopback".
+    Verify from_response rejects non-"loopback" `policyType` values (this module's scope is `policyType: "loopback"` only).
 
     ## Test
 
-    - API response with policyType="ipfmLoopback" is normalized
+    - API response with policyType="ipfmLoopback" raises ValidationError
+    - API response with policyType="userDefined" raises ValidationError
 
     ## Classes and Methods
 
     - LoopbackInterfaceModel.from_response()
-    - LoopbackPolicyModel.normalize_policy_type()
     """
-    response = copy.deepcopy(SAMPLE_API_RESPONSE)
-    response["configData"]["networkOS"]["policy"]["policyType"] = "ipfmLoopback"
-    instance = LoopbackInterfaceModel.from_response(response)
-    assert instance.config_data.network_os.policy.policy_type == "ipfm_loopback"
+    for unsupported in ("ipfmLoopback", "userDefined"):
+        response = copy.deepcopy(SAMPLE_API_RESPONSE)
+        response["configData"]["networkOS"]["policy"]["policyType"] = unsupported
+        with pytest.raises(ValidationError):
+            LoopbackInterfaceModel.from_response(response)
 
 
 def test_loopback_interface_00430():
@@ -1547,35 +1305,6 @@ def test_loopback_interface_00510():
     # switchIp is excluded from payload, so compare without it
     expected = {k: v for k, v in original.items() if k != "switchIp"}
     assert result == expected
-
-
-def test_loopback_interface_00520():
-    """
-    # Summary
-
-    Verify policy_type round-trip: ipfm_loopback (config) -> ipfmLoopback (payload) -> ipfm_loopback (config).
-
-    ## Test
-
-    - policy_type correctly converts between formats in round-trip
-
-    ## Classes and Methods
-
-    - LoopbackPolicyModel.normalize_policy_type()
-    - LoopbackPolicyModel.serialize_policy_type()
-    """
-    config = copy.deepcopy(SAMPLE_ANSIBLE_CONFIG)
-    config["config_data"]["network_os"]["policy"]["policy_type"] = "ipfm_loopback"
-
-    instance = LoopbackInterfaceModel.from_config(config)
-    payload = instance.to_payload()
-    assert payload["configData"]["networkOS"]["policy"]["policyType"] == "ipfmLoopback"
-
-    # Simulate orchestrator injecting switchIp back into API response
-    payload["switchIp"] = config["switch_ip"]
-    instance2 = LoopbackInterfaceModel.from_response(payload)
-    result_config = instance2.to_config()
-    assert result_config["config_data"]["network_os"]["policy"]["policy_type"] == "ipfm_loopback"
 
 
 # =============================================================================
@@ -1872,18 +1601,25 @@ def test_loopback_interface_00730():
     """
     # Summary
 
-    Verify policy_type choices from mapping and default.
+    Verify scaffolding fields (`interface_type`, `mode`, `network_os_type`, `policy_type`) are NOT exposed in the argument spec.
+
+    These are hardcoded in the model since this module only handles loopback interfaces with `policyType: "loopback"` on NX-OS.
+    The IP Fabric for Media (`ipfmLoopback`) and user-defined (`userDefined`) policies will get dedicated modules.
 
     ## Test
 
-    - policy_type choices: ["loopback", "ipfm_loopback", "user_defined"]
-    - policy_type default: "loopback"
+    - `interface_type`, `policy_type`, `mode`, `network_os_type` are not present anywhere in the argument spec
 
     ## Classes and Methods
 
     - LoopbackInterfaceModel.get_argument_spec()
     """
     spec = LoopbackInterfaceModel.get_argument_spec()
-    policy_spec = spec["config"]["options"]["config_data"]["options"]["network_os"]["options"]["policy"]["options"]["policy_type"]
-    assert policy_spec["choices"] == ["loopback", "ipfm_loopback", "user_defined"]
-    assert policy_spec["default"] == "loopback"
+    config_options = spec["config"]["options"]
+    assert "interface_type" not in config_options
+    config_data_options = config_options["config_data"]["options"]
+    assert "mode" not in config_data_options
+    network_os_options = config_data_options["network_os"]["options"]
+    assert "network_os_type" not in network_os_options
+    policy_options = network_os_options["policy"]["options"]
+    assert "policy_type" not in policy_options

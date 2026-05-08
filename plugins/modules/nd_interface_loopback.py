@@ -45,32 +45,16 @@ options:
         - The name of the loopback interface (e.g., C(loopback0), C(Loopback10)).
         type: str
         required: true
-      interface_type:
-        description:
-        - The type of the interface.
-        - Defaults to C(loopback) for this module.
-        type: str
-        default: loopback
       config_data:
         description:
         - The configuration data for the interface, following the ND API structure.
         type: dict
         suboptions:
-          mode:
-            description:
-            - The interface management mode.
-            type: str
-            default: managed
           network_os:
             description:
             - Network OS specific configuration.
             type: dict
             suboptions:
-              network_os_type:
-                description:
-                - The network OS type of the switch.
-                type: str
-                default: nx-os
               policy:
                 description:
                 - The policy configuration for the loopback interface.
@@ -107,15 +91,6 @@ options:
                     description:
                     - Additional CLI configuration commands to apply to the interface.
                     type: str
-                  policy_type:
-                    description:
-                    - The policy template type for the loopback interface.
-                    - V(loopback) is the standard loopback policy.
-                    - V(ipfm_loopback) is the IP Fabric for Media loopback policy.
-                    - V(user_defined) allows a custom user-defined policy.
-                    type: str
-                    choices: [ loopback, ipfm_loopback, user_defined ]
-                    default: loopback
   deploy:
     description:
     - Whether to deploy interface changes after mutations are complete.
@@ -143,7 +118,8 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module currently supports NX-OS loopback interfaces only.
+- This module currently supports NX-OS loopback interfaces only (interface_type C(loopback), policy_type C(loopback)).
+- The IP Fabric for Media (C(ipfmLoopback)) and user-defined (C(userDefined)) loopback policies will be managed by dedicated modules.
 """
 
 EXAMPLES = r"""

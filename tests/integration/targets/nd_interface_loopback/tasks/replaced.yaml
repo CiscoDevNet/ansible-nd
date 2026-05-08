@@ -22,7 +22,6 @@
               admin_state: true
               ip: "10.100.100.3"
               description: "Replaced loopback100"
-              policy_type: loopback
     state: replaced
   check_mode: true
   register: cm_replaced_100
@@ -71,7 +70,6 @@
               admin_state: true
               ip: "10.100.100.4"
               description: "Replaced again loopback100"
-              policy_type: loopback
       - "{{ loopback_101_updated }}"
     state: replaced
   check_mode: true

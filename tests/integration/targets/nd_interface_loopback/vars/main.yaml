@@ -20,7 +20,6 @@ loopback_100:
         description: "Ansible integration test loopback100"
         vrf: default
         route_map_tag: "12345"
-        policy_type: loopback
 
 loopback_101:
   switch_ip: "{{ test_switch_ip }}"
@@ -31,7 +30,6 @@ loopback_101:
         admin_state: true
         ip: "10.100.101.1"
         description: "Ansible integration test loopback101"
-        policy_type: loopback
 
 loopback_102:
   switch_ip: "{{ test_switch_ip }}"
@@ -42,7 +40,6 @@ loopback_102:
         admin_state: true
         ip: "10.100.102.1"
         description: "Ansible integration test loopback102"
-        policy_type: loopback
 
 # Updated versions for merge/replace tests
 loopback_100_updated:
@@ -56,7 +53,6 @@ loopback_100_updated:
         description: "Updated loopback100 description"
         vrf: default
         route_map_tag: "54321"
-        policy_type: loopback
 
 loopback_101_updated:
   switch_ip: "{{ test_switch_ip }}"
@@ -67,4 +63,3 @@ loopback_101_updated:
         admin_state: false
         ip: "10.100.101.2"
         description: "Updated loopback101 description"
-        policy_type: loopback

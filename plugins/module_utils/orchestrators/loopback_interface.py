@@ -32,10 +32,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesRemove,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import (
-    LOOPBACK_POLICY_TYPE_MAPPING,
-    LoopbackInterfaceModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.loopback_interface import LoopbackInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
@@ -230,10 +227,10 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         # Summary
 
         Validate the fabric context and query all interfaces across ALL switches in the fabric, filtering for user-managed
-        loopback interfaces only.
+        loopback interfaces only (`policyType: "loopback"`).
 
-        System-provisioned loopbacks (e.g. Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) are excluded because they are managed by ND
-        during initial switch role configuration and cannot be deleted or modified by this module.
+        System-provisioned loopbacks (e.g. Loopback0 routing, Loopback1 VTEP with `policyType: "underlayLoopback"`) and
+        non-standard policy templates (`ipfmLoopback`, `userDefined`) are excluded - those will be managed by dedicated modules.
 
         Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
 
@@ -248,7 +245,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         - If the fabric is in deployment-freeze mode.
         - If the query API request fails.
         """
-        managed_policy_types = set(LOOPBACK_POLICY_TYPE_MAPPING.data.values())
         try:
             self.validate_prerequisites()
             all_loopbacks = []
@@ -259,7 +255,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
                     continue
                 interfaces = result.get("interfaces", []) or []
                 loopbacks = [iface for iface in interfaces if iface.get("interfaceType") == "loopback"]
-                managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_policy_types]
+                managed = [lb for lb in loopbacks if lb.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") == "loopback"]
                 for iface in managed:
                     iface["switchIp"] = switch_ip
                 all_loopbacks.extend(managed)
