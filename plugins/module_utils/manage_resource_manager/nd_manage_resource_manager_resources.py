@@ -1135,7 +1135,7 @@ class NDResourceManagerModule:
     def _resolve_switch_ids_in_config(self, config):
         """Translate config ``switches`` values from management IPs to switch IDs.
 
-        Uses ``FabricSwitchInventory`` from ``utils.py`` with ``SwitchDataModel`` so
+        Uses ``FabricSwitchInventory`` from ``fabric_inventory.py`` with ``SwitchDataModel`` so
         resource manager shares the same inventory lookup behavior as switch manager.
         Values already provided as switch IDs are preserved.  Unresolved values fail
         early with a clear validation error instead of being passed to the ND API.
