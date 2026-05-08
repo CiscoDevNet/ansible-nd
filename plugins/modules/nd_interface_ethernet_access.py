@@ -247,6 +247,32 @@ EXAMPLES = r"""
               description: Server ports switch 2
     state: merged
 
+- name: Apply different access configurations to different interfaces on the same switch
+  cisco.nd.nd_interface_ethernet_access:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_names:
+          - Ethernet1/1
+          - Ethernet1/2
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 100
+              description: VLAN 100 access ports
+      - switch_ip: 192.168.1.1
+        interface_names:
+          - Ethernet1/3
+          - Ethernet1/4
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              access_vlan: 200
+              description: VLAN 200 access ports
+    state: merged
+
 - name: Delete accessHost interface configurations
   cisco.nd.nd_interface_ethernet_access:
     fabric_name: my_fabric
@@ -292,17 +318,84 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interf
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import EthernetAccessInterfaceOrchestrator
 
 
+# TODO: When all interface modules using `interface_names: list` are merged, lift
+# `validate_within_item_duplicates`, `validate_across_item_duplicates`, and
+# `expand_config` into a shared helper module (e.g.
+# `plugins/module_utils/interfaces/config_expansion.py`) and import from there.
+def validate_within_item_duplicates(config_list):
+    """
+    # Summary
+
+    Raise `ValueError` if any single config item lists the same interface name more than once
+    in its `interface_names` list. Comparison is case-insensitive.
+
+    ## Raises
+
+    ### ValueError
+
+    - If an interface name appears more than once within a single config item's `interface_names` list
+    """
+    for item_index, group in enumerate(config_list):
+        switch_ip = group.get("switch_ip")
+        interface_names = group.get("interface_names") or []
+        seen = {}
+        for name in interface_names:
+            key = name.lower()
+            if key in seen:
+                raise ValueError(
+                    f"Duplicate interface '{name}' in interface_names for switch '{switch_ip}' "
+                    f"(config item {item_index}). Each interface may appear only once per config item."
+                )
+            seen[key] = True
+
+
+# TODO: See note above `validate_within_item_duplicates`.
+def validate_across_item_duplicates(config_list):
+    """
+    # Summary
+
+    Raise `ValueError` if the same `(switch_ip, interface_name)` pair appears in more than one
+    config item. Comparison of interface names is case-insensitive. The error message identifies
+    both offending config item indices so the user can locate them in the playbook.
+
+    ## Raises
+
+    ### ValueError
+
+    - If the same `(switch_ip, interface_name)` pair appears in more than one config item
+    """
+    seen = {}
+    for item_index, group in enumerate(config_list):
+        switch_ip = group.get("switch_ip")
+        interface_names = group.get("interface_names") or []
+        for name in interface_names:
+            key = (switch_ip, name.lower())
+            if key in seen:
+                raise ValueError(
+                    f"Interface '{name}' on switch '{switch_ip}' is specified in multiple config items "
+                    f"({seen[key]} and {item_index}). Each switch/interface pair may appear only once."
+                )
+            seen[key] = item_index
+
+
 def expand_config(config_list):
     """
     # Summary
 
-    Expand grouped config items (with `interface_names` list) into flat config items (with singular `interface_name`).
-    Each group produces one flat item per interface name, all sharing the same `config_data` and `switch_ip`.
+    Validate then expand grouped config items (with `interface_names` list) into flat config items
+    (with singular `interface_name`). Each group produces one flat item per interface name, all
+    sharing the same `config_data` and `switch_ip`.
 
     ## Raises
 
-    None
+    ### ValueError
+
+    - If an interface name appears more than once within a single config item's `interface_names` list
+    - If the same `(switch_ip, interface_name)` pair appears in more than one config item
     """
+    validate_within_item_duplicates(config_list)
+    validate_across_item_duplicates(config_list)
+
     expanded = []
     for group in config_list:
         interface_names = group.get("interface_names", [])
@@ -341,7 +434,10 @@ def main():
     module_log = logging.getLogger("nd.nd_interface_ethernet_access")
 
     # Expand grouped config (interface_names list) into flat config items (interface_name singular)
-    module.params["config"] = expand_config(module.params["config"])
+    try:
+        module.params["config"] = expand_config(module.params["config"])
+    except ValueError as e:
+        module.fail_json(msg=f"Configuration error: {e}")
     module_log.debug(
         "expand_config done items=%d switches=%d",
         len(module.params["config"]),

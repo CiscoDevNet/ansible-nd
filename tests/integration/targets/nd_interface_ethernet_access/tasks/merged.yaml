@@ -254,3 +254,48 @@
   ansible.builtin.assert:
     that:
       - nm_merged_idem_large_fanout is not changed
+
+# --- MERGED CREATE: SPLIT CONFIG (DIFFERENT CONFIGS ON SAME SWITCH) ---
+
+- name: "MERGED SPLIT: Apply different access_vlans to Ethernet1/49 and Ethernet1/50 in one task (check mode)"
+  cisco.nd.nd_interface_ethernet_access: &merge_eth_split
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_split_49 }}"
+      - "{{ ethernet_split_50 }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_split
+
+- name: "MERGED SPLIT: Apply different access_vlans to Ethernet1/49 and Ethernet1/50 in one task (normal mode)"
+  cisco.nd.nd_interface_ethernet_access: *merge_eth_split
+  register: nm_merged_split
+
+- name: "MERGED SPLIT: Verify split-config creation"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_split is changed
+      - nm_merged_split is changed
+      - nm_merged_split.after | selectattr('interface_name', 'equalto', 'Ethernet1/49') | list | length == 1
+      - nm_merged_split.after | selectattr('interface_name', 'equalto', 'Ethernet1/50') | list | length == 1
+
+- name: "MERGED SPLIT: Verify each interface received its own config"
+  vars:
+    eth49_after: "{{ nm_merged_split.after | selectattr('interface_name', 'equalto', 'Ethernet1/49') | first }}"
+    eth50_after: "{{ nm_merged_split.after | selectattr('interface_name', 'equalto', 'Ethernet1/50') | first }}"
+  ansible.builtin.assert:
+    that:
+      - eth49_after.config_data.network_os.policy.access_vlan == 500
+      - eth49_after.config_data.network_os.policy.description == "Split config item A"
+      - eth50_after.config_data.network_os.policy.access_vlan == 600
+      - eth50_after.config_data.network_os.policy.description == "Split config item B"
+
+- name: "MERGED SPLIT: Re-apply for idempotency"
+  cisco.nd.nd_interface_ethernet_access: *merge_eth_split
+  register: nm_merged_split_idem
+
+- name: "MERGED SPLIT: Verify split-config idempotency"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_split_idem is not changed

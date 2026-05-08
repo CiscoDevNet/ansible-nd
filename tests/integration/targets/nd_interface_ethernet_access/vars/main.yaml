@@ -8,7 +8,7 @@ test_fabric_name: "{{ nd_test_fabric_name | default('test_fabric') }}"
 test_switch_ip: "{{ nd_test_switch_ip | default('192.168.1.1') }}"
 
 # Ethernet interfaces used across tests.
-# Ethernet1/41 through Ethernet1/48 are reserved for these integration tests.
+# Ethernet1/41 through Ethernet1/50 are reserved for these integration tests.
 # These interfaces must exist on the test switch and must NOT be port-channel members.
 
 # --- Base configs ---
@@ -100,6 +100,30 @@ ethernet_45_46_47:
         mtu: jumbo
         speed: auto
 
+# --- Split-config test: different configs on the same switch in one task ---
+
+ethernet_split_49:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/49
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 500
+        description: "Split config item A"
+
+ethernet_split_50:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/50
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        access_vlan: 600
+        description: "Split config item B"
+
 # --- Cleanup helper: all test interfaces ---
 
 cleanup_interface_names:
@@ -111,3 +135,5 @@ cleanup_interface_names:
   - Ethernet1/46
   - Ethernet1/47
   - Ethernet1/48
+  - Ethernet1/49
+  - Ethernet1/50
