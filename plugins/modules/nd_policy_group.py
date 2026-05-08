@@ -282,7 +282,6 @@ RETURN = r"""
 """
 
 import logging
-import os
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
@@ -473,13 +472,9 @@ def main():
         supports_check_mode=True,
     )
 
-    # Initialize logging (use separate log file for policy_group)
+    # Initialize logging
     try:
-        policy_group_log_config = os.path.join(
-            os.path.dirname(__file__),
-            "..", "module_utils", "logging_config_policy_group.json"
-        )
-        log_config = Log(config=policy_group_log_config)
+        log_config = Log()
         log_config.commit()
         log = logging.getLogger("nd.nd_policy_group")
     except ValueError as error:
@@ -622,16 +617,31 @@ def main():
         )
         nd_state_machine.manage_state()
 
-        # Deploy unchanged policies when deploy=true (push config even if no diff)
-        if state in ("merged", "replaced", "overridden") and orchestrator.deploy and not module.check_mode:
+        # Deploy unchanged policies when deploy=true (push config even if no diff).
+        # Scope strictly to policies the user mentioned in `config:` so we never
+        # touch unrelated fabric policies.
+        if state == "merged" and orchestrator.deploy and not module.check_mode:
             sent_identifiers = {item.get_identifier_value() for item in nd_state_machine.sent}
+            proposed_identifiers = {item.get_identifier_value() for item in nd_state_machine.proposed}
+            log.debug("deploy-unchanged: proposed_identifiers=%s", sorted(map(str, proposed_identifiers)))
+            log.debug("deploy-unchanged: sent_identifiers=%s", sorted(map(str, sent_identifiers)))
             unchanged_policy_ids = []
             for item in nd_state_machine.existing:
-                if item.get_identifier_value() not in sent_identifiers and getattr(item, "policy_id", None):
-                    unchanged_policy_ids.append(item.policy_id)
+                ident = item.get_identifier_value()
+                in_proposed = ident in proposed_identifiers
+                in_sent = ident in sent_identifiers
+                pid = getattr(item, "policy_id", None)
+                log.debug(
+                    "deploy-unchanged: existing item ident=%s policy_id=%s in_proposed=%s in_sent=%s",
+                    ident, pid, in_proposed, in_sent,
+                )
+                if in_proposed and not in_sent and pid:
+                    unchanged_policy_ids.append(pid)
             if unchanged_policy_ids:
                 log.info("Deploying %d unchanged policy groups (deploy=true): %s", len(unchanged_policy_ids), unchanged_policy_ids)
                 orchestrator._push_config(unchanged_policy_ids)
+            else:
+                log.debug("deploy-unchanged: no unchanged user-mentioned policies to push")
 
         result = nd_state_machine.output.format()
         # If we force-created items, ensure changed=True

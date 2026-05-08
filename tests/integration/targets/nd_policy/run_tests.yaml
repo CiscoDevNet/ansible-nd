@@ -17,15 +17,5 @@
 - name: ND Policy Integration Tests
   hosts: nd
   gather_facts: false
-  environment:
-    ND_LOGGING_CONFIG: "{{ nd_logging_config | default('') }}"
-  pre_tasks:
-    - name: Truncate log file for fresh run
-      ansible.builtin.copy:
-        content: ""
-        dest: "{{ nd_logging_config | default('') | dirname }}/../nd_policy.log"
-      delegate_to: localhost
-      when: nd_logging_config is defined and nd_logging_config != ''
-      ignore_errors: true
   roles:
     - role: "{{ playbook_dir }}"

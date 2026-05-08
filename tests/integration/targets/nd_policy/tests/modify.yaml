@@ -13,6 +13,22 @@
     ##     SETUP - Create initial policies      ##
     ##############################################
 
+    - name: "MODIFY SETUP - Enable BFD feature (prerequisite for BFD timers)"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "Enable BFD feature"
+            priority: 100
+            template_inputs:
+              featureName: bfd
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      tags: modify
+
     - name: "MODIFY SETUP - Create initial policies for modification tests"
       cisco.nd.nd_policy:
         fabric_name: "{{ fabric_name }}"

@@ -1034,6 +1034,9 @@ class NDPolicyModule:
             "description": description,
             "priority": priority,
             "template_inputs": cleaned_inputs,
+            # Conservative-safe default for `state=gathered` -> `state=merged`
+            # round-trip: re-running the gathered config will not create duplicate
+            # policies even though the module-wide default is `true`
             "create_additional_policy": False,
         }
 
@@ -1091,6 +1094,24 @@ class NDPolicyModule:
     # =========================================================================
     # Helpers: Classification & Filtering
     # =========================================================================
+
+    # Internal control flags carried on `want` dicts that are NOT real
+    # policy attributes on the controller.  Stripped before any user-facing
+    # projection (after, diff.after, _after).
+    _INTERNAL_WANT_KEYS: ClassVar[frozenset] = frozenset({"create_additional_policy"})
+
+    @classmethod
+    def _strip_internal(cls, d: dict | None) -> dict:
+        """Return a shallow copy of *d* with internal control keys removed.
+
+        Internal keys (e.g. ``create_additional_policy``) are carried on the
+        ``want`` dict so the diff classifier can read them, but they must not
+        leak into ``after`` / ``diff.after`` / ``gathered`` outputs because
+        they are not real attributes of the policy on the controller.
+        """
+        if not d:
+            return {} if d is None else dict(d)
+        return {k: v for k, v in d.items() if k not in cls._INTERNAL_WANT_KEYS}
 
     @staticmethod
     def _is_policy_id(name: str) -> bool:
@@ -1979,7 +2000,7 @@ class NDPolicyModule:
             for diff_entry in create_batch:
                 want = diff_entry["want"]
                 self._proposed.append(want)
-                self._after.append(want)
+                self._after.append(self._strip_internal(want))
                 self._register_result(
                     action="policy_create",
                     operation_type=OperationType.CREATE,
@@ -1994,7 +2015,8 @@ class NDPolicyModule:
                 want, have = diff_entry["want"], diff_entry["have"]
                 self._proposed.append(want)
                 self._before.append(have)
-                self._after.append({**have, **want})
+                after_proj = self._strip_internal({**have, **want})
+                self._after.append(after_proj)
                 self._register_result(
                     action="policy_update",
                     operation_type=OperationType.UPDATE,
@@ -2005,7 +2027,7 @@ class NDPolicyModule:
                     diff={
                         "action": "update",
                         "before": have,
-                        "after": {**have, **want},
+                        "after": after_proj,
                         "want": want,
                         "have": have,
                         "diff": diff_entry["diff"],
@@ -2017,7 +2039,8 @@ class NDPolicyModule:
                 want, have = diff_entry["want"], diff_entry["have"]
                 self._proposed.append(want)
                 self._before.append(have)
-                self._after.append(want)
+                after_proj = self._strip_internal(want)
+                self._after.append(after_proj)
                 self._register_result(
                     action="policy_replace",
                     operation_type=OperationType.UPDATE,
@@ -2028,7 +2051,7 @@ class NDPolicyModule:
                     diff={
                         "action": "delete_and_create",
                         "before": have,
-                        "after": want,
+                        "after": after_proj,
                         "want": want,
                         "have": have,
                         "diff": diff_entry["diff"],
@@ -2262,7 +2285,8 @@ class NDPolicyModule:
                     continue
 
                 policy_ids_to_deploy.append(created_id)
-                self._after.append({**want, "policyId": created_id})
+                after_proj = self._strip_internal({**want, "policyId": created_id})
+                self._after.append(after_proj)
 
                 if is_replace:
                     self._register_result(
@@ -2275,7 +2299,7 @@ class NDPolicyModule:
                         diff={
                             "action": "delete_and_create",
                             "before": have,
-                            "after": {**want, "policyId": created_id},
+                            "after": after_proj,
                             "want": want,
                             "have": have,
                             "diff": field_diff,
@@ -2294,7 +2318,7 @@ class NDPolicyModule:
                         diff={
                             "action": "create",
                             "before": None,
-                            "after": {**want, "policyId": created_id},
+                            "after": after_proj,
                             "want": want,
                             "diff": field_diff,
                             "created_policy_id": created_id,
@@ -2336,7 +2360,7 @@ class NDPolicyModule:
 
             policy_ids_to_deploy.append(policy_id)
 
-            after_merged = {**have, **want, "policyId": policy_id}
+            after_merged = self._strip_internal({**have, **want, "policyId": policy_id})
             self._after.append(after_merged)
 
             self._register_result(
@@ -2399,6 +2423,29 @@ class NDPolicyModule:
 
         # D-13 to D-16: Switch-only (no name given)
         if "templateName" not in want:
+            if self.use_desc_as_key and want.get("description"):
+                want_desc = want["description"]
+                filtered = [p for p in have_list if (p.get("description") or "") == want_desc]
+                policy_ids = [p.get("policyId") for p in filtered if p.get("policyId")]
+                result["policies"] = filtered
+                result["policy_ids"] = policy_ids
+                result["match_count"] = len(filtered)
+                if len(filtered) == 0:
+                    result["action"] = "skip"
+                elif len(filtered) == 1:
+                    result["action"] = "delete"
+                else:
+                    raise NDModuleError(
+                        msg=(
+                            f"Multiple policies ({len(filtered)}) found with description "
+                            f"'{want_desc}' on switch {want.get('switchId')}. "
+                            "Descriptions must be unique per switch when "
+                            "use_desc_as_key=true. Remove the duplicate policies from "
+                            "the controller manually."
+                        )
+                    )
+                return result
+
             if match_count == 0:
                 result["action"] = "skip"
             else:
@@ -2657,7 +2704,6 @@ class NDPolicyModule:
                 )
                 mark_succeeded = list(unique_policy_ids)
         else:
-            # No structured response — assume all succeeded (pre-existing behavior)
             self.log.warning("markDelete returned non-dict response — " "treating all as succeeded")
             mark_succeeded = list(unique_policy_ids)
 

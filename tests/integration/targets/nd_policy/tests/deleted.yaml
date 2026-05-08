@@ -42,6 +42,13 @@
             template_inputs:
               CONF: "system vlan long-name"
 
+          - name: feature_enable
+            create_additional_policy: false
+            description: "Enable BFD feature"
+            priority: 112
+            template_inputs:
+              featureName: bfd
+
           - name: switch_freeform
             create_additional_policy: false
             description: "BFD timers"

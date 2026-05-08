@@ -1,13 +1,11 @@
-# Integration test config template.
-# Copy to integration_config.yml and fill in your local values.
-# Do NOT commit integration_config.yml to git.
-#
-# Variables here are available as {{ nd_logging_config }}, {{ fabric_name }},
-# etc. in integration test playbooks.
+# Local integration test config — DO NOT COMMIT the actual integration_config.yml
+# Copy this file to integration_config.yml and fill in your values.
 
-# Logging — absolute path to logging_config.json
-nd_logging_config: <ABSOLUTE_PATH_TO>/plugins/module_utils/logging_config.json
+# Path to the logging config JSON (enables nd_policy debug logging)
+nd_logging_config: <PATH_TO_COLLECTION>/plugins/module_utils/logging_config.json
 
-# Fabric / switch info for policy and policy group tests
+# Fabric and switch details for integration tests
 fabric_name: <FABRIC_NAME>
-switch_serial_1: <SWITCH_SERIAL_NUMBER>
+switch_serial_1: <SWITCH_SERIAL_1>
+switch_serial_2: <SWITCH_SERIAL_2>
+switch_serial_3: <SWITCH_SERIAL_3>

@@ -392,3 +392,4 @@ $RECYCLE.BIN/
 
 # Ansible Collection tarball
 cisco-nd-*.tar.gz
+tests/integration/inventory.networking

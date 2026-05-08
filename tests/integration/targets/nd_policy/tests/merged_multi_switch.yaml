@@ -58,7 +58,32 @@
           - result.changed == false
       tags: merged_multi_switch
 
-    # TC-3: Per-switch policy override - different priorities per switch
+    # TC-3: Enable BFD feature first (prerequisite for BFD timers)
+    - name: "MERGED_MULTI_SWITCH TC3a - Enable BFD feature on both switches"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "Enable BFD feature"
+            priority: 112
+            template_inputs:
+              featureName: bfd
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+              - serial_number: "{{ switch_serial_2 }}"
+      register: result
+      tags: merged_multi_switch
+
+    - name: "MERGED_MULTI_SWITCH TC3a - Verify BFD feature enabled"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged_multi_switch
+
+    # TC-3b: Per-switch policy override - different priorities per switch
     - name: "MERGED_MULTI_SWITCH TC3 - Per-switch policy overrides"
       cisco.nd.nd_policy:
         fabric_name: "{{ fabric_name }}"

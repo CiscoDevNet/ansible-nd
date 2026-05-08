@@ -99,8 +99,32 @@
           - result.changed == true
       tags: merged
 
-    # TC-5: Create policy with no description (default empty)
-    - name: "MERGED TC5 - Create bfd_timers policy with no description"
+    # TC-5a: Enable BFD feature first (prerequisite for BFD timers)
+    - name: "MERGED TC5a - Enable BFD feature"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "Enable BFD feature"
+            priority: 112
+            template_inputs:
+              featureName: bfd
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: merged
+
+    - name: "MERGED TC5a - Verify BFD feature enabled"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: merged
+
+    # TC-5b: Create policy with no description (default empty)
+    - name: "MERGED TC5b - Create bfd_timers policy with no description"
       cisco.nd.nd_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
@@ -116,7 +140,7 @@
       register: result
       tags: merged
 
-    - name: "MERGED TC5 - Verify creation"
+    - name: "MERGED TC5b - Verify creation"
       ansible.builtin.assert:
         that:
           - result.changed == true

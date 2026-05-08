@@ -13,6 +13,23 @@
     ##      MERGE - MULTIPLE TEMPLATES          ##
     ##############################################
 
+    # SETUP: Enable BFD feature (prerequisite for BFD timers)
+    - name: "MERGED_MULTI_TEMPLATE SETUP - Enable BFD feature"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "Enable BFD feature"
+            priority: 100
+            template_inputs:
+              featureName: bfd
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      tags: merged_multi_template
+
     # TC-1: Create multiple policies with different templates in one task
     - name: "MERGED_MULTI_TEMPLATE TC1 - Create five policies across different templates"
       cisco.nd.nd_policy: &multi_tmpl
