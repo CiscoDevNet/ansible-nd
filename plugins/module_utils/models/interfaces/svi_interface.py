@@ -57,7 +57,7 @@ class SviPolicyModel(NDNestedModel):
     None
     """
 
-    policy_type: SviPolicyTypeEnum = Field(default=SviPolicyTypeEnum.SVI, alias="policyType", description="Interface policy type")
+    policy_type: SviPolicyTypeEnum = Field(default=SviPolicyTypeEnum.SVI, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)")
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
     description: AsciiDescription = Field(default=None, alias="description", max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
@@ -140,7 +140,7 @@ class SviNetworkOSModel(NDNestedModel):
     None
     """
 
-    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType")
+    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
     policy: SviPolicyModel | None = Field(default=None, alias="policy")
 
 
@@ -156,7 +156,7 @@ class SviConfigDataModel(NDNestedModel):
     None
     """
 
-    mode: Literal["managed"] = Field(default="managed", alias="mode")
+    mode: Literal["managed"] = Field(default="managed", alias="mode", frozen=True)
     network_os: SviNetworkOSModel = Field(alias="networkOS")
 
 
@@ -210,7 +210,7 @@ class SviInterfaceModel(NDBaseModel):
 
     switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
-    interface_type: Literal["svi"] = Field(default="svi", alias="interfaceType")
+    interface_type: Literal["svi"] = Field(default="svi", alias="interfaceType", frozen=True)
     config_data: SviConfigDataModel | None = Field(default=None, alias="configData")
     oper_data: SviOperDataModel | None = Field(default=None, alias="operData")
 
