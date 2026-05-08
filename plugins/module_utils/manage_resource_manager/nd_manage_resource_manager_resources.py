@@ -50,7 +50,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.sw
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import FabricSwitchInventory
 
-
 # =========================================================================
 # Validation & Diff
 # =========================================================================
