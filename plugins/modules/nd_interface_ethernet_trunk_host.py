@@ -49,34 +49,16 @@ options:
         type: list
         elements: str
         required: true
-      interface_type:
-        description:
-        - The type of the interface.
-        - Defaults to C(ethernet) for this module.
-        type: str
-        default: ethernet
       config_data:
         description:
         - The configuration data shared by all interfaces in O(config[].interface_names), following the ND API structure.
         type: dict
         suboptions:
-          mode:
-            description:
-            - The interface operational mode.
-            - Defaults to C(trunk) for this module. The ND API uses this as a discriminator
-              to select the trunkHost interface configuration schema.
-            type: str
-            default: trunk
           network_os:
             description:
             - Network OS specific configuration.
             type: dict
             suboptions:
-              network_os_type:
-                description:
-                - The network OS type of the switch.
-                type: str
-                default: nx-os
               policy:
                 description:
                 - The policy configuration for the trunkHost interface.
@@ -321,7 +303,7 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS ethernet trunkHost interfaces only.
+- This module manages NX-OS ethernet trunkHost interfaces only (interface_type C(ethernet), mode C(trunk), network_os_type C(nx-os), policy_type C(trunkHost)). These values are hardcoded by the module and are not user-configurable.
 - Interfaces that are port-channel members have restricted mutability.
 """
 

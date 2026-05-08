@@ -229,7 +229,7 @@ class EthernetTrunkHostPolicyModel(NDNestedModel):
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
     orphan_port: bool | None = Field(default=None, alias="orphanPort", description="Enable vPC orphan port")
     pfc: bool | None = Field(default=None, alias="pfc", description="Enable priority flow control")
-    policy_type: TrunkHostPolicyTypeEnum = Field(default=TrunkHostPolicyTypeEnum.TRUNK_HOST, alias="policyType", description="Interface policy type")
+    policy_type: TrunkHostPolicyTypeEnum = Field(default=TrunkHostPolicyTypeEnum.TRUNK_HOST, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)")
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Enable spanning-tree edge port behavior")
     qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
     qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
@@ -298,7 +298,7 @@ class EthernetTrunkHostNetworkOSModel(NDNestedModel):
     None
     """
 
-    network_os_type: str = Field(default="nx-os", alias="networkOSType")
+    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
     policy: EthernetTrunkHostPolicyModel | None = Field(default=None, alias="policy")
 
 
@@ -313,7 +313,7 @@ class EthernetTrunkHostConfigDataModel(NDNestedModel):
     None
     """
 
-    mode: str = Field(default="trunk", alias="mode")
+    mode: Literal["trunk"] = Field(default="trunk", alias="mode", frozen=True)
     network_os: EthernetTrunkHostNetworkOSModel = Field(alias="networkOS")
 
 
@@ -344,7 +344,7 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
 
     switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
-    interface_type: str = Field(default="ethernet", alias="interfaceType")
+    interface_type: Literal["ethernet"] = Field(default="ethernet", alias="interfaceType", frozen=True)
     config_data: EthernetTrunkHostConfigDataModel | None = Field(default=None, alias="configData")
 
     @field_validator("interface_name", mode="before")
@@ -385,15 +385,12 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
                 options=dict(
                     switch_ip=dict(type="str", required=True),
                     interface_names=dict(type="list", elements="str", required=True),
-                    interface_type=dict(type="str", default="ethernet"),
                     config_data=dict(
                         type="dict",
                         options=dict(
-                            mode=dict(type="str", default="trunk"),
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", default="nx-os"),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
