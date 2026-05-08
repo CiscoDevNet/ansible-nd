@@ -90,7 +90,7 @@ class PortChannelAccessPolicyModel(NDNestedModel):
     netflow_monitor: str | None = Field(default=None, alias="netflowMonitor", description="Layer 2 Netflow monitor name")
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
     policy_type: AccessPoHostPolicyTypeEnum = Field(
-        default=AccessPoHostPolicyTypeEnum.ACCESS_PO_HOST, alias="policyType", description="Interface policy type"
+        default=AccessPoHostPolicyTypeEnum.ACCESS_PO_HOST, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)"
     )
     port_channel_mode: PortChannelModeEnum | None = Field(default=None, alias="portChannelMode", description="Port-channel mode (on/active/passive)")
     ports: list[str] | None = Field(default=None, alias="ports", description="Member interface names (e.g. ['Ethernet1/1', 'Ethernet1/2'])")
@@ -183,7 +183,7 @@ class PortChannelAccessNetworkOSModel(NDNestedModel):
     None
     """
 
-    network_os_type: str = Field(default="nx-os", alias="networkOSType")
+    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
     policy: PortChannelAccessPolicyModel | None = Field(default=None, alias="policy")
 
 
@@ -198,7 +198,7 @@ class PortChannelAccessConfigDataModel(NDNestedModel):
     None
     """
 
-    mode: str = Field(default="access", alias="mode")
+    mode: Literal["access"] = Field(default="access", alias="mode", frozen=True)
     network_os: PortChannelAccessNetworkOSModel = Field(alias="networkOS")
 
 
@@ -232,7 +232,7 @@ class PortChannelAccessInterfaceModel(NDBaseModel):
 
     switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
-    interface_type: str = Field(default="portChannel", alias="interfaceType")
+    interface_type: Literal["portChannel"] = Field(default="portChannel", alias="interfaceType", frozen=True)
     config_data: PortChannelAccessConfigDataModel | None = Field(default=None, alias="configData")
 
     @field_validator("interface_name", mode="before")
@@ -274,15 +274,12 @@ class PortChannelAccessInterfaceModel(NDBaseModel):
                 options=dict(
                     switch_ip=dict(type="str", required=True),
                     interface_name=dict(type="str", required=True),
-                    interface_type=dict(type="str", default="portChannel"),
                     config_data=dict(
                         type="dict",
                         options=dict(
-                            mode=dict(type="str", default="access"),
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", default="nx-os"),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
