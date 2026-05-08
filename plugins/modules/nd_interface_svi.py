@@ -350,6 +350,27 @@ EXAMPLES = r"""
               mac: "0000.0c07.ac05"
     state: merged
 
+- name: Create an SVI with HSRP configured via extra_config (raw CLI)
+  cisco.nd.nd_interface_svi:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        vlan_ids:
+          - 10
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: 192.0.2.2
+              prefix: 24
+              extra_config: |
+                hsrp 1
+                  preempt
+                  priority 110
+                  authentication md5 key-chain hsrp-keys
+                  track 1 decrement 20
+    state: merged
+
 - name: Create an SVI with DHCP relay servers
   cisco.nd.nd_interface_svi:
     fabric_name: my_fabric
