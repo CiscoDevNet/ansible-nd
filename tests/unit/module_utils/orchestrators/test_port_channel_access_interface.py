@@ -199,7 +199,6 @@ def test_port_channel_access_orchestrator_00400() -> None:
 
     def responses():
         yield responses_pc_access("test_query_all_happy_path_00400a")
-        yield responses_pc_access("test_query_all_happy_path_00400_freeze")
         yield responses_pc_access("test_query_all_happy_path_00400b")
         yield responses_pc_access("test_query_all_happy_path_00400c")
         yield responses_pc_access("test_query_all_happy_path_00400d")
@@ -247,7 +246,6 @@ def test_port_channel_access_orchestrator_00410() -> None:
 
     def responses():
         yield responses_pc_access("test_query_all_no_match_00410a")
-        yield responses_pc_access("test_query_all_no_match_00410_freeze")
         yield responses_pc_access("test_query_all_no_match_00410b")
         yield responses_pc_access("test_query_all_no_match_00410c")
 
@@ -306,7 +304,6 @@ def test_port_channel_access_orchestrator_00430() -> None:
 
     def responses():
         yield responses_pc_access("test_query_all_switch_404_00430a")
-        yield responses_pc_access("test_query_all_switch_404_00430_freeze")
         yield responses_pc_access("test_query_all_switch_404_00430b")
         yield responses_pc_access("test_query_all_switch_404_00430c")
 
