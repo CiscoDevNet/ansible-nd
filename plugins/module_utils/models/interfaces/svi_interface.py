@@ -14,13 +14,13 @@ wrapping or flattening.
 
 - `SviInterfaceModel` (top-level, `NDBaseModel`)
     - `interface_name` (identifier, e.g. `vlan333`)
-    - `interface_type` (default: "svi")
+    - `interface_type` (hardcoded: "svi")
     - `config_data` -> `SviConfigDataModel`
-        - `mode` (default: "managed")
+        - `mode` (hardcoded: "managed")
         - `network_os` -> `SviNetworkOSModel`
-            - `network_os_type` (default: "nx-os")
+            - `network_os_type` (hardcoded: "nx-os")
             - `policy` -> `SviPolicyModel`
-                - `policy_type` (default: "svi"), `admin_state`, `ip`, `prefix`, HSRP block, DHCP relay, etc.
+                - `policy_type` (hardcoded: SviPolicyTypeEnum.SVI), `admin_state`, `ip`, `prefix`, HSRP block, DHCP relay, etc.
     - `oper_data` -> `SviOperDataModel` (read-only, returned on GET, excluded from payload)
 
 ## Field set
@@ -140,7 +140,7 @@ class SviNetworkOSModel(NDNestedModel):
     None
     """
 
-    network_os_type: str = Field(default="nx-os", alias="networkOSType")
+    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType")
     policy: SviPolicyModel | None = Field(default=None, alias="policy")
 
 
@@ -156,7 +156,7 @@ class SviConfigDataModel(NDNestedModel):
     None
     """
 
-    mode: str = Field(default="managed", alias="mode")
+    mode: Literal["managed"] = Field(default="managed", alias="mode")
     network_os: SviNetworkOSModel = Field(alias="networkOS")
 
 
@@ -210,7 +210,7 @@ class SviInterfaceModel(NDBaseModel):
 
     switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
-    interface_type: str = Field(default="svi", alias="interfaceType")
+    interface_type: Literal["svi"] = Field(default="svi", alias="interfaceType")
     config_data: SviConfigDataModel | None = Field(default=None, alias="configData")
     oper_data: SviOperDataModel | None = Field(default=None, alias="operData")
 
@@ -263,15 +263,12 @@ class SviInterfaceModel(NDBaseModel):
                 options=dict(
                     switch_ip=dict(type="str", required=True),
                     interface_name=dict(type="str", required=True),
-                    interface_type=dict(type="str", default="svi"),
                     config_data=dict(
                         type="dict",
                         options=dict(
-                            mode=dict(type="str", default="managed"),
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", default="nx-os"),
                                     policy=dict(
                                         type="dict",
                                         options=dict(

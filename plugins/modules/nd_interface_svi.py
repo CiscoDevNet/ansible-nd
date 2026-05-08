@@ -46,34 +46,16 @@ options:
         - Each SVI is L3 and must have its own item with its own L3 settings (IP, VRF, HSRP, ...).
         type: str
         required: true
-      interface_type:
-        description:
-        - The type of the interface.
-        - Defaults to C(svi) for this module.
-        type: str
-        default: svi
       config_data:
         description:
         - The configuration data for this SVI, following the ND API structure.
         type: dict
         suboptions:
-          mode:
-            description:
-            - The interface operational mode.
-            - Defaults to C(managed) for SVIs. The ND API uses this as a discriminator
-              to select the SVI configuration schema.
-            type: str
-            default: managed
           network_os:
             description:
             - Network OS specific configuration.
             type: dict
             suboptions:
-              network_os_type:
-                description:
-                - The network OS type of the switch.
-                type: str
-                default: nx-os
               policy:
                 description:
                 - The policy configuration for the SVI.
@@ -251,8 +233,8 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS SVI interfaces with C(policyType: svi) only.
-- Other SVI policy types (e.g. C(policyType: vpcBackupSvi) for fabric/underlay SVIs with OSPF, ISIS, BFD, and
+- This module manages NX-OS SVI interfaces only (interface_type C(svi), mode C(managed), network_os_type C(nx-os), policy_type C(svi)). These values are hardcoded by the module and are not user-configurable.
+- Other SVI policy types (e.g. policyType C(vpcBackupSvi) for fabric/underlay SVIs with OSPF, ISIS, BFD, and
   replication-mode options) are not yet exposed and will be added as separate variants in a follow-up release.
 """
 

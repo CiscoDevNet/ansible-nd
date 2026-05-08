@@ -951,7 +951,11 @@ def test_svi_interface_01100():
     assert config_options["switch_ip"]["required"] is True
     assert config_options["interface_name"]["type"] == "str"
     assert config_options["interface_name"]["required"] is True
-    assert config_options["interface_type"]["default"] == "svi"
+    # interface_type, mode, and network_os_type are hardcoded in the Pydantic model
+    # and intentionally absent from the user-facing argument spec.
+    assert "interface_type" not in config_options
+    assert "mode" not in config_options["config_data"]["options"]
+    assert "network_os_type" not in config_options["config_data"]["options"]["network_os"]["options"]
 
     policy_options = config_options["config_data"]["options"]["network_os"]["options"]["policy"]["options"]
     expected_policy_fields = {
