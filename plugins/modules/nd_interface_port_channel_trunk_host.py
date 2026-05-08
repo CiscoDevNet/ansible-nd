@@ -49,34 +49,16 @@ options:
         - The port-channel interface name (e.g. C(port-channel501)).
         type: str
         required: true
-      interface_type:
-        description:
-        - The type of the interface.
-        - Defaults to C(portChannel) for this module.
-        type: str
-        default: portChannel
       config_data:
         description:
         - The configuration data for the port-channel, following the ND API structure.
         type: dict
         suboptions:
-          mode:
-            description:
-            - The interface operational mode.
-            - Defaults to C(trunk) for this module. The ND API uses this as a discriminator
-              to select the trunk-mode port-channel configuration schema.
-            type: str
-            default: trunk
           network_os:
             description:
             - Network OS specific configuration.
             type: dict
             suboptions:
-              network_os_type:
-                description:
-                - The network OS type of the switch.
-                type: str
-                default: nx-os
               policy:
                 description:
                 - The policy configuration for the trunkPoHost port-channel.
@@ -324,7 +306,7 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS port-channel trunkPoHost interfaces only.
+- This module manages NX-OS port-channel trunkPoHost interfaces only (interface_type C(portChannel), mode C(trunk), network_os_type C(nx-os), policy_type C(trunkPoHost)). These values are hardcoded by the module and are not user-configurable.
 - The port-channel policy is the source of truth for member interface configuration.
 """
 
