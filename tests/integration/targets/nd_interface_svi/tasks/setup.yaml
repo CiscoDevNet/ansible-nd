@@ -12,9 +12,7 @@
   cisco.nd.nd_interface_svi:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids: "{{ cleanup_vlan_ids }}"
+    config: "{{ cleanup_config }}"
     state: deleted
   register: setup_cleanup
   tags: always

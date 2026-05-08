@@ -20,8 +20,7 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 333
+        interface_name: vlan333
         config_data:
           network_os:
             policy:
@@ -30,8 +29,7 @@
               ip: 10.99.200.1
               prefix: 24
       - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 334
+        interface_name: vlan334
         config_data:
           network_os:
             policy:
@@ -96,8 +94,7 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 333
+        interface_name: vlan333
         config_data:
           network_os:
             policy:
@@ -106,8 +103,7 @@
               ip: 10.99.200.1
               prefix: 24
       - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 334
+        interface_name: vlan334
         config_data:
           network_os:
             policy:
@@ -116,8 +112,7 @@
               ip: 10.99.201.1
               prefix: 24
       - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 335
+        interface_name: vlan335
         config_data:
           network_os:
             policy:

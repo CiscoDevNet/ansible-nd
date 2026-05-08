@@ -14,8 +14,8 @@ short_description: Manage SVI (switched virtual) interfaces on Cisco Nexus Dashb
 description:
 - Manage SVI interfaces on Cisco Nexus Dashboard.
 - It supports creating, updating, querying, and deleting SVI interface configurations on switches within a fabric.
-- Multiple SVIs can share the same configuration via the O(config[].vlan_ids) list.
-- The interface name is derived from O(config[].vlan_ids) as C(vlan<id>) (e.g. V(333) -> C(vlan333)).
+- Each config item targets a single SVI identified by O(config[].interface_name) (e.g. C(vlan333)).
+- Configure multiple SVIs in one task by listing multiple config items.
 author:
 - Allen Robel (@allenrobel)
 options:
@@ -26,9 +26,9 @@ options:
     required: true
   config:
     description:
-    - The list of SVI interface groups to configure.
-    - Each item specifies the target switch, a list of VLAN IDs, and a shared configuration.
-    - Multiple switches can be configured in a single task.
+    - The list of SVI interfaces to configure.
+    - Each item specifies the target switch, the interface name, and the policy configuration.
+    - Multiple SVIs and multiple switches can be configured in a single task by listing additional items.
     - The structure mirrors the ND Manage Interfaces API payload.
     type: list
     elements: dict
@@ -36,16 +36,15 @@ options:
     suboptions:
       switch_ip:
         description:
-        - The management IP address of the switch on which to manage the SVI interfaces.
+        - The management IP address of the switch on which to manage the SVI interface.
         - This is resolved to the switch serial number (switchId) internally.
         type: str
         required: true
-      vlan_ids:
+      interface_name:
         description:
-        - The list of VLAN IDs for which to manage SVI interfaces.
-        - Each ID is expanded into a separate interface named C(vlan<id>).
-        type: list
-        elements: int
+        - The name of the SVI interface, in the form C(vlan<id>) (e.g. C(vlan333)).
+        - Each SVI is L3 and must have its own item with its own L3 settings (IP, VRF, HSRP, ...).
+        type: str
         required: true
       interface_type:
         description:
@@ -55,7 +54,7 @@ options:
         default: svi
       config_data:
         description:
-        - The configuration data shared by all SVIs in O(config[].vlan_ids), following the ND API structure.
+        - The configuration data for this SVI, following the ND API structure.
         type: dict
         suboptions:
           mode:
@@ -258,22 +257,37 @@ notes:
 """
 
 EXAMPLES = r"""
-- name: Create three SVI interfaces with the same configuration
+- name: Create three SVI interfaces, each with its own L3 settings
   cisco.nd.nd_interface_svi:
     fabric_name: my_fabric
     config:
       - switch_ip: 192.168.1.1
-        vlan_ids:
-          - 333
-          - 334
-          - 335
+        interface_name: vlan333
         config_data:
           network_os:
             policy:
               admin_state: true
               ip: 10.99.99.1
               prefix: 24
-              description: Tenant SVI
+              description: Tenant SVI 333
+      - switch_ip: 192.168.1.1
+        interface_name: vlan334
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: 10.99.100.1
+              prefix: 24
+              description: Tenant SVI 334
+      - switch_ip: 192.168.1.1
+        interface_name: vlan335
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              ip: 10.99.101.1
+              prefix: 24
+              description: Tenant SVI 335
     state: merged
   register: result
 
@@ -282,8 +296,7 @@ EXAMPLES = r"""
     fabric_name: my_fabric
     config:
       - switch_ip: 192.168.1.1
-        vlan_ids:
-          - 333
+        interface_name: vlan333
         config_data:
           network_os:
             policy:
@@ -291,8 +304,7 @@ EXAMPLES = r"""
               ip: 10.99.99.1
               prefix: 24
       - switch_ip: 192.168.1.2
-        vlan_ids:
-          - 333
+        interface_name: vlan333
         config_data:
           network_os:
             policy:
@@ -306,9 +318,9 @@ EXAMPLES = r"""
     fabric_name: my_fabric
     config:
       - switch_ip: 192.168.1.1
-        vlan_ids:
-          - 333
-          - 334
+        interface_name: vlan333
+      - switch_ip: 192.168.1.1
+        interface_name: vlan334
     state: deleted
 
 - name: Stage SVI changes without deploying (for batching)
@@ -316,8 +328,7 @@ EXAMPLES = r"""
     fabric_name: my_fabric
     config:
       - switch_ip: 192.168.1.1
-        vlan_ids:
-          - 333
+        interface_name: vlan333
         config_data:
           network_os:
             policy:
@@ -332,8 +343,7 @@ EXAMPLES = r"""
     fabric_name: my_fabric
     config:
       - switch_ip: 192.168.1.1
-        vlan_ids:
-          - 500
+        interface_name: vlan500
         config_data:
           network_os:
             policy:
@@ -355,8 +365,7 @@ EXAMPLES = r"""
     fabric_name: my_fabric
     config:
       - switch_ip: 192.168.1.1
-        vlan_ids:
-          - 10
+        interface_name: vlan10
         config_data:
           network_os:
             policy:
@@ -376,8 +385,7 @@ EXAMPLES = r"""
     fabric_name: my_fabric
     config:
       - switch_ip: 192.168.1.1
-        vlan_ids:
-          - 600
+        interface_name: vlan600
         config_data:
           network_os:
             policy:
@@ -396,7 +404,6 @@ EXAMPLES = r"""
 RETURN = r"""
 """
 
-import copy
 import logging
 import traceback
 
@@ -411,35 +418,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interf
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.svi_interface import SviInterfaceOrchestrator
 
 
-def expand_config(config_list):
-    """
-    # Summary
-
-    Expand grouped config items (with `vlan_ids` list) into flat config items (with singular `interface_name`). Each
-    group produces one flat item per VLAN ID, all sharing the same `config_data` and `switch_ip`. The `interface_name`
-    is set to `vlan<id>` (lowercase, matching the ND API convention).
-
-    ## Raises
-
-    None
-    """
-    expanded = []
-    for group in config_list:
-        vlan_ids = group.get("vlan_ids", []) or []
-        for vlan_id in vlan_ids:
-            item = copy.deepcopy(group)
-            item.pop("vlan_ids", None)
-            item["interface_name"] = f"vlan{vlan_id}"
-            expanded.append(item)
-    return expanded
-
-
 def main():
     """
     # Summary
 
-    Entry point for the `nd_interface_svi` Ansible module. Expands grouped config items, initializes the
-    `NDStateMachine` with `SviInterfaceOrchestrator`, and executes the requested state operation.
+    Entry point for the `nd_interface_svi` Ansible module. Initializes the `NDStateMachine` with
+    `SviInterfaceOrchestrator` and executes the requested state operation.
 
     ## Raises
 
@@ -458,11 +442,8 @@ def main():
     require_pydantic(module)
     setup_logging(module)
     module_log = logging.getLogger("nd.nd_interface_svi")
-
-    # Expand grouped config (vlan_ids list) into flat config items (interface_name singular)
-    module.params["config"] = expand_config(module.params["config"])
     module_log.debug(
-        "expand_config done items=%d switches=%d",
+        "config items=%d switches=%d",
         len(module.params["config"]),
         len({item.get("switch_ip") for item in module.params["config"]}),
     )

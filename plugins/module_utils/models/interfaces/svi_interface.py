@@ -246,9 +246,9 @@ class SviInterfaceModel(NDBaseModel):
 
         Return the Ansible argument spec for the `nd_interface_svi` module.
 
-        The module accepts `vlan_ids` (a list of integer VLAN IDs) which the module entry point expands into one flat
-        config item per ID (with `interface_name` set to `vlan<id>`). This mirrors the `interface_names` expansion in
-        the ethernet modules.
+        Each config item targets a single SVI identified by `interface_name` (e.g. `vlan333`). To configure multiple SVIs
+        in one task, list multiple config items. Per-SVI L3 settings (ip, hsrp_*, vrf_interface, ...) live under
+        `config_data.network_os.policy` and apply to that one interface only.
 
         ## Raises
 
@@ -262,7 +262,7 @@ class SviInterfaceModel(NDBaseModel):
                 required=True,
                 options=dict(
                     switch_ip=dict(type="str", required=True),
-                    vlan_ids=dict(type="list", elements="int", required=True),
+                    interface_name=dict(type="str", required=True),
                     interface_type=dict(type="str", default="svi"),
                     config_data=dict(
                         type="dict",

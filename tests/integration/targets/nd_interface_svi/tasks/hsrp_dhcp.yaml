@@ -12,9 +12,9 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 500
-          - 501
+        interface_name: vlan500
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: vlan501
     state: deleted
   register: setup_cleanup_hsrp
   tags: always
@@ -120,8 +120,8 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 500
-          - 501
+        interface_name: vlan500
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: vlan501
     state: deleted
   tags: always

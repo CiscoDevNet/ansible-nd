@@ -16,8 +16,7 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 333
+        interface_name: vlan333
         config_data:
           network_os:
             policy:
@@ -52,44 +51,51 @@
     that:
       - nm_replaced_333_idem is not changed
 
-# --- REPLACED: FAN-OUT ---
+# --- REPLACED: MULTIPLE SVIs IN ONE TASK ---
 
-- name: "REPLACED: Replace vlan334 and vlan335 via fan-out (normal mode)"
+- name: "REPLACED: Replace vlan334 and vlan335 in one task (normal mode)"
   cisco.nd.nd_interface_svi: &replace_vlan334_335
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 334
-          - 335
+        interface_name: vlan334
         config_data:
           network_os:
             policy:
               admin_state: true
-              description: "Replaced fan-out"
+              description: "Replaced vlan334"
               ip: 10.99.151.1
               prefix: 24
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: vlan335
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              description: "Replaced vlan335"
+              ip: 10.99.152.1
+              prefix: 24
     state: replaced
-  register: nm_replaced_fanout
+  register: nm_replaced_multi
 
-- name: "REPLACED: Verify fan-out replace"
+- name: "REPLACED: Verify multi-SVI replace"
   vars:
-    vlan334_after: "{{ nm_replaced_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan334') | first }}"
-    vlan335_after: "{{ nm_replaced_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan335') | first }}"
+    vlan334_after: "{{ nm_replaced_multi.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan334') | first }}"
+    vlan335_after: "{{ nm_replaced_multi.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan335') | first }}"
   ansible.builtin.assert:
     that:
-      - nm_replaced_fanout is changed
-      - vlan334_after.config_data.network_os.policy.description == "Replaced fan-out"
+      - nm_replaced_multi is changed
+      - vlan334_after.config_data.network_os.policy.description == "Replaced vlan334"
       - vlan334_after.config_data.network_os.policy.ip == "10.99.151.1"
-      - vlan335_after.config_data.network_os.policy.description == "Replaced fan-out"
-      - vlan335_after.config_data.network_os.policy.ip == "10.99.151.1"
+      - vlan335_after.config_data.network_os.policy.description == "Replaced vlan335"
+      - vlan335_after.config_data.network_os.policy.ip == "10.99.152.1"
 
-- name: "REPLACED IDEMPOTENT: Verify fan-out replace idempotency"
+- name: "REPLACED IDEMPOTENT: Re-apply multi-SVI replace"
   cisco.nd.nd_interface_svi: *replace_vlan334_335
-  register: nm_replaced_fanout_idem
+  register: nm_replaced_multi_idem
 
-- name: "REPLACED IDEMPOTENT: Verify fan-out idempotency"
+- name: "REPLACED IDEMPOTENT: Verify multi-SVI idempotency"
   ansible.builtin.assert:
     that:
-      - nm_replaced_fanout_idem is not changed
+      - nm_replaced_multi_idem is not changed

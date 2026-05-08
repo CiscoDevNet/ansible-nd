@@ -949,9 +949,8 @@ def test_svi_interface_01100():
 
     config_options = spec["config"]["options"]
     assert config_options["switch_ip"]["required"] is True
-    assert config_options["vlan_ids"]["type"] == "list"
-    assert config_options["vlan_ids"]["elements"] == "int"
-    assert config_options["vlan_ids"]["required"] is True
+    assert config_options["interface_name"]["type"] == "str"
+    assert config_options["interface_name"]["required"] is True
     assert config_options["interface_type"]["default"] == "svi"
 
     policy_options = config_options["config_data"]["options"]["network_os"]["options"]["policy"]["options"]

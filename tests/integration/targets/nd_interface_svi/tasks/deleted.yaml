@@ -17,8 +17,7 @@
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 333
+        interface_name: vlan333
     state: deleted
   check_mode: true
   register: cm_deleted_333
@@ -47,33 +46,33 @@
     that:
       - nm_deleted_333_idem is not changed
 
-# --- DELETED: FAN-OUT DELETE ---
+# --- DELETED: MULTI-SVI DELETE ---
 
-- name: "DELETED FAN-OUT: Delete vlan334 and vlan335 via fan-out (check mode)"
+- name: "DELETED MULTI: Delete vlan334 and vlan335 in one task (check mode)"
   cisco.nd.nd_interface_svi: &delete_vlan334_335
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids:
-          - 334
-          - 335
+        interface_name: vlan334
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: vlan335
     state: deleted
   check_mode: true
-  register: cm_deleted_fanout
+  register: cm_deleted_multi
 
-- name: "DELETED FAN-OUT: Delete vlan334 and vlan335 via fan-out (normal mode)"
+- name: "DELETED MULTI: Delete vlan334 and vlan335 in one task (normal mode)"
   cisco.nd.nd_interface_svi: *delete_vlan334_335
-  register: nm_deleted_fanout
+  register: nm_deleted_multi
 
-- name: "DELETED FAN-OUT: Verify both SVIs removed"
+- name: "DELETED MULTI: Verify both SVIs removed"
   vars:
-    vlan334_after: "{{ nm_deleted_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan334') | list }}"
-    vlan335_after: "{{ nm_deleted_fanout.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan335') | list }}"
+    vlan334_after: "{{ nm_deleted_multi.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan334') | list }}"
+    vlan335_after: "{{ nm_deleted_multi.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'vlan335') | list }}"
   ansible.builtin.assert:
     that:
-      - cm_deleted_fanout is changed
-      - nm_deleted_fanout is changed
+      - cm_deleted_multi is changed
+      - nm_deleted_multi is changed
       - vlan334_after | length == 0
       - vlan335_after | length == 0
 
@@ -83,9 +82,7 @@
   cisco.nd.nd_interface_svi:
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
-    config:
-      - switch_ip: "{{ test_switch_ip }}"
-        vlan_ids: "{{ cleanup_vlan_ids }}"
+    config: "{{ cleanup_config }}"
     state: deleted
   register: nm_deleted_cleanup
 
