@@ -451,20 +451,23 @@ def test_ethernet_access_interface_00420():
     """
     # Summary
 
-    Verify camelCase alias `networkOSType` populates network_os_type.
+    Verify camelCase alias `networkOSType` populates network_os_type, and that the field is locked to `nx-os`.
 
     ## Test
 
-    - Construct with camelCase alias
-    - Python field accessible
+    - Construct with camelCase alias and the only valid value
+    - Construct with a non-nx-os value raises ValidationError (Literal lock)
 
     ## Classes and Methods
 
     - EthernetAccessNetworkOSModel.__init__()
     """
     with does_not_raise():
-        instance = EthernetAccessNetworkOSModel(networkOSType="ios-xe")
-    assert instance.network_os_type == "ios-xe"
+        instance = EthernetAccessNetworkOSModel(networkOSType="nx-os")
+    assert instance.network_os_type == "nx-os"
+
+    with pytest.raises(ValidationError, match="Input should be 'nx-os'"):
+        EthernetAccessNetworkOSModel(networkOSType="ios-xe")
 
 
 # =============================================================================
@@ -1204,8 +1207,13 @@ def test_ethernet_access_interface_01100():
     assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
     assert spec["state"]["default"] == "merged"
 
-    config_data_spec = spec["config"]["options"]["config_data"]["options"]
-    assert config_data_spec["mode"]["default"] == "access"
+    # interface_type, mode, and network_os_type are hardcoded in the Pydantic model
+    # and intentionally absent from the user-facing argument spec.
+    config_options = spec["config"]["options"]
+    assert "interface_type" not in config_options
+    config_data_spec = config_options["config_data"]["options"]
+    assert "mode" not in config_data_spec
+    assert "network_os_type" not in config_data_spec["network_os"]["options"]
     policy_spec = config_data_spec["network_os"]["options"]["policy"]["options"]
     assert "policy_type" not in policy_spec
 

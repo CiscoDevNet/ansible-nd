@@ -84,7 +84,7 @@ class EthernetAccessPolicyModel(NDNestedModel):
     orphan_port: bool | None = Field(default=None, alias="orphanPort", description="Enable vPC orphan port")
     pfc: bool | None = Field(default=None, alias="pfc", description="Enable priority flow control")
     policy_type: AccessHostPolicyTypeEnum = Field(
-        default=AccessHostPolicyTypeEnum.ACCESS_HOST, alias="policyType", description="Interface policy type"
+        default=AccessHostPolicyTypeEnum.ACCESS_HOST, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)"
     )
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Enable spanning-tree edge port behavior")
     qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
@@ -150,7 +150,7 @@ class EthernetAccessNetworkOSModel(NDNestedModel):
     None
     """
 
-    network_os_type: str = Field(default="nx-os", alias="networkOSType")
+    network_os_type: Literal["nx-os"] = Field(default="nx-os", alias="networkOSType", frozen=True)
     policy: EthernetAccessPolicyModel | None = Field(default=None, alias="policy")
 
 
@@ -165,7 +165,7 @@ class EthernetAccessConfigDataModel(NDNestedModel):
     None
     """
 
-    mode: str = Field(default="access", alias="mode")
+    mode: Literal["access"] = Field(default="access", alias="mode", frozen=True)
     network_os: EthernetAccessNetworkOSModel = Field(alias="networkOS")
 
 
@@ -196,7 +196,7 @@ class EthernetAccessInterfaceModel(NDBaseModel):
 
     switch_ip: str = Field(alias="switchIp")
     interface_name: str = Field(alias="interfaceName")
-    interface_type: str = Field(default="ethernet", alias="interfaceType")
+    interface_type: Literal["ethernet"] = Field(default="ethernet", alias="interfaceType", frozen=True)
     config_data: EthernetAccessConfigDataModel | None = Field(default=None, alias="configData")
 
     @field_validator("interface_name", mode="before")
@@ -237,15 +237,12 @@ class EthernetAccessInterfaceModel(NDBaseModel):
                 options=dict(
                     switch_ip=dict(type="str", required=True),
                     interface_names=dict(type="list", elements="str", required=True),
-                    interface_type=dict(type="str", default="ethernet"),
                     config_data=dict(
                         type="dict",
                         options=dict(
-                            mode=dict(type="str", default="access"),
                             network_os=dict(
                                 type="dict",
                                 options=dict(
-                                    network_os_type=dict(type="str", default="nx-os"),
                                     policy=dict(
                                         type="dict",
                                         options=dict(
