@@ -234,7 +234,7 @@ class RestSend:
         self.log.debug(msg)
 
         try:
-            if self.check_mode is True:
+            if self.check_mode is True and self.verb != HttpVerbEnum.GET:
                 self._commit_check_mode()
             else:
                 self._commit_normal_mode()
@@ -292,6 +292,7 @@ class RestSend:
             self._response.append(self.response_current)
             self._result.append(self.result_current)
             self._committed_payload = copy.deepcopy(self._payload)
+            self._payload = None
         except (TypeError, ValueError) as error:
             msg = f"{self.class_name}.{method_name}: "
             msg += "Error building response/result. "
@@ -319,8 +320,7 @@ class RestSend:
 
         self.sender.path = self.path
         self.sender.verb = self.verb
-        if self.payload is not None:
-            self.sender.payload = self.payload
+        self.sender.payload = self.payload
         success = False
         while timeout > 0 and success is False:
             msg = f"{self.class_name}.{method_name}: "
@@ -372,6 +372,47 @@ class RestSend:
         self._result.append(self.result_current)
         self._committed_payload = copy.deepcopy(self._payload)
         self._payload = None
+
+    @property
+    def success(self) -> bool:
+        """
+        # Summary
+
+        Whether the most recent commit was successful.
+
+        ## Raises
+
+        None
+        """
+        return self._result_current.get("success", False)
+
+    @property
+    def return_code(self) -> int:
+        """
+        # Summary
+
+        The HTTP return code from the most recent commit.
+
+        ## Raises
+
+        None
+        """
+        return self._response_current.get("RETURN_CODE", -1)
+
+    @property
+    def error_summary(self) -> str:
+        """
+        # Summary
+
+        A short error string combining the return code and message from the most recent commit.
+
+        ## Raises
+
+        None
+        """
+        code = self._response_current.get("RETURN_CODE", -1)
+        msg = self._response_current.get("MESSAGE", "Unknown error")
+        return f"({code}): {msg}"
 
     @property
     def check_mode(self) -> bool:
