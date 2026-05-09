@@ -55,7 +55,9 @@ class LoopbackPolicyModel(NDNestedModel):
     route_map_tag: str | None = Field(default=None, alias="routeMapTag", description="Route-Map tag associated with interface IP")
     description: AsciiDescription = Field(default=None, alias="description", min_length=1, max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    policy_type: Literal["loopback"] = Field(default="loopback", alias="policyType", frozen=True, description="Loopback policy template (hardcoded for this module)")
+    policy_type: Literal["loopback"] = Field(
+        default="loopback", alias="policyType", frozen=True, description="Loopback policy template (hardcoded for this module)"
+    )
 
     # --- Validators ---
 
