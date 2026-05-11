@@ -61,8 +61,8 @@ class LoopbackPolicyModel(NDNestedModel):
 
     # --- Validators ---
 
-    # TODO(ND 4.3): Remove this coercion once the ND 4.3 GET-side type drift is fixed.
-    # ND 4.2 returns `routeMapTag` as an integer even though the template defines it as a string.
+    # TODO(4.2.1): Remove coerce_route_map_tag once GET-side type drift is fixed.
+    # ND 4.2.1 returns `routeMapTag` as an integer even though the template defines it as a string.
     # The same drift affects SVI `routingTag` - keep both validators in sync.
     @field_validator("route_map_tag", mode="before")
     @classmethod
