@@ -16,11 +16,15 @@ with interface-type-specific payload construction and query filtering.
 
 from __future__ import annotations
 
+from collections import defaultdict
+from typing import ClassVar, Iterable
+
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
     EpManageInterfacesRemove,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
+from ansible_collections.cisco.nd.plugins.module_utils.interface_capability_preflight import InterfaceCapabilityPreflight
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import ModelType, NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
@@ -50,7 +54,12 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
     deploy: bool = True
 
+    # Subclasses override to enable capability preflight (e.g. `interface_type: ClassVar[str] = "loopback"`).
+    # An empty string opts out — used by interface types with no capability endpoint (e.g. future breakout).
+    interface_type: ClassVar[str] = ""
+
     _fabric_context: FabricContext | None = None
+    _capability_preflight: InterfaceCapabilityPreflight | None = None
 
     def model_post_init(self, __context) -> None:
         """
@@ -107,6 +116,78 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         - If no switch matches the given IP in the fabric.
         """
         return self.fabric_context.get_switch_id(switch_ip)
+
+    @property
+    def capability_preflight(self) -> InterfaceCapabilityPreflight:
+        """
+        # Summary
+
+        Return a lazily-initialized `InterfaceCapabilityPreflight` for this orchestrator's fabric. Shares the orchestrator's
+        `FabricContext` so error messages for incapable switches are enriched with `switch_ip`.
+
+        ## Raises
+
+        None
+        """
+        if self._capability_preflight is None:
+            self._capability_preflight = InterfaceCapabilityPreflight(
+                rest_send=self.rest_send,
+                fabric_name=self.fabric_name,
+                fabric_context=self.fabric_context,
+            )
+        return self._capability_preflight
+
+    def _resolve_mode(self, model_instance: ModelType) -> str:
+        """
+        # Summary
+
+        Return the `mode` string for a model instance, used to key the capability preflight cache. Defaults to
+        `model_instance.mode`. Subclasses override only when the model has no `mode` attribute or the mapping is non-trivial.
+
+        ## Raises
+
+        ### AttributeError
+
+        - If the model has no `mode` attribute and the subclass has not overridden this method.
+        """
+        return getattr(model_instance, "mode")
+
+    def validate_switches_capable(self, model_instances: Iterable[ModelType]) -> None:
+        """
+        # Summary
+
+        Pre-flight the set of target switches against the ND `capableSwitches` endpoint for this orchestrator's
+        `interface_type` and the per-instance `mode`. Groups instances by `(interface_type, mode)` so a single GET covers
+        all instances sharing the same pair. On failure, raises a single aggregate `RuntimeError` naming every offending
+        switch across all groups.
+
+        When `interface_type` is `""` (default on the base class) this method is a no-op — subclasses opt in by setting
+        the `ClassVar`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If one or more switches are not capable of hosting the requested `(interface_type, mode)` pair.
+        - If no switch matches a given `switch_ip` in the fabric.
+        - If the underlying capability GET request fails.
+        """
+        if not self.interface_type:
+            return
+        groups: dict[tuple[str, str], set[str]] = defaultdict(set)
+        for model_instance in model_instances:
+            mode = self._resolve_mode(model_instance)
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            groups[(self.interface_type, mode)].add(switch_id)
+
+        errors: list[str] = []
+        for (interface_type, mode), switch_ids in groups.items():
+            try:
+                self.capability_preflight.validate(interface_type, mode, switch_ids)
+            except RuntimeError as e:
+                errors.append(str(e))
+        if errors:
+            raise RuntimeError(" | ".join(errors))
 
     def validate_prerequisites(self) -> None:
         """

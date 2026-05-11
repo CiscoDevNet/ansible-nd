@@ -174,6 +174,7 @@ def test_loopback_interface_00100() -> None:
     def responses():
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -219,6 +220,7 @@ def test_loopback_interface_00110() -> None:
     def responses():
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -293,6 +295,7 @@ def test_loopback_interface_00200() -> None:
     def responses():
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -333,6 +336,7 @@ def test_loopback_interface_00210() -> None:
     def responses():
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -453,6 +457,7 @@ def test_loopback_interface_00400() -> None:
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
         yield responses_loopback_interface(f"{method_name}c")
+        yield responses_loopback_interface(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -504,6 +509,7 @@ def test_loopback_interface_00410() -> None:
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
         yield responses_loopback_interface(f"{method_name}c")
+        yield responses_loopback_interface(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -539,6 +545,7 @@ def test_loopback_interface_00420() -> None:
     def responses():
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
+        yield responses_loopback_interface(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -875,6 +882,7 @@ def test_loopback_interface_00800() -> None:
         yield responses_loopback_interface(f"{method_name}a")
         yield responses_loopback_interface(f"{method_name}b")
         yield responses_loopback_interface(f"{method_name}c")
+        yield responses_loopback_interface(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)

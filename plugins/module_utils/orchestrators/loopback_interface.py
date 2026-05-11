@@ -74,6 +74,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     model_class: ClassVar[type[NDBaseModel]] = LoopbackInterfaceModel
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    interface_type: ClassVar[str] = "loopback"
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -82,6 +83,19 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
+
+    def _resolve_mode(self, model_instance: LoopbackInterfaceModel) -> str:
+        """
+        # Summary
+
+        Return the capability-preflight mode for a loopback interface. `LoopbackInterfaceModel` has no top-level `mode`
+        field -- `mode` is hardcoded to `managed` on the nested `LoopbackConfigDataModel` -- so this always returns `managed`.
+
+        ## Raises
+
+        None
+        """
+        return "managed"
 
     def create(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """
@@ -97,6 +111,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         - If the create API request fails.
         """
         try:
+            self.validate_switches_capable([model_instance])
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
             payload = model_instance.to_payload()
@@ -122,6 +137,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         - If the update API request fails.
         """
         try:
+            self.validate_switches_capable([model_instance])
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
@@ -165,6 +181,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
         - If any create API request fails.
         """
         try:
+            self.validate_switches_capable(model_instances)
             groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
             for model_instance in model_instances:
                 switch_id = self._resolve_switch_id(model_instance.switch_ip)

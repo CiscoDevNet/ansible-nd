@@ -1,0 +1,136 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_interface_capability_preflight.py",
+        "Each key matches a test function + suffix (a/b/c/...) per CLAUDE.md unit-test conventions.",
+        "Responses mirror what ND returns for /api/v1/manage/fabrics/{fabric}/capableSwitches?interfaceType=...&mode=...",
+        "Switch record shape: {model, switchId, switchName}. Taxonomy captured from ND 4.2 GUI 2026-05-11."
+    ],
+    "test_interface_capability_preflight_00100a": {
+        "TEST_NOTES": ["capableSwitches for (loopback, managed): two capable switches"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"},
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"}
+            ]
+        }
+    },
+    "test_interface_capability_preflight_00110a": {
+        "TEST_NOTES": ["capableSwitches for (loopback, managed): first fetch, two switches (cache hit test - only one response yielded)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"},
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"}
+            ]
+        }
+    },
+    "test_interface_capability_preflight_00120a": {
+        "TEST_NOTES": ["capableSwitches for (loopback, managed) - first call in 00120 dual-cache test"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"},
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"}
+            ]
+        }
+    },
+    "test_interface_capability_preflight_00120b": {
+        "TEST_NOTES": ["capableSwitches for (ethernet, trunk) - second call in 00120 dual-cache test"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=ethernet&mode=trunk",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C93180YC-EX", "switchId": "FDO12345ABC", "switchName": "LE1"},
+                {"model": "N9K-C93180YC-EX", "switchId": "FDO12345ABD", "switchName": "LE2"},
+                {"model": "N9K-C9504", "switchId": "FDO12345ABE", "switchName": "SP1"}
+            ]
+        }
+    },
+    "test_interface_capability_preflight_00130a": {
+        "TEST_NOTES": ["capableSwitches for (loopback, managed) before invalidate(): one capable switch"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"}
+            ]
+        }
+    },
+    "test_interface_capability_preflight_00130b": {
+        "TEST_NOTES": ["capableSwitches for (loopback, managed) after invalidate(): two capable switches"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"},
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"}
+            ]
+        }
+    },
+    "test_interface_capability_preflight_00200a": {
+        "TEST_NOTES": ["validate success: all requested switch_ids are in the capable set"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"},
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"}
+            ]
+        }
+    },
+    "test_interface_capability_preflight_00210a": {
+        "TEST_NOTES": ["validate failure: one switch_id is not in the capable set; no fabric_context for enrichment"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"}
+            ]
+        }
+    },
+    "test_interface_capability_preflight_00220a": {
+        "TEST_NOTES": ["validate failure with fabric_context enrichment: capableSwitches response (incapable switch FDO99999XYZ not present)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"}
+            ]
+        }
+    },
+    "test_interface_capability_preflight_00220b": {
+        "TEST_NOTES": ["validate failure with fabric_context enrichment: fabric switches list (FDO99999XYZ -> 10.0.0.99)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"},
+                {"fabricManagementIp": "10.0.0.99", "switchId": "FDO99999XYZ"}
+            ]
+        }
+    }
+}

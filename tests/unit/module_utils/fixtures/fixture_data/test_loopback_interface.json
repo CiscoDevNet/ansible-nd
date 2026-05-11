@@ -6,7 +6,8 @@
         "Tests that resolve a switch IP consume one switches-list response first (FabricContext lazy fetch).",
         "Tests that call validate_prerequisites consume one fabric-summary response first.",
         "Switch A: fabricManagementIp=192.168.12.151, switchId=FDO12345ABC.",
-        "Switch B: fabricManagementIp=192.168.12.152, switchId=FDO12345ABD."
+        "Switch B: fabricManagementIp=192.168.12.152, switchId=FDO12345ABD.",
+        "Mutating tests (create/update/create_bulk) consume one capableSwitches response after the switches-list (interface capability preflight)."
     ],
 
     "test_loopback_interface_00100a": {
@@ -22,6 +23,18 @@
         }
     },
     "test_loopback_interface_00100b": {
+        "TEST_NOTES": ["capableSwitches GET (loopback, managed): FDO12345ABC capable"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"}
+            ]
+        }
+    },
+    "test_loopback_interface_00100c": {
         "TEST_NOTES": ["create happy path: POST /interfaces (200)"],
         "RETURN_CODE": 200,
         "METHOD": "POST",
@@ -43,6 +56,18 @@
         }
     },
     "test_loopback_interface_00110b": {
+        "TEST_NOTES": ["capableSwitches GET (loopback, managed): FDO12345ABC capable"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"}
+            ]
+        }
+    },
+    "test_loopback_interface_00110c": {
         "TEST_NOTES": ["create _request failure: POST returns 500"],
         "RETURN_CODE": 500,
         "METHOD": "POST",
@@ -77,6 +102,18 @@
         }
     },
     "test_loopback_interface_00200b": {
+        "TEST_NOTES": ["capableSwitches GET (loopback, managed): FDO12345ABC capable"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"}
+            ]
+        }
+    },
+    "test_loopback_interface_00200c": {
         "TEST_NOTES": ["update happy path: PUT /interfaces/loopback10"],
         "RETURN_CODE": 200,
         "METHOD": "PUT",
@@ -98,6 +135,18 @@
         }
     },
     "test_loopback_interface_00210b": {
+        "TEST_NOTES": ["capableSwitches GET (loopback, managed): FDO12345ABC capable"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"}
+            ]
+        }
+    },
+    "test_loopback_interface_00210c": {
         "TEST_NOTES": ["update _request failure: PUT returns 500"],
         "RETURN_CODE": 500,
         "METHOD": "PUT",
@@ -146,6 +195,19 @@
         }
     },
     "test_loopback_interface_00400b": {
+        "TEST_NOTES": ["capableSwitches GET (loopback, managed): FDO12345ABC, FDO12345ABD capable"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"},
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"}
+            ]
+        }
+    },
+    "test_loopback_interface_00400c": {
         "TEST_NOTES": ["create_bulk: POST switch A (loopback10+loopback11)"],
         "RETURN_CODE": 200,
         "METHOD": "POST",
@@ -153,7 +215,7 @@
         "MESSAGE": "OK",
         "DATA": {"status": "ok"}
     },
-    "test_loopback_interface_00400c": {
+    "test_loopback_interface_00400d": {
         "TEST_NOTES": ["create_bulk: POST switch B (loopback20)"],
         "RETURN_CODE": 200,
         "METHOD": "POST",
@@ -176,6 +238,19 @@
         }
     },
     "test_loopback_interface_00410b": {
+        "TEST_NOTES": ["capableSwitches GET (loopback, managed): FDO12345ABC, FDO12345ABD capable"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"},
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"}
+            ]
+        }
+    },
+    "test_loopback_interface_00410c": {
         "TEST_NOTES": ["create_bulk failure: POST switch A succeeds"],
         "RETURN_CODE": 200,
         "METHOD": "POST",
@@ -183,7 +258,7 @@
         "MESSAGE": "OK",
         "DATA": {"status": "ok"}
     },
-    "test_loopback_interface_00410c": {
+    "test_loopback_interface_00410d": {
         "TEST_NOTES": ["create_bulk failure: POST switch B fails"],
         "RETURN_CODE": 500,
         "METHOD": "POST",
@@ -205,6 +280,18 @@
         }
     },
     "test_loopback_interface_00420b": {
+        "TEST_NOTES": ["capableSwitches GET (loopback, managed): FDO12345ABC capable"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"}
+            ]
+        }
+    },
+    "test_loopback_interface_00420c": {
         "TEST_NOTES": ["create_bulk single: POST switch A (loopback10)"],
         "RETURN_CODE": 200,
         "METHOD": "POST",
@@ -481,6 +568,18 @@
         }
     },
     "test_loopback_interface_00800b": {
+        "TEST_NOTES": ["capableSwitches GET (loopback, managed): FDO12345ABC capable"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"}
+            ]
+        }
+    },
+    "test_loopback_interface_00800c": {
         "TEST_NOTES": ["deploy queue de-dup: first POST"],
         "RETURN_CODE": 200,
         "METHOD": "POST",
@@ -488,7 +587,7 @@
         "MESSAGE": "OK",
         "DATA": {"status": "ok"}
     },
-    "test_loopback_interface_00800c": {
+    "test_loopback_interface_00800d": {
         "TEST_NOTES": ["deploy queue de-dup: second POST (same identifier — should NOT add a second queue entry)"],
         "RETURN_CODE": 200,
         "METHOD": "POST",
