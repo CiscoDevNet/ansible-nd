@@ -21,7 +21,7 @@ stable for the lifetime of ND 4.2.x. See GitHub issue #273 for context and risk 
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -60,12 +60,12 @@ class CapableSwitchesEndpointParams(EndpointQueryParams):
     None
     """
 
-    interface_type: Optional[str] = Field(
+    interface_type: str | None = Field(
         default=None,
         min_length=1,
         description="Interface type (e.g. loopback, ethernet, portChannel, svi, tunnel). Sent as interfaceType.",
     )
-    mode: Optional[str] = Field(
+    mode: str | None = Field(
         default=None,
         min_length=1,
         description="Interface mode (e.g. managed, trunk, access, routed).",
