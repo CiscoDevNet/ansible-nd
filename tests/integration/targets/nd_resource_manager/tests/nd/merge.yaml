@@ -56,8 +56,7 @@
 - name: Assert conditions
   ansible.builtin.assert:
     that:
-      - 'item["RETURN_CODE"] == 200'
-  loop: '{{ result.response }}'
+      - result.response | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
 
 - block:
 
