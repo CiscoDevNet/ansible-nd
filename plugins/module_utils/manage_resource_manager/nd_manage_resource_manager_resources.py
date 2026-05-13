@@ -284,7 +284,9 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 ep.path,
                 self.state,
             )
-            raise ValueError(f"_get_all_resources: GET resources API call failed after {api_elapsed:.3f} second(s) (path={ep.path}, state={self.state})") from exc
+            raise ValueError(
+                f"_get_all_resources: GET resources API call failed after {api_elapsed:.3f} second(s) (path={ep.path}, state={self.state})"
+            ) from exc
         except Exception:
             self.log.exception(
                 "_get_all_resources: GET resources API call failed after %.3f second(s) (path=%s, state=%s)",
@@ -292,7 +294,9 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 ep.path,
                 self.state,
             )
-            raise ValueError(f"_get_all_resources: GET resources API call failed after {time.monotonic() - api_start:.3f} second(s) (path={ep.path}, state={self.state})")
+            raise ValueError(
+                f"_get_all_resources: GET resources API call failed after {time.monotonic() - api_start:.3f} second(s) (path={ep.path}, state={self.state})"
+            )
         api_elapsed = time.monotonic() - api_start
         _resp_count = len(data) if isinstance(data, list) else len(data["resources"]) if isinstance(data, dict) and "resources" in data else 0
         self.log.info(
@@ -547,7 +551,9 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 ep.path,
                 len(pending_payloads),
             )
-            raise ValueError(f"manage_merged: Batch create API call failed after {time.monotonic() - api_start:.3f} second(s) (path={ep.path}, resource_count={len(pending_payloads)})")
+            raise ValueError(
+                f"manage_merged: Batch create API call failed after {time.monotonic() - api_start:.3f} second(s) (path={ep.path}, resource_count={len(pending_payloads)})"
+            )
         api_elapsed = time.monotonic() - api_start
         self.log.info(
             "manage_merged: Batch create API response time %.3f second(s) (path=%s, resource_count=%s)",
@@ -704,7 +710,9 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 ep.path,
                 len(resource_ids),
             )
-            raise ValueError(f"manage_deleted: Delete API call failed after {time.monotonic() - api_start:.3f} second(s) (path={ep.path}, resource_count={len(resource_ids)})")
+            raise ValueError(
+                f"manage_deleted: Delete API call failed after {time.monotonic() - api_start:.3f} second(s) (path={ep.path}, resource_count={len(resource_ids)})"
+            )
         api_elapsed = time.monotonic() - api_start
         self.log.info(
             "manage_deleted: Delete API response time %.3f second(s) (path=%s, resource_count=%s)",
