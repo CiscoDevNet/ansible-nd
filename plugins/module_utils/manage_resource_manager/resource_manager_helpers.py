@@ -450,7 +450,6 @@ class ResourceManagerResourceHelpersMixin:
         )
         return translated
 
-
     def _get_switch_id(self, resource):
         """Return the primary switch ID from scopeDetails for gathered filtering."""
         scope_details = ResourceManagerDiffEngine._scope_details(resource)
@@ -556,4 +555,3 @@ class ResourceManagerResourceHelpersMixin:
                     seen_ids.add(resource_id)
 
         return results
-

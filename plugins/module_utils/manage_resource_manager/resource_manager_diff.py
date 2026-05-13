@@ -799,5 +799,3 @@ class ResourceManagerDiffEngine:
             resource_cfg.entity_name,
             resource_cfg.pool_name,
         )
-
-
