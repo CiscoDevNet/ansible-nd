@@ -1,0 +1,85 @@
+---
+# Merged state tests for nd_interface_vpc_trunk_host
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- MERGED CREATE ---
+
+- name: "MERGED CREATE: Create vpc500 (check mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: &merge_vpc
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_trunk_host_baseline }}"
+    state: merged
+  check_mode: true
+  register: cm_merged_create
+
+- name: "MERGED CREATE: Create vpc500 (normal mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: *merge_vpc
+  register: nm_merged_create
+
+- name: "MERGED CREATE: Verify creation produced a change"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_create is changed
+      - nm_merged_create is changed
+
+# --- MERGED IDEMPOTENCY ---
+
+- name: "MERGED IDEMPOTENT: Pause for switch convergence"
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: "MERGED IDEMPOTENT: Re-apply vpc500 (check mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: *merge_vpc
+  check_mode: true
+  register: cm_merged_idem
+
+- name: "MERGED IDEMPOTENT: Re-apply vpc500 (normal mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: *merge_vpc
+  register: nm_merged_idem
+
+- name: "MERGED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_merged_idem is not changed
+      - nm_merged_idem is not changed
+
+# --- VLAN MAPPING (gated on supports_vlan_mapping) ---
+# Skipped by default because Nexus 9000v virtual switches reject
+# `switchport vlan mapping ... dot1q-tunnel ...`. Set ND_SUPPORTS_VLAN_MAPPING=true on
+# hardware-backed testbeds to exercise these blocks.
+
+- name: "MERGED VLAN MAPPING: Apply vlan_mapping_entries (normal mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: &merge_vpc_vlan_map
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_trunk_host_with_vlan_mapping }}"
+    state: merged
+  register: nm_merged_vlan_map
+  when: supports_vlan_mapping | default(false) | bool
+
+- name: "MERGED VLAN MAPPING: Verify vlan mapping change applied"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_vlan_map is changed
+  when: supports_vlan_mapping | default(false) | bool
+
+- name: "MERGED VLAN MAPPING IDEMPOTENT: Pause for convergence"
+  ansible.builtin.pause:
+    seconds: 30
+  when: supports_vlan_mapping | default(false) | bool
+
+- name: "MERGED VLAN MAPPING IDEMPOTENT: Re-apply (normal mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: *merge_vpc_vlan_map
+  register: nm_merged_vlan_map_idem
+  when: supports_vlan_mapping | default(false) | bool
+
+- name: "MERGED VLAN MAPPING IDEMPOTENT: Verify no change on re-apply"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_vlan_map_idem is not changed
+  when: supports_vlan_mapping | default(false) | bool

@@ -1,0 +1,41 @@
+---
+# Overridden state tests for nd_interface_vpc_trunk_host
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# After replaced.yaml, vpc500 exists. State overridden with a single new vpc (vpc501) should
+# remove vpc500 and create vpc501 fabric-wide.
+
+- name: "OVERRIDDEN: Single source of truth = vpc501 only (check mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: &override_vpc
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ vpc_trunk_host_overridden }}"
+    state: overridden
+  check_mode: true
+  register: cm_overridden
+
+- name: "OVERRIDDEN: Single source of truth = vpc501 only (normal mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: *override_vpc
+  register: nm_overridden
+
+- name: "OVERRIDDEN: Verify override produced a change"
+  ansible.builtin.assert:
+    that:
+      - cm_overridden is changed
+      - nm_overridden is changed
+
+- name: "OVERRIDDEN IDEMPOTENT: Pause for convergence"
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: "OVERRIDDEN IDEMPOTENT: Re-apply (normal mode)"
+  cisco.nd.nd_interface_vpc_trunk_host: *override_vpc
+  register: nm_overridden_idem
+
+- name: "OVERRIDDEN IDEMPOTENT: Verify no change on re-apply"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_idem is not changed
