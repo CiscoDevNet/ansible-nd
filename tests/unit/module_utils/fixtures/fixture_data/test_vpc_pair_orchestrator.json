@@ -1,0 +1,214 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for tests/unit/module_utils/orchestrators/test_vpc_pair.py",
+        "Each key matches a test function + suffix per CLAUDE.md unit-test conventions.",
+        "Fixtures simulate ND responses for:",
+        "  - GET /api/v1/manage/fabrics/{fabric_name}/switches  (FabricContext IP -> serial map)",
+        "  - GET /api/v1/manage/fabrics/{fabric_name}/switches/{sn}/vpcPair  (per-switch intent)",
+        "  - GET /api/v1/manage/fabrics/{fabric_name}/vpcPairs  (fabric-wide list)",
+        "  - PUT /api/v1/manage/fabrics/{fabric_name}/switches/{sn}/vpcPair  (create / update / unpair)",
+        "  - POST /api/v1/manage/fabrics/{fabric_name}/switchActions/deploy (deploy 207 multi-status)"
+    ],
+    "_switches_lab_baseline": {
+        "TEST_NOTES": [
+            "Reusable switch-list response: SITE1 with the two leafs lab-paired in project_vpc_module_design.md.",
+            "Test functions reference this via responses_helper to avoid duplication."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "9ASNKH8T9DJ"},
+                {"fabricManagementIp": "192.168.12.155", "switchId": "9SJKCSQND07"}
+            ]
+        }
+    },
+    "test_vpc_pair_orch_00100a_switches": {
+        "TEST_NOTES": ["query_one 404 — switches list (one-time IP->serial load)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "9ASNKH8T9DJ"},
+                {"fabricManagementIp": "192.168.12.155", "switchId": "9SJKCSQND07"}
+            ]
+        }
+    },
+    "test_vpc_pair_orch_00100b_get_404": {
+        "TEST_NOTES": ["query_one 404: no pair exists yet for switch"],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches/9ASNKH8T9DJ/vpcPair",
+        "MESSAGE": "Not Found",
+        "DATA": {
+            "code": 404,
+            "description": "",
+            "message": "No vPC Pair found for switch serial number: 9ASNKH8T9DJ"
+        }
+    },
+    "test_vpc_pair_orch_00110a_switches": {
+        "TEST_NOTES": ["query_one 200 — switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "9ASNKH8T9DJ"},
+                {"fabricManagementIp": "192.168.12.155", "switchId": "9SJKCSQND07"}
+            ]
+        }
+    },
+    "test_vpc_pair_orch_00110b_get_200": {
+        "TEST_NOTES": [
+            "query_one 200: lab-captured per-switch GET response (project_vpc_module_design.md)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches/9ASNKH8T9DJ/vpcPair",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switchId": "9ASNKH8T9DJ",
+            "peerSwitchId": "9SJKCSQND07",
+            "useVirtualPeerLink": false,
+            "vpcAction": "pair",
+            "vpcPairDetails": {
+                "domainId": 1,
+                "keepAliveVrf": "management",
+                "keepAliveHoldTimeout": 3,
+                "enableMirrorConfig": false,
+                "isVpcPlus": false,
+                "isVteps": false,
+                "nveInterface": 1,
+                "poMode": "active",
+                "adminState": true,
+                "allowedVlans": "all",
+                "fabricName": "SITE1"
+            }
+        }
+    },
+    "test_vpc_pair_orch_00200a_list_empty": {
+        "TEST_NOTES": ["query_all empty: fabric has no pairs"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/vpcPairs",
+        "MESSAGE": "OK",
+        "DATA": {
+            "meta": {"counts": {"remaining": 0, "total": 0}},
+            "vpcPairs": []
+        }
+    },
+    "test_vpc_pair_orch_00210a_list_populated": {
+        "TEST_NOTES": ["query_all populated: one paired entry"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/vpcPairs",
+        "MESSAGE": "OK",
+        "DATA": {
+            "meta": {"counts": {"remaining": 0, "total": 1}},
+            "vpcPairs": [
+                {
+                    "switchId": "9ASNKH8T9DJ",
+                    "peerSwitchId": "9SJKCSQND07",
+                    "useVirtualPeerLink": false,
+                    "vpcPairDetails": {
+                        "domainId": 1,
+                        "keepAliveVrf": "management",
+                        "fabricName": "SITE1"
+                    }
+                }
+            ]
+        }
+    },
+    "test_vpc_pair_orch_00300a_switches": {
+        "TEST_NOTES": ["create — switch list for IP->serial"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "9ASNKH8T9DJ"},
+                {"fabricManagementIp": "192.168.12.155", "switchId": "9SJKCSQND07"}
+            ]
+        }
+    },
+    "test_vpc_pair_orch_00300b_put_204": {
+        "TEST_NOTES": ["create — PUT vpcPair returns 204 No Content"],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches/9ASNKH8T9DJ/vpcPair",
+        "MESSAGE": "No Content",
+        "DATA": {}
+    },
+    "test_vpc_pair_orch_00500a_switches": {
+        "TEST_NOTES": ["delete — switch list for IP->serial"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "9ASNKH8T9DJ"},
+                {"fabricManagementIp": "192.168.12.155", "switchId": "9SJKCSQND07"}
+            ]
+        }
+    },
+    "test_vpc_pair_orch_00500b_put_unpair_204": {
+        "TEST_NOTES": ["delete — PUT vpcPair body vpcAction=unPair returns 204"],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches/9ASNKH8T9DJ/vpcPair",
+        "MESSAGE": "No Content",
+        "DATA": {}
+    },
+    "test_vpc_pair_orch_00600a_deploy_207_all_success": {
+        "TEST_NOTES": [
+            "deploy_pending — 207 multi-status, both switches success (lowercase per OpenAPI)."
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switchActions/deploy",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {"switchId": "9ASNKH8T9DJ", "switchName": "S1_LE1", "status": "success", "message": "Deployed Successfully"},
+                {"switchId": "9SJKCSQND07", "switchName": "S1_LE2", "status": "success", "message": "Deployed Successfully"}
+            ]
+        }
+    },
+    "test_vpc_pair_orch_00610a_deploy_207_mixed_case": {
+        "TEST_NOTES": [
+            "deploy_pending — 207 with mixed-case status (Success vs success).",
+            "Lab observed: interfaceActions returns 'Success' (capital), switchActions returns 'success' (lower).",
+            "Orchestrator must compare case-insensitively."
+        ],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switchActions/deploy",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {"switchId": "9ASNKH8T9DJ", "switchName": "S1_LE1", "status": "Success", "message": "Deployed Successfully"},
+                {"switchId": "9SJKCSQND07", "switchName": "S1_LE2", "status": "success", "message": "Deployed Successfully"}
+            ]
+        }
+    },
+    "test_vpc_pair_orch_00620a_deploy_207_one_failed": {
+        "TEST_NOTES": ["deploy_pending — 207 with one failed switch must raise."],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switchActions/deploy",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "switchIds": [
+                {"switchId": "9ASNKH8T9DJ", "switchName": "S1_LE1", "status": "success", "message": "Deployed Successfully"},
+                {"switchId": "9SJKCSQND07", "switchName": "S1_LE2", "status": "failed", "message": "Switch unreachable"}
+            ]
+        }
+    }
+}

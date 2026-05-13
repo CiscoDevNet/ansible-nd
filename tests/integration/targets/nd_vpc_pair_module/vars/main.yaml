@@ -1,0 +1,36 @@
+---
+# Variables for nd_vpc_pair integration tests.
+#
+# Override the defaults in your inventory or extra-vars to match a real ND 4.2 testbed.
+# The defaults below match the SITE1 lab documented in reference_nd_lab.md.
+
+test_fabric_name: "{{ nd_test_vpc_fabric_name | default(nd_test_fabric_name | default('SITE1')) }}"
+test_switch_ip_peer1: "{{ nd_test_vpc_peer1_ip | default('192.168.12.151') }}"
+test_switch_ip_peer2: "{{ nd_test_vpc_peer2_ip | default('192.168.12.155') }}"
+
+# Baseline pair config used by merged + idempotent tests.
+vpc_pair_baseline:
+  switch_ip: "{{ test_switch_ip_peer1 }}"
+  peer_switch_ip: "{{ test_switch_ip_peer2 }}"
+  domain_id: 1
+  keep_alive_vrf: management
+  switch_po_id: 1
+  peer_switch_po_id: 1
+  switch_member_interfaces:
+    - Ethernet1/3
+  peer_switch_member_interfaces:
+    - Ethernet1/2
+
+# Updated pair config used by replaced tests (different keepalive hold timeout).
+vpc_pair_updated:
+  switch_ip: "{{ test_switch_ip_peer1 }}"
+  peer_switch_ip: "{{ test_switch_ip_peer2 }}"
+  domain_id: 1
+  keep_alive_vrf: management
+  keep_alive_hold_timeout: 5
+  switch_po_id: 1
+  peer_switch_po_id: 1
+  switch_member_interfaces:
+    - Ethernet1/3
+  peer_switch_member_interfaces:
+    - Ethernet1/2

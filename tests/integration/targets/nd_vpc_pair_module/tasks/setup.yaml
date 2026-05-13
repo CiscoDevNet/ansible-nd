@@ -1,0 +1,26 @@
+---
+# Pre-test cleanup for nd_vpc_pair
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Ensures the two test switches are NOT paired before the state tests run.
+# Per project_vpc_module_design.md: PUT vpcAction=unPair returns 204 even when no pair exists,
+# but ND treats nothing-to-do gracefully. The teardown also waits for switch convergence.
+
+- name: "SETUP: Tear down any existing vPC pair on test peers"
+  cisco.nd.nd_vpc_pair:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip_peer1 }}"
+        peer_switch_ip: "{{ test_switch_ip_peer2 }}"
+        domain_id: 1
+    state: deleted
+  ignore_errors: true
+  tags: always
+
+- name: "SETUP: Allow ND switch poller to reflect baseline state"
+  ansible.builtin.pause:
+    seconds: 30
+  tags: always
