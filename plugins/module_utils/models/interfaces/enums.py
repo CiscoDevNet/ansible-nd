@@ -46,6 +46,16 @@ class TrunkPoHostPolicyTypeEnum(str, Enum):
     TRUNK_PO_HOST = "trunkPoHost"
 
 
+class AccessVpcHostPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Policy type for vPC access host interfaces (`int_vpc_access_host` template).
+    """
+
+    ACCESS_VPC_HOST = "accessVpcHost"
+
+
 class BpduFilterEnum(str, Enum):
     """
     # Summary
