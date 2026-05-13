@@ -315,6 +315,7 @@ gathered:
 """
 
 import logging
+import traceback
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
@@ -330,6 +331,52 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Resul
 from ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources import NDResourceManagerModule
 
 
+def _record_failed_result(results, message, return_code=-1, data=None):
+    """Populate Results with a failed API-call shaped entry."""
+    results.response_current = {
+        "RETURN_CODE": return_code,
+        "MESSAGE": message,
+        "DATA": data or {},
+    }
+    results.result_current = {
+        "success": False,
+        "found": False,
+    }
+    results.diff_current = {}
+    results.register_api_call()
+    results.build_final_result()
+
+
+def _record_nd_module_error_result(results, nd, error, log):
+    """Populate Results from RestSend when possible, otherwise use NDModuleError details."""
+    if nd is not None:
+        try:
+            results.response_current = nd.rest_send.response_current
+            results.result_current = nd.rest_send.result_current
+            log.debug(
+                "main: RestSend response captured — RETURN_CODE=%s",
+                getattr(nd.rest_send.response_current, "RETURN_CODE", "N/A"),
+            )
+            results.diff_current = {}
+            results.register_api_call()
+            results.build_final_result()
+            return
+        except (AttributeError, ValueError) as rest_exc:
+            log.debug(
+                "main: RestSend not available (%s: %s), building fallback response — RETURN_CODE=%s",
+                type(rest_exc).__name__,
+                rest_exc,
+                error.status if error.status else -1,
+            )
+
+    _record_failed_result(
+        results,
+        error.msg,
+        return_code=error.status if error.status else -1,
+        data=error.response_payload if error.response_payload else {},
+    )
+
+
 def main():
     """Main entry point for the nd_manage_resource_manager module."""
 
@@ -343,17 +390,12 @@ def main():
         supports_check_mode=True,
         required_if=[
             ("state", "merged", ["config"]),
-            ("state", "delete", ["config"]),
+            ("state", "deleted", ["config"]),
         ],
     )
 
-    # Initialize logging — setup_logging() configures the "nd" logger hierarchy via dictConfig.
-    # The config parameter overrides ND_LOGGING_CONFIG env var (useful for local development).
-    # logging.getLogger() returns the actual logging.Logger used for .debug()/.info()/.error().
-    setup_logging(
-        module,
-        develop=True,
-    )
+    # Initialize logging. ND_LOGGING_CONFIG remains the supported config override.
+    setup_logging(module)
     log = logging.getLogger("nd.nd_manage_resource_manager")
 
     log.debug(
@@ -380,6 +422,7 @@ def main():
     results = Results()
     results.check_mode = module.check_mode
     results.action = "manage_resource_manager"
+    nd = None
 
     try:
         # Initialize NDModule (uses RestSend infrastructure internally)
@@ -424,35 +467,7 @@ def main():
             state,
         )
 
-        # Try to get response from RestSend if available
-        try:
-            results.response_current = nd.rest_send.response_current
-            results.result_current = nd.rest_send.result_current
-            log.debug(
-                "main: RestSend response captured — RETURN_CODE=%s",
-                getattr(nd.rest_send.response_current, "RETURN_CODE", "N/A"),
-            )
-        except (AttributeError, ValueError) as rest_exc:
-            # Fallback if RestSend wasn't initialized or no response available
-            log.debug(
-                "main: RestSend not available (%s: %s), building fallback response — RETURN_CODE=%s",
-                type(rest_exc).__name__,
-                rest_exc,
-                error.status if error.status else -1,
-            )
-            results.response_current = {
-                "RETURN_CODE": error.status if error.status else -1,
-                "MESSAGE": error.msg,
-                "DATA": error.response_payload if error.response_payload else {},
-            }
-            results.result_current = {
-                "success": False,
-                "found": False,
-            }
-
-        results.diff_current = {}
-        results.register_api_call()
-        results.build_final_result()
+        _record_nd_module_error_result(results, nd, error, log)
 
         # Add error details if debug output is requested
         if output_level == "debug":
@@ -483,18 +498,7 @@ def main():
             fabric,
             state,
         )
-        results.response_current = {
-            "RETURN_CODE": -1,
-            "MESSAGE": str(error),
-            "DATA": {},
-        }
-        results.result_current = {
-            "success": False,
-            "found": False,
-        }
-        results.diff_current = {}
-        results.register_api_call()
-        results.build_final_result()
+        _record_failed_result(results, str(error))
         module.fail_json(msg=str(error), **results.final_result)
 
     except Exception as error:
@@ -507,27 +511,13 @@ def main():
             state,
         )
 
-        # Build failed result
-        results.response_current = {
-            "RETURN_CODE": -1,
-            "MESSAGE": f"Unexpected error: {str(error)}",
-            "DATA": {},
-        }
-        results.result_current = {
-            "success": False,
-            "found": False,
-        }
-        results.diff_current = {}
-        results.register_api_call()
-        results.build_final_result()
+        _record_failed_result(results, f"Unexpected error: {str(error)}")
         log.debug(
             "main: built fallback failed result — RETURN_CODE=-1, error_type='%s'",
             type(error).__name__,
         )
 
         if output_level == "debug":
-            import traceback
-
             tb_str = traceback.format_exc()
             results.final_result["traceback"] = tb_str
             log.debug(
