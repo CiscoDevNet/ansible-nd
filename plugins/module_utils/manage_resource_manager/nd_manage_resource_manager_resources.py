@@ -552,7 +552,8 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 len(pending_payloads),
             )
             raise ValueError(
-                f"manage_merged: Batch create API call failed {time.monotonic() - api_start:.3f} second(s) (path={ep.path}, resource_count={len(pending_payloads)})"
+                f"manage_merged: Batch create API call failed {time.monotonic() - api_start:.3f} second(s)"
+                f" (path={ep.path}, resource_count={len(pending_payloads)})"
             )
         api_elapsed = time.monotonic() - api_start
         self.log.info(
