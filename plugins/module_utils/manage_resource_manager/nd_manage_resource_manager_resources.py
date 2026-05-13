@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import time
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
@@ -258,18 +259,49 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         self.log.info("Fetching all resources for fabric=%s", self.fabric)
 
         ep = EpManageFabricResourcesGet(fabric_name=self.fabric)
+        api_start = time.monotonic()
         try:
             data = self.nd.request(ep.path, ep.verb)
         except NDModuleError as exc:
+            api_elapsed = time.monotonic() - api_start
             if exc.status == 404:
                 # Fabric has no resources yet — that is valid
+                self.log.info(
+                    "_get_all_resources: GET resources API response time %.3f second(s) (path=%s, state=%s, status=404)",
+                    api_elapsed,
+                    ep.path,
+                    self.state,
+                )
                 self.log.info(
                     "No resources found (404) for fabric=%s, treating as empty",
                     self.fabric,
                 )
                 self._resources_fetched = True
                 return
-            raise
+            self.log.exception(
+                "_get_all_resources: GET resources API call failed after %.3f second(s) (path=%s, state=%s)",
+                api_elapsed,
+                ep.path,
+                self.state,
+            )
+            raise ValueError(f"_get_all_resources: GET resources API call failed after {api_elapsed:.3f} second(s) (path={ep.path}, state={self.state})") from exc
+        except Exception:
+            self.log.exception(
+                "_get_all_resources: GET resources API call failed after %.3f second(s) (path=%s, state=%s)",
+                time.monotonic() - api_start,
+                ep.path,
+                self.state,
+            )
+            raise ValueError(f"_get_all_resources: GET resources API call failed after {time.monotonic() - api_start:.3f} second(s) (path={ep.path}, state={self.state})")
+        api_elapsed = time.monotonic() - api_start
+        _resp_count = len(data) if isinstance(data, list) else len(data["resources"]) if isinstance(data, dict) and "resources" in data else 0
+        self.log.info(
+            "_get_all_resources: GET resources API response time %.3f second(s) (path=%s, state=%s, response_count=%s)",
+            api_elapsed,
+            ep.path,
+            self.state,
+            _resp_count,
+        )
 
         # The ND API may return a list directly or {"resources": [...], "meta": {...}}
         if isinstance(data, list):
@@ -505,7 +537,24 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
 
         payloads_only = [p for _cfg, p in pending_payloads]
         batch = ResourceManagerBatchRequest.model_validate({"resources": payloads_only})
-        resp_data = self.nd.request(ep.path, ep.verb, data=batch.to_payload())
+        api_start = time.monotonic()
+        try:
+            resp_data = self.nd.request(ep.path, ep.verb, data=batch.to_payload())
+        except Exception:
+            self.log.exception(
+                "manage_merged: Batch create API call failed after %.3f second(s) (path=%s, resource_count=%s)",
+                time.monotonic() - api_start,
+                ep.path,
+                len(pending_payloads),
+            )
+            raise ValueError(f"manage_merged: Batch create API call failed after {time.monotonic() - api_start:.3f} second(s) (path={ep.path}, resource_count={len(pending_payloads)})")
+        api_elapsed = time.monotonic() - api_start
+        self.log.info(
+            "manage_merged: Batch create API response time %.3f second(s) (path=%s, resource_count=%s)",
+            api_elapsed,
+            ep.path,
+            len(pending_payloads),
+        )
 
         # Parse batch response.
         batch_response = ResourcesManagerBatchResponse.from_response(resp_data)
@@ -645,7 +694,24 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
 
         ep = EpManageFabricResourcesActionsRemovePost(fabric_name=self.fabric)
         remove_req = RemoveResourcesByIdsRequest(resource_ids=resource_ids)
-        resp_data = self.nd.request(ep.path, ep.verb, data=remove_req.to_payload())
+        api_start = time.monotonic()
+        try:
+            resp_data = self.nd.request(ep.path, ep.verb, data=remove_req.to_payload())
+        except Exception:
+            self.log.exception(
+                "manage_deleted: Delete API call failed after %.3f second(s) (path=%s, resource_count=%s)",
+                time.monotonic() - api_start,
+                ep.path,
+                len(resource_ids),
+            )
+            raise ValueError(f"manage_deleted: Delete API call failed after {time.monotonic() - api_start:.3f} second(s) (path={ep.path}, resource_count={len(resource_ids)})")
+        api_elapsed = time.monotonic() - api_start
+        self.log.info(
+            "manage_deleted: Delete API response time %.3f second(s) (path=%s, resource_count=%s)",
+            api_elapsed,
+            ep.path,
+            len(resource_ids),
+        )
 
         remove_response = RemoveResourcesByIdsResponse.from_response(resp_data)
 

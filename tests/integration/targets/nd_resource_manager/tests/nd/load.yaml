@@ -1,0 +1,201 @@
+---
+##############################################
+##          LOAD TEST - OPT-IN              ##
+##############################################
+
+- name: ND Resource Manager load test
+  when: rm_load_test_enabled | default(false) | bool
+  block:
+
+    - name: LOAD - Set load test defaults
+      ansible.builtin.set_fact:
+        rm_load_expected_resources: "{{ rm_load_expected_resources | default(1000) | int }}"
+        rm_load_resource_start: "{{ rm_load_resource_start | default(300) | int }}"
+        rm_load_switches:
+          - "{{ ansible_switch1 }}"
+          - "{{ ansible_switch2 }}"
+
+    - name: LOAD - Validate load test prerequisites
+      ansible.builtin.assert:
+        that:
+          - '(rm_load_expected_resources | int) > 0'
+          - '(rm_load_switches | length) == 2'
+          - '((rm_load_expected_resources | int) % (rm_load_switches | length)) == 0'
+        fail_msg: >-
+          Resource manager load test requires a positive resource count that is
+          divisible by exactly two configured switches.
+
+    - name: LOAD - Calculate generated config count
+      ansible.builtin.set_fact:
+        rm_load_config_count: "{{ (rm_load_expected_resources | int) // (rm_load_switches | length) }}"
+        rm_load_config: []
+
+    - name: LOAD - Build generated resource config
+      ansible.builtin.set_fact:
+        rm_load_config: >-
+          {{
+            rm_load_config + [
+              {
+                'entity_name': 'rm_load_loopback_' ~ item,
+                'pool_type': 'ID',
+                'pool_name': 'LOOPBACK_ID',
+                'scope_type': 'device',
+                'switches': rm_load_switches,
+                'resource': ((rm_load_resource_start | int) + (item | int) - 1) | string
+              }
+            ]
+          }}
+      loop: "{{ range(1, (rm_load_config_count | int) + 1) | list }}"
+
+    - name: LOAD - Assert generated config size
+      ansible.builtin.assert:
+        that:
+          - '(rm_load_config | length) == (rm_load_config_count | int)'
+
+    - name: LOAD - Pre-clean generated resources
+      cisco.nd.nd_manage_resource_manager:
+        state: deleted
+        fabric: "{{ ansible_it_fabric }}"
+        config: "{{ rm_load_config }}"
+      register: rm_load_pre_cleanup_result
+
+    - block:
+
+        ##############################################
+        ##              BULK CREATE                 ##
+        ##############################################
+
+        - name: LOAD - Capture bulk create start time
+          ansible.builtin.set_fact:
+            rm_load_create_start_epoch: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: LOAD - Bulk create resources
+          cisco.nd.nd_manage_resource_manager: &rm_load_merge
+            state: merged
+            fabric: "{{ ansible_it_fabric }}"
+            config: "{{ rm_load_config }}"
+          register: rm_load_create_result
+
+        - name: LOAD - Capture bulk create elapsed time
+          ansible.builtin.set_fact:
+            rm_load_create_elapsed: "{{ (lookup('pipe', 'date +%s') | int) - (rm_load_create_start_epoch | int) }}"
+
+        - name: LOAD - Report bulk create timing
+          ansible.builtin.debug:
+            msg: "Resource manager bulk create completed in {{ rm_load_create_elapsed }} second(s)."
+
+        - name: LOAD - Assert bulk create result
+          ansible.builtin.assert:
+            that:
+              - 'rm_load_create_result.changed == true'
+              - '(rm_load_create_result["diff"][0]["merged"] | length) == (rm_load_expected_resources | int)'
+              - '(rm_load_create_result["response"] | length) == (rm_load_expected_resources | int)'
+
+        - name: LOAD - Assert bulk create response codes
+          ansible.builtin.assert:
+            that:
+              - 'item["RETURN_CODE"] == 200'
+          loop: "{{ rm_load_create_result.response }}"
+
+        - name: LOAD - Assert optional bulk create performance threshold
+          ansible.builtin.assert:
+            that:
+              - '(rm_load_create_elapsed | int) <= (rm_load_max_create_seconds | int)'
+            fail_msg: >-
+              Resource manager bulk create took {{ rm_load_create_elapsed }}
+              second(s), exceeding rm_load_max_create_seconds={{ rm_load_max_create_seconds }}.
+          when: rm_load_max_create_seconds is defined
+
+        ##############################################
+        ##              IDEMPOTENCE                 ##
+        ##############################################
+
+        - name: LOAD - Bulk create resources - Idempotence
+          cisco.nd.nd_manage_resource_manager: *rm_load_merge
+          register: rm_load_idempotent_result
+
+        - name: LOAD - Assert bulk create idempotency
+          ansible.builtin.assert:
+            that:
+              - '(rm_load_idempotent_result["diff"][0]["merged"] | length) <= 1'
+              - '(rm_load_idempotent_result["diff"][0]["deleted"] | length) == 0'
+
+        - name: LOAD - Assert bulk create idempotency response codes
+          ansible.builtin.assert:
+            that:
+              - rm_load_idempotent_result.response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+
+        ##############################################
+        ##              BULK DELETE                 ##
+        ##############################################
+
+        - name: LOAD - Capture bulk delete start time
+          ansible.builtin.set_fact:
+            rm_load_delete_start_epoch: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: LOAD - Bulk delete resources
+          cisco.nd.nd_manage_resource_manager: &rm_load_delete
+            state: deleted
+            fabric: "{{ ansible_it_fabric }}"
+            config: "{{ rm_load_config }}"
+          register: rm_load_delete_result
+
+        - name: LOAD - Capture bulk delete elapsed time
+          ansible.builtin.set_fact:
+            rm_load_delete_elapsed: "{{ (lookup('pipe', 'date +%s') | int) - (rm_load_delete_start_epoch | int) }}"
+
+        - name: LOAD - Report bulk delete timing
+          ansible.builtin.debug:
+            msg: "Resource manager bulk delete completed in {{ rm_load_delete_elapsed }} second(s)."
+
+        - name: LOAD - Assert bulk delete result
+          ansible.builtin.assert:
+            that:
+              - 'rm_load_delete_result.changed == true'
+              - '(rm_load_delete_result["diff"][0]["deleted"] | length) == (rm_load_expected_resources | int)'
+              - '(rm_load_delete_result["response"] | length) == (rm_load_expected_resources | int)'
+
+        - name: LOAD - Assert bulk delete response codes
+          ansible.builtin.assert:
+            that:
+              - 'item["RETURN_CODE"] == 200'
+          loop: "{{ rm_load_delete_result.response }}"
+
+        - name: LOAD - Assert optional bulk delete performance threshold
+          ansible.builtin.assert:
+            that:
+              - '(rm_load_delete_elapsed | int) <= (rm_load_max_delete_seconds | int)'
+            fail_msg: >-
+              Resource manager bulk delete took {{ rm_load_delete_elapsed }}
+              second(s), exceeding rm_load_max_delete_seconds={{ rm_load_max_delete_seconds }}.
+          when: rm_load_max_delete_seconds is defined
+
+        ##############################################
+        ##          DELETE IDEMPOTENCE              ##
+        ##############################################
+
+        - name: LOAD - Bulk delete resources - Idempotence
+          cisco.nd.nd_manage_resource_manager: *rm_load_delete
+          register: rm_load_delete_idempotent_result
+
+        - name: LOAD - Assert bulk delete idempotency
+          ansible.builtin.assert:
+            that:
+              - 'rm_load_delete_idempotent_result.changed == false'
+              - '(rm_load_delete_idempotent_result["diff"][0]["deleted"] | length) == 0'
+
+      always:
+
+        ##############################################
+        ##              CLEANUP                     ##
+        ##############################################
+
+        - name: LOAD - Cleanup generated resources
+          cisco.nd.nd_manage_resource_manager:
+            state: deleted
+            fabric: "{{ ansible_it_fabric }}"
+            config: "{{ rm_load_config }}"
+          register: rm_load_cleanup_result
+          when:
+            - rm_load_config is defined
+            - (rm_load_config | length) > 0
