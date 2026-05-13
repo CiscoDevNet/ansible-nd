@@ -89,7 +89,7 @@ class ResourceManagerConfigModel(NDBaseModel):
         description=(
             "Name of the resource pool to use (e.g. 'L3_VNI', 'LOOPBACK_ID', 'SUBNET'). "
             "For known pool names the scope_type must match the allowed scopes in POOL_SCOPE_MAP. "
-            "Custom pool names not in POOL_SCOPE_MAP are unrestricted."
+            "ID pool names must be present in POOL_SCOPE_MAP for merged/deleted states."
         ),
     )
     scope_type: ScopeType | None = Field(
@@ -306,15 +306,17 @@ class ResourceManagerConfigModel(NDBaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_pool_name_scope_combination(self) -> "ResourceManagerConfigModel":
+    def validate_pool_name_scope_combination(self, info: Any) -> "ResourceManagerConfigModel":
         """Validate pool_name and scope_type are a known-valid combination via POOL_SCOPE_MAP.
 
         For IP pool types, 'IP_POOL' is used as the POOL_SCOPE_MAP lookup key.
         For SUBNET pool types, 'SUBNET' is used as the POOL_SCOPE_MAP lookup key.
         For ID pool types, the pool_name itself is used as the lookup key.
-        Custom / user-defined pool names not present in POOL_SCOPE_MAP are unrestricted.
+        Known ID pool names must be present in POOL_SCOPE_MAP; this preserves
+        the module's historical strict validation for ID pools.
         """
-        if self.pool_name is None or self.scope_type is None:
+        state = (info.context or {}).get("state") if info else None
+        if self.pool_name is None or self.scope_type is None or self.pool_type is None:
             return self
         pool_name = self.pool_name
         scope_type = self.scope_type
@@ -327,6 +329,8 @@ class ResourceManagerConfigModel(NDBaseModel):
         else:
             check_key = pool_name
         allowed_scopes = POOL_SCOPE_MAP.get(check_key)
+        if allowed_scopes is None and pool_type == PoolType.ID and state in ("merged", "deleted"):
+            raise ValueError("pool_name '{0}' is not valid for pool_type 'ID'".format(pool_name))
         if allowed_scopes is not None and scope_type not in allowed_scopes:
             raise ValueError("scope_type '{0}' is not valid for pool_name '{1}'. Allowed scope_types: {2}".format(scope_type, pool_name, allowed_scopes))
         return self
@@ -339,14 +343,16 @@ class ResourceManagerConfigModel(NDBaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_scope_and_switch(self) -> "ResourceManagerConfigModel":
-        """Require 'switches' when scope_type is not 'fabric'.
+    def validate_scope_and_switch(self, info: Any) -> "ResourceManagerConfigModel":
+        """Require 'switches' for non-fabric merged/deleted config entries.
 
         For the fabric scope, switch IDs are not applicable. For all other
-        scopes (device, device_interface, device_pair, link), at least one
-        switch must be specified to identify the target device(s).
+        scopes (device, device_interface, device_pair, link), at least one switch
+        must be specified for states that modify resources. Gathered-state config
+        entries are filters and may provide partial criteria.
         """
-        if self.scope_type is not None and self.scope_type != ScopeType.FABRIC:
+        state = (info.context or {}).get("state") if info else None
+        if state in ("merged", "deleted") and self.scope_type is not None and self.scope_type != ScopeType.FABRIC:
             if not self.switches:
                 raise ValueError("'switches' is required when scope_type is '{0}' (entity_name: '{1}')".format(self.scope_type, self.entity_name))
         return self

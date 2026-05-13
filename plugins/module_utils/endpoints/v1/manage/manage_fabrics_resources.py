@@ -65,7 +65,18 @@ class ResourcesQueryParams(ClusterNameMixin, SwitchIdMixin, TenantNameMixin, End
 # =============================================================================
 
 
-class EpManageFabricResourcesGet(FabricNameMixin, ResourcesQueryParams, LuceneQueryParams, NDEndpointBaseModel):
+class _EpManageFabricResourcesBase(FabricNameMixin, NDEndpointBaseModel):
+    """Base class for fabric resource endpoints."""
+
+    @property
+    def _base_path(self) -> str:
+        """Build the fabric resources endpoint path."""
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        return BasePath.path("fabrics", self.fabric_name, "resources")
+
+
+class EpManageFabricResourcesGet(_EpManageFabricResourcesBase):
     """
     # Summary
 
@@ -121,7 +132,9 @@ class EpManageFabricResourcesGet(FabricNameMixin, ResourcesQueryParams, LuceneQu
 
     model_config = COMMON_CONFIG
 
-    class_name: Literal["EpManageFabricSwitchesGet"] = Field(default="EpManageFabricSwitchesGet", description="Class name for backward compatibility")
+    class_name: Literal["EpManageFabricResourcesGet"] = Field(default="EpManageFabricResourcesGet", description="Class name for backward compatibility")
+    endpoint_params: ResourcesQueryParams = Field(default_factory=ResourcesQueryParams, description="Endpoint-specific query parameters")
+    lucene_params: LuceneQueryParams = Field(default_factory=LuceneQueryParams, description="Lucene-style query parameters")
 
     @property
     def path(self) -> str:
@@ -135,11 +148,14 @@ class EpManageFabricResourcesGet(FabricNameMixin, ResourcesQueryParams, LuceneQu
         - Complete endpoint path string, optionally including query parameters
         """
 
-        base_path = BasePath.path("fabrics", self.fabric_name, "resources")
-        query_string = self.to_query_string()
+        query_parts = [
+            self.endpoint_params.to_query_string(),
+            self.lucene_params.to_query_string(),
+        ]
+        query_string = "&".join(part for part in query_parts if part)
         if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
+            return f"{self._base_path}?{query_string}"
+        return self._base_path
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -147,7 +163,7 @@ class EpManageFabricResourcesGet(FabricNameMixin, ResourcesQueryParams, LuceneQu
         return HttpVerbEnum.GET
 
 
-class EpManageFabricResourcesPost(FabricNameMixin, ResourcesQueryParams, NDEndpointBaseModel):
+class EpManageFabricResourcesPost(_EpManageFabricResourcesBase):
     """
     # Summary
 
@@ -192,6 +208,7 @@ class EpManageFabricResourcesPost(FabricNameMixin, ResourcesQueryParams, NDEndpo
     model_config = COMMON_CONFIG
 
     class_name: Literal["EpManageFabricResourcesPost"] = Field(default="EpManageFabricResourcesPost", description="Class name for backward compatibility")
+    endpoint_params: ResourcesQueryParams = Field(default_factory=ResourcesQueryParams, description="Endpoint-specific query parameters")
 
     @property
     def path(self) -> str:
@@ -204,11 +221,10 @@ class EpManageFabricResourcesPost(FabricNameMixin, ResourcesQueryParams, NDEndpo
 
         - Complete endpoint path string, optionally including query parameters
         """
-        base_path = BasePath.path("fabrics", self.fabric_name, "resources")
-        query_string = self.to_query_string()
+        query_string = self.endpoint_params.to_query_string()
         if query_string:
-            return f"{base_path}?{query_string}"
-        return base_path
+            return f"{self._base_path}?{query_string}"
+        return self._base_path
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -221,7 +237,7 @@ class EpManageFabricResourcesPost(FabricNameMixin, ResourcesQueryParams, NDEndpo
 # =============================================================================
 
 
-class EpManageFabricResourcesActionsRemovePost(FabricNameMixin, ResourcesQueryParams, NDEndpointBaseModel):
+class EpManageFabricResourcesActionsRemovePost(_EpManageFabricResourcesBase):
     """
     # Summary
 
@@ -257,6 +273,7 @@ class EpManageFabricResourcesActionsRemovePost(FabricNameMixin, ResourcesQueryPa
     class_name: Literal["EpManageFabricResourcesActionsRemovePost"] = Field(
         default="EpManageFabricResourcesActionsRemovePost", description="Class name for backward compatibility"
     )
+    endpoint_params: ResourcesQueryParams = Field(default_factory=ResourcesQueryParams, description="Endpoint-specific query parameters")
 
     @property
     def path(self) -> str:
@@ -271,7 +288,7 @@ class EpManageFabricResourcesActionsRemovePost(FabricNameMixin, ResourcesQueryPa
         """
 
         base_path = BasePath.path("fabrics", self.fabric_name, "resources", "actions", "remove")
-        query_string = self.to_query_string()
+        query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
         return base_path

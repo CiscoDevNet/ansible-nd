@@ -15,7 +15,7 @@ from enum import Enum
 # =============================================================================
 # POOL_SCOPE_MAP - Derived from dcnm_rm_check_resource_params()
 # Maps known pool names to the scope types they are valid for.
-# Custom / user-defined pool names not present here are unrestricted.
+# The resource-manager config model uses this map to keep ID pool validation strict.
 # =============================================================================
 
 POOL_SCOPE_MAP: dict[str, list[str]] = {

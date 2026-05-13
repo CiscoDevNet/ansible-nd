@@ -125,6 +125,30 @@ class ResourceManagerDiffEngine:
         return normalize_entity_name
 
     @staticmethod
+    def _resource_attr(resource, model_attr: str, dict_key: str | None = None):
+        """Return a field from either a ResourceManagerResponse model or raw API dict."""
+        if hasattr(resource, model_attr):
+            return getattr(resource, model_attr)
+        if isinstance(resource, dict):
+            return resource.get(dict_key or model_attr)
+        return None
+
+    @staticmethod
+    def _scope_details(resource):
+        """Return scope details from either a model resource or raw API dict."""
+        if hasattr(resource, "scope_details"):
+            return getattr(resource, "scope_details", None)
+        if isinstance(resource, dict):
+            return resource.get("scopeDetails")
+        return None
+
+    @staticmethod
+    def _dict_scope_key(attr_name: str) -> str:
+        """Convert a snake_case scope attribute name to the ND API camelCase key."""
+        parts = attr_name.split("_")
+        return parts[0] + "".join(part.title() for part in parts[1:])
+
+    @staticmethod
     def _extract_scope_switch_key_val(scope_details, switch_key, src_switch_key, log: logging.Logger) -> str | None:
         """Extract a switch identifier from a scope_details model using the correct attribute name.
 
@@ -148,6 +172,24 @@ class ResourceManagerDiffEngine:
         if scope_details is None:
             log.debug("_extract_scope_switch_key_val: scope_details is None, returning None")
             return None
+        if isinstance(scope_details, dict):
+            scope_type = scope_details.get("scopeType")
+            if scope_type == "fabric":
+                log.debug("_extract_scope_switch_key_val: fabric scope dict has no switch identity, returning None")
+                return None
+            switch_dict_key = ResourceManagerDiffEngine._dict_scope_key(switch_key)
+            src_switch_dict_key = ResourceManagerDiffEngine._dict_scope_key(src_switch_key)
+            if scope_type in ("device", "deviceInterface"):
+                value = scope_details.get(switch_dict_key)
+                log.debug("_extract_scope_switch_key_val: dict %s scope, %s='%s'", scope_type, switch_dict_key, value)
+                return value
+            if scope_type in ("devicePair", "link"):
+                value = scope_details.get(src_switch_dict_key)
+                log.debug("_extract_scope_switch_key_val: dict %s scope, %s='%s'", scope_type, src_switch_dict_key, value)
+                return value
+            value = scope_details.get(switch_dict_key) or scope_details.get(src_switch_dict_key)
+            log.debug("_extract_scope_switch_key_val: unknown dict scope type %s, fallback value='%s'", scope_type, value)
+            return value
         if isinstance(scope_details, FabricScope):
             log.debug("_extract_scope_switch_key_val: FabricScope has no switch identity, returning None")
             return None
@@ -178,7 +220,10 @@ class ResourceManagerDiffEngine:
         if scope_details is None:
             log.debug("_extract_scope_type: scope_details is None, returning None")
             return None
-        raw = getattr(scope_details, "scope_type", None)
+        if isinstance(scope_details, dict):
+            raw = scope_details.get("scopeType")
+        else:
+            raw = getattr(scope_details, "scope_type", None)
         if not raw:
             log.debug("_extract_scope_type: no scope_type attribute on %s, returning None", type(scope_details).__name__)
             return None
@@ -291,7 +336,6 @@ class ResourceManagerDiffEngine:
     def validate_configs(
         config: dict[str, Any] | list[dict[str, Any]],
         state: str,
-        nd: NDModule,
         log: logging.Logger,
     ) -> list[ResourceManagerConfigModel]:
         """Validate raw module config and return typed resource configurations.
@@ -299,7 +343,6 @@ class ResourceManagerDiffEngine:
         Args:
             config: Raw config dict or list of dicts from module parameters.
             state: Requested module state.
-            nd: ND module wrapper used for failure handling.
             log: Logger instance.
 
         Returns:
@@ -413,21 +456,17 @@ class ResourceManagerDiffEngine:
             len(proposed),
             len(existing),
         )
-        log.debug(
-            "Comparing proposed : %s  vs  existing : %s existing resources",
-            proposed,
-            existing,
-        )
 
         # Build index of existing resources keyed by
         # (normalized_entity, pool_name, playbook_scope_type, switch_id)
         existing_index: dict[tuple, ResourceManagerResponse] = {}
         for res in existing:
-            entity = res.entity_name
-            pool = res.pool_name
-            scope_type = ResourceManagerDiffEngine._extract_scope_type(res.scope_details, log=log)
+            entity = ResourceManagerDiffEngine._resource_attr(res, "entity_name", "entityName")
+            pool = ResourceManagerDiffEngine._resource_attr(res, "pool_name", "poolName")
+            scope_details = ResourceManagerDiffEngine._scope_details(res)
+            scope_type = ResourceManagerDiffEngine._extract_scope_type(scope_details, log=log)
             switch_id = ResourceManagerDiffEngine._extract_scope_switch_key_val(
-                res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id", log=log
+                scope_details, switch_key="switch_id", src_switch_key="src_switch_id", log=log
             )
             key = ResourceManagerDiffEngine._make_resource_key(entity, pool, scope_type, switch_id, log=log)
             existing_index[key] = res
@@ -454,11 +493,12 @@ class ResourceManagerDiffEngine:
         # and populate the debugs bucket to mirror ND's mismatch logging.
         entity_only_index: dict[str, list[ResourceManagerResponse]] = {}
         for res in existing:
-            norm = ResourceManagerDiffEngine._normalize_entity_key(res.entity_name or "", log=log)
+            entity_name = ResourceManagerDiffEngine._resource_attr(res, "entity_name", "entityName") or ""
+            norm = ResourceManagerDiffEngine._normalize_entity_key(entity_name, log=log)
             entity_only_index.setdefault(norm, []).append(res)
             log.debug(
                 "entity_only_index: added entity='%s' under norm_key='%s' (total under key: %s)",
-                res.entity_name,
+                entity_name,
                 norm,
                 len(entity_only_index[norm]),
             )
@@ -537,35 +577,40 @@ class ResourceManagerDiffEngine:
                         len(partials),
                     )
                     for partial in partials:
+                        partial_resource_id = ResourceManagerDiffEngine._resource_attr(partial, "resource_id", "resourceId")
                         mismatch_key = (
                             entity_name,
-                            getattr(partial, "resource_id", None),
+                            partial_resource_id,
                         )
                         if mismatch_key in seen_mismatch_keys:
                             log.debug(
                                 "compute_changes: skipping duplicate partial match for entity='%s', resource_id=%s",
                                 entity_name,
-                                getattr(partial, "resource_id", None),
+                                ResourceManagerDiffEngine._resource_attr(partial, "resource_id", "resourceId"),
                             )
                             continue
                         seen_mismatch_keys.add(mismatch_key)
 
-                        partial_pool = ResourceManagerDiffEngine._normalize_pool_name(partial.pool_name, log=log)
-                        desired_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name, log=log)
-                        partial_scope = ResourceManagerDiffEngine._extract_scope_type(partial.scope_details, log=log)
-                        partial_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(
-                            partial.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip", log=log
+                        partial_scope_details = ResourceManagerDiffEngine._scope_details(partial)
+                        partial_pool = ResourceManagerDiffEngine._normalize_pool_name(
+                            ResourceManagerDiffEngine._resource_attr(partial, "pool_name", "poolName"),
+                            log=log,
                         )
-                        partial_resource_value = getattr(partial, "resource_value", None)
+                        desired_pool = ResourceManagerDiffEngine._normalize_pool_name(pool_name, log=log)
+                        partial_scope = ResourceManagerDiffEngine._extract_scope_type(partial_scope_details, log=log)
+                        partial_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(
+                            partial_scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip", log=log
+                        )
+                        partial_resource_value = ResourceManagerDiffEngine._resource_attr(partial, "resource_value", "resourceValue")
                         existing_values = {
-                            "resource_id": getattr(partial, "resource_id", None),
+                            "resource_id": partial_resource_id,
                             "pool_name": partial_pool,
                             "scope_type": partial_scope,
                             "switch_ip": partial_sw,
                             "resource_value": partial_resource_value,
                         }
                         mismatch = {
-                            "resource_id": getattr(partial, "resource_id", None),
+                            "resource_id": partial_resource_id,
                             "have_pool_name": partial_pool,
                             "want_pool_name": desired_pool,
                             "have_scope_type": partial_scope,
@@ -594,11 +639,11 @@ class ResourceManagerDiffEngine:
                         pool_name,
                         scope_type,
                         sw,
-                        getattr(existing_res, "resource_id", None),
-                        existing_res.resource_value,
+                        ResourceManagerDiffEngine._resource_attr(existing_res, "resource_id", "resourceId"),
+                        ResourceManagerDiffEngine._resource_attr(existing_res, "resource_value", "resourceValue"),
                     )
                     matched_existing_keys.add(key)
-                    existing_value = existing_res.resource_value
+                    existing_value = ResourceManagerDiffEngine._resource_attr(existing_res, "resource_value", "resourceValue")
 
                     if ResourceManagerDiffEngine._compare_resource_values(existing_value, resource_value, log=log):
                         log.debug(
@@ -633,15 +678,15 @@ class ResourceManagerDiffEngine:
             if key not in matched_existing_keys:
                 log.info(
                     "Existing resource (entity=%s, pool=%s) not in proposed — marking to_delete",
-                    res.entity_name,
-                    res.pool_name,
+                    ResourceManagerDiffEngine._resource_attr(res, "entity_name", "entityName"),
+                    ResourceManagerDiffEngine._resource_attr(res, "pool_name", "poolName"),
                 )
                 changes["to_delete"].append(res)
             else:
                 log.debug(
                     "Existing resource (entity=%s, pool=%s, key=%s) was matched by a proposed entry — skipping to_delete",
-                    res.entity_name,
-                    res.pool_name,
+                    ResourceManagerDiffEngine._resource_attr(res, "entity_name", "entityName"),
+                    ResourceManagerDiffEngine._resource_attr(res, "pool_name", "poolName"),
                     key,
                 )
 
@@ -892,81 +937,41 @@ class NDResourceManagerModule:
     # Input validation
     # ------------------------------------------------------------------
 
-    def _validate_resource_params(self, item):
-        """Validate that the combination of pool_type, pool_name, and scope_type is allowed.
+    def _validate_required_fields_compat(self):
+        """Preserve legacy first-missing-field error messages for modifying states."""
+        for item in self.config:
+            for field in ("scope_type", "pool_type", "pool_name", "entity_name"):
+                if item.get(field) is None:
+                    self.log.error(
+                        "Mandatory parameter '%s' is missing in config item: %s",
+                        field,
+                        item,
+                    )
+                    raise ValueError("Mandatory parameter '{0}' missing".format(field))
 
-        Maps pool_type to an internal check_key (the pool_name for ID pools, 'IP_POOL' for
-        IP pools, 'SUBNET' for subnet pools), then looks up the allowed scope_type list in
-        ``POOL_SCOPE_MAP``.  Fails fast with an informative message if the
-        combination is not permitted by the ND Manage API.
-
-        Args:
-            item: A single config dict from the playbook ``config`` list, expected to
-                contain ``pool_type``, ``pool_name``, and ``scope_type`` keys.
-
-        Returns:
-            Tuple ``(True, '')`` when validation passes.
-            Tuple ``(False, error_message)`` when an invalid combination is detected.
-        """
-        pool_type = item.get("pool_type")
-        pool_name = item.get("pool_name")
-        scope_type = item.get("scope_type")
-
-        self.log.debug(
-            "Validating resource params: pool_type=%s, pool_name=%s, scope_type=%s",
-            pool_type,
-            pool_name,
-            scope_type,
-        )
-
-        if pool_type == "ID":
-            self.log.debug("pool_type is 'ID', using pool_name as check_key: %s", pool_name)
-            check_key = pool_name
-        elif pool_type == "IP":
-            self.log.debug("pool_type is 'IP', using check_key='IP_POOL'")
-            check_key = "IP_POOL"
-        elif pool_type == "SUBNET":
-            self.log.debug("pool_type is 'SUBNET', using check_key='SUBNET'")
-            check_key = "SUBNET"
-        else:
-            msg = "Given pool type = '{0}' is invalid, Allowed pool types = ['ID', 'IP', 'SUBNET']".format(pool_type)
-            self.log.warning("Validation failed: %s", msg)
-            return False, msg
-
-        allowed_scopes = POOL_SCOPE_MAP.get(check_key)
-        if allowed_scopes is None:
-            msg = "Given pool name '{0}' is not valid".format(pool_name)
-            self.log.warning("Validation failed: %s", msg)
-            return False, msg
-
-        if scope_type not in allowed_scopes:
-            msg = "Given scope type '{0}' is not valid for pool name = '{1}', Allowed scope_types = {2}".format(scope_type, pool_name, allowed_scopes)
-            self.log.warning("Validation failed: %s", msg)
-            return False, msg
-
-        self.log.debug(
-            "Validation passed: pool_name=%s, scope_type=%s, allowed_scopes=%s",
-            pool_name,
-            scope_type,
-            allowed_scopes,
-        )
-        return True, ""
+            if item.get("scope_type") != "fabric" and not item.get("switches"):
+                self.log.error(
+                    "'switches' is required for scope_type='%s' but is missing in config item: %s",
+                    item.get("scope_type"),
+                    item,
+                )
+                raise ValueError("switches : Required parameter not found")
 
     def _validate_input(self):
-        """Validate all playbook config items against the requirements of the current state.
+        """Validate playbook config items and return typed proposed config.
 
-        For ``merged`` and ``deleted`` states, ensures that ``config`` is provided and that
-        every item carries the four mandatory fields (``entity_name``, ``pool_type``,
-        ``pool_name``, ``scope_type``).  Also verifies that ``switch`` is present for any
-        non-fabric scope type, runs pool_type/pool_name/scope_type compatibility checks via
-        ``_validate_resource_params``, and performs pydantic cross-field validation via
-        ``ResourceManagerConfigModel.from_config``.
-
-        For ``gathered`` state, mandatory field checks are skipped so that partial filter
-        criteria (e.g. only ``pool_name`` or only ``switch``) are accepted.
+        ``ResourceManagerConfigModel`` is the primary validation surface. For
+        ``merged`` and ``deleted`` it enforces mandatory fields, resource format,
+        strict ID pool names, pool/scope compatibility, and required switch lists.
+        For ``gathered`` it validates any supplied filter fields while allowing
+        partial criteria such as only ``entity_name`` or only ``pool_name``.
 
         Raises:
             ValueError: On any validation failure.
+
+        Returns:
+            Validated config models for ``merged``/``deleted``. Gathered returns
+            an empty list because gathered config is used as raw filter criteria.
         """
         self.log.info(
             "Validating input: state=%s, config_count=%s",
@@ -981,74 +986,33 @@ class NDResourceManagerModule:
                     self.state,
                 )
                 raise ValueError("'config' element is mandatory for state '{0}'".format(self.state))
-            return
+            return []
 
-        for item in self.config:
+        if self.state != "gathered":
+            self._validate_required_fields_compat()
+            return ResourceManagerDiffEngine.validate_configs(self.config, self.state, log=self.log)
+
+        for idx, item in enumerate(self.config):
+            try:
+                ResourceManagerConfigModel.model_validate(item, context={"state": self.state})
+            except ValidationError as exc:
+                error_detail = exc.errors() if hasattr(exc, "errors") else str(exc)
+                error_msg = f"Gathered filter validation failed for config index {idx}: {error_detail}"
+                self.log.error(error_msg)
+                raise ValueError(error_msg) from exc
+            except Exception as exc:
+                error_msg = f"Gathered filter validation failed for config index {idx}: {str(exc)}"
+                self.log.error(error_msg)
+                raise ValueError(error_msg) from exc
             self.log.debug(
-                "Validating config item: entity_name=%s, pool_name=%s, scope_type=%s, pool_type=%s",
+                "Gathered filter [%s] validated: entity_name=%s, pool_name=%s, switches=%s",
+                idx,
                 item.get("entity_name"),
                 item.get("pool_name"),
-                item.get("scope_type"),
-                item.get("pool_type"),
+                item.get("switches"),
             )
-            if self.state != "gathered":
-                # Mandatory parameter checks
-                for field in ("scope_type", "pool_type", "pool_name", "entity_name"):
-                    if item.get(field) is None:
-                        self.log.error(
-                            "Mandatory parameter '%s' is missing in config item: %s",
-                            field,
-                            item,
-                        )
-                        raise ValueError("Mandatory parameter '{0}' missing".format(field))
-                    else:
-                        self.log.debug("Mandatory parameter '%s' present: %s", field, item.get(field))
 
-                # Switch required for non-fabric scopes
-                if item.get("scope_type") != "fabric" and not item.get("switches"):
-                    self.log.error(
-                        "'switches' is required for scope_type='%s' but is missing in config item: %s",
-                        item.get("scope_type"),
-                        item,
-                    )
-                    raise ValueError("switches : Required parameter not found")
-                elif item.get("scope_type") != "fabric":
-                    self.log.debug(
-                        "'switches' provided for scope_type='%s': %s",
-                        item.get("scope_type"),
-                        item.get("switches"),
-                    )
-
-            # Validate pool_name / scope_type combination (only when pool_type is provided)
-            if item.get("pool_type") is not None:
-                self.log.debug(
-                    "Running pool_type/pool_name/scope_type compatibility check for: pool_type=%s, pool_name=%s, scope_type=%s",
-                    item.get("pool_type"),
-                    item.get("pool_name"),
-                    item.get("scope_type"),
-                )
-                rc, mesg = self._validate_resource_params(item)
-                if not rc:
-                    self.log.error("Pool/scope compatibility check failed: %s", mesg)
-                    raise ValueError(mesg)
-                else:
-                    self.log.debug("Pool/scope compatibility check passed")
-
-            # Pydantic cross-field validation for merged/deleted
-            if self.state != "gathered":
-                try:
-                    ResourceManagerConfigModel.from_config(item)
-                    self.log.debug(
-                        "Pydantic validation passed for entity_name=%s",
-                        item.get("entity_name"),
-                    )
-                except Exception as exc:
-                    self.log.error(
-                        "Pydantic validation failed for entity_name=%s: %s",
-                        item.get("entity_name"),
-                        exc,
-                    )
-                    raise ValueError("Invalid parameters in playbook: {0}".format(str(exc)))
+        return []
 
     # ------------------------------------------------------------------
     # ND API interaction helpers
@@ -1250,9 +1214,8 @@ class NDResourceManagerModule:
     def _attr(self, resource, model_attr, dict_key):
         """Return a field value from a resource that may be a model instance or a raw dict.
 
-        Tries to read ``model_attr`` from the resource via ``getattr`` first (for typed
-        ``ResourceManagerResponse`` instances), then falls back to ``resource.get(dict_key)``
-        for raw dict responses returned when model parsing failed at fetch time.
+        Delegates to ``ResourceManagerDiffEngine._resource_attr`` so diffing,
+        gathered output, and filtering share the same model/dict access behavior.
 
         Args:
             resource: A ``ResourceManagerResponse`` model instance or a plain dict.
@@ -1262,16 +1225,9 @@ class NDResourceManagerModule:
         Returns:
             The field value, or None if neither path resolves.
         """
-        if hasattr(resource, model_attr):
-            value = getattr(resource, model_attr)
-            self.log.debug("_attr: resolved '%s' from model: %s", model_attr, value)
-            return value
-        if isinstance(resource, dict):
-            value = resource.get(dict_key)
-            self.log.debug("_attr: resolved '%s' from dict: %s", dict_key, value)
-            return value
-        self.log.debug("_attr: could not resolve '%s'/'%s' from resource type %s", model_attr, dict_key, type(resource))
-        return None
+        value = ResourceManagerDiffEngine._resource_attr(resource, model_attr, dict_key)
+        self.log.debug("_attr: resolved '%s'/'%s' from %s: %s", model_attr, dict_key, type(resource).__name__, value)
+        return value
 
     def _get_entity_name(self, resource):
         """Return the entity_name field from a resource model or raw dict."""
@@ -1304,18 +1260,12 @@ class NDResourceManagerModule:
         Returns:
             Playbook-style scope_type string, or None if the resource type is unrecognised.
         """
-        if hasattr(resource, "scope_details") and resource.scope_details:
-            raw = getattr(resource.scope_details, "scope_type", None)
-            self.log.debug("_get_scope_type: from model scope_details, raw=%s", raw)
-        elif isinstance(resource, dict):
-            sd = resource.get("scopeDetails") or {}
-            raw = sd.get("scopeType")
-            self.log.debug("_get_scope_type: from dict scopeDetails, raw=%s", raw)
-        else:
+        scope_details = ResourceManagerDiffEngine._scope_details(resource)
+        if scope_details is None:
             self.log.debug("_get_scope_type: unrecognised resource type %s, returning None", type(resource))
             return None
-        mapped = API_SCOPE_TYPE_TO_PLAYBOOK.get(raw, raw) if raw else None
-        self.log.debug("_get_scope_type: mapped API scope '%s' -> playbook scope '%s'", raw, mapped)
+        mapped = ResourceManagerDiffEngine._extract_scope_type(scope_details, log=self.log)
+        self.log.debug("_get_scope_type: mapped scope to playbook scope '%s'", mapped)
         return mapped
 
     def _get_switch_ip(self, resource):
@@ -1327,17 +1277,12 @@ class NDResourceManagerModule:
           - device / device_interface → switch_ip
           - device_pair / link  → src_switch_ip
         """
-        if hasattr(resource, "scope_details") and resource.scope_details:
+        scope_details = ResourceManagerDiffEngine._scope_details(resource)
+        if scope_details is not None:
             value = ResourceManagerDiffEngine._extract_scope_switch_key_val(
-                resource.scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip", log=self.log
+                scope_details, switch_key="switch_ip", src_switch_key="src_switch_ip", log=self.log
             )
-            self.log.debug("_get_switch_ip: from model scope_details, switch_ip=%s", value)
-            return value
-        if isinstance(resource, dict):
-            sd = resource.get("scopeDetails") or {}
-            # device/deviceInterface use "switchIp"; device_pair/link use "srcSwitchIp"
-            value = sd.get("switchIp") or sd.get("srcSwitchIp")
-            self.log.debug("_get_switch_ip: from dict scopeDetails, switch_ip=%s", value)
+            self.log.debug("_get_switch_ip: from scope_details, switch_ip=%s", value)
             return value
         self.log.debug("_get_switch_ip: unrecognised resource type %s, returning None", type(resource))
         return None
@@ -1384,20 +1329,58 @@ class NDResourceManagerModule:
     # API payload builders
     # ------------------------------------------------------------------
 
+    def _build_fabric_scope(self, _switch_id=None, _entity_name=None):
+        """Build fabric-level scope details."""
+        return FabricScope(fabric_name=self.fabric)
+
+    def _build_device_scope(self, switch_id=None, _entity_name=None):
+        """Build device-level scope details."""
+        return DeviceScope(switch_id=switch_id)
+
+    def _build_device_interface_scope(self, switch_id=None, entity_name=None):
+        """Build device-interface scope details from ``entity_name``."""
+        parts = (entity_name or "").split("~", 1)
+        interface_name = parts[1] if len(parts) > 1 else None
+        if not interface_name:
+            self.log.warning(
+                "_build_device_interface_scope: could not parse interfaceName from entity_name='%s'",
+                entity_name,
+            )
+        return DeviceInterfaceScope(switch_id=switch_id, interface_name=interface_name)
+
+    def _build_device_pair_scope(self, _switch_id=None, entity_name=None):
+        """Build device-pair scope details from ``entity_name``."""
+        parts = (entity_name or "").split("~")
+        src_switch_id = parts[0] if len(parts) > 0 else None
+        dst_switch_id = parts[1] if len(parts) > 1 else None
+        return DevicePairScope(src_switch_id=src_switch_id, dst_switch_id=dst_switch_id)
+
+    def _build_link_scope(self, _switch_id=None, entity_name=None):
+        """Build link scope details from ``entity_name``."""
+        parts = (entity_name or "").split("~")
+        src_switch_id = parts[0] if len(parts) > 0 else None
+        src_interface_name = parts[1] if len(parts) > 1 else None
+        dst_switch_id = parts[2] if len(parts) > 2 else None
+        dst_interface_name = parts[3] if len(parts) > 3 else None
+        return LinkScope(
+            src_switch_id=src_switch_id,
+            src_interface_name=src_interface_name,
+            dst_switch_id=dst_switch_id,
+            dst_interface_name=dst_interface_name,
+        )
+
     def _build_scope_details(self, scope_type, switch_ip=None, entity_name=None):
-        """Build the scopeDetails Pydantic model for the ND Manage API.
+        """Build the scopeDetails model for the ND Manage API.
 
         ``switch_ip`` is the translated switchId (serial number) of the source switch
         from the playbook ``switch`` list.  The entity_name encodes the full topology
-        (src and dst) as tilde-separated fields — the server uses it to resolve
-        additional context, so we only need to supply srcSwitchId for multi-switch
-        scopes (device_pair, link) and let the server derive dst from entityName.
+        (src and dst) as tilde-separated fields for multi-switch scopes.
 
           - fabric:           FabricScope(fabricName)
           - device:           DeviceScope(switchId)
           - device_interface: DeviceInterfaceScope(switchId, interfaceName)
-          - device_pair:      DevicePairScope(srcSwitchId)  — dst derived by server from entityName
-          - link:             LinkScope(srcSwitchId, srcInterfaceName)  — dst derived by server from entityName
+          - device_pair:      DevicePairScope(srcSwitchId, dstSwitchId)
+          - link:             LinkScope(src/dst switch and interface details)
         """
         self.log.debug(
             "_build_scope_details: scope_type=%s, switch_ip=%s, entity_name=%s, fabric=%s",
@@ -1407,85 +1390,18 @@ class NDResourceManagerModule:
             self.fabric,
         )
 
-        if scope_type == "fabric":
-            self.log.debug(
-                "_build_scope_details: fabric scope -> fabricName=%s",
-                self.fabric,
-            )
-            result = FabricScope(fabric_name=self.fabric)
+        scope_builders = {
+            "fabric": self._build_fabric_scope,
+            "device": self._build_device_scope,
+            "device_interface": self._build_device_interface_scope,
+            "device_pair": self._build_device_pair_scope,
+            "link": self._build_link_scope,
+        }
+        builder = scope_builders.get(scope_type)
+        if builder is None:
+            raise ValueError("Unsupported scope_type '{0}' while building scope details".format(scope_type))
 
-        elif scope_type == "device":
-            self.log.debug(
-                "_build_scope_details: device scope -> switchId=%s",
-                switch_ip,
-            )
-            result = DeviceScope(switch_id=switch_ip)
-
-        elif scope_type == "device_interface":
-            # entity_name format: <serialNumber>~<interfaceName>
-            # switch_ip is already the translated switchId (serial number)
-            parts = (entity_name or "").split("~", 1)
-            if_name = parts[1] if len(parts) > 1 else None
-            self.log.debug(
-                "_build_scope_details: device_interface scope -> switchId=%s, interfaceName=%s (interfaceName parsed from entity_name='%s')",
-                switch_ip,
-                if_name,
-                entity_name,
-            )
-            if not if_name:
-                self.log.warning(
-                    "_build_scope_details: device_interface scope: could not parse interfaceName from entity_name='%s'",
-                    entity_name,
-                )
-            result = DeviceInterfaceScope(switch_id=switch_ip, interface_name=if_name)
-
-        elif scope_type == "device_pair":
-            # entity_name format: <srcSN>~<dstSN>[~<label>]
-            # Both srcSwitchId and dstSwitchId must be sent — the server does not derive
-            # dstSwitchId from entityName and returns "JSONObject["dstSwitchId"] not found."
-            # if it is missing.
-            parts = (entity_name or "").split("~")
-            src_sn = parts[0] if len(parts) > 0 else None
-            dst_sn = parts[1] if len(parts) > 1 else None
-            self.log.debug(
-                "_build_scope_details: device_pair scope -> srcSwitchId=%s, dstSwitchId=%s (parsed from entity_name='%s')",
-                src_sn,
-                dst_sn,
-                entity_name,
-            )
-            result = DevicePairScope(src_switch_id=src_sn, dst_switch_id=dst_sn)
-
-        elif scope_type == "link":
-            # entity_name format: <srcSN>~<srcIF>~<dstSN>~<dstIF>
-            # All four fields must be supplied — the server does not derive dst context
-            # from entityName alone.
-            parts = (entity_name or "").split("~")
-            src_sn = parts[0] if len(parts) > 0 else None
-            src_if = parts[1] if len(parts) > 1 else None
-            dst_sn = parts[2] if len(parts) > 2 else None
-            dst_if = parts[3] if len(parts) > 3 else None
-            self.log.debug(
-                "_build_scope_details: link scope -> srcSwitchId=%s, srcInterfaceName=%s, dstSwitchId=%s, dstInterfaceName=%s (parsed from entity_name='%s')",
-                src_sn,
-                src_if,
-                dst_sn,
-                dst_if,
-                entity_name,
-            )
-            result = LinkScope(
-                src_switch_id=src_sn,
-                src_interface_name=src_if,
-                dst_switch_id=dst_sn,
-                dst_interface_name=dst_if,
-            )
-
-        else:
-            self.log.warning(
-                "_build_scope_details: unrecognised scope_type='%s', falling back to generic DeviceScope payload",
-                scope_type,
-            )
-            result = DeviceScope(switch_id=switch_ip)
-
+        result = builder(switch_ip, entity_name)
         self.log.debug("_build_scope_details: result=%s", result)
         return result
 
@@ -1970,6 +1886,112 @@ class NDResourceManagerModule:
             payload=remove_req.to_payload(),
         )
 
+    def _get_switch_id(self, resource):
+        """Return the primary switch ID from scopeDetails for gathered filtering."""
+        scope_details = ResourceManagerDiffEngine._scope_details(resource)
+        if scope_details is None:
+            return None
+        return ResourceManagerDiffEngine._extract_scope_switch_key_val(
+            scope_details,
+            switch_key="switch_id",
+            src_switch_key="src_switch_id",
+            log=self.log,
+        )
+
+    @staticmethod
+    def _filter_has_active_criteria(filter_item):
+        """Return True when a gathered filter item has at least one criterion."""
+        return bool(filter_item.get("entity_name") or filter_item.get("pool_name") or filter_item.get("switches"))
+
+    def _resource_matches_filter(self, resource, filter_item):
+        """Return True when a resource matches one gathered filter item."""
+        resource_id = self._get_resource_id(resource)
+        resource_entity = self._get_entity_name(resource)
+        resource_pool = self._get_pool_name(resource)
+        resource_switch_id = self._get_switch_id(resource)
+
+        filter_entity = filter_item.get("entity_name")
+        filter_pool = filter_item.get("pool_name")
+        filter_switches = filter_item.get("switches") or []
+
+        if filter_entity and not self._entity_names_match(resource_entity, filter_entity):
+            self.log.debug(
+                "manage_gathered: skipping resource id='%s', entity_name mismatch: resource='%s' vs filter='%s'",
+                resource_id,
+                resource_entity,
+                filter_entity,
+            )
+            return False
+
+        if filter_pool and resource_pool != filter_pool:
+            self.log.debug(
+                "manage_gathered: skipping resource id='%s', pool_name mismatch: resource='%s' vs filter='%s'",
+                resource_id,
+                resource_pool,
+                filter_pool,
+            )
+            return False
+
+        if filter_switches and resource_switch_id not in filter_switches:
+            self.log.debug(
+                "manage_gathered: skipping resource id='%s', switchId not in filter: resource_switch='%s', filter_switches=%s",
+                resource_id,
+                resource_switch_id,
+                filter_switches,
+            )
+            return False
+
+        self.log.debug(
+            "manage_gathered: resource id='%s' matched filter (entity_name='%s', pool_name='%s', switch_id='%s')",
+            resource_id,
+            resource_entity,
+            resource_pool,
+            resource_switch_id,
+        )
+        return True
+
+    def _apply_gathered_filters(self):
+        """Apply gathered config filters to cached resources and return translated results."""
+        seen_ids = set()
+        results = []
+
+        for filter_item in self.config:
+            if not self._filter_has_active_criteria(filter_item):
+                self.log.debug(
+                    "manage_gathered: skipping empty filter item (entity_name=%s, pool_name=%s, switches=%s)",
+                    filter_item.get("entity_name"),
+                    filter_item.get("pool_name"),
+                    filter_item.get("switches") or [],
+                )
+                continue
+
+            self.log.debug(
+                "manage_gathered: applying filter: entity_name=%s, pool_name=%s, switches=%s",
+                filter_item.get("entity_name"),
+                filter_item.get("pool_name"),
+                filter_item.get("switches") or [],
+            )
+
+            for resource in self._all_resources:
+                resource_id = self._get_resource_id(resource)
+                if resource_id is not None and resource_id in seen_ids:
+                    self.log.debug(
+                        "manage_gathered: skipping resource id='%s' already included by an earlier filter",
+                        resource_id,
+                    )
+                    continue
+
+                if not self._resource_matches_filter(resource, filter_item):
+                    continue
+
+                translated = self.translate_gathered_results([resource])
+                if translated:
+                    results.append(translated[0])
+                if resource_id is not None:
+                    seen_ids.add(resource_id)
+
+        return results
+
     def manage_gathered(self):
         """Return resources from the ND fabric, optionally filtered by config criteria.
 
@@ -2001,97 +2023,7 @@ class NDResourceManagerModule:
             self.changed_dict[0]["gathered"].extend(results)
             return
 
-        seen_ids = set()
-        results = []
-
-        for filter_item in self.config:
-            filter_entity = filter_item.get("entity_name")
-            filter_pool = filter_item.get("pool_name")
-            filter_switches = filter_item.get("switches") or []
-
-            # Skip filter items with no active criteria to avoid matching all resources
-            if not filter_entity and not filter_pool and not filter_switches:
-                self.log.debug(
-                    "manage_query: Skipping filter item with no active criteria (entity_name=%s, pool_name=%s, switches=%s)",
-                    filter_entity,
-                    filter_pool,
-                    filter_switches,
-                )
-                continue
-
-            self.log.debug(
-                "manage_query: Applying filter: entity_name=%s, pool_name=%s, switches=%s",
-                filter_entity,
-                filter_pool,
-                filter_switches,
-            )
-
-            for res in self._all_resources:
-                rid = self._get_resource_id(res)
-
-                # Deduplicate across filter criteria
-                if rid is not None and rid in seen_ids:
-                    self.log.debug(
-                        "manage_query: Skipping resource id='%s' (already included via previous filter)",
-                        rid,
-                    )
-                    continue
-
-                res_entity = self._get_entity_name(res)
-                res_pool = self._get_pool_name(res)
-                # Use switchId (serial number) from scopeDetails to match playbook switch config values
-                if hasattr(res, "scope_details") and res.scope_details:
-                    res_sw = ResourceManagerDiffEngine._extract_scope_switch_key_val(
-                        res.scope_details, switch_key="switch_id", src_switch_key="src_switch_id", log=self.log
-                    )
-                elif isinstance(res, dict):
-                    sd = res.get("scopeDetails") or {}
-                    res_sw = sd.get("switchId") or sd.get("srcSwitchId")
-                else:
-                    res_sw = None
-
-                # Apply entity_name filter
-                if filter_entity and not self._entity_names_match(res_entity, filter_entity):
-                    self.log.debug(
-                        "manage_query: Skipping resource id='%s', entity_name mismatch: resource='%s' vs filter='%s'",
-                        rid,
-                        res_entity,
-                        filter_entity,
-                    )
-                    continue
-
-                # Apply pool_name filter
-                if filter_pool and res_pool != filter_pool:
-                    self.log.debug(
-                        "manage_query: Skipping resource id='%s', pool_name mismatch: resource='%s' vs filter='%s'",
-                        rid,
-                        res_pool,
-                        filter_pool,
-                    )
-                    continue
-
-                # Apply switch filter: match switchId (serial number) from scopeDetails;
-                # fabric-scoped resources (no switchId) are correctly excluded
-                if filter_switches and res_sw not in filter_switches:
-                    self.log.debug(
-                        "manage_query: Skipping resource id='%s', switchId not in filter: resource_switch='%s', filter_switches=%s",
-                        rid,
-                        res_sw,
-                        filter_switches,
-                    )
-                    continue
-
-                self.log.debug(
-                    "manage_query: Resource id='%s' matched all filters (entity_name='%s', pool_name='%s', switch_ip='%s')",
-                    rid,
-                    res_entity,
-                    res_pool,
-                    res_sw,
-                )
-                result_dict = self.translate_gathered_results([res])[0]
-                results.append(result_dict)
-                if rid is not None:
-                    seen_ids.add(rid)
+        results = self._apply_gathered_filters()
 
         self.log.info(
             "manage_gathered: Gather complete, %s resource(s) matched filters",
@@ -2107,27 +2039,28 @@ class NDResourceManagerModule:
     def manage_state(self):
         """Validate input and dispatch to the appropriate state handler.
 
-        Runs ``_validate_input`` on the raw config, then converts the config list to
-        typed ``ResourceManagerConfigModel`` objects via
-        ``ResourceManagerDiffEngine.validate_configs`` (skipped for ``gathered`` state).
-        Dispatches to ``manage_merged``, ``manage_deleted``, or
-        ``manage_gathered`` depending on ``self.state``.
+        Runs model-backed validation on the raw config and dispatches to
+        ``manage_merged``, ``manage_deleted``, or ``manage_gathered`` through a
+        small state handler map.
         """
         self.log.info("manage_state: Dispatching to state handler: state=%s", self.state)
-        self._validate_input()
+        validated_configs = self._validate_input()
 
-        if self.config and self.state != "gathered":
-            self.proposed = ResourceManagerDiffEngine.validate_configs(self.config, self.state, self.nd, log=self.log)
+        if self.state != "gathered":
+            self.proposed = validated_configs
             self._proposed_list = [cfg.model_dump(by_alias=True, exclude_none=True) for cfg in self.proposed]
-        if self.state == "merged":
-            self.log.info("manage_state: Dispatching to manage_merged()")
-            self.manage_merged()
-        elif self.state == "deleted":
-            self.log.info("manage_state: Dispatching to manage_deleted()")
-            self.manage_deleted()
-        elif self.state == "gathered":
-            self.log.info("manage_state: Dispatching to manage_gathered()")
-            self.manage_gathered()
+
+        state_handlers = {
+            "merged": self.manage_merged,
+            "deleted": self.manage_deleted,
+            "gathered": self.manage_gathered,
+        }
+        handler = state_handlers.get(self.state)
+        if handler is None:
+            raise ValueError("Unsupported state '{0}'".format(self.state))
+
+        self.log.info("manage_state: Dispatching to %s()", handler.__name__)
+        handler()
 
         self.log.info("manage_state: State handler completed for state=%s", self.state)
 
