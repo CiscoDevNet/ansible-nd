@@ -275,6 +275,44 @@ class EpManageInterfacesPut(_EpManageInterfacesBase):
         return HttpVerbEnum.PUT
 
 
+class EpManageInterfacesDelete(_EpManageInterfacesBase):
+    """
+    # Summary
+
+    Delete a specific interface via the per-interface endpoint.
+
+    - Path: `/api/v1/manage/fabrics/{fabric_name}/switches/{switch_sn}/interfaces/{interface_name}`
+    - Verb: DELETE
+
+    Used by vPC interface orchestrators because the `interfaceActions/remove` bulk endpoint returns
+    `Invalid Interface` for vPC entries on ND 4.2.1 (lab-verified). The per-interface DELETE returns 204
+    on success and a subsequent GET returns 404.
+
+    ## Raises
+
+    ### ValueError
+
+    - Via inherited `path` property if `fabric_name`, `switch_sn`, or `interface_name` is not set.
+    """
+
+    class_name: Literal["EpManageInterfacesDelete"] = Field(
+        default="EpManageInterfacesDelete", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.DELETE`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.DELETE
+
+
 class EpManageInterfacesDeploy(FabricNameMixin, NDEndpointBaseModel):
     """
     # Summary
