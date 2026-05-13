@@ -145,7 +145,9 @@ def test_manage_policies_00060():
     - PolicyMutationEndpointParams.to_query_string()
     """
     with does_not_raise():
-        params = PolicyMutationEndpointParams(cluster_name="cluster1", ticket_id="MyTicket1234")
+        params = PolicyMutationEndpointParams(
+            cluster_name="cluster1", ticket_id="MyTicket1234"
+        )
         result = params.to_query_string()
     assert "clusterName=cluster1" in result
     assert "ticketId=MyTicket1234" in result
@@ -295,7 +297,9 @@ def test_manage_policies_00140():
     with does_not_raise():
         instance = EpManagePoliciesGet()
         instance.fabric_name = "my-fabric"
-        instance.lucene_params.filter = "switchId:FDO123 AND templateName:switch_freeform"
+        instance.lucene_params.filter = (
+            "switchId:FDO123 AND templateName:switch_freeform"
+        )
         instance.lucene_params.max = 100
         result = instance.path
     assert result.startswith("/api/v1/manage/fabrics/my-fabric/policies?")

@@ -52,6 +52,8 @@ options:
       name:
         description:
         - "This can be one of the following:"
+        - This field is mutually exclusive with O(config.policy_id) as the primary key;
+          when both are present, O(config.policy_id) takes precedence.
         - "a) Template Name - A unique name identifying the template (e.g., C(feature_enable), C(switch_freeform))."
         - "   A template name can be used by multiple policy groups and hence does not identify a policy group uniquely."
         - "b) Policy Group ID - A unique ID identifying a policy group (e.g., C(POLICY-GROUP-123456))."
@@ -68,6 +70,16 @@ options:
         - For O(state=gathered), the ID is used directly to query the specific policy group by ID.
         - Required for O(state=merged) and O(state=deleted). Optional for O(state=gathered)
           where entries can filter by O(config.description) alone.
+        type: str
+      policy_id:
+        description:
+        - The unique policy group ID assigned by the controller (e.g., C(POLICY-GROUP-123456)).
+        - Populated automatically in O(state=gathered) output to support round-trip operations.
+        - When provided together with O(config.name) (template name) and O(config.description),
+          this field is used as the authoritative key for ID-based resolution, bypassing the
+          composite (description, template_name) lookup.
+        - Optional for O(state=merged) and O(state=deleted). Not applicable for O(state=gathered)
+          (use O(config.name) with a C(POLICY-GROUP-*) value to filter by ID in gathered).
         type: str
       description:
         description:
@@ -284,14 +296,26 @@ RETURN = r"""
 import logging
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.policy_group_base import PolicyGroupCreate
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_policy_group import PolicyGroupOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.gathered_models import GatheredPolicyGroup
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDStateMachineError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.gathered_models import (
+    GatheredPolicyGroup,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.policy_group_base import (
+    PolicyGroupCreate,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+    NDStateMachine,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_policy_group import (
+    PolicyGroupOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
@@ -330,8 +354,12 @@ def _resolve_config(config, existing_groups, state, module, log):
         by_policy_id[pid] = group
         by_template_name.setdefault(tname, []).append(group)
 
-    log.debug("_resolve_config: %d existing groups, %d unique IDs, %d unique templates",
-              len(existing_groups), len(by_policy_id), len(by_template_name))
+    log.debug(
+        "_resolve_config: %d existing groups, %d unique IDs, %d unique templates",
+        len(existing_groups),
+        len(by_policy_id),
+        len(by_template_name),
+    )
 
     resolved = []
     for idx, entry in enumerate(config):
@@ -344,8 +372,11 @@ def _resolve_config(config, existing_groups, state, module, log):
         # is the template name; the policy_id is the authoritative key.
         explicit_pgid = entry.get("policy_id")
         if explicit_pgid and not name.startswith("POLICY-GROUP-"):
-            log.debug("config[%d]: policy_id='%s' provided — promoting to ID-based resolution",
-                      idx, explicit_pgid)
+            log.debug(
+                "config[%d]: policy_id='%s' provided — promoting to ID-based resolution",
+                idx,
+                explicit_pgid,
+            )
             name = explicit_pgid
 
         if name.startswith("POLICY-GROUP-"):
@@ -374,18 +405,33 @@ def _resolve_config(config, existing_groups, state, module, log):
                 # can detect rename-via-id and route to the direct-action path
                 # (the state machine keys on description and cannot represent
                 # a description change).
-                resolved_entry["_existing_description"] = existing.get("description", "")
+                resolved_entry["_existing_description"] = existing.get(
+                    "description", ""
+                )
                 resolved.append(resolved_entry)
-                log.info("config[%d]: Resolved ID '%s' → template='%s', description='%s' (existing description='%s')",
-                         idx, name, resolved_entry["name"], resolved_entry["description"],
-                         resolved_entry["_existing_description"])
+                log.info(
+                    "config[%d]: Resolved ID '%s' → template='%s', description='%s' (existing description='%s')",
+                    idx,
+                    name,
+                    resolved_entry["name"],
+                    resolved_entry["description"],
+                    resolved_entry["_existing_description"],
+                )
             elif state == "deleted":
                 # ID not found — skip silently (already deleted)
-                log.info("config[%d]: ID '%s' not found — skipping (already deleted)", idx, name)
+                log.info(
+                    "config[%d]: ID '%s' not found — skipping (already deleted)",
+                    idx,
+                    name,
+                )
                 continue
             else:
-                log.error("config[%d]: Policy group ID '%s' not found on controller (state=%s)",
-                          idx, name, state)
+                log.error(
+                    "config[%d]: Policy group ID '%s' not found on controller (state=%s)",
+                    idx,
+                    name,
+                    state,
+                )
                 module.fail_json(
                     msg=(
                         f"config[{idx}]: Policy group ID '{name}' not found on controller. "
@@ -399,11 +445,18 @@ def _resolve_config(config, existing_groups, state, module, log):
             # Template name only — expand to ALL existing with that template
             matching = by_template_name.get(name, [])
             if matching:
-                log.info("config[%d]: Template '%s' (no description) — expanded to %d policy groups",
-                         idx, name, len(matching))
+                log.info(
+                    "config[%d]: Template '%s' (no description) — expanded to %d policy groups",
+                    idx,
+                    name,
+                    len(matching),
+                )
             else:
-                log.info("config[%d]: Template '%s' (no description) — no matches found, skipping",
-                         idx, name)
+                log.info(
+                    "config[%d]: Template '%s' (no description) — no matches found, skipping",
+                    idx,
+                    name,
+                )
             for group in matching:
                 resolved_entry = dict(entry)
                 resolved_entry["name"] = name
@@ -413,10 +466,19 @@ def _resolve_config(config, existing_groups, state, module, log):
 
         else:
             # Normal case: name + description provided
-            log.debug("config[%d]: Pass-through — name='%s', description='%s'", idx, name, description)
+            log.debug(
+                "config[%d]: Pass-through — name='%s', description='%s'",
+                idx,
+                name,
+                description,
+            )
             resolved.append(entry)
 
-    log.debug("EXIT: _resolve_config() — %d entries resolved from %d input", len(resolved), len(config))
+    log.debug(
+        "EXIT: _resolve_config() — %d entries resolved from %d input",
+        len(resolved),
+        len(config),
+    )
     return resolved
 
 
@@ -442,7 +504,9 @@ def _handle_gathered_state(orchestrator, config, log):
     if not config:
         # No config — fetch everything
         log.info("Gathered: fetching all policy groups")
-        raw_groups = orchestrator.query_all(include_no_description=True, deduplicate=False)
+        raw_groups = orchestrator.query_all(
+            include_no_description=True, deduplicate=False
+        )
     else:
         for entry in config:
             name = entry.get("name", "") or ""
@@ -456,18 +520,28 @@ def _handle_gathered_state(orchestrator, config, log):
                     raw_groups.append(result)
             elif name and description:
                 # Filter by template name + description
-                log.info("Gathered: filtering by template=%s, description=%s", name, description)
-                filtered = orchestrator.query_filtered(template_name=name, description=description, deduplicate=False)
+                log.info(
+                    "Gathered: filtering by template=%s, description=%s",
+                    name,
+                    description,
+                )
+                filtered = orchestrator.query_filtered(
+                    template_name=name, description=description, deduplicate=False
+                )
                 raw_groups.extend(filtered)
             elif name:
                 # Filter by template name only
                 log.info("Gathered: filtering by template=%s", name)
-                filtered = orchestrator.query_filtered(template_name=name, deduplicate=False)
+                filtered = orchestrator.query_filtered(
+                    template_name=name, deduplicate=False
+                )
                 raw_groups.extend(filtered)
             elif description:
                 # Filter by description only
                 log.info("Gathered: filtering by description=%s", description)
-                filtered = orchestrator.query_filtered(description=description, deduplicate=False)
+                filtered = orchestrator.query_filtered(
+                    description=description, deduplicate=False
+                )
                 raw_groups.extend(filtered)
 
     if not raw_groups:
@@ -486,7 +560,9 @@ def _handle_gathered_state(orchestrator, config, log):
             model = GatheredPolicyGroup.from_api_policy_group(group)
             gathered.append(model.to_gathered_config())
         except Exception as exc:
-            log.warning("Failed to parse policy group %s for gathered output: %s", pid, exc)
+            log.warning(
+                "Failed to parse policy group %s for gathered output: %s", pid, exc
+            )
 
     log.info("Gathered %d unique policy groups", len(gathered))
     return gathered
@@ -515,9 +591,7 @@ def main():
     # Config is mandatory for merged and deleted states.
     # For gathered, it is optional (no config = fetch all).
     if not config and state != "gathered":
-        module.fail_json(
-            msg=f"'config' is required when state='{state}'."
-        )
+        module.fail_json(msg=f"'config' is required when state='{state}'.")
 
     if module.check_mode:
         log.info("Running in check mode — no changes will be made to the controller.")
@@ -579,8 +653,12 @@ def main():
             seen_keys[key] = idx
 
     try:
-        log.info("Starting nd_policy_group module: state=%s, config_entries=%d, deploy=%s",
-                 state, len(config), module.params.get("deploy"))
+        log.info(
+            "Starting nd_policy_group module: state=%s, config_entries=%d, deploy=%s",
+            state,
+            len(config),
+            module.params.get("deploy"),
+        )
 
         # Build REST infrastructure for orchestrator instance
         sender = Sender()
@@ -605,7 +683,9 @@ def main():
         if state == "gathered":
             gathered = _handle_gathered_state(orchestrator, config, log)
             result = {"changed": False, "gathered": gathered}
-            log.info("Gathered state completed. Returned %d policy groups.", len(gathered))
+            log.info(
+                "Gathered state completed. Returned %d policy groups.", len(gathered)
+            )
             module.exit_json(**result)
 
         # Pre-process config for deleted/merged states to resolve:
@@ -616,8 +696,12 @@ def main():
         # state machine via the direct-action path below).
         existing_groups = None
         if config and state in ("merged", "deleted"):
-            existing_groups = orchestrator.query_all(include_no_description=True, deduplicate=False)
-            resolved_config = _resolve_config(config, existing_groups, state, module, log)
+            existing_groups = orchestrator.query_all(
+                include_no_description=True, deduplicate=False
+            )
+            resolved_config = _resolve_config(
+                config, existing_groups, state, module, log
+            )
             module.params["config"] = resolved_config
 
         # Partition resolved entries into three buckets:
@@ -629,7 +713,7 @@ def main():
         direct_action_items = []
         normal_config = []
         if state in ("merged", "deleted"):
-            for entry in (module.params.get("config") or []):
+            for entry in module.params.get("config") or []:
                 if entry.get("create_additional_policy", False):
                     force_create_items.append(entry)
                 elif entry.get("policy_id") and (
@@ -655,9 +739,15 @@ def main():
                 entry.pop("_existing_description", None)
             module.params["config"] = normal_config
             if force_create_items:
-                log.info("Force-create items (create_additional_policy): %d", len(force_create_items))
+                log.info(
+                    "Force-create items (create_additional_policy): %d",
+                    len(force_create_items),
+                )
             if direct_action_items:
-                log.info("Direct-action items (managed by policy_id): %d", len(direct_action_items))
+                log.info(
+                    "Direct-action items (managed by policy_id): %d",
+                    len(direct_action_items),
+                )
             log.info("Normal state machine items: %d", len(normal_config))
 
         force_created = False
@@ -668,7 +758,9 @@ def main():
             # they CANNOT show up in before/after — the identifier-keyed
             # NDConfigCollection collapses duplicates. Surface them via a
             # dedicated `force_created` key in the result instead.
-            force_created_models = [PolicyGroupCreate.from_config(e) for e in force_create_items]
+            force_created_models = [
+                PolicyGroupCreate.from_config(e) for e in force_create_items
+            ]
             orchestrator.create_bulk(force_created_models)
             force_created = True
 
@@ -680,7 +772,9 @@ def main():
         if direct_action_items:
             for entry in direct_action_items:
                 pid = entry["policy_id"]
-                entry_for_model = {k: v for k, v in entry.items() if k != "_existing_description"}
+                entry_for_model = {
+                    k: v for k, v in entry.items() if k != "_existing_description"
+                }
                 if state == "merged":
                     model = PolicyGroupCreate.from_config(entry_for_model)
                     model.policy_id = pid
@@ -689,7 +783,11 @@ def main():
                     direct_actions_result["updated"].append(
                         model.model_dump(by_alias=False, exclude_none=True)
                     )
-                    log.info("Direct-action: updated policy group %s (description='%s')", pid, model.description)
+                    log.info(
+                        "Direct-action: updated policy group %s (description='%s')",
+                        pid,
+                        model.description,
+                    )
                 elif state == "deleted":
                     model = PolicyGroupCreate.from_config(entry_for_model)
                     model.policy_id = pid
@@ -711,10 +809,20 @@ def main():
         # Scope strictly to policies the user mentioned in `config:` so we never
         # touch unrelated fabric policies.
         if state == "merged" and orchestrator.deploy and not module.check_mode:
-            sent_identifiers = {item.get_identifier_value() for item in nd_state_machine.sent}
-            proposed_identifiers = {item.get_identifier_value() for item in nd_state_machine.proposed}
-            log.debug("deploy-unchanged: proposed_identifiers=%s", sorted(map(str, proposed_identifiers)))
-            log.debug("deploy-unchanged: sent_identifiers=%s", sorted(map(str, sent_identifiers)))
+            sent_identifiers = {
+                item.get_identifier_value() for item in nd_state_machine.sent
+            }
+            proposed_identifiers = {
+                item.get_identifier_value() for item in nd_state_machine.proposed
+            }
+            log.debug(
+                "deploy-unchanged: proposed_identifiers=%s",
+                sorted(map(str, proposed_identifiers)),
+            )
+            log.debug(
+                "deploy-unchanged: sent_identifiers=%s",
+                sorted(map(str, sent_identifiers)),
+            )
             unchanged_policy_ids = []
             for item in nd_state_machine.existing:
                 ident = item.get_identifier_value()
@@ -723,15 +831,24 @@ def main():
                 pid = getattr(item, "policy_id", None)
                 log.debug(
                     "deploy-unchanged: existing item ident=%s policy_id=%s in_proposed=%s in_sent=%s",
-                    ident, pid, in_proposed, in_sent,
+                    ident,
+                    pid,
+                    in_proposed,
+                    in_sent,
                 )
                 if in_proposed and not in_sent and pid:
                     unchanged_policy_ids.append(pid)
             if unchanged_policy_ids:
-                log.info("Deploying %d unchanged policy groups (deploy=true): %s", len(unchanged_policy_ids), unchanged_policy_ids)
+                log.info(
+                    "Deploying %d unchanged policy groups (deploy=true): %s",
+                    len(unchanged_policy_ids),
+                    unchanged_policy_ids,
+                )
                 orchestrator._push_config(unchanged_policy_ids)
             else:
-                log.debug("deploy-unchanged: no unchanged user-mentioned policies to push")
+                log.debug(
+                    "deploy-unchanged: no unchanged user-mentioned policies to push"
+                )
 
         result = nd_state_machine.output.format()
         # Surface force-created items as a dedicated key so they're visible
@@ -740,7 +857,8 @@ def main():
         if force_created:
             result["changed"] = True
             result["force_created"] = [
-                m.model_dump(by_alias=False, exclude_none=True) for m in force_created_models
+                m.model_dump(by_alias=False, exclude_none=True)
+                for m in force_created_models
             ]
         # Surface direct-action results (no-description groups managed by ID).
         # These bypass the state machine, so they don't show up in before/after.
@@ -748,7 +866,10 @@ def main():
             result["changed"] = True
             result["direct_actions"] = direct_actions_result
 
-        log.info("State management completed successfully. Changed: %s", result.get("changed", False))
+        log.info(
+            "State management completed successfully. Changed: %s",
+            result.get("changed", False),
+        )
         module.exit_json(**result)
 
     except NDStateMachineError as e:

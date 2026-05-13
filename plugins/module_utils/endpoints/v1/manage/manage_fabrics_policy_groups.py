@@ -21,7 +21,13 @@ __author__ = "L Nikhil Sri Krishna"
 
 from typing import Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    ConfigDict,
+    Field,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
+    NDEndpointBaseModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     FabricNameMixin,
     PolicyGroupIdMixin,
@@ -34,13 +40,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params im
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    ConfigDict,
-    Field,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
-    NDEndpointBaseModel,
-)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 # ============================================================================
 # Query parameter classes

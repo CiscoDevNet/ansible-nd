@@ -92,7 +92,9 @@ class PolicyGroupIds(NDNestedModel):
             raise ValueError("policy_ids must contain at least one policy group ID")
         for policy_id in v:
             if not isinstance(policy_id, str) or not policy_id.strip():
-                raise ValueError(f"Invalid policy group ID: {policy_id!r}. Must be a non-empty string.")
+                raise ValueError(
+                    f"Invalid policy group ID: {policy_id!r}. Must be a non-empty string."
+                )
         return v
 
     def to_request_dict(self) -> dict[str, Any]:

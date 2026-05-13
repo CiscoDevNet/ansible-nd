@@ -61,7 +61,9 @@ class SwitchDeployEndpointParams(EndpointQueryParams):
 
     force_show_run: bool | None = Field(
         default=None,
-        description=("If true, Config compliance fetches the latest running config from the device. If false, uses the cached version."),
+        description=(
+            "If true, Config compliance fetches the latest running config from the device. If false, uses the cached version."
+        ),
     )
     # TODO: Move cluster_name to shared fields file once available.
     cluster_name: str | None = Field(

@@ -60,10 +60,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
     NDNestedModel,
 )
 
-
 # ============================================================================
 # Helper
 # ============================================================================
+
 
 def _is_policy_group_id(name: str) -> bool:
     """Return True if ``name`` looks like an auto-generated policy group ID.
@@ -182,7 +182,9 @@ class PlaybookPolicyGroupConfig(NDNestedModel):
         return v
 
     @model_validator(mode="after")
-    def validate_state_requirements(self, info: ValidationInfo) -> "PlaybookPolicyGroupConfig":
+    def validate_state_requirements(
+        self, info: ValidationInfo
+    ) -> "PlaybookPolicyGroupConfig":
         """Apply state-aware validation using context.
 
         When ``context={"state": "merged", "use_desc_as_key": True}`` is
@@ -254,7 +256,9 @@ class PlaybookPolicyGroupConfig(NDNestedModel):
             deploy=dict(type="bool", default=True),
             ticket_id=dict(type="str"),
             cluster_name=dict(type="str"),
-            state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),
+            state=dict(
+                type="str", default="merged", choices=["merged", "deleted", "gathered"]
+            ),
         )
 
 

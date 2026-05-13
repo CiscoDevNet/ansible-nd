@@ -84,8 +84,12 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManagePolicyGroupsDelete
 
     # Additional endpoints not in base
-    mark_delete_endpoint: type[NDEndpointBaseModel] = EpManagePolicyGroupActionsMarkDeletePost
-    push_config_endpoint: type[NDEndpointBaseModel] = EpManagePolicyActionsPushConfigPost
+    mark_delete_endpoint: type[NDEndpointBaseModel] = (
+        EpManagePolicyGroupActionsMarkDeletePost
+    )
+    push_config_endpoint: type[NDEndpointBaseModel] = (
+        EpManagePolicyActionsPushConfigPost
+    )
     switch_deploy_endpoint: type[NDEndpointBaseModel] = EpManageSwitchActionsDeployPost
 
     # Configuration
@@ -190,8 +194,14 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             key = (group.get("description", ""), group.get("templateName", ""))
             if key in seen:
                 # Keep the one with the later timestamp
-                existing_ts = seen[key].get("updateTimestamp") or seen[key].get("createTimestamp") or 0
-                current_ts = group.get("updateTimestamp") or group.get("createTimestamp") or 0
+                existing_ts = (
+                    seen[key].get("updateTimestamp")
+                    or seen[key].get("createTimestamp")
+                    or 0
+                )
+                current_ts = (
+                    group.get("updateTimestamp") or group.get("createTimestamp") or 0
+                )
                 if current_ts > existing_ts:
                     seen[key] = group
             else:
@@ -239,7 +249,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             if raw is not None:
                 groups = raw
                 if template_name:
-                    groups = [g for g in groups if g.get("templateName") == template_name]
+                    groups = [
+                        g for g in groups if g.get("templateName") == template_name
+                    ]
                 if description:
                     groups = [g for g in groups if g.get("description") == description]
                 if deduplicate:
@@ -276,7 +288,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         """Create a single policy group (wraps in bulk API)."""
         return self.create_bulk([model_instance], **kwargs)
 
-    def create_bulk(self, model_instances: list[PolicyGroupCreate], **kwargs) -> ResponseType:
+    def create_bulk(
+        self, model_instances: list[PolicyGroupCreate], **kwargs
+    ) -> ResponseType:
         """POST /policyGroups with ``{"policyGroups": [...]}`` wrapper.
 
         The endpoint always returns HTTP 207 (Multi-Status); per-item
@@ -347,7 +361,10 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         try:
             policy_group_id = model_instance.policy_id
             if not policy_group_id:
-                raise ValueError(f"Cannot update policy group — no policy_id found. " f"Description: {model_instance.description!r}")
+                raise ValueError(
+                    f"Cannot update policy group — no policy_id found. "
+                    f"Description: {model_instance.description!r}"
+                )
 
             # Capture current switch_ids before update for removal detection
             old_switch_ids = self._get_current_switch_ids(policy_group_id)
@@ -356,7 +373,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             ep.fabric_name = self.fabric_name
             ep.policy_group_id = policy_group_id
 
-            result = self._request(path=ep.path, verb=ep.verb, data=model_instance.to_payload())
+            result = self._request(
+                path=ep.path, verb=ep.verb, data=model_instance.to_payload()
+            )
 
             # Deploy if requested
             if self.deploy:
@@ -373,7 +392,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             self._invalidate_cache()
             return result
         except Exception as e:
-            raise Exception(f"Update policy group failed for {model_instance.description!r}: {e}") from e
+            raise Exception(
+                f"Update policy group failed for {model_instance.description!r}: {e}"
+            ) from e
 
     # ------------------------------------------------------------------ #
     # Delete operations
@@ -383,7 +404,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         """Delete a single policy group (delegates to delete_bulk)."""
         return self.delete_bulk([model_instance], **kwargs)
 
-    def delete_bulk(self, model_instances: list[PolicyGroupCreate], **kwargs) -> ResponseType:
+    def delete_bulk(
+        self, model_instances: list[PolicyGroupCreate], **kwargs
+    ) -> ResponseType:
         """Delete multiple policy groups with markDelete-first fallback.
 
         Deletion strategy:
@@ -407,7 +430,11 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 log.debug("delete_bulk: No policy_ids to delete, returning early.")
                 return {}
 
-            log.debug("delete_bulk: Starting deletion for policy_ids=%s, deploy=%s", policy_ids, self.deploy)
+            log.debug(
+                "delete_bulk: Starting deletion for policy_ids=%s, deploy=%s",
+                policy_ids,
+                self.deploy,
+            )
 
             # Build switch_ids lookup for switch-level deploy
             switch_ids_by_policy: dict[str, list[str]] = {}
@@ -451,14 +478,21 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                     "; ".join(mark_failure_messages),
                 )
 
-            log.debug("delete_bulk: markDelete succeeded=%s, failed=%s", mark_succeeded, mark_failed_ids)
+            log.debug(
+                "delete_bulk: markDelete succeeded=%s, failed=%s",
+                mark_succeeded,
+                mark_failed_ids,
+            )
 
             # Step 2: Direct DELETE fallback for markDelete failures
             # (switch_freeform / PYTHON-type groups that the controller does
             # not allow to be markDeleted).
             direct_deleted: list[str] = []
             if mark_failed_ids:
-                log.debug("delete_bulk: Step 2 - Direct DELETE fallback for failed=%s", mark_failed_ids)
+                log.debug(
+                    "delete_bulk: Step 2 - Direct DELETE fallback for failed=%s",
+                    mark_failed_ids,
+                )
                 for pid in mark_failed_ids:
                     ep = self.delete_endpoint()
                     ep.fabric_name = self.fabric_name
@@ -483,7 +517,11 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 else:
                     log.debug("delete_bulk: Step 3 skipped (no affected switches).")
 
-            log.debug("delete_bulk: Complete. mark_succeeded=%s, direct_deleted=%s", mark_succeeded, direct_deleted)
+            log.debug(
+                "delete_bulk: Complete. mark_succeeded=%s, direct_deleted=%s",
+                mark_succeeded,
+                direct_deleted,
+            )
             self._invalidate_cache()
             return {"policyIds": policy_ids, "status": "success"}
         except Exception as e:

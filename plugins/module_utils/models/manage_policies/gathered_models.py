@@ -51,7 +51,9 @@ class GatheredPolicy(NDBaseModel):
 
     # --- NDBaseModel ClassVars ---
     identifiers: ClassVar[list[str]] = ["policy_id"]
-    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    identifier_strategy: ClassVar[
+        Literal["single", "composite", "hierarchical", "singleton"] | None
+    ] = "single"
     exclude_from_diff: ClassVar[set[str]] = set()
 
     # Fields excluded from config output (internal / not user-facing)
@@ -140,7 +142,11 @@ class GatheredPolicy(NDBaseModel):
             try:
                 raw_inputs = json.loads(raw_inputs)
             except (json.JSONDecodeError, ValueError):
-                log.warning("Failed to parse templateInputs for %s: %r", data.get("policyId", "?"), raw_inputs)
+                log.warning(
+                    "Failed to parse templateInputs for %s: %r",
+                    data.get("policyId", "?"),
+                    raw_inputs,
+                )
                 raw_inputs = {}
         data["templateInputs"] = raw_inputs
 

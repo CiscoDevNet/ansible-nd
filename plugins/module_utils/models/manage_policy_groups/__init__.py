@@ -12,23 +12,15 @@ that consumers can import directly from the package:
 
 from __future__ import annotations
 
-# --- Base models ---
-from .policy_group_base import (  # noqa: F401
-    PolicyGroupCreate,
-)
-
-# --- CRUD models ---
-from .policy_group_crud import (  # noqa: F401
-    PolicyGroupCreateBulk,
-    PolicyGroupUpdate,
-)
+# --- Config (playbook input) models ---
+from .config_models import PlaybookPolicyGroupConfig  # noqa: F401
 
 # --- Action models ---
-from .policy_group_actions import (  # noqa: F401
-    PolicyGroupIds,
-)
+from .policy_group_actions import PolicyGroupIds  # noqa: F401
 
-# --- Config (playbook input) models ---
-from .config_models import (  # noqa: F401
-    PlaybookPolicyGroupConfig,
-)
+# --- Base models ---
+from .policy_group_base import PolicyGroupCreate  # noqa: F401
+
+# --- CRUD models ---
+from .policy_group_crud import PolicyGroupCreateBulk  # noqa: F401
+from .policy_group_crud import PolicyGroupUpdate

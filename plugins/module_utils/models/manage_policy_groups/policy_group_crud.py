@@ -24,9 +24,11 @@ from typing import Any, ClassVar
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.policy_group_base import (
     PolicyGroupCreate,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
+    NDNestedModel,
 )
 
 # ============================================================================

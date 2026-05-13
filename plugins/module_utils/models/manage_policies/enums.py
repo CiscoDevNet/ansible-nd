@@ -51,7 +51,9 @@ class PolicyEntityType(str, Enum):
         try:
             return cls(camel_case)
         except ValueError:
-            raise ValueError(f"Invalid entity type: {value}. Valid options: {cls.choices()}")
+            raise ValueError(
+                f"Invalid entity type: {value}. Valid options: {cls.choices()}"
+            )
 
     @classmethod
     def normalize(cls, value: str | PolicyEntityType | None) -> PolicyEntityType:

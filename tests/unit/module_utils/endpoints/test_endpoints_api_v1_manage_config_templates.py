@@ -209,7 +209,9 @@ def test_manage_config_templates_00140():
         instance.template_name = "switch_freeform"
         instance.endpoint_params.cluster_name = "cluster1"
         result = instance.path
-    assert result == ("/api/v1/manage/configTemplates/switch_freeform/parameters?clusterName=cluster1")
+    assert result == (
+        "/api/v1/manage/configTemplates/switch_freeform/parameters?clusterName=cluster1"
+    )
 
 
 def test_manage_config_templates_00150():

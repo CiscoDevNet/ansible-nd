@@ -63,7 +63,9 @@ def test_manage_policy_actions_00020():
     - PolicyActionMutationEndpointParams.to_query_string()
     """
     with does_not_raise():
-        params = PolicyActionMutationEndpointParams(cluster_name="cluster1", ticket_id="MyTicket1234")
+        params = PolicyActionMutationEndpointParams(
+            cluster_name="cluster1", ticket_id="MyTicket1234"
+        )
         result = params.to_query_string()
     assert "clusterName=cluster1" in result
     assert "ticketId=MyTicket1234" in result
@@ -238,7 +240,9 @@ def test_manage_policy_actions_00130():
         instance.endpoint_params.cluster_name = "cluster1"
         instance.endpoint_params.ticket_id = "MyTicket1234"
         result = instance.path
-    assert result.startswith("/api/v1/manage/fabrics/my-fabric/policyActions/markDelete?")
+    assert result.startswith(
+        "/api/v1/manage/fabrics/my-fabric/policyActions/markDelete?"
+    )
     assert "clusterName=cluster1" in result
     assert "ticketId=MyTicket1234" in result
 
@@ -331,4 +335,6 @@ def test_manage_policy_actions_00230():
         instance.fabric_name = "my-fabric"
         instance.endpoint_params.cluster_name = "cluster1"
         result = instance.path
-    assert result == ("/api/v1/manage/fabrics/my-fabric/policyActions/pushConfig?clusterName=cluster1")
+    assert result == (
+        "/api/v1/manage/fabrics/my-fabric/policyActions/pushConfig?clusterName=cluster1"
+    )

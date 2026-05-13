@@ -26,8 +26,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.enums import PolicyEntityType
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.enums import (
+    PolicyEntityType,
+)
 
 # ============================================================================
 # Policy Group Create Model (base for all CRUD body models)
@@ -85,11 +86,17 @@ class PolicyGroupCreate(NDBaseModel):
 
     # --- NDBaseModel ClassVars ---
     identifiers: ClassVar[list[str]] = ["description", "template_name"]
-    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
+    identifier_strategy: ClassVar[
+        Literal["single", "composite", "hierarchical", "singleton"] | None
+    ] = "composite"
     # Note: ``priority`` is intentionally NOT excluded — the base diff uses
     # ``exclude_none=True``, so an omitted priority on the user side is already
     # ignored, while an explicit priority change correctly triggers an update.
-    exclude_from_diff: ClassVar[set] = {"source", "policy_id", "create_additional_policy"}
+    exclude_from_diff: ClassVar[set] = {
+        "source",
+        "policy_id",
+        "create_additional_policy",
+    }
     payload_exclude_fields: ClassVar[set] = {"policy_id", "create_additional_policy"}
 
     # Server-generated policy group ID (populated from API responses)
@@ -170,7 +177,9 @@ class PolicyGroupCreate(NDBaseModel):
             return v
         for sid in v:
             if not isinstance(sid, str) or not sid.strip():
-                raise ValueError(f"Invalid switch ID: {sid!r}. Must be a non-empty string.")
+                raise ValueError(
+                    f"Invalid switch ID: {sid!r}. Must be a non-empty string."
+                )
         return v
 
     @model_validator(mode="before")
@@ -222,9 +231,10 @@ class PolicyGroupCreate(NDBaseModel):
         new_data[ti_key] = new_ti or None
         return new_data
 
-
     @classmethod
-    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "PolicyGroupCreate":
+    def from_config(
+        cls, ansible_config: dict[str, Any], **kwargs
+    ) -> "PolicyGroupCreate":
         """Create model instance from Ansible config dict.
 
         Handles the ``name`` → ``template_name`` translation so the user-facing
@@ -240,7 +250,8 @@ class PolicyGroupCreate(NDBaseModel):
         # Remove Ansible-injected defaults so Pydantic defaults take effect.
         # Ansible injects None for unset str/dict/list, and 0 for unset int.
         config = {
-            k: v for k, v in config.items()
+            k: v
+            for k, v in config.items()
             if v is not None and v != 0 and v != [] and v != {}
         }
         # Controller stringifies all templateInputs values after deploy
@@ -276,7 +287,9 @@ class PolicyGroupCreate(NDBaseModel):
                     create_additional_policy=dict(type="bool", default=False),
                 ),
             ),
-            state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),
+            state=dict(
+                type="str", default="merged", choices=["merged", "deleted", "gathered"]
+            ),
         )
 
     def to_request_dict(self) -> dict[str, Any]:

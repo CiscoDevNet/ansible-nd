@@ -92,7 +92,9 @@ class _EpManagePolicyGroupActionsBase(FabricNameMixin, NDEndpointBaseModel):
         """Build the base endpoint path for a specific action."""
         if self.fabric_name is None:
             raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.path("fabrics", self.fabric_name, "policyGroups", "actions", action)
+        return BasePath.path(
+            "fabrics", self.fabric_name, "policyGroups", "actions", action
+        )
 
 
 # ============================================================================
