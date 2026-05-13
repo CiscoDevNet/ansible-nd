@@ -44,19 +44,19 @@ if TYPE_CHECKING:
         BeforeValidator,
         ConfigDict,
         Field,
-        FieldSerializationInfo,
         PydanticExperimentalWarning,
-        SecretStr,
-        SerializationInfo,
         StrictBool,
+        SecretStr,
         ValidationError,
-        ValidationInfo,
-        computed_field,
         field_serializer,
-        field_validator,
         model_serializer,
+        field_validator,
         model_validator,
         validator,
+        computed_field,
+        FieldSerializationInfo,
+        SerializationInfo,
+        ValidationInfo,
     )
 
     HAS_PYDANTIC = True  # pylint: disable=invalid-name
@@ -70,25 +70,23 @@ else:
             BeforeValidator,
             ConfigDict,
             Field,
-            FieldSerializationInfo,
             PydanticExperimentalWarning,
-            SecretStr,
-            SerializationInfo,
             StrictBool,
+            SecretStr,
             ValidationError,
-            ValidationInfo,
-            computed_field,
             field_serializer,
-            field_validator,
             model_serializer,
+            field_validator,
             model_validator,
             validator,
+            computed_field,
+            FieldSerializationInfo,
+            SerializationInfo,
+            ValidationInfo,
         )
     except ImportError:
         HAS_PYDANTIC = False  # pylint: disable=invalid-name
-        PYDANTIC_IMPORT_ERROR: Union[str, None] = (
-            traceback.format_exc()
-        )  # pylint: disable=invalid-name
+        PYDANTIC_IMPORT_ERROR: Union[str, None] = traceback.format_exc()  # pylint: disable=invalid-name
 
         # Fallback: Minimal BaseModel replacement
         class BaseModel:
@@ -101,9 +99,7 @@ else:
                 for key, value in kwargs.items():
                     setattr(self, key, value)
 
-            def model_dump(
-                self, exclude_none: bool = False, exclude_defaults: bool = False
-            ) -> dict:  # pylint: disable=unused-argument
+            def model_dump(self, exclude_none: bool = False, exclude_defaults: bool = False) -> dict:  # pylint: disable=unused-argument
                 """Return a dictionary of field names and values.
 
                 Args:
@@ -118,21 +114,17 @@ else:
                 return result
 
         # Fallback: ConfigDict that does nothing
-        def ConfigDict(
-            **kwargs,
-        ) -> dict:  # pylint: disable=unused-argument,invalid-name
+        def ConfigDict(**kwargs) -> dict:  # pylint: disable=unused-argument,invalid-name
             """Pydantic ConfigDict fallback when pydantic is not available."""
             return kwargs
 
         # Fallback: Field that does nothing
-        def Field(
-            *args, **kwargs
-        ) -> Any:  # pylint: disable=unused-argument,invalid-name
+        def Field(*args, **kwargs) -> Any:  # pylint: disable=unused-argument,invalid-name
             """Pydantic Field fallback when pydantic is not available."""
-            if args:
-                return args[0]
             if "default_factory" in kwargs:
                 return kwargs["default_factory"]()
+            if args:
+                return args[0]
             return kwargs.get("default")
 
         # Fallback: field_serializer decorator that does nothing
@@ -154,9 +146,7 @@ else:
             return decorator
 
         # Fallback: field_validator decorator that does nothing
-        def field_validator(
-            *args, **kwargs
-        ) -> Callable[..., Any]:  # pylint: disable=unused-argument,invalid-name
+        def field_validator(*args, **kwargs) -> Callable[..., Any]:  # pylint: disable=unused-argument,invalid-name
             """Pydantic field_validator fallback when pydantic is not available."""
 
             def decorator(func):
@@ -205,14 +195,6 @@ else:
             def __str__(self):
                 return f"ValidationError: {self.message}"
 
-        class ValidationInfo:
-            """Pydantic ValidationInfo fallback when pydantic is not available."""
-
-            def __init__(
-                self, context=None, **kwargs
-            ):  # pylint: disable=unused-argument
-                self.context = context
-
         # Fallback: model_validator decorator that does nothing
         def model_validator(*args, **kwargs):  # pylint: disable=unused-argument
             """Pydantic model_validator fallback when pydantic is not available."""
@@ -241,6 +223,13 @@ else:
         # Fallback: SerializationInfo placeholder class that does nothing
         class SerializationInfo:
             """Pydantic SerializationInfo fallback when pydantic is not available."""
+
+            def __init__(self, **kwargs):
+                pass
+
+        # Fallback: ValidationInfo placeholder class that does nothing
+        class ValidationInfo:
+            """Pydantic ValidationInfo fallback when pydantic is not available."""
 
             def __init__(self, **kwargs):
                 pass
@@ -281,13 +270,9 @@ def require_pydantic(module) -> None:
       message that includes installation instructions.
     """
     if not HAS_PYDANTIC:
-        from ansible.module_utils.basic import (
-            missing_required_lib,  # pylint: disable=import-outside-toplevel
-        )
+        from ansible.module_utils.basic import missing_required_lib  # pylint: disable=import-outside-toplevel
 
-        module.fail_json(
-            msg=missing_required_lib("pydantic"), exception=PYDANTIC_IMPORT_ERROR
-        )
+        module.fail_json(msg=missing_required_lib("pydantic"), exception=PYDANTIC_IMPORT_ERROR)
 
 
 __all__ = [

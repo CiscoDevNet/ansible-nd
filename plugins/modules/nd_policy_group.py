@@ -93,7 +93,12 @@ options:
         type: str
       switch_ids:
         description:
-        - List of switch serial numbers to apply the policy group to.
+        - List of switch identifiers to apply the policy group to.
+        - Each entry may be either a switch serial number (e.g. C(FDO25031SY4))
+          or a management IPv4 address (e.g. C(10.122.84.58)). IPv4 addresses
+          are transparently resolved to serial numbers by querying the fabric
+          switch inventory before the policy group is created or updated.
+          Serials and IPs may be freely mixed in the same list.
         type: list
         elements: str
       priority:
@@ -184,12 +189,12 @@ EXAMPLES = r"""
     config:
       - name: feature_enable
         description: "Enable LACP"
-        switch_ids: [ FDO25031SY4 ]
+        switch_ids: [FDO25031SY4]
         template_inputs:
           featureName: lacp
       - name: feature_enable
         description: "Enable LLDP"
-        switch_ids: [ FDO25031SY4 ]
+        switch_ids: [FDO25031SY4]
         template_inputs:
           featureName: lldp
 
@@ -200,7 +205,7 @@ EXAMPLES = r"""
     config:
       - name: switch_freeform
         create_additional_policy: true
-        switch_ids: [ FDO25031SY4 ]
+        switch_ids: [FDO25031SY4]
         template_inputs:
           CONF: "system vlan long-name"
 
@@ -300,13 +305,20 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
     NDStateMachineError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
+    FabricSwitchInventory,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.gathered_models import (
     GatheredPolicyGroup,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.policy_group_base import (
     PolicyGroupCreate,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.switch_data_models import (
+    SwitchDataModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
 )
@@ -405,9 +417,7 @@ def _resolve_config(config, existing_groups, state, module, log):
                 # can detect rename-via-id and route to the direct-action path
                 # (the state machine keys on description and cannot represent
                 # a description change).
-                resolved_entry["_existing_description"] = existing.get(
-                    "description", ""
-                )
+                resolved_entry["_existing_description"] = existing.get("description", "")
                 resolved.append(resolved_entry)
                 log.info(
                     "config[%d]: Resolved ID '%s' → template='%s', description='%s' (existing description='%s')",
@@ -504,9 +514,7 @@ def _handle_gathered_state(orchestrator, config, log):
     if not config:
         # No config — fetch everything
         log.info("Gathered: fetching all policy groups")
-        raw_groups = orchestrator.query_all(
-            include_no_description=True, deduplicate=False
-        )
+        raw_groups = orchestrator.query_all(include_no_description=True, deduplicate=False)
     else:
         for entry in config:
             name = entry.get("name", "") or ""
@@ -525,23 +533,17 @@ def _handle_gathered_state(orchestrator, config, log):
                     name,
                     description,
                 )
-                filtered = orchestrator.query_filtered(
-                    template_name=name, description=description, deduplicate=False
-                )
+                filtered = orchestrator.query_filtered(template_name=name, description=description, deduplicate=False)
                 raw_groups.extend(filtered)
             elif name:
                 # Filter by template name only
                 log.info("Gathered: filtering by template=%s", name)
-                filtered = orchestrator.query_filtered(
-                    template_name=name, deduplicate=False
-                )
+                filtered = orchestrator.query_filtered(template_name=name, deduplicate=False)
                 raw_groups.extend(filtered)
             elif description:
                 # Filter by description only
                 log.info("Gathered: filtering by description=%s", description)
-                filtered = orchestrator.query_filtered(
-                    description=description, deduplicate=False
-                )
+                filtered = orchestrator.query_filtered(description=description, deduplicate=False)
                 raw_groups.extend(filtered)
 
     if not raw_groups:
@@ -560,12 +562,84 @@ def _handle_gathered_state(orchestrator, config, log):
             model = GatheredPolicyGroup.from_api_policy_group(group)
             gathered.append(model.to_gathered_config())
         except Exception as exc:
-            log.warning(
-                "Failed to parse policy group %s for gathered output: %s", pid, exc
-            )
+            log.warning("Failed to parse policy group %s for gathered output: %s", pid, exc)
 
     log.info("Gathered %d unique policy groups", len(gathered))
     return gathered
+
+
+def _looks_like_ipv4(value: str) -> bool:
+    """Return True if *value* is a dotted-quad IPv4 address."""
+    if not value:
+        return False
+    parts = str(value).strip().split(".")
+    if len(parts) != 4:
+        return False
+    return all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+
+
+def _resolve_switch_ips_in_config(module, log, config, fabric_name):
+    """Replace IPv4 entries in every ``config[].switch_ids`` with serial numbers.
+
+    Walks the config; if any ``switch_ids`` entry is an IPv4 address it is
+    resolved to its switch serial number via ``FabricSwitchInventory``.
+    Serials are passed through unchanged.  Mixed serial/IP lists are
+    supported.
+
+    The fabric inventory is fetched at most once per module invocation,
+    and only when the config actually contains an IP (zero overhead for
+    serial-only playbooks).  Read-only check_mode users still get
+    resolution because RestSend's ``check_mode`` is temporarily
+    overridden for this single GET.
+
+    Args:
+        module: ``AnsibleModule`` instance (used for ``fail_json``).
+        log: Logger instance.
+        config: List of config entry dicts (mutated in place).
+        fabric_name: Fabric to query for switch inventory.
+    """
+    if not config:
+        return
+    has_ip = any(_looks_like_ipv4(sid) for entry in config for sid in (entry.get("switch_ids") or []))
+    if not has_ip:
+        return
+
+    log.info(
+        "Resolving switch IPv4 addresses to serial numbers for fabric '%s'",
+        fabric_name,
+    )
+    nd = NDModule(module)
+    rest_send = nd._get_rest_send()
+    rest_send.save_settings()
+    rest_send.check_mode = False
+    try:
+        inventory = FabricSwitchInventory.from_fabric(nd, fabric_name, log, SwitchDataModel)
+    finally:
+        rest_send.restore_settings()
+
+    ip_map = inventory.by_ip()
+
+    for idx, entry in enumerate(config):
+        switch_ids = entry.get("switch_ids")
+        if not switch_ids:
+            continue
+        resolved_list = []
+        for j, sid in enumerate(switch_ids):
+            if not _looks_like_ipv4(sid):
+                resolved_list.append(sid)
+                continue
+            value = str(sid).strip()
+            switch = ip_map.get(value)
+            if switch is None:
+                module.fail_json(
+                    msg=(
+                        f"config[{idx}].switch_ids[{j}]: unable to resolve IP '{sid}' "
+                        f"to a serial number in fabric '{fabric_name}'. Provide a valid "
+                        "switch serial number or management IP from the fabric inventory."
+                    )
+                )
+            resolved_list.append(switch.switch_id)
+        entry["switch_ids"] = resolved_list
 
 
 def main():
@@ -602,9 +676,7 @@ def main():
         for idx, entry in enumerate(config):
             name = entry.get("name", "") or ""
             if not name:
-                module.fail_json(
-                    msg=f"config[{idx}]: 'name' is required for every config entry when state=merged."
-                )
+                module.fail_json(msg=f"config[{idx}]: 'name' is required for every config entry when state=merged.")
             # Policy group ID in name field doesn't need description for update
             if name.startswith("POLICY-GROUP-"):
                 continue
@@ -623,9 +695,7 @@ def main():
         for idx, entry in enumerate(config):
             name = entry.get("name", "") or ""
             if not name:
-                module.fail_json(
-                    msg=f"config[{idx}]: 'name' is required for every config entry when state=deleted."
-                )
+                module.fail_json(msg=f"config[{idx}]: 'name' is required for every config entry when state=deleted.")
 
     # Cross-entry duplicate validation: (description, template_name) must be
     # unique within the config to prevent ambiguous state machine operations.
@@ -679,13 +749,19 @@ def main():
             deploy=module.params["deploy"],
         )
 
+        # Resolve any switch_ids entries that are IPv4 addresses to serial
+        # numbers via the fabric inventory.  This is a no-op (no API call)
+        # when every switch_ids entry is already a serial number.  Skipped
+        # for state=gathered since gathered config is filter-only and does
+        # not carry switch_ids the controller needs to act on.
+        if state in ("merged", "deleted"):
+            _resolve_switch_ips_in_config(module, log, config, module.params["fabric_name"])
+
         # --- Gathered state: bypass the state machine entirely ---
         if state == "gathered":
             gathered = _handle_gathered_state(orchestrator, config, log)
             result = {"changed": False, "gathered": gathered}
-            log.info(
-                "Gathered state completed. Returned %d policy groups.", len(gathered)
-            )
+            log.info("Gathered state completed. Returned %d policy groups.", len(gathered))
             module.exit_json(**result)
 
         # Pre-process config for deleted/merged states to resolve:
@@ -696,12 +772,8 @@ def main():
         # state machine via the direct-action path below).
         existing_groups = None
         if config and state in ("merged", "deleted"):
-            existing_groups = orchestrator.query_all(
-                include_no_description=True, deduplicate=False
-            )
-            resolved_config = _resolve_config(
-                config, existing_groups, state, module, log
-            )
+            existing_groups = orchestrator.query_all(include_no_description=True, deduplicate=False)
+            resolved_config = _resolve_config(config, existing_groups, state, module, log)
             module.params["config"] = resolved_config
 
         # Partition resolved entries into three buckets:
@@ -716,10 +788,7 @@ def main():
             for entry in module.params.get("config") or []:
                 if entry.get("create_additional_policy", False):
                     force_create_items.append(entry)
-                elif entry.get("policy_id") and (
-                    not entry.get("description")
-                    or entry.get("description") != entry.get("_existing_description")
-                ):
+                elif entry.get("policy_id") and (not entry.get("description") or entry.get("description") != entry.get("_existing_description")):
                     # Resolved from POLICY-GROUP-* AND either:
                     #   (a) the target has no description (state machine cannot
                     #       index a None composite key), or
@@ -758,9 +827,7 @@ def main():
             # they CANNOT show up in before/after — the identifier-keyed
             # NDConfigCollection collapses duplicates. Surface them via a
             # dedicated `force_created` key in the result instead.
-            force_created_models = [
-                PolicyGroupCreate.from_config(e) for e in force_create_items
-            ]
+            force_created_models = [PolicyGroupCreate.from_config(e) for e in force_create_items]
             orchestrator.create_bulk(force_created_models)
             force_created = True
 
@@ -772,17 +839,13 @@ def main():
         if direct_action_items:
             for entry in direct_action_items:
                 pid = entry["policy_id"]
-                entry_for_model = {
-                    k: v for k, v in entry.items() if k != "_existing_description"
-                }
+                entry_for_model = {k: v for k, v in entry.items() if k != "_existing_description"}
                 if state == "merged":
                     model = PolicyGroupCreate.from_config(entry_for_model)
                     model.policy_id = pid
                     if not module.check_mode:
                         orchestrator.update(model)
-                    direct_actions_result["updated"].append(
-                        model.model_dump(by_alias=False, exclude_none=True)
-                    )
+                    direct_actions_result["updated"].append(model.model_dump(by_alias=False, exclude_none=True))
                     log.info(
                         "Direct-action: updated policy group %s (description='%s')",
                         pid,
@@ -793,9 +856,7 @@ def main():
                     model.policy_id = pid
                     if not module.check_mode:
                         orchestrator.delete_bulk([model])
-                    direct_actions_result["deleted"].append(
-                        model.model_dump(by_alias=False, exclude_none=True)
-                    )
+                    direct_actions_result["deleted"].append(model.model_dump(by_alias=False, exclude_none=True))
                     log.info("Direct-action: deleted policy group %s", pid)
 
         # Initialize and run StateMachine for normal items
@@ -808,13 +869,14 @@ def main():
         # Deploy unchanged policies when deploy=true (push config even if no diff).
         # Scope strictly to policies the user mentioned in `config:` so we never
         # touch unrelated fabric policies.
+        #
+        # ``policyActions/pushConfig`` is not supported for policy groups
+        # (the controller silently ignores policyGroup IDs there), so this
+        # deploy path goes through ``switchActions/deploy`` against the
+        # union of switches referenced by the unchanged groups.
         if state == "merged" and orchestrator.deploy and not module.check_mode:
-            sent_identifiers = {
-                item.get_identifier_value() for item in nd_state_machine.sent
-            }
-            proposed_identifiers = {
-                item.get_identifier_value() for item in nd_state_machine.proposed
-            }
+            sent_identifiers = {item.get_identifier_value() for item in nd_state_machine.sent}
+            proposed_identifiers = {item.get_identifier_value() for item in nd_state_machine.proposed}
             log.debug(
                 "deploy-unchanged: proposed_identifiers=%s",
                 sorted(map(str, proposed_identifiers)),
@@ -823,7 +885,8 @@ def main():
                 "deploy-unchanged: sent_identifiers=%s",
                 sorted(map(str, sent_identifiers)),
             )
-            unchanged_policy_ids = []
+            unchanged_switch_ids: set[str] = set()
+            unchanged_policy_ids: list[str] = []
             for item in nd_state_machine.existing:
                 ident = item.get_identifier_value()
                 in_proposed = ident in proposed_identifiers
@@ -838,17 +901,19 @@ def main():
                 )
                 if in_proposed and not in_sent and pid:
                     unchanged_policy_ids.append(pid)
-            if unchanged_policy_ids:
+                    for sid in getattr(item, "switch_ids", None) or []:
+                        if sid:
+                            unchanged_switch_ids.add(sid)
+            if unchanged_switch_ids:
                 log.info(
-                    "Deploying %d unchanged policy groups (deploy=true): %s",
+                    "Deploying %d unchanged policy group(s) [%s] via switchActions/deploy on switches: %s",
                     len(unchanged_policy_ids),
                     unchanged_policy_ids,
+                    sorted(unchanged_switch_ids),
                 )
-                orchestrator._push_config(unchanged_policy_ids)
+                orchestrator._switch_deploy(sorted(unchanged_switch_ids))
             else:
-                log.debug(
-                    "deploy-unchanged: no unchanged user-mentioned policies to push"
-                )
+                log.debug("deploy-unchanged: no unchanged user-mentioned policies to push")
 
         result = nd_state_machine.output.format()
         # Surface force-created items as a dedicated key so they're visible
@@ -856,10 +921,7 @@ def main():
         # the state-machine's before/after.
         if force_created:
             result["changed"] = True
-            result["force_created"] = [
-                m.model_dump(by_alias=False, exclude_none=True)
-                for m in force_created_models
-            ]
+            result["force_created"] = [m.model_dump(by_alias=False, exclude_none=True) for m in force_created_models]
         # Surface direct-action results (no-description groups managed by ID).
         # These bypass the state machine, so they don't show up in before/after.
         if direct_action_items:

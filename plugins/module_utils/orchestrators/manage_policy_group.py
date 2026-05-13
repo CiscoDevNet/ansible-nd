@@ -9,8 +9,7 @@ Extends ``NDBaseOrchestrator`` with custom logic for:
 - Bulk create via ``POST /policyGroups`` with ``{"policyGroups": [...]}`` wrapper
 - Update via ``PUT /policyGroups/{policyGroupId}`` (resolves server-generated ID)
 - Delete via ``markDelete`` → switch-level deploy (pushes removal config)
-- Deploy via ``POST /policyActions/pushConfig`` (create/update) or
-  ``POST /switchActions/deploy`` (delete — pushes removal config)
+- Deploy via ``POST /switchActions/deploy`` for create,update and delete
 - Query extracting ``policyGroups`` list from GET response
 """
 
@@ -23,9 +22,6 @@ log = logging.getLogger("nd.PolicyGroupOrchestrator")
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policy_actions import (
-    EpManagePolicyActionsPushConfigPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policy_group_actions import (
     EpManagePolicyGroupActionsMarkDeletePost,
@@ -62,8 +58,11 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
       in the URL path, not the model's composite identifier.
     - **Delete**: Two-step flow — ``markDelete`` then ``DELETE`` verb
       per individual policy group.
-    - **Deploy (merged)**: ``POST /policyActions/pushConfig`` with
-      ``{"policyIds": [...]}`` containing the server-generated IDs.
+    - **Deploy**: ``POST /switchActions/deploy`` with
+      ``{"switchIds": [...]}`` against the union of switches
+      affected by the create/update/delete batch. The
+      ``policyActions/pushConfig`` endpoint is not honoured for policy
+      groups, so it is never used here.
     - **Query**: GET response wraps results in ``{"policyGroups": [...]}``.
     """
 
@@ -84,12 +83,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManagePolicyGroupsDelete
 
     # Additional endpoints not in base
-    mark_delete_endpoint: type[NDEndpointBaseModel] = (
-        EpManagePolicyGroupActionsMarkDeletePost
-    )
-    push_config_endpoint: type[NDEndpointBaseModel] = (
-        EpManagePolicyActionsPushConfigPost
-    )
+    mark_delete_endpoint: type[NDEndpointBaseModel] = EpManagePolicyGroupActionsMarkDeletePost
     switch_deploy_endpoint: type[NDEndpointBaseModel] = EpManageSwitchActionsDeployPost
 
     # Configuration
@@ -194,14 +188,8 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             key = (group.get("description", ""), group.get("templateName", ""))
             if key in seen:
                 # Keep the one with the later timestamp
-                existing_ts = (
-                    seen[key].get("updateTimestamp")
-                    or seen[key].get("createTimestamp")
-                    or 0
-                )
-                current_ts = (
-                    group.get("updateTimestamp") or group.get("createTimestamp") or 0
-                )
+                existing_ts = seen[key].get("updateTimestamp") or seen[key].get("createTimestamp") or 0
+                current_ts = group.get("updateTimestamp") or group.get("createTimestamp") or 0
                 if current_ts > existing_ts:
                     seen[key] = group
             else:
@@ -249,9 +237,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             if raw is not None:
                 groups = raw
                 if template_name:
-                    groups = [
-                        g for g in groups if g.get("templateName") == template_name
-                    ]
+                    groups = [g for g in groups if g.get("templateName") == template_name]
                 if description:
                     groups = [g for g in groups if g.get("description") == description]
                 if deduplicate:
@@ -288,9 +274,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         """Create a single policy group (wraps in bulk API)."""
         return self.create_bulk([model_instance], **kwargs)
 
-    def create_bulk(
-        self, model_instances: list[PolicyGroupCreate], **kwargs
-    ) -> ResponseType:
+    def create_bulk(self, model_instances: list[PolicyGroupCreate], **kwargs) -> ResponseType:
         """POST /policyGroups with ``{"policyGroups": [...]}`` wrapper.
 
         The endpoint always returns HTTP 207 (Multi-Status); per-item
@@ -328,17 +312,17 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                     failures.append(f"{ident}: {msg}")
 
             if failures:
-                raise Exception(
-                    "Bulk create reported {0} failed item(s): {1}".format(
-                        len(failures), "; ".join(failures)
-                    )
-                )
+                raise Exception("Bulk create reported {0} failed item(s): {1}".format(len(failures), "; ".join(failures)))
 
-            # Deploy if requested
+            # Deploy if requested.
             if self.deploy:
-                policy_ids = [m.policy_id for m in model_instances if m.policy_id]
-                if policy_ids:
-                    self._push_config(policy_ids)
+                affected_switches: set[str] = set()
+                for m in model_instances:
+                    for sid in m.switch_ids or []:
+                        if sid:
+                            affected_switches.add(sid)
+                if affected_switches:
+                    self._switch_deploy(sorted(affected_switches))
 
             self._invalidate_cache()
             return result
@@ -361,10 +345,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         try:
             policy_group_id = model_instance.policy_id
             if not policy_group_id:
-                raise ValueError(
-                    f"Cannot update policy group — no policy_id found. "
-                    f"Description: {model_instance.description!r}"
-                )
+                raise ValueError(f"Cannot update policy group — no policy_id found. " f"Description: {model_instance.description!r}")
 
             # Capture current switch_ids before update for removal detection
             old_switch_ids = self._get_current_switch_ids(policy_group_id)
@@ -373,28 +354,27 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             ep.fabric_name = self.fabric_name
             ep.policy_group_id = policy_group_id
 
-            result = self._request(
-                path=ep.path, verb=ep.verb, data=model_instance.to_payload()
-            )
+            result = self._request(path=ep.path, verb=ep.verb, data=model_instance.to_payload())
 
-            # Deploy if requested
+            # Deploy if requested.
+            #
+            # NOTE: ``policyActions/pushConfig`` is not supported for
+            # policy groups, so we deploy at the switch level instead.
+            # The set of affected switches is the union of the new
+            # switch_ids (so the updated config is pushed) and any
+            # switches that were removed from the group (so the negative
+            # / removal config is pushed to them).
             if self.deploy:
                 new_switch_ids = set(model_instance.switch_ids or [])
                 removed_switches = old_switch_ids - new_switch_ids
-
-                # Push config for the policy group itself
-                self._push_config([policy_group_id])
-
-                # Switch-level deploy on removed switches to push negative config
-                if removed_switches:
-                    self._switch_deploy(list(removed_switches))
+                affected_switches = {sid for sid in new_switch_ids | removed_switches if sid}
+                if affected_switches:
+                    self._switch_deploy(sorted(affected_switches))
 
             self._invalidate_cache()
             return result
         except Exception as e:
-            raise Exception(
-                f"Update policy group failed for {model_instance.description!r}: {e}"
-            ) from e
+            raise Exception(f"Update policy group failed for {model_instance.description!r}: {e}") from e
 
     # ------------------------------------------------------------------ #
     # Delete operations
@@ -404,9 +384,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         """Delete a single policy group (delegates to delete_bulk)."""
         return self.delete_bulk([model_instance], **kwargs)
 
-    def delete_bulk(
-        self, model_instances: list[PolicyGroupCreate], **kwargs
-    ) -> ResponseType:
+    def delete_bulk(self, model_instances: list[PolicyGroupCreate], **kwargs) -> ResponseType:
         """Delete multiple policy groups with markDelete-first fallback.
 
         Deletion strategy:
@@ -538,46 +516,86 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         payload = {"policyIds": policy_ids}
         return self._request(path=ep.path, verb=ep.verb, data=payload)
 
-    def _push_config(self, policy_ids: list[str]) -> ResponseType:
-        """POST /policyActions/pushConfig with policy IDs.
-
-        Returns 207 with a per-item ``policies[].status`` array.  Any item
-        with ``status != "success"`` is surfaced as an exception so a failed
-        push does not slip through as a successful module run.
-        """
-        ep = self.push_config_endpoint()
-        ep.fabric_name = self.fabric_name
-        payload = {"policyIds": policy_ids}
-        result = self._request(path=ep.path, verb=ep.verb, data=payload)
-
-        if isinstance(result, dict):
-            failures: list[str] = []
-            for p in result.get("policies", []) or []:
-                if not isinstance(p, dict):
-                    continue
-                status = str(p.get("status", "")).lower()
-                if status and status != "success":
-                    pid = p.get("policyId") or "?"
-                    msg = p.get("message") or "unknown error"
-                    failures.append(f"{pid}: {msg}")
-            if failures:
-                raise Exception(
-                    "pushConfig reported {0} failed policy push(es): {1}".format(
-                        len(failures), "; ".join(failures)
-                    )
-                )
-        return result
-
     def _switch_deploy(self, switch_ids: list[str]) -> ResponseType:
         """POST /switchActions/deploy to deploy config to specific switches.
 
-        Used after removing switches from a policy group to push the
-        negative (removal) configuration to those switches.
+        Sends a single bulk request with every ``switchId`` in one
+        ``{"switchIds": [...]}`` payload. The controller responds with a
+        per-switch status array of the form::
+
+            {
+                "switchIds": [
+                    {"switchId": "<sn>", "status": "success",     "message": "Deployed Successfully"},
+                    {"switchId": "<sn>", "status": "notExecuted", "message": "No Commands to execute"},
+                    {"switchId": "<sn>", "status": "failed",      "message": "<reason>"},
+                ]
+            }
+
+        Status semantics:
+
+        - ``success`` -- deploy completed and pushed config to the switch.
+        - ``notExecuted`` -- the switch was already in sync, so no
+          commands were generated.  After a freshly created or updated
+          policy group this typically means the controller considered
+          the switch already aligned (e.g. a duplicate group existed
+          from a prior run, or another playbook left state behind).
+          It is not a hard error, but it IS a useful diagnostic, so we
+          log a warning instead of swallowing it silently.
+        - Any other status (``failed``, etc.) is treated as a real
+          error and is surfaced as an exception so partial deploy
+          failures cannot slip through as a successful module run.
+
+        Used after create / update / delete to push pending config
+        (or, for delete, the negative removal config) to the affected
+        switches in a single round trip.
         """
         ep = self.switch_deploy_endpoint()
         ep.fabric_name = self.fabric_name
         payload = {"switchIds": switch_ids}
-        return self._request(path=ep.path, verb=ep.verb, data=payload)
+        log.debug(
+            "switchActions/deploy: dispatching to %d switch(es): %s",
+            len(switch_ids),
+            switch_ids,
+        )
+        result = self._request(path=ep.path, verb=ep.verb, data=payload)
+
+        # Parse per-switch status.  ``DATA`` body has been unwrapped to
+        # ``result`` already by ``_request``.  Be defensive about shape:
+        # some controller versions/error paths return list/None instead
+        # of the documented dict.
+        per_switch = []
+        if isinstance(result, dict):
+            per_switch = result.get("switchIds") or []
+        elif isinstance(result, list):
+            per_switch = result
+
+        not_executed: list[str] = []
+        failures: list[str] = []
+        for entry in per_switch:
+            if not isinstance(entry, dict):
+                continue
+            sid = entry.get("switchId") or entry.get("switchSn") or "?"
+            status = str(entry.get("status", "")).lower()
+            message = entry.get("message") or ""
+            if status == "success":
+                continue
+            if status == "notexecuted":
+                not_executed.append(f"{sid}: {message}")
+                continue
+            failures.append(f"{sid}: status={status!r} message={message!r}")
+
+        if not_executed:
+            log.warning(
+                "switchActions/deploy: %d/%d switch(es) returned notExecuted (controller considers them already in-sync): %s",
+                len(not_executed),
+                len(per_switch),
+                not_executed,
+            )
+
+        if failures:
+            raise Exception("switchActions/deploy reported {0} failed switch(es): {1}".format(len(failures), "; ".join(failures)))
+
+        return result
 
     def _get_current_switch_ids(self, policy_group_id: str) -> set:
         """Return a policy group's current switch_ids.

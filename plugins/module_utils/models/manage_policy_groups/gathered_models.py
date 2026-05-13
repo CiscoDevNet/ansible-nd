@@ -49,9 +49,7 @@ class GatheredPolicyGroup(NDBaseModel):
 
     # --- NDBaseModel ClassVars ---
     identifiers: ClassVar[list[str]] = ["policy_id"]
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "single"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
     exclude_from_diff: ClassVar[set] = set()
 
     # --- Fields ---
@@ -189,11 +187,7 @@ class GatheredPolicyGroup(NDBaseModel):
             "PRIORITY",
         }
         if self.template_inputs:
-            cleaned_ti = {
-                k: v
-                for k, v in self.template_inputs.items()
-                if k not in _SERVER_MANAGED_TI_KEYS
-            }
+            cleaned_ti = {k: v for k, v in self.template_inputs.items() if k not in _SERVER_MANAGED_TI_KEYS}
             if cleaned_ti:
                 config["template_inputs"] = cleaned_ti
         return config

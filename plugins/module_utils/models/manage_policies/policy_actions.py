@@ -73,9 +73,7 @@ class SwitchIds(NDNestedModel):
             raise ValueError("switch_ids must contain at least one switch ID")
         for sid in v:
             if not isinstance(sid, str) or not sid.strip():
-                raise ValueError(
-                    f"Invalid switch ID: {sid!r}. Must be a non-empty string."
-                )
+                raise ValueError(f"Invalid switch ID: {sid!r}. Must be a non-empty string.")
         return v
 
     def to_request_dict(self) -> dict[str, Any]:
@@ -150,9 +148,7 @@ class PolicyIds(NDNestedModel):
             raise ValueError("policy_ids must contain at least one policy ID")
         for policy_id in v:
             if not isinstance(policy_id, str) or not policy_id.strip():
-                raise ValueError(
-                    f"Invalid policy ID: {policy_id!r}. Must be a non-empty string."
-                )
+                raise ValueError(f"Invalid policy ID: {policy_id!r}. Must be a non-empty string.")
         return v
 
     def to_request_dict(self) -> dict[str, Any]:

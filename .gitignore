@@ -392,11 +392,3 @@ $RECYCLE.BIN/
 
 # Ansible Collection tarball
 cisco-nd-*.tar.gz
-tests/integration/inventory.networking
-tests/integration/targets/nd_policy/dev_tests/
-tests/integration/targets/nd_policy_group/debug_tc11.yaml
-tests/integration/targets/nd_policy_group/debug_priority.yaml
-ansible-venv/
-ansible-venv-216/
-inventory/
-.env.sh

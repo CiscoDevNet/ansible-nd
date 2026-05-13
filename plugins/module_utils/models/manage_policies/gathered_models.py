@@ -51,9 +51,7 @@ class GatheredPolicy(NDBaseModel):
 
     # --- NDBaseModel ClassVars ---
     identifiers: ClassVar[list[str]] = ["policy_id"]
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "single"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
     exclude_from_diff: ClassVar[set[str]] = set()
 
     # Fields excluded from config output (internal / not user-facing)

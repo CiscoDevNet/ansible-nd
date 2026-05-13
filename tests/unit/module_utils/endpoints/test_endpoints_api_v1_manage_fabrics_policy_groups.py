@@ -145,9 +145,7 @@ def test_manage_policy_groups_00060():
     - PolicyGroupMutationEndpointParams.to_query_string()
     """
     with does_not_raise():
-        params = PolicyGroupMutationEndpointParams(
-            cluster_name="cluster1", ticket_id="MyTicket1234"
-        )
+        params = PolicyGroupMutationEndpointParams(cluster_name="cluster1", ticket_id="MyTicket1234")
         result = params.to_query_string()
     assert "clusterName=cluster1" in result
     assert "ticketId=MyTicket1234" in result
@@ -371,9 +369,7 @@ def test_manage_policy_groups_00170():
     with does_not_raise():
         instance = EpManagePolicyGroupsGet()
         instance.fabric_name = "my-fabric"
-        instance.lucene_params.filter = (
-            "templateName:feature_enable AND description:Enable LACP"
-        )
+        instance.lucene_params.filter = "templateName:feature_enable AND description:Enable LACP"
         instance.lucene_params.max = 10000
         result = instance.path
     assert "filter=" in result
@@ -585,9 +581,7 @@ def test_manage_policy_groups_00340():
         instance.endpoint_params.cluster_name = "cluster1"
         instance.endpoint_params.ticket_id = "MyTicket1234"
         result = instance.path
-    assert result.startswith(
-        "/api/v1/manage/fabrics/my-fabric/policyGroups/POLICY-GROUP-143310?"
-    )
+    assert result.startswith("/api/v1/manage/fabrics/my-fabric/policyGroups/POLICY-GROUP-143310?")
     assert "clusterName=cluster1" in result
     assert "ticketId=MyTicket1234" in result
 
@@ -703,8 +697,6 @@ def test_manage_policy_groups_00440():
         instance.endpoint_params.cluster_name = "cluster1"
         instance.endpoint_params.ticket_id = "MyTicket1234"
         result = instance.path
-    assert result.startswith(
-        "/api/v1/manage/fabrics/my-fabric/policyGroups/POLICY-GROUP-143310?"
-    )
+    assert result.startswith("/api/v1/manage/fabrics/my-fabric/policyGroups/POLICY-GROUP-143310?")
     assert "clusterName=cluster1" in result
     assert "ticketId=MyTicket1234" in result

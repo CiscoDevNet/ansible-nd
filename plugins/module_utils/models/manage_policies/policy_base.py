@@ -81,9 +81,7 @@ class PolicyCreate(NDBaseModel):
 
     # --- NDBaseModel ClassVars ---
     identifiers: ClassVar[list[str]] = ["switch_id", "template_name", "description"]
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "composite"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
     exclude_from_diff: ClassVar[set] = {"source"}
 
     # Required fields from createPolicy schema

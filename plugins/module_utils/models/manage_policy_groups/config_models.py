@@ -151,9 +151,7 @@ class PlaybookPolicyGroupConfig(NDNestedModel):
     switch_ids: list[str] | None = Field(
         default=None,
         description=(
-            "List of target switch serial numbers, management IPs, or hostnames "
-            "(e.g., ['FDO25031SY4', 'FDO245206N5']). "
-            "Required for state=merged."
+            "List of target switch serial numbers, management IPs, or hostnames " "(e.g., ['FDO25031SY4', 'FDO245206N5']). " "Required for state=merged."
         ),
     )
 
@@ -175,16 +173,11 @@ class PlaybookPolicyGroupConfig(NDNestedModel):
             return v
         for idx, sid in enumerate(v):
             if not isinstance(sid, str) or not sid.strip():
-                raise ValueError(
-                    f"switch_ids[{idx}]: Invalid switch identifier {sid!r}. "
-                    f"Must be a non-empty string (serial number, IP, or hostname)."
-                )
+                raise ValueError(f"switch_ids[{idx}]: Invalid switch identifier {sid!r}. " f"Must be a non-empty string (serial number, IP, or hostname).")
         return v
 
     @model_validator(mode="after")
-    def validate_state_requirements(
-        self, info: ValidationInfo
-    ) -> "PlaybookPolicyGroupConfig":
+    def validate_state_requirements(self, info: ValidationInfo) -> "PlaybookPolicyGroupConfig":
         """Apply state-aware validation using context.
 
         When ``context={"state": "merged", "use_desc_as_key": True}`` is
@@ -219,20 +212,11 @@ class PlaybookPolicyGroupConfig(NDNestedModel):
                     "or a policy group ID like 'POLICY-GROUP-143310'."
                 )
             if not self.switch_ids:
-                raise ValueError(
-                    "'switch_ids' is required for state=merged. "
-                    "Provide at least one switch serial number, IP, or hostname."
-                )
+                raise ValueError("'switch_ids' is required for state=merged. Provide at least one switch serial number, IP, or hostname.")
 
         # When use_desc_as_key=true, description must not be empty for
         # template-name entries (not policy group IDs) in merged/deleted states.
-        if (
-            use_desc_as_key
-            and state in ("merged", "deleted")
-            and self.name
-            and not _is_policy_group_id(self.name)
-            and not self.description
-        ):
+        if use_desc_as_key and state in ("merged", "deleted") and self.name and not _is_policy_group_id(self.name) and not self.description:
             raise ValueError(
                 f"'description' cannot be empty when use_desc_as_key=true "
                 f"and name is a template name ('{self.name}'). "
@@ -256,9 +240,7 @@ class PlaybookPolicyGroupConfig(NDNestedModel):
             deploy=dict(type="bool", default=True),
             ticket_id=dict(type="str"),
             cluster_name=dict(type="str"),
-            state=dict(
-                type="str", default="merged", choices=["merged", "deleted", "gathered"]
-            ),
+            state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),
         )
 
 

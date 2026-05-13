@@ -86,9 +86,7 @@ class PolicyGroupCreate(NDBaseModel):
 
     # --- NDBaseModel ClassVars ---
     identifiers: ClassVar[list[str]] = ["description", "template_name"]
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "composite"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
     # Note: ``priority`` is intentionally NOT excluded — the base diff uses
     # ``exclude_none=True``, so an omitted priority on the user side is already
     # ignored, while an explicit priority change correctly triggers an update.
@@ -177,9 +175,7 @@ class PolicyGroupCreate(NDBaseModel):
             return v
         for sid in v:
             if not isinstance(sid, str) or not sid.strip():
-                raise ValueError(
-                    f"Invalid switch ID: {sid!r}. Must be a non-empty string."
-                )
+                raise ValueError(f"Invalid switch ID: {sid!r}. Must be a non-empty string.")
         return v
 
     @model_validator(mode="before")
@@ -232,9 +228,7 @@ class PolicyGroupCreate(NDBaseModel):
         return new_data
 
     @classmethod
-    def from_config(
-        cls, ansible_config: dict[str, Any], **kwargs
-    ) -> "PolicyGroupCreate":
+    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "PolicyGroupCreate":
         """Create model instance from Ansible config dict.
 
         Handles the ``name`` → ``template_name`` translation so the user-facing
@@ -249,18 +243,11 @@ class PolicyGroupCreate(NDBaseModel):
             config["template_name"] = config.pop("name")
         # Remove Ansible-injected defaults so Pydantic defaults take effect.
         # Ansible injects None for unset str/dict/list, and 0 for unset int.
-        config = {
-            k: v
-            for k, v in config.items()
-            if v is not None and v != 0 and v != [] and v != {}
-        }
+        config = {k: v for k, v in config.items() if v is not None and v != 0 and v != [] and v != {}}
         # Controller stringifies all templateInputs values after deploy
         # (e.g., int 5 → "5"). Normalize here so diff comparison works.
         if "template_inputs" in config and isinstance(config["template_inputs"], dict):
-            config["template_inputs"] = {
-                k: str(v) if not isinstance(v, str) else v
-                for k, v in config["template_inputs"].items()
-            }
+            config["template_inputs"] = {k: str(v) if not isinstance(v, str) else v for k, v in config["template_inputs"].items()}
         return cls.model_validate(config, by_name=True, **kwargs)
 
     @classmethod
@@ -287,9 +274,7 @@ class PolicyGroupCreate(NDBaseModel):
                     create_additional_policy=dict(type="bool", default=False),
                 ),
             ),
-            state=dict(
-                type="str", default="merged", choices=["merged", "deleted", "gathered"]
-            ),
+            state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),
         )
 
     def to_request_dict(self) -> dict[str, Any]:

@@ -1,0 +1,158 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+#
+# Validates create_additional_policy: true semantics.
+#
+# When create_additional_policy=true, the orchestrator MUST bypass all
+# idempotency checks and unconditionally call POST /policies.  Re-running
+# the SAME task therefore creates an additional policy each time, each
+# with a distinct policyId — no description match, no template+switch
+# match, no diff computation.
+
+- name: "CREATE_ADDITIONAL_POLICY - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: create_additional_policy
+
+- block:
+
+    ##############################################
+    ##         ADDITIONAL TEST CASES             ##
+    ##############################################
+
+    # TC-1: First create with create_additional_policy=true
+    - name: "ADDITIONAL TC1 - First create with create_additional_policy=true"
+      cisco.nd.nd_policy: &add_pol
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: true
+            description: "ADD-duplicate-allowed"
+            priority: 400
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result_first
+      tags: additional
+
+    - name: "ADDITIONAL TC1 - Verify first creation succeeded"
+      ansible.builtin.assert:
+        that:
+          - result_first.changed == true
+      tags: additional
+
+    - name: "ADDITIONAL TC1 - Gather after first create"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: gathered_after_first
+      tags: additional
+
+    - name: "ADDITIONAL TC1 - Capture matching policies"
+      ansible.builtin.set_fact:
+        matches_after_first: >-
+          {{ gathered_after_first.gathered
+             | selectattr('description', 'equalto', 'ADD-duplicate-allowed')
+             | list }}
+      tags: additional
+
+    - name: "ADDITIONAL TC1 - Verify exactly 1 policy exists with this description"
+      ansible.builtin.assert:
+        that:
+          - matches_after_first | length == 1
+      tags: additional
+
+    # TC-2: Re-run the SAME task — must NOT be idempotent.  Should produce
+    #       a SECOND policy with a different policyId.
+    - name: "ADDITIONAL TC2 - Re-run same task (must not be idempotent)"
+      cisco.nd.nd_policy: *add_pol
+      register: result_second
+      tags: additional
+
+    - name: "ADDITIONAL TC2 - Verify second run also reports changed=true"
+      ansible.builtin.assert:
+        that:
+          - result_second.changed == true
+      tags: additional
+
+    - name: "ADDITIONAL TC2 - Gather after second create"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: gathered_after_second
+      tags: additional
+
+    - name: "ADDITIONAL TC2 - Capture matching policies"
+      ansible.builtin.set_fact:
+        matches_after_second: >-
+          {{ gathered_after_second.gathered
+             | selectattr('description', 'equalto', 'ADD-duplicate-allowed')
+             | list }}
+      tags: additional
+
+    - name: "ADDITIONAL TC2 - Verify count grew from 1 → 2 with distinct policyIds"
+      ansible.builtin.assert:
+        that:
+          # Two policies with the same description now exist.
+          - matches_after_second | length == 2
+          # Each policy has a unique policy_id.
+          - (matches_after_second | map(attribute='policy_id') | list | unique | length) == 2
+          # The original policy_id is still present (we did not replace it).
+          - matches_after_first[0].policy_id in (matches_after_second | map(attribute='policy_id') | list)
+      tags: additional
+
+    # TC-3: A third run produces a 3rd distinct policy — proves the bypass
+    #       is not capped after some count.
+    - name: "ADDITIONAL TC3 - Third run creates yet another duplicate"
+      cisco.nd.nd_policy: *add_pol
+      register: result_third
+      tags: additional
+
+    - name: "ADDITIONAL TC3 - Gather after third create"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: gathered_after_third
+      tags: additional
+
+    - name: "ADDITIONAL TC3 - Verify total count is 3 with distinct policyIds"
+      ansible.builtin.assert:
+        that:
+          - result_third.changed == true
+          - >-
+            (gathered_after_third.gathered
+             | selectattr('description', 'equalto', 'ADD-duplicate-allowed')
+             | list
+             | length) == 3
+          - >-
+            (gathered_after_third.gathered
+             | selectattr('description', 'equalto', 'ADD-duplicate-allowed')
+             | map(attribute='policy_id')
+             | list
+             | unique
+             | length) == 3
+      tags: additional
+
+  always:
+    # Default cleanup deletes by template-name (no description), which expands
+    # to ALL switch_freeform policies on the switches — so all 3 duplicates
+    # are removed in one shot.
+    - name: "ADDITIONAL - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: additional

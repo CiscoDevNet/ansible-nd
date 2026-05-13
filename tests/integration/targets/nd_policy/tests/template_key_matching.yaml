@@ -1,0 +1,243 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+#
+# Validates default key mode (use_desc_as_key=false / omitted).
+#
+# In default mode the matcher uses (switchId + templateName) — but template
+# names are NOT unique on a switch, so the orchestrator deliberately
+# REFUSES to update existing policies in place.  Behaviour:
+#
+#   - 1 match, no diff      → SKIP        (idempotent)
+#   - 1 match, has diff     → CREATE new  (old policy is left untouched;
+#                                          a brand-new policy with a fresh
+#                                          policyId is added)
+#   - >=2 matches, no diff  → SKIP
+#   - >=2 matches, has diff → CREATE new  (only with create_additional=true)
+#
+# This is fundamentally different from use_desc_as_key=true, where (switchId
+# + description) uniquely identifies a policy and an in-place UPDATE (PUT)
+# is performed on a diff.
+#
+# Reference: nd_policy_resources.py — Cases 1-6 in `_get_diff_merged_single`.
+#
+# These tests prove that default mode never silently mutates an existing
+# policy and always preserves the original policyId.
+
+- name: "TEMPLATE_KEY_MATCHING - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: template_key_matching
+
+- block:
+
+    ##############################################
+    ##  SETUP - Create baseline clock_timezone   ##
+    ##############################################
+
+    - name: "DEFAULT_KEY SETUP - Create baseline clock_timezone"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        # use_desc_as_key omitted → default (false)
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "DK-original"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: setup_result
+      tags: default_key
+
+    - name: "DEFAULT_KEY SETUP - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - setup_result.changed == true
+      tags: default_key
+
+    - name: "DEFAULT_KEY SETUP - Gather baseline"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: baseline_gathered
+      tags: default_key
+
+    - name: "DEFAULT_KEY SETUP - Capture original policyId"
+      ansible.builtin.set_fact:
+        baseline_policies: "{{ baseline_gathered.gathered }}"
+      tags: default_key
+
+    - name: "DEFAULT_KEY SETUP - Verify baseline (1 clock_timezone)"
+      ansible.builtin.assert:
+        that:
+          - baseline_policies | length == 1
+          - baseline_policies[0].description == "DK-original"
+          - baseline_policies[0].priority == 101
+      tags: default_key
+
+    ##############################################
+    ##         DEFAULT_KEY TEST CASES            ##
+    ##############################################
+
+    # TC-1: Re-apply identical config → SKIP (idempotent), policyId unchanged.
+    - name: "DEFAULT_KEY TC1 - Re-apply identical config (idempotency)"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "DK-original"
+            priority: 101
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: default_key
+
+    - name: "DEFAULT_KEY TC1 - Verify idempotency (no change)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: default_key
+
+    - name: "DEFAULT_KEY TC1 - Gather and verify nothing was added or replaced"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc1_gathered
+      tags: default_key
+
+    - name: "DEFAULT_KEY TC1 - Verify still 1 policy with same policyId"
+      ansible.builtin.assert:
+        that:
+          - tc1_gathered.gathered | length == 1
+          - tc1_gathered.gathered[0].policy_id == baseline_policies[0].policy_id
+      tags: default_key
+
+    # TC-2: Apply with a CHANGED priority — default mode cannot update in
+    #       place; it must CREATE a new policy and leave the original alone.
+    #       (The user's intent to "modify" silently turns into a duplicate.
+    #        This is a known semantic of default mode and is the reason
+    #        use_desc_as_key=true exists.)
+    - name: "DEFAULT_KEY TC2 - Apply same template with NEW priority"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "DK-changed-priority"
+            priority: 555
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: default_key
+
+    - name: "DEFAULT_KEY TC2 - Verify a new policy was created"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: default_key
+
+    - name: "DEFAULT_KEY TC2 - Gather to confirm count grew 1 → 2"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc2_gathered
+      tags: default_key
+
+    - name: "DEFAULT_KEY TC2 - Verify both old and new policies exist"
+      ansible.builtin.assert:
+        that:
+          # 2 distinct clock_timezone policies on the same switch.
+          - tc2_gathered.gathered | length == 2
+          # Original policyId still present (NOT modified or deleted).
+          - baseline_policies[0].policy_id in (tc2_gathered.gathered | map(attribute='policy_id') | list)
+          # Both descriptions present.
+          - >-
+            (tc2_gathered.gathered
+             | map(attribute='description')
+             | list
+             | sort) == (['DK-changed-priority', 'DK-original'])
+          # Both priorities present.
+          - >-
+            (tc2_gathered.gathered
+             | map(attribute='priority')
+             | list
+             | sort) == ([101, 555])
+      tags: default_key
+
+    # TC-3: Apply the EXACT same diff-bearing config a second time.  Default
+    #       mode rule: 2 matches with no full-equality match → SKIP (no
+    #       new duplicate is added when create_additional=false).
+    - name: "DEFAULT_KEY TC3 - Re-apply changed-priority config (multi-match SKIP)"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "DK-changed-priority"
+            priority: 555
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: default_key
+
+    - name: "DEFAULT_KEY TC3 - Gather to confirm count is still 2"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: clock_timezone
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: tc3_gathered
+      tags: default_key
+
+    - name: "DEFAULT_KEY TC3 - Verify no further duplicate was added"
+      ansible.builtin.assert:
+        that:
+          # Either skipped (changed=false) because the second policy now
+          # matches exactly, or already-present detection kicked in.
+          # Either way, count must NOT grow.
+          - tc3_gathered.gathered | length == 2
+      tags: default_key
+
+  always:
+    - name: "DEFAULT_KEY - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: default_key

@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 # Copyright: (c) 2026, Mike Wiebe (@mwiebe) <mwiebe@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
@@ -29,22 +31,12 @@ __metaclass__ = type
 
 from typing import ClassVar, Literal, Optional
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    Field,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
-    NDEndpointBaseModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
-    FabricNameMixin,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
-    EndpointQueryParams,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
-    BasePath,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
@@ -93,10 +85,7 @@ class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):
     _require_fabric_name: ClassVar[bool] = True
     _path_suffix: ClassVar[Optional[str]] = None
 
-    endpoint_params: EndpointQueryParams = Field(
-        default_factory=EndpointQueryParams,
-        description="Endpoint-specific query parameters",
-    )
+    endpoint_params: EndpointQueryParams = Field(default_factory=EndpointQueryParams, description="Endpoint-specific query parameters")
 
     def set_identifiers(self, identifier: IdentifierKey = None):
         self.fabric_name = identifier
@@ -118,9 +107,7 @@ class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):
         - `ValueError` if `fabric_name` is required but not set
         """
         if self._require_fabric_name and self.fabric_name is None:
-            raise ValueError(
-                f"{type(self).__name__}.path: fabric_name must be set before accessing path."
-            )
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         segments = ["fabrics"]
         if self.fabric_name is not None:
             segments.append(self.fabric_name)
@@ -178,15 +165,9 @@ class EpManageFabricsGet(_EpManageFabricsBase):
     ```
     """
 
-    class_name: Literal["EpApiV1ManageFabricsGet"] = Field(
-        default="EpApiV1ManageFabricsGet",
-        description="Class name for backward compatibility",
-    )
+    class_name: Literal["EpApiV1ManageFabricsGet"] = Field(default="EpApiV1ManageFabricsGet", description="Class name for backward compatibility")
 
-    endpoint_params: FabricsEndpointParams = Field(
-        default_factory=FabricsEndpointParams,
-        description="Endpoint-specific query parameters",
-    )
+    endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -296,15 +277,9 @@ class EpManageFabricsListGet(_EpManageFabricsBase):
 
     _require_fabric_name: ClassVar[bool] = False
 
-    class_name: Literal["EpApiV1ManageFabricsListGet"] = Field(
-        default="EpApiV1ManageFabricsListGet",
-        description="Class name for backward compatibility",
-    )
+    class_name: Literal["EpApiV1ManageFabricsListGet"] = Field(default="EpApiV1ManageFabricsListGet", description="Class name for backward compatibility")
 
-    endpoint_params: FabricsListEndpointParams = Field(
-        default_factory=FabricsListEndpointParams,
-        description="Endpoint-specific query parameters",
-    )
+    endpoint_params: FabricsListEndpointParams = Field(default_factory=FabricsListEndpointParams, description="Endpoint-specific query parameters")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -364,15 +339,9 @@ class EpManageFabricsPost(_EpManageFabricsBase):
 
     _require_fabric_name: ClassVar[bool] = False
 
-    class_name: Literal["EpApiV1ManageFabricsPost"] = Field(
-        default="EpApiV1ManageFabricsPost",
-        description="Class name for backward compatibility",
-    )
+    class_name: Literal["EpApiV1ManageFabricsPost"] = Field(default="EpApiV1ManageFabricsPost", description="Class name for backward compatibility")
 
-    endpoint_params: FabricsEndpointParams = Field(
-        default_factory=FabricsEndpointParams,
-        description="Endpoint-specific query parameters",
-    )
+    endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -424,15 +393,9 @@ class EpManageFabricsPut(_EpManageFabricsBase):
     ```
     """
 
-    class_name: Literal["EpApiV1ManageFabricsPut"] = Field(
-        default="EpApiV1ManageFabricsPut",
-        description="Class name for backward compatibility",
-    )
+    class_name: Literal["EpApiV1ManageFabricsPut"] = Field(default="EpApiV1ManageFabricsPut", description="Class name for backward compatibility")
 
-    endpoint_params: FabricsEndpointParams = Field(
-        default_factory=FabricsEndpointParams,
-        description="Endpoint-specific query parameters",
-    )
+    endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -474,15 +437,9 @@ class EpManageFabricsDelete(_EpManageFabricsBase):
     ```
     """
 
-    class_name: Literal["EpApiV1ManageFabricsDelete"] = Field(
-        default="EpApiV1ManageFabricsDelete",
-        description="Class name for backward compatibility",
-    )
+    class_name: Literal["EpApiV1ManageFabricsDelete"] = Field(default="EpApiV1ManageFabricsDelete", description="Class name for backward compatibility")
 
-    endpoint_params: FabricsEndpointParams = Field(
-        default_factory=FabricsEndpointParams,
-        description="Endpoint-specific query parameters",
-    )
+    endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -526,16 +483,12 @@ class EpManageFabricsSummaryGet(_EpManageFabricsBase):
     """
 
     class_name: Literal["EpApiV1ManageFabricsSummaryGet"] = Field(
-        default="EpApiV1ManageFabricsSummaryGet",
-        description="Class name for backward compatibility",
+        default="EpApiV1ManageFabricsSummaryGet", description="Class name for backward compatibility"
     )
 
     _path_suffix: ClassVar[Optional[str]] = "summary"
 
-    endpoint_params: FabricsEndpointParams = Field(
-        default_factory=FabricsEndpointParams,
-        description="Endpoint-specific query parameters",
-    )
+    endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 
     @property
     def verb(self) -> HttpVerbEnum:

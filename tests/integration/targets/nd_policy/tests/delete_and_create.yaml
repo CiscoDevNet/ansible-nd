@@ -1,0 +1,161 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+#
+# Validates the delete_and_create (replace) classification path.
+#
+# delete_and_create is triggered ONLY when ALL of the following hold:
+#   - use_desc_as_key=true
+#   - exactly ONE existing policy matches by (switchId + description)
+#   - the existing policy's templateName DIFFERS from want.templateName
+#
+# i.e. the user has reused the SAME description for a DIFFERENT template.
+# Changing template_inputs / priority / description on the same template is
+# an UPDATE (PUT), not a delete_and_create.
+#
+# Reference: nd_policy_resources.py — Case 15 in `_get_diff_merged_single`.
+#
+# Flow exercised on the controller:
+#   1. markDelete the old (clock_timezone) policy
+#   2. switchActions/deploy to push removal
+#   3. Bulk-create the new (clock_summertime) policy
+#   4. pushConfig to deploy the new policy
+
+- name: "DELETE_AND_CREATE - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: delete_and_create
+
+- block:
+
+    ##############################################
+    ##  SETUP - Create initial clock_timezone   ##
+    ##############################################
+
+    - name: "REPLACE SETUP - Create clock_timezone with description REPLACE-X"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        use_desc_as_key: true
+        config:
+          - name: clock_timezone
+            create_additional_policy: false
+            description: "REPLACE-X"
+            priority: 300
+            template_inputs:
+              TIME_ZONE: CET
+              HOUR_OFFSET: 1
+              MINUTE_OFFSET: 0
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: setup_result
+      tags: replace
+
+    - name: "REPLACE SETUP - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - setup_result.changed == true
+      tags: replace
+
+    - name: "REPLACE SETUP - Gather to capture original policy"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: pre_replace_gathered
+      tags: replace
+
+    - name: "REPLACE SETUP - Filter to REPLACE-X matches"
+      ansible.builtin.set_fact:
+        pre_replace_matches: >-
+          {{ pre_replace_gathered.gathered
+             | selectattr('description', 'equalto', 'REPLACE-X')
+             | list }}
+      tags: replace
+
+    - name: "REPLACE SETUP - Verify exactly 1 clock_timezone with REPLACE-X exists"
+      ansible.builtin.assert:
+        that:
+          - pre_replace_matches | length == 1
+          - pre_replace_matches[0].name == "clock_timezone"
+      tags: replace
+
+    ##############################################
+    ##         REPLACE TEST CASES                ##
+    ##############################################
+
+    # TC-1: Re-apply the SAME description on a DIFFERENT template.
+    #       This is the only path that triggers delete_and_create.
+    - name: "REPLACE TC1 - Reuse description REPLACE-X with clock_summertime template"
+      cisco.nd.nd_policy: &replace_new_template
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        use_desc_as_key: true
+        config:
+          - name: clock_summertime
+            create_additional_policy: false
+            description: "REPLACE-X"
+            priority: 300
+            template_inputs:
+              SUMMER_TIME: "CEST 5 SUNDAY MARCH 02:00 5 SUNDAY OCTOBER 03:00 60"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: replace
+
+    - name: "REPLACE TC1 - Verify replace was performed"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: replace
+
+    # TC-2: Verify END STATE — old clock_timezone gone, new clock_summertime present
+    - name: "REPLACE TC2 - Gather post-replace state"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: post_replace_gathered
+      tags: replace
+
+    - name: "REPLACE TC2 - Filter to REPLACE-X matches"
+      ansible.builtin.set_fact:
+        post_replace_matches: >-
+          {{ post_replace_gathered.gathered
+             | selectattr('description', 'equalto', 'REPLACE-X')
+             | list }}
+      tags: replace
+
+    - name: "REPLACE TC2 - Verify exactly 1 surviving policy and template_name CHANGED"
+      ansible.builtin.assert:
+        that:
+          # No leftover from the old policy.
+          - post_replace_matches | length == 1
+          # Template was swapped.
+          - post_replace_matches[0].name == "clock_summertime"
+          # New policyId — proves delete + recreate, not in-place update.
+          - post_replace_matches[0].policy_id != pre_replace_matches[0].policy_id
+      tags: replace
+
+    # TC-3: Idempotence — re-running with the new template should be a no-op
+    - name: "REPLACE TC3 - Re-run with new template (idempotence)"
+      cisco.nd.nd_policy: *replace_new_template
+      register: result
+      tags: replace
+
+    - name: "REPLACE TC3 - Verify idempotence after replace"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: replace
+
+  always:
+    - name: "REPLACE - Cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: replace
