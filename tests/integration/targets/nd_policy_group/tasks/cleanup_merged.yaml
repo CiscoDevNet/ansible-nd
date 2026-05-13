@@ -1,0 +1,56 @@
+---
+# Clean up all IT-MERGED- prefixed test policy groups.
+# Uses description-based composite keys for precise cleanup.
+# Also cleans up create_additional_policy duplicates by template-name-only delete.
+
+- name: "CLEANUP MERGED - Delete IT-MERGED prefixed policy groups"
+  cisco.nd.nd_policy_group:
+    fabric_name: "{{ fabric_name }}"
+    state: deleted
+    deploy: true
+    config:
+      - name: switch_freeform
+        description: "IT-MERGED-System vlan long-name"
+      - name: switch_freeform
+        description: "IT-MERGED-BFD timers"
+      - name: switch_freeform
+        description: "IT-MERGED-Multi switch freeform"
+      - name: switch_freeform
+        description: "IT-MERGED-Staged freeform"
+      - name: feature_enable
+        description: "IT-MERGED-Enable LACP"
+      - name: feature_enable
+        description: "IT-MERGED-Enable LLDP"
+      - name: feature_enable
+        description: "IT-MERGED-Enable NV Overlay"
+      - name: feature_enable
+        description: "IT-MERGED-Staged feature"
+      - name: clock_timezone
+        description: "IT-MERGED-Timezone CET"
+  ignore_errors: true
+
+# Catch any create_additional_policy duplicates that don't have IT-MERGED- descriptions
+# These are created without descriptions or with auto-generated ones
+- name: "CLEANUP MERGED - Gather all to find stray IT-MERGED groups"
+  cisco.nd.nd_policy_group:
+    fabric_name: "{{ fabric_name }}"
+    state: gathered
+  register: cleanup_gather
+  ignore_errors: true
+
+- name: "CLEANUP MERGED - Delete any remaining IT-MERGED groups by policy_id"
+  cisco.nd.nd_policy_group:
+    fabric_name: "{{ fabric_name }}"
+    state: deleted
+    deploy: true
+    config: >-
+      {{
+        cleanup_gather.gathered
+        | default([])
+        | selectattr('description', 'match', '^IT-MERGED-')
+        | list
+      }}
+  when:
+    - cleanup_gather.gathered is defined
+    - cleanup_gather.gathered | selectattr('description', 'match', '^IT-MERGED-') | list | length > 0
+  ignore_errors: true

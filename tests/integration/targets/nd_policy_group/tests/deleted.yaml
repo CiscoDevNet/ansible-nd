@@ -1,0 +1,99 @@
+---
+##############################################
+##               SETUP                      ##
+##############################################
+
+- name: "DELETED - Import cleanup tasks"
+  ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+  tags: deleted
+
+- block:
+
+    ##############################################
+    ##     SETUP - Create policy group          ##
+    ##############################################
+
+    # Create a switch_freeform policy group with deploy=true
+    - name: "DELETED SETUP - Create switch_freeform policy group with deploy"
+      cisco.nd.nd_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+            priority: 110
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              CONF: "system vlan long-name"
+      register: result
+      tags: deleted
+
+    - name: "DELETED SETUP - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    ##############################################
+    ##     TC1 - Delete with deploy=true        ##
+    ##############################################
+
+    - name: "DELETED TC1 - Delete switch_freeform policy group with deploy"
+      cisco.nd.nd_policy_group: &delete_freeform
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "Enable system vlan long-name"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC1 - Verify deletion"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: deleted
+
+    ##############################################
+    ##     TC2 - Idempotence after delete       ##
+    ##############################################
+
+    - name: "DELETED TC2 - Idempotence check (already deleted)"
+      cisco.nd.nd_policy_group: *delete_freeform
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC2 - Verify idempotence (no change)"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: deleted
+
+    ##############################################
+    ##     TC3 - Delete non-existent (no-op)    ##
+    ##############################################
+
+    - name: "DELETED TC3 - Delete a policy group that does not exist"
+      cisco.nd.nd_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "This does not exist"
+      register: result
+      tags: deleted
+
+    - name: "DELETED TC3 - Verify no change"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: deleted
+
+  always:
+    - name: "DELETED - Final cleanup"
+      ansible.builtin.import_tasks: ../tasks/cleanup.yaml
+      tags: deleted

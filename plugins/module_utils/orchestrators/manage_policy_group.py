@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
@@ -98,27 +96,79 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     # Query operations
     # ------------------------------------------------------------------ #
 
-    def query_all(self, model_instance=None, **kwargs) -> ResponseType:
+    def query_all(
+        self,
+        model_instance=None,
+        *,
+        include_no_description: bool = False,
+        deduplicate: bool = True,
+        **kwargs,
+    ) -> ResponseType:
         """GET /policyGroups — extract ``policyGroups`` list from response.
 
-        Deduplicates results by ``(description, templateName)`` composite key.
-        If the controller returns multiple groups with the same key (e.g. created
-        via UI), the most recently updated group is kept and others are silently
-        dropped to prevent ``NDConfigCollection`` from raising on duplicate keys.
+        Results from the underlying API call are cached on the orchestrator
+        instance (``_raw_cache``) so that subsequent ``query_all`` calls within
+        the same module run can derive their view by re-applying the requested
+        filters in memory. The cache is invalidated automatically by any
+        mutation method (``create_bulk``, ``update``, ``delete_bulk``).
+
+        The cache stores the broadest possible view (no description and source
+        filtering applied here on the raw response — only the spec-mandated
+        ``source`` artifact filter is always applied since those records are
+        never user-managed). ``include_no_description`` and ``deduplicate``
+        are then applied as Python-side filters on the cached list.
+
+        Args:
+            include_no_description: When False (default), exclude policy groups
+                whose ``description`` is missing/null/empty. Per the ``policyBase``
+                schema, ``description`` is ``nullable: true`` and may be ``""``
+                or absent — the truthiness check ``g.get("description")`` covers
+                all three forms. Such groups cannot be uniquely indexed by the
+                (description, templateName) composite identifier and would crash
+                ``NDStateMachine`` initialization. Callers that need the full
+                set (e.g. ``state: gathered`` or the ID-resolution step in the
+                module's main()) pass ``True``.
+            deduplicate: When True (default), collapse multiple groups that
+                share ``(description, templateName)`` down to the most recently
+                updated one so the result is safe for ``NDConfigCollection``.
+                When False, every distinct ``policyId`` is returned — required
+                for ``state: gathered`` and any ID-based lookup so that legitimate
+                duplicates (ND permits them) are not silently hidden.
         """
         try:
-            ep = self.query_all_endpoint()
-            ep.fabric_name = self.fabric_name
-            ep.lucene_params.max = 10000
-            result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
-            groups = result.get("policyGroups", []) or []
-            # Filter out internal controller artifacts (e.g. switch_freeform_config
-            # records created during deletion of PYTHON content-type policy groups).
-            # These have a non-empty "source" field referencing the original policy ID.
-            groups = [g for g in groups if not g.get("source")]
-            return self._deduplicate_groups(groups)
+            raw = getattr(self, "_raw_cache", None)
+            if raw is None:
+                ep = self.query_all_endpoint()
+                ep.fabric_name = self.fabric_name
+                ep.lucene_params.max = 10000
+                result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
+                groups = result.get("policyGroups", []) or []
+                # Filter out internal controller artifacts (e.g. switch_freeform_config
+                # records auto-generated during deletion of PYTHON content-type
+                # policy groups). These have a non-empty "source" field referencing
+                # the original policy ID and are never user-managed.
+                # Per the policyBase schema, ``source`` defaults to ``""`` and is
+                # falsy for user-created groups; ``not g.get("source")`` covers
+                # ``""``, ``None``, and missing — all spec-valid forms.
+                raw = [g for g in groups if not g.get("source")]
+                # Cache without the per-call filters so other callers can re-derive
+                # their view. Use object.__setattr__ to bypass Pydantic validation.
+                object.__setattr__(self, "_raw_cache", raw)
+
+            groups = raw
+            # Exclude no-description groups for state-machine consumers so the
+            # composite identifier (description, templateName) is never None.
+            if not include_no_description:
+                groups = [g for g in groups if g.get("description")]
+            if deduplicate:
+                return self._deduplicate_groups(groups)
+            return list(groups)
         except Exception as e:
             raise Exception(f"Query all policy groups failed: {e}") from e
+
+    def _invalidate_cache(self) -> None:
+        """Drop the cached query_all response after any mutation."""
+        object.__setattr__(self, "_raw_cache", None)
 
     @staticmethod
     def _deduplicate_groups(groups: list) -> list:
@@ -161,17 +211,41 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         except Exception as e:
             raise Exception(f"Query policy group by ID failed: {e}") from e
 
-    def query_filtered(self, template_name: str = None, description: str = None) -> ResponseType:
+    def query_filtered(
+        self,
+        template_name: str = None,
+        description: str = None,
+        *,
+        deduplicate: bool = True,
+    ) -> ResponseType:
         """GET /policyGroups with Lucene filter — server-side filtering.
 
         Args:
             template_name: Filter by templateName (exact match via Lucene).
             description: Filter by description (exact match via Lucene).
+            deduplicate: See :meth:`query_all`. Defaults to True for safe
+                state-machine consumption; ``state: gathered`` passes False
+                so duplicate policies with distinct ``policyId``s are visible.
 
         Returns:
-            Filtered, deduplicated list of policy group dicts.
+            Filtered list of policy group dicts (deduplicated by default).
         """
         try:
+            # Serve from cache if populated; ``_raw_cache`` already has the
+            # ``source``-artifact filter applied. We re-apply the requested
+            # template_name / description filters in memory to mirror the
+            # semantics of the server-side Lucene query.
+            raw = getattr(self, "_raw_cache", None)
+            if raw is not None:
+                groups = raw
+                if template_name:
+                    groups = [g for g in groups if g.get("templateName") == template_name]
+                if description:
+                    groups = [g for g in groups if g.get("description") == description]
+                if deduplicate:
+                    return self._deduplicate_groups(groups)
+                return list(groups)
+
             ep = self.query_all_endpoint()
             ep.fabric_name = self.fabric_name
             ep.lucene_params.max = 10000
@@ -188,7 +262,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
             groups = result.get("policyGroups", []) or []
             groups = [g for g in groups if not g.get("source")]
-            return self._deduplicate_groups(groups)
+            if deduplicate:
+                return self._deduplicate_groups(groups)
+            return groups
         except Exception as e:
             raise Exception(f"Query filtered policy groups failed: {e}") from e
 
@@ -203,8 +279,10 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     def create_bulk(self, model_instances: list[PolicyGroupCreate], **kwargs) -> ResponseType:
         """POST /policyGroups with ``{"policyGroups": [...]}`` wrapper.
 
-        After creation, populates ``policy_id`` on each model instance
-        from the API response for subsequent deploy/update operations.
+        The endpoint always returns HTTP 207 (Multi-Status); per-item
+        ``status`` is ``"success"`` or ``"failed"``. We surface failures as
+        an exception so the user sees them rather than getting a silent
+        partial create with ``changed=true``.
         """
         try:
             ep = self.create_bulk_endpoint()
@@ -219,12 +297,36 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 response_groups = result.get("policyGroups", [])
             self._populate_policy_ids(model_instances, response_groups)
 
+            # Detect per-item failures in the 207 response body.
+            failures: list[str] = []
+            for idx, rg in enumerate(response_groups):
+                if not isinstance(rg, dict):
+                    continue
+                status = (rg.get("status") or "").lower()
+                if status and status != "success":
+                    # Best-effort identifier for the failed item from the request
+                    if idx < len(model_instances):
+                        m = model_instances[idx]
+                        ident = f"{m.template_name!r} (description={m.description!r})"
+                    else:
+                        ident = f"index {idx}"
+                    msg = rg.get("message") or "unknown error"
+                    failures.append(f"{ident}: {msg}")
+
+            if failures:
+                raise Exception(
+                    "Bulk create reported {0} failed item(s): {1}".format(
+                        len(failures), "; ".join(failures)
+                    )
+                )
+
             # Deploy if requested
             if self.deploy:
                 policy_ids = [m.policy_id for m in model_instances if m.policy_id]
                 if policy_ids:
                     self._push_config(policy_ids)
 
+            self._invalidate_cache()
             return result
         except Exception as e:
             raise Exception(f"Bulk create policy groups failed: {e}") from e
@@ -268,6 +370,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 if removed_switches:
                     self._switch_deploy(list(removed_switches))
 
+            self._invalidate_cache()
             return result
         except Exception as e:
             raise Exception(f"Update policy group failed for {model_instance.description!r}: {e}") from e
@@ -286,13 +389,17 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         Deletion strategy:
 
         1. **markDelete** all policy group IDs.
-        2. **Switch-level deploy** on all affected switches (bulk) to push
-           the removal (negative) configuration.
-        3. For mark-failed groups (switch_freeform/PYTHON types): direct
-           DELETE, then switch-level deploy on their affected switches.
+        2. For mark-failed groups (switch_freeform/PYTHON types): direct
+           ``DELETE /policyGroups/<id>``.
+        3. **Single** ``switchActions/deploy`` against the **union** of all
+           affected switches (both markDelete-succeeded and direct-deleted).
 
-        When ``deploy=False``, markDelete is performed for normal
-        groups, and direct DELETE for PYTHON-type groups (no switch deploy).
+        Consolidating the deploy into one call avoids hitting the same
+        switch twice when a batch mixes markDelete-eligible and
+        direct-delete groups that share switches.
+
+        When ``deploy=False``, markDelete (and direct DELETE for failures)
+        is performed without the trailing switch deploy.
         """
         try:
             policy_ids = [m.policy_id for m in model_instances if m.policy_id]
@@ -317,6 +424,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             # Inspect 207 response for per-policy failures
             mark_succeeded = []
             mark_failed_ids = []
+            mark_failure_messages: list[str] = []
             if isinstance(mark_result, dict):
                 policies_response = mark_result.get("policyGroups", [])
                 failed_set = set()
@@ -326,6 +434,8 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                     if status != "success":
                         failed_set.add(pid)
                         mark_failed_ids.append(pid)
+                        msg = p.get("message") or "unknown error"
+                        mark_failure_messages.append(f"{pid}: {msg}")
                 mark_succeeded = [pid for pid in policy_ids if pid not in failed_set]
                 # If empty response, treat all as succeeded (ambiguous)
                 if not policies_response and policy_ids:
@@ -333,22 +443,22 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             else:
                 mark_succeeded = list(policy_ids)
 
+            if mark_failure_messages:
+                # Log the reason at WARNING so the cause of the direct-DELETE
+                # fallback is visible even when the fallback ultimately succeeds.
+                log.warning(
+                    "delete_bulk: markDelete reported failures (will retry via direct DELETE): %s",
+                    "; ".join(mark_failure_messages),
+                )
+
             log.debug("delete_bulk: markDelete succeeded=%s, failed=%s", mark_succeeded, mark_failed_ids)
 
-            # Step 2: Switch-level deploy for markDeleted groups to push removal config
-            if self.deploy and mark_succeeded:
-                affected_switches = set()
-                for pid in mark_succeeded:
-                    switch_ids = switch_ids_by_policy.get(pid, [])
-                    affected_switches.update(switch_ids)
-                log.debug("delete_bulk: Step 2 - switchActions/deploy for markDeleted groups, switches=%s", affected_switches)
-                if affected_switches:
-                    self._switch_deploy(list(affected_switches))
-
-            # Step 3: Direct DELETE fallback for markDelete failures (switch_freeform/PYTHON types)
-            direct_deleted = []
+            # Step 2: Direct DELETE fallback for markDelete failures
+            # (switch_freeform / PYTHON-type groups that the controller does
+            # not allow to be markDeleted).
+            direct_deleted: list[str] = []
             if mark_failed_ids:
-                log.debug("delete_bulk: Step 3 - Direct DELETE fallback for failed=%s", mark_failed_ids)
+                log.debug("delete_bulk: Step 2 - Direct DELETE fallback for failed=%s", mark_failed_ids)
                 for pid in mark_failed_ids:
                     ep = self.delete_endpoint()
                     ep.fabric_name = self.fabric_name
@@ -356,17 +466,25 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                     self._request(path=ep.path, verb=ep.verb)
                     direct_deleted.append(pid)
 
-            # Step 4: Switch-level deploy for direct-deleted groups
-            if self.deploy and direct_deleted:
-                affected_switches = set()
-                for pid in direct_deleted:
-                    switch_ids = switch_ids_by_policy.get(pid, [])
-                    affected_switches.update(switch_ids)
-                log.debug("delete_bulk: Step 4 - switchActions/deploy for direct-deleted groups, switches=%s", affected_switches)
+            # Step 3: Single consolidated switchActions/deploy against the
+            # union of all affected switches.  One call covers the removal
+            # for both markDelete-succeeded and direct-deleted groups so
+            # shared switches are not redeployed twice.
+            if self.deploy:
+                affected_switches: set[str] = set()
+                for pid in (*mark_succeeded, *direct_deleted):
+                    affected_switches.update(switch_ids_by_policy.get(pid, []))
                 if affected_switches:
+                    log.debug(
+                        "delete_bulk: Step 3 - consolidated switchActions/deploy, switches=%s",
+                        sorted(affected_switches),
+                    )
                     self._switch_deploy(list(affected_switches))
+                else:
+                    log.debug("delete_bulk: Step 3 skipped (no affected switches).")
 
             log.debug("delete_bulk: Complete. mark_succeeded=%s, direct_deleted=%s", mark_succeeded, direct_deleted)
+            self._invalidate_cache()
             return {"policyIds": policy_ids, "status": "success"}
         except Exception as e:
             raise Exception(f"Bulk delete policy groups failed: {e}") from e
@@ -383,11 +501,34 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         return self._request(path=ep.path, verb=ep.verb, data=payload)
 
     def _push_config(self, policy_ids: list[str]) -> ResponseType:
-        """POST /policyActions/pushConfig with policy IDs."""
+        """POST /policyActions/pushConfig with policy IDs.
+
+        Returns 207 with a per-item ``policies[].status`` array.  Any item
+        with ``status != "success"`` is surfaced as an exception so a failed
+        push does not slip through as a successful module run.
+        """
         ep = self.push_config_endpoint()
         ep.fabric_name = self.fabric_name
         payload = {"policyIds": policy_ids}
-        return self._request(path=ep.path, verb=ep.verb, data=payload)
+        result = self._request(path=ep.path, verb=ep.verb, data=payload)
+
+        if isinstance(result, dict):
+            failures: list[str] = []
+            for p in result.get("policies", []) or []:
+                if not isinstance(p, dict):
+                    continue
+                status = str(p.get("status", "")).lower()
+                if status and status != "success":
+                    pid = p.get("policyId") or "?"
+                    msg = p.get("message") or "unknown error"
+                    failures.append(f"{pid}: {msg}")
+            if failures:
+                raise Exception(
+                    "pushConfig reported {0} failed policy push(es): {1}".format(
+                        len(failures), "; ".join(failures)
+                    )
+                )
+        return result
 
     def _switch_deploy(self, switch_ids: list[str]) -> ResponseType:
         """POST /switchActions/deploy to deploy config to specific switches.
@@ -401,7 +542,21 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         return self._request(path=ep.path, verb=ep.verb, data=payload)
 
     def _get_current_switch_ids(self, policy_group_id: str) -> set:
-        """Query the API for a policy group's current switch_ids."""
+        """Return a policy group's current switch_ids.
+
+        Prefers the cached ``query_all`` response when available so we avoid
+        a redundant ``GET /policyGroups/{id}`` round-trip; falls back to the
+        single-resource endpoint only when the cache is empty (e.g. orchestrator
+        used standalone without a prior ``query_all``).
+        """
+        raw = getattr(self, "_raw_cache", None)
+        if raw is not None:
+            for g in raw:
+                if g.get("policyId") == policy_group_id:
+                    return set(g.get("switchIds", []) or [])
+            # Cache present but ID not found — group was likely just created in
+            # this run; treat as having no prior switches.
+            return set()
         try:
             ep = self.query_one_endpoint()
             ep.fabric_name = self.fabric_name
@@ -420,22 +575,28 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     ) -> None:
         """Match API response items back to model instances and set policy_id.
 
-        Matching is done by templateName + description since those form
-        the user-facing identity of a policy group.
+        The POST /policyGroups response item does NOT echo the ``description``
+        field of the request (see API docs example: only ``entityName``,
+        ``entityType``, ``message``, ``policyId``, ``status``, ``switchIds``
+        and ``templateName`` are returned).  We therefore cannot match by
+        ``(templateName, description)``.
         """
         if not response_groups:
             return
 
-        # Build lookup from (templateName, description) → policyId
-        response_lookup = {}
-        for rg in response_groups:
-            key = (rg.get("templateName", ""), rg.get("description", ""))
-            pid = rg.get("policyId")
-            if pid:
-                response_lookup[key] = pid
-
-        for model in model_instances:
-            key = (model.template_name, model.description or "")
-            pid = response_lookup.get(key)
+        for idx, model in enumerate(model_instances):
+            if idx >= len(response_groups):
+                break
+            rg = response_groups[idx] or {}
+            status = (rg.get("status") or "").lower()
+            if status and status != "success":
+                # Failed item — no policyId to populate; let caller surface error
+                continue
+            pid = rg.get("policyId") or rg.get("policy_id")
+            if not pid:
+                # Some templates embed the assigned ID inside templateInputs
+                ti = rg.get("templateInputs") or rg.get("template_inputs") or {}
+                if isinstance(ti, dict):
+                    pid = ti.get("POLICY_ID")
             if pid:
                 model.policy_id = pid

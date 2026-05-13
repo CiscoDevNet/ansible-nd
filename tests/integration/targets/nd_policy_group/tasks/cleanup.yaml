@@ -1,0 +1,42 @@
+---
+# Clean up all test policy groups from the fabric.
+# Each entry needs (description, name) to match the composite key.
+
+- name: "CLEANUP - Delete all test policy groups"
+  cisco.nd.nd_policy_group:
+    fabric_name: "{{ fabric_name }}"
+    state: deleted
+    deploy: true
+    config:
+      - name: switch_freeform
+        description: "Enable system vlan long-name"
+      - name: switch_freeform
+        description: "Enable BFD timers"
+      - name: feature_enable
+        description: "Enable LACP on leaf switches"
+      - name: feature_enable
+        description: "Enable LLDP on leaf switches"
+      - name: clock_timezone
+        description: "Set timezone to CET"
+
+      # --- special_cases.yaml (SPC- prefix) ---
+      - name: switch_freeform
+        description: "SPC-FORCE-baseline freeform"
+      - name: clock_timezone
+        description: "SPC-CHECK-Timezone PST"
+      - name: clock_summertime
+        description: "SPC-CHECK-MD-Summertime CEST"
+      - name: switch_freeform
+        description: "SPC-NODEPLOY-as-format asdot"
+      - name: feature_enable
+        description: "SPC-NODEPLOY-Enable LACP"
+      - name: feature_enable
+        description: "SPC-ID-Enable LLDP"
+      - name: clock_timezone
+        description: "SPC-ID-Timezone EST"
+      - name: switch_freeform
+        description: "SPC-BFD-BFD timers"
+      - name: feature_enable
+        description: "SPC-BFD-Enable BFD feature"
+  register: cleanup_result
+  ignore_errors: true

@@ -23,6 +23,7 @@ from typing import Any, ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     field_validator,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
@@ -85,7 +86,10 @@ class PolicyGroupCreate(NDBaseModel):
     # --- NDBaseModel ClassVars ---
     identifiers: ClassVar[list[str]] = ["description", "template_name"]
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
-    exclude_from_diff: ClassVar[set] = {"source", "policy_id", "priority", "create_additional_policy"}
+    # Note: ``priority`` is intentionally NOT excluded — the base diff uses
+    # ``exclude_none=True``, so an omitted priority on the user side is already
+    # ignored, while an explicit priority change correctly triggers an update.
+    exclude_from_diff: ClassVar[set] = {"source", "policy_id", "create_additional_policy"}
     payload_exclude_fields: ClassVar[set] = {"policy_id", "create_additional_policy"}
 
     # Server-generated policy group ID (populated from API responses)
@@ -169,6 +173,56 @@ class PolicyGroupCreate(NDBaseModel):
                 raise ValueError(f"Invalid switch ID: {sid!r}. Must be a non-empty string.")
         return v
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_priority_from_template_inputs(cls, data: Any) -> Any:
+        """Normalize priority echoed by the controller into ``templateInputs.PRIORITY``.
+
+        For some templates (e.g. ``switch_freeform``) the controller stores the
+        user-set priority inside ``templateInputs.PRIORITY`` and zeroes out the
+        top-level ``priority`` field in its GET response.  Without this
+        normalization the ``have`` model (built from the API) and the ``want``
+        model (built from gathered output round-trip) would compare unequally
+        on either ``priority`` or ``template_inputs``, breaking idempotency.
+
+        Normalization rules (applied symmetrically to both want and have):
+          1. If ``templateInputs.PRIORITY`` is convertible to int AND top-level
+             ``priority`` is the server-reset sentinel (None/0), lift it to
+             top-level.  If the user explicitly set a non-zero top-level
+             priority, respect it (the controller's stale echo loses).
+          2. Always remove ``PRIORITY`` from ``template_inputs`` so the two
+             sides compare equally on ``template_inputs``.
+
+        User input never carries ``PRIORITY`` inside ``template_inputs`` (the
+        argument spec exposes ``priority`` as a top-level field).  The only
+        ``want`` path that has it is gathered round-trip, which lifts but does
+        not strip; this validator strips on both sides for symmetry.
+        """
+        if not isinstance(data, dict):
+            return data
+        # Support both snake_case (from_config path) and camelCase (alias path)
+        ti = data.get("template_inputs")
+        ti_key = "template_inputs"
+        if ti is None:
+            ti = data.get("templateInputs")
+            ti_key = "templateInputs"
+        if not isinstance(ti, dict) or "PRIORITY" not in ti:
+            return data
+
+        new_data = dict(data)
+        # Only lift to top-level when top-level is the server-reset sentinel.
+        top_priority = data.get("priority")
+        if top_priority in (None, 0, "0"):
+            try:
+                new_data["priority"] = int(ti["PRIORITY"])
+            except (TypeError, ValueError):
+                pass
+        # Always strip PRIORITY from template_inputs for symmetric diff.
+        new_ti = {k: v for k, v in ti.items() if k != "PRIORITY"}
+        new_data[ti_key] = new_ti or None
+        return new_data
+
+
     @classmethod
     def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "PolicyGroupCreate":
         """Create model instance from Ansible config dict.
@@ -214,6 +268,7 @@ class PolicyGroupCreate(NDBaseModel):
                 elements="dict",
                 options=dict(
                     name=dict(type="str"),
+                    policy_id=dict(type="str"),
                     description=dict(type="str"),
                     switch_ids=dict(type="list", elements="str"),
                     priority=dict(type="int"),

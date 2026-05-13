@@ -2671,12 +2671,10 @@ class NDPolicyModule:
                     )
                     continue
 
-                # Real mode: do NOT register a per-entry "Pending bulk
-                # delete" intent row.  The real bulk markDelete (Phase B)
-                # produces a single row with the deduplicated policyIds
-                # list and the real path/payload, which is the source of
-                # truth.  Emitting an intent row here would only duplicate
-                # that information and confuse the output.
+                # Real mode: do NOT register a per-entry intent row here. The
+                # bulk markDelete in Phase B emits a single authoritative row
+                # (with the deduplicated policyIds and the real path/payload);
+                # an extra per-entry row would just duplicate that information.
                 continue
 
         # Phase B: Execute bulk API calls (skip if check_mode or nothing to delete)

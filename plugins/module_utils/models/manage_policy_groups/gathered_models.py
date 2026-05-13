@@ -148,7 +148,13 @@ class GatheredPolicyGroup(NDBaseModel):
         # priority inside templateInputs.PRIORITY (e.g. for switch_freeform)
         # and reset the top-level priority to 0.  Prefer templateInputs.PRIORITY
         # when available so gathered output is round-trip compatible.
-        effective_priority = self.priority or 500
+        #
+        # IMPORTANT: do NOT substitute a "500" default when the server returns
+        # ``priority=0``.  The controller uses 0 as the server-side "use default"
+        # sentinel and will keep returning 0 on the next GET; emitting 500 here
+        # would break idempotency on round-trip (the want model would be 500,
+        # the next have would be 0).
+        effective_priority = self.priority if self.priority is not None else 0
         if self.template_inputs and "PRIORITY" in self.template_inputs:
             try:
                 effective_priority = int(self.template_inputs["PRIORITY"])
@@ -162,6 +168,29 @@ class GatheredPolicyGroup(NDBaseModel):
             "switch_ids": self.switch_ids or [],
             "priority": effective_priority,
         }
+        # Filter controller-managed echo fields from ``template_inputs`` before
+        # exposing it as a round-trippable config.  These keys are populated by
+        # the controller in the GET response (they mirror top-level fields or
+        # the assigned policy group ID) and must NOT be fed back into a create
+        # — doing so causes the controller to reject the request with errors
+        # like "Item with key=0 is not unique" because the stale ``POLICY_ID``
+        # collides with the new resource.  ``PRIORITY`` is also stripped: the
+        # top-level ``priority`` field carries the authoritative value, and
+        # ``PolicyGroupCreate``'s model_validator further normalizes any
+        # residual ``PRIORITY`` echoes symmetrically.
+        _SERVER_MANAGED_TI_KEYS = {
+            "POLICY_ID",
+            "POLICY_DESC",
+            "FABRIC_ID",
+            "SECENTITY",
+            "SECENTTYPE",
+            "PRIORITY",
+        }
         if self.template_inputs:
-            config["template_inputs"] = self.template_inputs
+            cleaned_ti = {
+                k: v for k, v in self.template_inputs.items()
+                if k not in _SERVER_MANAGED_TI_KEYS
+            }
+            if cleaned_ti:
+                config["template_inputs"] = cleaned_ti
         return config
