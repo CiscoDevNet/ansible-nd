@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2026, Cisco Systems, Inc.
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -10,13 +10,10 @@ Unit tests for plugins/module_utils/models/vpc/vpc_pair.py
 Tests the VpcPairModel Pydantic model.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
-
-# pylint: disable=invalid-name
 # pylint: disable=line-too-long
 # pylint: disable=too-many-lines
-__metaclass__ = type
-# pylint: enable=invalid-name
+
+from __future__ import annotations
 
 import copy
 from contextlib import contextmanager
