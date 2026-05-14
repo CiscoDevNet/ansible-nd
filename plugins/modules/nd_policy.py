@@ -176,9 +176,9 @@ options:
     description:
     - When set to V(true), policies are deployed to devices after create/update/delete operations.
     - For C(merged) state, this triggers a pushConfig action for the affected policy IDs.
-    - For C(deleted) state, this triggers C(markDelete) → C(switchActions/deploy) → C(remove) to push
+    - For C(deleted) state, this triggers C(markDelete) → C(switchActions/deploy) to push
       removal config to switches and then hard-delete the policy records from the controller.
-    - For C(deleted) with O(deploy=false), C(markDelete) → C(remove) is performed.
+    - For C(deleted) with O(deploy=false), C(markDelete) is performed.
       Policy records are removed from the controller but the running config remains on the
       switch until the next deploy.
     - B(Exception) — C(switch_freeform) and other PYTHON content-type policies do not
@@ -203,8 +203,8 @@ options:
     - Use C(merged) to create or update policies.
     - Use C(deleted) to delete policies.
     - For C(deleted) with O(deploy=true), the module performs
-      C(markDelete) → C(switchActions/deploy) → C(remove).
-    - For C(deleted) with O(deploy=false), C(markDelete) → C(remove) is performed.
+      C(markDelete) → C(switchActions/deploy).
+    - For C(deleted) with O(deploy=false), C(markDelete)is performed.
       Policy records are removed from the controller but the running config remains
       on the switch until the next deploy.
     - B(Exception) — C(switch_freeform) and other PYTHON content-type policies cannot

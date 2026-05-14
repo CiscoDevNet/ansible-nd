@@ -531,23 +531,6 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 ]
             }
 
-        Status semantics:
-
-        - ``success`` -- deploy completed and pushed config to the switch.
-        - ``notExecuted`` -- the switch was already in sync, so no
-          commands were generated.  After a freshly created or updated
-          policy group this typically means the controller considered
-          the switch already aligned (e.g. a duplicate group existed
-          from a prior run, or another playbook left state behind).
-          It is not a hard error, but it IS a useful diagnostic, so we
-          log a warning instead of swallowing it silently.
-        - Any other status (``failed``, etc.) is treated as a real
-          error and is surfaced as an exception so partial deploy
-          failures cannot slip through as a successful module run.
-
-        Used after create / update / delete to push pending config
-        (or, for delete, the negative removal config) to the affected
-        switches in a single round trip.
         """
         ep = self.switch_deploy_endpoint()
         ep.fabric_name = self.fabric_name

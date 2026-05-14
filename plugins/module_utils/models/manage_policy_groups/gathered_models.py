@@ -29,6 +29,7 @@ import json
 import logging
 from typing import Any, ClassVar, Literal
 
+from ansible_collections.cisco.nd.plugins.module_utils.constants import SYSTEM_INJECTED_TEMPLATE_KEYS
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
 )
@@ -168,26 +169,9 @@ class GatheredPolicyGroup(NDBaseModel):
             "switch_ids": self.switch_ids or [],
             "priority": effective_priority,
         }
-        # Filter controller-managed echo fields from ``template_inputs`` before
-        # exposing it as a round-trippable config.  These keys are populated by
-        # the controller in the GET response (they mirror top-level fields or
-        # the assigned policy group ID) and must NOT be fed back into a create
-        # — doing so causes the controller to reject the request with errors
-        # like "Item with key=0 is not unique" because the stale ``POLICY_ID``
-        # collides with the new resource.  ``PRIORITY`` is also stripped: the
-        # top-level ``priority`` field carries the authoritative value, and
-        # ``PolicyGroupCreate``'s model_validator further normalizes any
-        # residual ``PRIORITY`` echoes symmetrically.
-        _SERVER_MANAGED_TI_KEYS = {
-            "POLICY_ID",
-            "POLICY_DESC",
-            "FABRIC_ID",
-            "SECENTITY",
-            "SECENTTYPE",
-            "PRIORITY",
-        }
+
         if self.template_inputs:
-            cleaned_ti = {k: v for k, v in self.template_inputs.items() if k not in _SERVER_MANAGED_TI_KEYS}
+            cleaned_ti = {k: v for k, v in self.template_inputs.items() if k not in SYSTEM_INJECTED_TEMPLATE_KEYS}
             if cleaned_ti:
                 config["template_inputs"] = cleaned_ti
         return config
