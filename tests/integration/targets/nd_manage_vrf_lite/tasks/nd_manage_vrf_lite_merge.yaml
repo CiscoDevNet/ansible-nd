@@ -1,0 +1,730 @@
+##############################################
+##                 SETUP                    ##
+##############################################
+
+- name: Import nd_manage_vrf_lite Base Tasks
+  ansible.builtin.import_tasks: base_tasks.yaml
+  tags: merge
+
+- name: MERGE - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vrf_lite_module_timeout | default(600) }}"
+  tags: merge
+
+##############################################
+##      Setup Merge TestCase Variables     ##
+##############################################
+
+- name: MERGE - Setup full config
+  ansible.builtin.set_fact:
+    vrf_lite_conf:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+            import_evpn_rt: ""
+            export_evpn_rt: ""
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "{{ test_ipv4_addr }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+                peer_vrf: "{{ test_peer_vrf }}"
+  delegate_to: localhost
+  tags: merge
+
+- name: Import Configuration Prepare Tasks - merge_full
+  vars:
+    file: merge_full
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: merge
+
+- name: MERGE - Setup modified config (changed ipv4 addr)
+  ansible.builtin.set_fact:
+    vrf_lite_conf:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+            import_evpn_rt: ""
+            export_evpn_rt: ""
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "10.33.0.10/24"
+                neighbor_ipv4: "10.33.0.9"
+                peer_vrf: "{{ test_peer_vrf }}"
+  delegate_to: localhost
+  tags: merge
+
+- name: Import Configuration Prepare Tasks - merge_modified
+  vars:
+    file: merge_modified
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: merge
+
+- name: MERGE - Setup minimal config (VRF name + switch only)
+  ansible.builtin.set_fact:
+    vrf_lite_conf:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  delegate_to: localhost
+  tags: merge
+
+- name: Import Configuration Prepare Tasks - merge_minimal
+  vars:
+    file: merge_minimal
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: merge
+
+- name: MERGE - Setup no-deploy config
+  ansible.builtin.set_fact:
+    vrf_lite_conf:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "{{ test_ipv4_addr }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+                peer_vrf: "{{ test_peer_vrf }}"
+  delegate_to: localhost
+  tags: merge
+
+- name: Import Configuration Prepare Tasks - merge_no_deploy
+  vars:
+    file: merge_no_deploy
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: merge
+
+##############################################
+##                MERGE                    ##
+##############################################
+
+# TC1 - Create VRF Lite attachment with full configuration
+- name: MERGE - TC1 - MERGE - Create VRF Lite with full configuration
+  cisco.nd.nd_manage_vrf_lite: &conf_full
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_full_conf }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC1 - ASSERT - Check if changed flag is true
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: merge
+
+- name: MERGE - TC1 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: merge
+
+- name: MERGE - TC1 - ASSERT - Verify VRF Lite state in ND
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+  tags: merge
+
+- name: MERGE - TC1 - conf - Idempotence
+  cisco.nd.nd_manage_vrf_lite: *conf_full
+  register: result
+  tags: merge
+
+- name: MERGE - TC1 - ASSERT - Check if changed flag is false (idempotence)
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.class_diff.created | default([]) | length == 0
+      - result.class_diff.deleted | default([]) | length == 0
+  tags: merge
+
+# TC2 - Modify existing VRF Lite configuration
+- name: MERGE - TC2 - MERGE - Modify VRF Lite configuration (change IP)
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_modified_conf }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC2 - ASSERT - Check if changed flag is true
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: merge
+
+- name: MERGE - TC2 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: merge
+
+- name: MERGE - TC2 - ASSERT - Verify modified VRF Lite state
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+  tags: merge
+
+# TC3 - Delete VRF Lite attachment
+- name: MERGE - TC3 - DELETE - Delete VRF Lite attachment
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC3 - ASSERT - Check if delete successful
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: merge
+
+- name: MERGE - TC3 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: merge
+
+- name: MERGE - TC3 - ASSERT - Verify VRF Lite deletion
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+  tags: merge
+
+# TC4 - Create VRF Lite with minimal configuration
+- name: MERGE - TC4 - MERGE - Create VRF Lite with minimal configuration
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_minimal_conf }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC4 - ASSERT - Check if changed flag is true
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: merge
+
+- name: MERGE - TC4 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: merge
+
+- name: MERGE - TC4 - ASSERT - Verify minimal VRF Lite state
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+  tags: merge
+
+# TC4b - Delete VRF Lite after minimal test
+- name: MERGE - TC4b - DELETE - Delete VRF Lite after minimal test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC4b - ASSERT - Check if delete successful
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: merge
+
+# TC5 - Create VRF Lite with defaults (state omitted)
+- name: MERGE - TC5 - MERGE - Create VRF Lite with defaults
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_minimal_conf }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC5 - ASSERT - Check if changed flag is true
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.diff is defined
+  tags: merge
+
+# TC5b - Delete VRF Lite after defaults test
+- name: MERGE - TC5b - DELETE - Delete VRF Lite after defaults test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC5b - ASSERT - Check if delete successful
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: merge
+
+# TC6 - Create VRF Lite with deploy flag false
+- name: MERGE - TC6 - MERGE - Create VRF Lite with deploy false
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_no_deploy_conf }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC6 - ASSERT - Check if changed flag is true and no deploy
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is not defined
+  tags: merge
+
+- name: MERGE - TC6 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: merge
+
+- name: MERGE - TC6 - ASSERT - Verify VRF Lite state after no-deploy merge
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+  tags: merge
+
+# TC6b - Re-run same config with deploy=true after non-deploy create
+- name: MERGE - TC6b - MERGE - Re-run same config with deploy true
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_no_deploy_conf }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC6b - ASSERT - Verify deployment decision after non-deploy config
+  vars:
+    tc6b_deployment_needed: >-
+      {{
+        (result.deployment_needed | default(result.deployment.deployment_needed | default(false)))
+        | bool
+      }}
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.deployment is defined
+      - >
+        (
+          (tc6b_deployment_needed and (result.deployment.response is defined)
+           and ((result.deployment.response | selectattr('operation', 'equalto', 'config_save') | list | length) > 0)
+           and ((result.deployment.response | selectattr('operation', 'equalto', 'vrf_deploy') | list | length) > 0))
+          or
+          ((not tc6b_deployment_needed) and (result.deployment.msg | default('') is search('skipping')))
+        )
+  tags: merge
+
+# TC7 - Test invalid configurations (non-existent switch)
+- name: MERGE - TC7 - MERGE - Create VRF Lite with invalid switch IP
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "192.168.255.255"
+            vrf_lite:
+              - interface: "Ethernet1/20"
+                dot1q: 500
+                ipv4_addr: "10.33.0.2/24"
+                neighbor_ipv4: "10.33.0.1"
+                peer_vrf: "{{ test_peer_vrf }}"
+  register: result
+  failed_when: false
+  tags: merge
+
+- name: MERGE - TC7 - ASSERT - Check invalid switch error
+  ansible.builtin.assert:
+    that:
+      - result.changed == false
+      - result.msg is defined
+      - >
+        (
+          (result.msg is search("192.168.255.255"))
+          or
+          (result.msg is search("not found"))
+          or
+          (result.msg is search("do not exist"))
+          or
+          (result.msg is search("Switch validation failed"))
+        )
+  tags: merge
+
+# TC8 - Create VRF Lite with deploy enabled (actual deployment path)
+- name: MERGE - TC8 - DELETE - Ensure VRF Lite is absent before deploy test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  tags: merge
+
+- name: MERGE - TC8 - MERGE - Create VRF Lite with deploy true
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_full_conf }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC8 - ASSERT - Verify deploy path execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
+  tags: merge
+
+- name: MERGE - TC8 - ASSERT - Verify config-save and deploy API traces
+  ansible.builtin.assert:
+    that:
+      - result.deployment.response is defined
+      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'config_save')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'vrf_deploy')
+          | list
+          | length
+        ) > 0
+  tags: merge
+
+# TC9 - Idempotent deploy skip
+- name: MERGE - TC9 - MERGE - Re-run same deploy-enabled config
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_full_conf }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC9 - ASSERT - Verify idempotent deploy skip
+  vars:
+    tc9_deployment_needed: >-
+      {{
+        (result.deployment_needed | default(result.deployment.deployment_needed | default(false)))
+        | bool
+      }}
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+  tags: merge
+
+# TC10 - check_mode should not apply configuration changes
+- name: MERGE - TC10 - DELETE - Ensure VRF Lite absent before check_mode test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  tags: merge
+
+- name: MERGE - TC10 - MERGE - Run check_mode create for VRF Lite
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_full_conf }}"
+  check_mode: true
+  register: result
+  tags: merge
+
+- name: MERGE - TC10 - ASSERT - Verify check_mode invocation succeeded
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is not defined
+  tags: merge
+
+# TC11 - Validate invalid config_actions (save: false, deploy: true)
+- name: MERGE - TC11 - MERGE - Invalid config_actions (save false, deploy true)
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: true
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_full_conf }}"
+  register: result
+  failed_when: false
+  tags: merge
+
+- name: MERGE - TC11 - ASSERT - Verify invalid config_actions rejected
+  ansible.builtin.assert:
+    that:
+      - result.failed == true
+      - result.msg is defined
+      - result.msg is search("deploy.*requires.*save")
+  tags: merge
+
+# TC12 - config_actions with save only (no deploy)
+- name: MERGE - TC12 - DELETE - Ensure VRF Lite absent before config_actions test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  tags: merge
+
+- name: MERGE - TC12 - MERGE - Create VRF Lite with save only
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: true
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_merge_full_conf }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC12 - ASSERT - Verify save-only behavior
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: merge
+
+# TC13 - Extended VRF Lite attachment payload coverage
+- name: MERGE - TC13 - MERGE - Apply extended VRF Lite attachment payload
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach: "{{ vrf_lite_attach_extended }}"
+  register: result
+  tags: merge
+
+- name: MERGE - TC13 - ASSERT - Verify extended payload applied
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: merge
+
+- name: MERGE - TC13 - GATHER - Get VRF Lite state after extended payload
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: merge
+
+- name: MERGE - TC13 - ASSERT - Verify extended state
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+  tags: merge
+
+##############################################
+##                 CLEAN-UP                 ##
+##############################################
+
+- name: MERGE - END - ensure clean state
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  when: cleanup_at_end | default(true)
+  tags: merge

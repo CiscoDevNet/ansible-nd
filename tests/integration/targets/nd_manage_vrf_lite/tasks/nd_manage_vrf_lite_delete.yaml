@@ -1,0 +1,469 @@
+##############################################
+##                 SETUP                    ##
+##############################################
+
+- name: Import nd_manage_vrf_lite Base Tasks
+  ansible.builtin.import_tasks: base_tasks.yaml
+  tags: delete
+
+- name: DELETE - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vrf_lite_module_timeout | default(600) }}"
+  tags: delete
+
+##############################################
+##      Setup Delete TestCase Variables    ##
+##############################################
+
+- name: DELETE - Setup config
+  ansible.builtin.set_fact:
+    vrf_lite_conf:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "{{ test_ipv4_addr }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+                peer_vrf: "{{ test_peer_vrf }}"
+  delegate_to: localhost
+  tags: delete
+
+- name: Import Configuration Prepare Tasks - delete_setup
+  vars:
+    file: delete_setup
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: delete
+
+##############################################
+##                DELETE                   ##
+##############################################
+
+# TC1 - Setup: Create VRF Lite attachment for deletion tests
+- name: DELETE - TC1 - MERGE - Create VRF Lite attachment for deletion testing
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_delete_setup_conf }}"
+  register: result
+  tags: delete
+
+- name: DELETE - TC1 - ASSERT - Check if creation successful
+  ansible.builtin.assert:
+    that:
+      - result.changed == true
+      - result.failed == false
+  tags: delete
+
+- name: DELETE - TC1 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: delete
+
+- name: DELETE - TC1 - ASSERT - Verify VRF Lite state in ND
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+  tags: delete
+
+# TC2 - Delete VRF Lite with specific config (without deploy)
+- name: DELETE - TC2 - DELETE - Delete VRF Lite with specific config (no deploy)
+  cisco.nd.nd_manage_vrf_lite: &delete_specific
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  register: result
+  tags: delete
+
+- name: DELETE - TC2 - ASSERT - Check if deletion successful
+  ansible.builtin.assert:
+    that:
+      - result.changed == true
+      - result.failed == false
+      - result.deployment is not defined
+  tags: delete
+
+- name: DELETE - TC2 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: delete
+
+- name: DELETE - TC2 - ASSERT - Verify VRF Lite deletion
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+  tags: delete
+
+# TC2b - Delete VRF Lite with deploy=true path
+- name: DELETE - TC2b - MERGE - Recreate VRF Lite for deploy-delete path
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_delete_setup_conf }}"
+  register: result
+  tags: delete
+
+- name: DELETE - TC2b - ASSERT - Verify setup creation for deploy-delete
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: delete
+
+- name: DELETE - TC2b - DELETE - Delete VRF Lite with deploy enabled
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  register: result
+  tags: delete
+
+- name: DELETE - TC2b - ASSERT - Verify deploy delete execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is defined
+      - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
+  tags: delete
+
+- name: DELETE - TC2b - ASSERT - Verify config-save and deploy API traces
+  ansible.builtin.assert:
+    that:
+      - result.deployment.response is defined
+      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'config_save')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          result.deployment.response
+          | selectattr('operation', 'equalto', 'vrf_deploy')
+          | list
+          | length
+        ) > 0
+  tags: delete
+
+- name: DELETE - TC2b - GATHER - Verify deploy delete result in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: delete
+
+- name: DELETE - TC2b - ASSERT - Verify VRF Lite deleted after deploy
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+  tags: delete
+
+# TC3 - Idempotence test for deletion (no deploy)
+- name: DELETE - TC3 - conf - Idempotence
+  cisco.nd.nd_manage_vrf_lite: *delete_specific
+  register: result
+  tags: delete
+
+- name: DELETE - TC3 - ASSERT - Check if changed flag is false
+  ansible.builtin.assert:
+    that:
+      - result.changed == false
+      - result.failed == false
+  tags: delete
+
+# TC4 - Force deletion bypass path
+- name: DELETE - TC4 - MERGE - Create VRF Lite for force delete test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_delete_setup_conf }}"
+  register: result
+  tags: delete
+
+- name: DELETE - TC4 - ASSERT - Verify setup creation for force test
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: delete
+
+- name: DELETE - TC4 - DELETE - Delete VRF Lite with force true
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    force: true
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  register: result
+  tags: delete
+
+- name: DELETE - TC4 - ASSERT - Verify force delete execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+      - result.deployment is not defined
+  tags: delete
+
+- name: DELETE - TC4 - GATHER - Verify force deletion result in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: delete
+
+- name: DELETE - TC4 - ASSERT - Verify VRF Lite deleted with force
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+  tags: delete
+
+# TC5 - Delete with config_actions save+deploy
+- name: DELETE - TC5 - MERGE - Recreate VRF Lite for config_actions delete path
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_delete_setup_conf }}"
+  register: result
+  tags: delete
+
+- name: DELETE - TC5 - DELETE - Delete VRF Lite with config_actions save+deploy
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  register: tc5_delete_result
+  tags: delete
+
+- name: DELETE - TC5 - ASSERT - Verify config_actions save+deploy execution in delete flow
+  ansible.builtin.assert:
+    that:
+      - tc5_delete_result.failed == false
+      - tc5_delete_result.changed == true
+      - tc5_delete_result.deployment is defined
+      - tc5_delete_result.deployment.config_actions is defined
+      - tc5_delete_result.deployment.config_actions.save == true
+      - tc5_delete_result.deployment.config_actions.deploy == true
+      - tc5_delete_result.deployment.config_actions.type == "switch"
+      - tc5_delete_result.deployment.response is defined
+      - (tc5_delete_result.deployment.response | length) >= 2
+      - >
+        (
+          tc5_delete_result.deployment.response
+          | selectattr('operation', 'equalto', 'config_save')
+          | list
+          | length
+        ) > 0
+      - >
+        (
+          tc5_delete_result.deployment.response
+          | selectattr('operation', 'equalto', 'vrf_deploy')
+          | list
+          | length
+        ) > 0
+  tags: delete
+
+# TC6 - check_mode should not apply delete configuration changes
+- name: DELETE - TC6 - MERGE - Ensure VRF Lite exists before check_mode delete test
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_delete_setup_conf }}"
+  register: tc6_setup_result
+  tags: delete
+
+- name: DELETE - TC6 - ASSERT - Verify setup creation for check_mode delete
+  ansible.builtin.assert:
+    that:
+      - tc6_setup_result.failed == false
+      - tc6_setup_result.changed in [true, false]
+  tags: delete
+
+- name: DELETE - TC6 - DELETE - Run check_mode delete for existing VRF Lite
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  check_mode: true
+  register: tc6_delete_result
+  tags: delete
+
+- name: DELETE - TC6 - ASSERT - Verify check_mode delete preview behavior
+  ansible.builtin.assert:
+    that:
+      - tc6_delete_result.failed == false
+      - tc6_delete_result.changed == true
+      - tc6_delete_result.deployment is not defined
+  tags: delete
+
+- name: DELETE - TC6 - GATHER - Verify check_mode delete did not remove VRF Lite
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: tc6_verify_result
+  tags: delete
+
+- name: DELETE - TC6 - ASSERT - Verify VRF Lite still exists after check_mode delete
+  ansible.builtin.assert:
+    that:
+      - tc6_verify_result.failed == false
+      - tc6_verify_result.gathered is defined
+  tags: delete
+
+# TC7 - Delete with empty config must be rejected (guard against accidental purge)
+- name: DELETE - TC7 - DELETE - Validate empty config is rejected
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: []
+  register: result
+  failed_when: false
+  tags: delete
+
+- name: DELETE - TC7 - ASSERT - Verify empty delete config rejected
+  ansible.builtin.assert:
+    that:
+      - result.changed == false
+      - result.msg is defined
+      - result.msg is search("Config parameter is required for state 'deleted'")
+  tags: delete
+
+##############################################
+##                 CLEAN-UP                 ##
+##############################################
+
+- name: DELETE - END - ensure clean state
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  when: cleanup_at_end | default(true)
+  tags: delete

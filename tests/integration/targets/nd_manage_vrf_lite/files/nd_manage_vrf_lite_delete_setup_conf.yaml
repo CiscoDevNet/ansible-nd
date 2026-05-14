@@ -1,0 +1,17 @@
+---
+# This nd_manage_vrf_lite test data structure is auto-generated
+# DO NOT EDIT MANUALLY
+#
+# Template: nd_manage_vrf_lite_conf.j2
+# Variables: vrf_lite_conf (list of dicts)
+
+- attach:
+  - ip_address: 10.122.84.55
+    vrf_lite:
+    - dot1q: 2001
+      interface: Ethernet1/20
+      ipv4_addr: 10.33.0.2/24
+      neighbor_ipv4: 10.33.0.1
+      peer_vrf: VRF_LITE_IT_50001
+  vlan_id: 2001
+  vrf_name: VRF_LITE_IT_50001

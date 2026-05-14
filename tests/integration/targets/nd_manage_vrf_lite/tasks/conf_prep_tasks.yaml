@@ -1,0 +1,35 @@
+---
+# Shared configuration preparation tasks for nd_manage_vrf_lite integration tests.
+#
+# Usage:
+#   - name: Import Configuration Prepare Tasks
+#     vars:
+#       file: merge  # output file identifier
+#     import_tasks: conf_prep_tasks.yaml
+#
+# Requires: vrf_lite_conf variable to be set before importing.
+
+- name: Build VRF Lite Config Data from Template
+  ansible.builtin.file:
+    path: "{{ nd_vrf_lite_root | default(playbook_dir | dirname) }}/files"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+- name: Build VRF Lite Config Data from Template
+  ansible.builtin.template:
+    src: "{{ nd_vrf_lite_root | default(playbook_dir | dirname) }}/templates/nd_manage_vrf_lite_conf.j2"
+    dest: "{{ nd_vrf_lite_root | default(playbook_dir | dirname) }}/files/nd_manage_vrf_lite_{{ file }}_conf.yaml"
+    mode: "0644"
+  delegate_to: localhost
+
+- name: Load Configuration Data into Variable
+  ansible.builtin.set_fact:
+    "{{ 'nd_manage_vrf_lite_' + file + '_conf' }}": >-
+      {{
+        lookup(
+          'file',
+          (nd_vrf_lite_root | default(playbook_dir | dirname)) + '/files/nd_manage_vrf_lite_' + file + '_conf.yaml'
+        ) | from_yaml
+      }}
+  delegate_to: localhost

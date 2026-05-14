@@ -1,0 +1,269 @@
+##############################################
+##                 SETUP                    ##
+##############################################
+
+- name: Import nd_manage_vrf_lite Base Tasks
+  ansible.builtin.import_tasks: base_tasks.yaml
+  tags: gather
+
+- name: GATHER - Set nd_info defaults
+  ansible.builtin.set_fact:
+    nd_info: &nd_info
+      output_level: '{{ api_key_output_level | default("debug") }}'
+      timeout: "{{ nd_vrf_lite_module_timeout | default(600) }}"
+  tags: gather
+
+##############################################
+##      Setup Gather TestCase Variables    ##
+##############################################
+
+- name: GATHER - Setup config
+  ansible.builtin.set_fact:
+    vrf_lite_conf:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "{{ test_ipv4_addr }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+                peer_vrf: "{{ test_peer_vrf }}"
+  delegate_to: localhost
+  tags: gather
+
+- name: Import Configuration Prepare Tasks - gather_setup
+  vars:
+    file: gather_setup
+  ansible.builtin.import_tasks: conf_prep_tasks.yaml
+  tags: gather
+
+##############################################
+##                GATHER                    ##
+##############################################
+
+# TC1 - Setup: Create VRF Lite attachment for gather tests
+- name: GATHER - TC1 - MERGE - Create VRF Lite attachment for testing
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config: "{{ nd_manage_vrf_lite_gather_setup_conf }}"
+  register: result
+  tags: gather
+
+- name: GATHER - TC1 - ASSERT - Check if creation successful
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == true
+  tags: gather
+
+- name: GATHER - TC1 - GATHER - Get VRF Lite state in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    fabric_name: "{{ test_fabric }}"
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+  register: verify_result
+  tags: gather
+
+- name: GATHER - TC1 - ASSERT - Verify gathered data is returned
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.changed == false
+      - verify_result.gathered is defined
+      - verify_result.gathered | type_debug == "list"
+      - verify_result.gathered.vrf_lite is not defined
+  tags: gather
+
+# TC2 - Gather with no filters
+- name: GATHER - TC2 - GATHER - Gather all VRF Lite attachments with no filters
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+  register: result
+  tags: gather
+
+- name: GATHER - TC2 - ASSERT - Check gather results
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
+  tags: gather
+
+# TC3 - Gather with VRF name filter
+- name: GATHER - TC3 - GATHER - Gather VRF Lite with VRF name filter
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: result
+  tags: gather
+
+- name: GATHER - TC3 - ASSERT - Check gather results with VRF filter
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
+  tags: gather
+
+# TC4 - Gather with non-existent VRF
+- name: GATHER - TC4 - GATHER - Gather VRF Lite with non-existent VRF
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "NONEXISTENT_VRF_12345"
+  register: result
+  failed_when: false
+  tags: gather
+
+- name: GATHER - TC4 - ASSERT - Check gather results with non-existent VRF
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
+  tags: gather
+
+# TC5 - Gather with custom verify timeout/retries
+- name: GATHER - TC5 - GATHER - Gather with verify override
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    verify:
+      timeout: 20
+      retries: 3
+  register: result
+  tags: gather
+
+- name: GATHER - TC5 - ASSERT - Verify verify path execution
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
+  tags: gather
+
+# TC6 - gathered + deploy validation (must fail)
+- name: GATHER - TC6 - GATHER - Gather with deploy enabled (invalid)
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: true
+      deploy: true
+      type: switch
+  register: result
+  failed_when: false
+  tags: gather
+
+- name: GATHER - TC6 - ASSERT - Verify gathered+deploy validation
+  ansible.builtin.assert:
+    that:
+      - result.changed == false
+      - result.gathered is not defined
+      - result.msg is defined
+  tags: gather
+
+# TC7 - gathered + native check_mode validation
+- name: GATHER - TC7 - GATHER - Gather with native check_mode enabled
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+  check_mode: true
+  register: result
+  tags: gather
+
+- name: GATHER - TC7 - ASSERT - Verify gathered+check_mode behavior
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
+  tags: gather
+
+# TC8 - Gather with VRF name + switch filter
+- name: GATHER - TC8 - GATHER - Gather VRF Lite with VRF and switch filter
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  register: result
+  tags: gather
+
+- name: GATHER - TC8 - ASSERT - Check gather results with VRF and switch filter
+  ansible.builtin.assert:
+    that:
+      - result.failed == false
+      - result.changed == false
+      - result.gathered is defined
+  tags: gather
+
+##############################################
+##                 CLEAN-UP                 ##
+##############################################
+
+- name: GATHER - END - ensure clean state
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+  failed_when: false
+  when: cleanup_at_end | default(true)
+  tags: gather

@@ -19,6 +19,7 @@ from __future__ import annotations
 __author__ = "Akshayanat C S"
 
 from typing import Literal
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
@@ -460,3 +461,23 @@ class EpManageFabricsSwitchChangeSerialNumberPost(_EpManageFabricsSwitchActionsP
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.POST
+
+
+class EpFabricSwitchesGet(FabricNameMixin, NDEndpointBaseModel):
+    """Compatibility endpoint for callers that need URL-quoted fabric names."""
+
+    class_name: Literal["EpFabricSwitchesGet"] = Field(
+        default="EpFabricSwitchesGet",
+        frozen=True,
+        description="Class name for backward compatibility",
+    )
+
+    @property
+    def path(self) -> str:
+        if self.fabric_name is None:
+            raise ValueError("fabric_name must be set before accessing path")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "switches")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        return HttpVerbEnum.GET
