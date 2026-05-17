@@ -73,6 +73,7 @@ class HttpApi(HttpApiBase):
         self.status = -1
         self.info = {}
         self.version = None
+        self.auth_base_path = None
 
     def get_platform(self):
         return self.platform
@@ -112,15 +113,26 @@ class HttpApi(HttpApiBase):
     def get_url_connection(self):
         return self.connection._url
 
+    def _attempt_login(self, path, payload):
+        """Attempt login at the given path. Returns (token, status) on success, raises on fatal error, returns (None, status) on non-200."""
+        method = "POST"
+        full_path = self.connection.get_option("host") + path
+        data = json.dumps(payload)
+        self.connection.queue_message("info", "login() - connection.send({0}, LOGIN_PAYLOAD_NOT_SHOWN, {1}, {2})".format(path, method, self.headers))
+        response, response_data = self.connection.send(path, data, method=method, headers=self.headers)
+        status = response.getcode()
+        if status not in [200, 201] or (status == 200 and response_data.seek(0, 2) == 0):
+            return None, status
+        response_json = self._response_to_json(response_data)
+        token = response_json.get("jwttoken") or response_json.get("token")
+        return token, status
+
     def login(self, username, password):
         """Log in to ND"""
         # Perform login request
         self.connection.queue_message("info", "login() - login method called for {0}".format(self.connection.get_option("host")))
         if self.connection._auth is None:
             self.connection.queue_message("info", "login() - previous auth not found sending login POST to {0}".format(self.connection.get_option("host")))
-            method = "POST"
-            path = "/login"
-            full_path = self.connection.get_option("host") + path
 
             payload = {
                 "userName": self.connection.get_option("remote_user"),
@@ -134,23 +146,39 @@ class HttpApi(HttpApiBase):
             if self.params.get("password") is not None:
                 payload["userPasswd"] = self.params.get("password")
 
-            data = json.dumps(payload)
             try:
-                self.connection.queue_message("info", "login() - connection.send({0}, LOGIN_PAYLOAD_NOT_SHOWN, {1}, {2})".format(path, method, self.headers))
-                response, response_data = self.connection.send(path, data, method=method, headers=self.headers)
+                # Auto-detect auth endpoint: try new path first (ND 4.2.1+), fall back to legacy
+                if self.auth_base_path is not None:
+                    # Already detected, use cached path
+                    path = self.auth_base_path + "/login"
+                    token, self.status = self._attempt_login(path, payload)
+                else:
+                    # Try new endpoint first
+                    path = "/api/v1/infra/login"
+                    try:
+                        token, self.status = self._attempt_login(path, payload)
+                    except Exception:
+                        token, self.status = None, -1
 
-                # Handle ND response
-                self.status = response.getcode()
-                if self.status not in [200, 201] or (self.status == 200 and response_data.seek(0, 2) == 0):
+                    if token is not None:
+                        self.auth_base_path = "/api/v1/infra"
+                        self.connection.queue_message("info", "login() - detected new auth endpoint: /api/v1/infra")
+                    else:
+                        # Fall back to legacy endpoint
+                        path = "/login"
+                        token, self.status = self._attempt_login(path, payload)
+                        if token is not None:
+                            self.auth_base_path = ""
+                            self.connection.queue_message("info", "login() - detected legacy auth endpoint: /login")
+
+                full_path = self.connection.get_option("host") + path
+
+                if token is None:
                     self.connection.queue_message("error", "login() - login status incorrect or response empty. HTTP status={0}".format(self.status))
                     json_response = "Most likely a wrong login domain was provided, the provided login_domain was {0}".format(self.get_option("login_domain"))
-                    if self.status not in [200, 201]:
-                        json_response = self._response_to_json(response_data)
                     self.error = dict(code=self.status, message="Authentication failed: {0}".format(json_response))
-                    raise ConnectionError(json.dumps(self._verify_response(response, method, full_path, response_data)))
-                token = self._response_to_json(response_data).get("token")
-                if token is None:
-                    token = self._response_to_json(response_data).get("jwttoken")
+                    raise ConnectionError(json.dumps(self._verify_response(None, "POST", full_path, None)))
+
                 self.connection._auth = {
                     "Authorization": "Bearer {0}".format(token),
                     "Cookie": "AuthCookie={0}".format(token),
@@ -162,12 +190,15 @@ class HttpApi(HttpApiBase):
             except Exception as e:
                 self.connection.queue_message("error", "login() - Generic Exception: {0}".format(e))
                 self.error = dict(code=self.status, message="Authentication failed: Request failed: {0}".format(e))
-                raise ConnectionError(json.dumps(self._verify_response(None, method, full_path, None)))
+                raise ConnectionError(json.dumps(self._verify_response(None, "POST", self.connection.get_option("host") + "/login", None)))
 
     def logout(self):
         self.connection.queue_message("info", "logout() - logout method called for {0}".format(self.connection.get_option("host")))
         method = "POST"
-        path = "/logout"
+        if self.auth_base_path is not None:
+            path = self.auth_base_path + "/logout"
+        else:
+            path = "/logout"
 
         try:
             self.connection.queue_message("info", "logout() - connection.send({0}, {1}, {2})".format(path, method, self.headers))
