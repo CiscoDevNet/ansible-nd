@@ -266,10 +266,9 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
         response = self._request(path=api_endpoint.path, verb=api_endpoint.verb)
         if not isinstance(response, dict):
             return None, None
-        # TODO(4.2.1) systemMode fields are nested under `additionalData` in the GET switch response,
-        # not at the top level as the OpenAPI schema documents. We read `intendedSystemMode` (what ND
-        # has committed) for idempotency rather than the aggregator `systemMode`, which returns the
-        # string "inconsistent" between an intent change and a deploy.
+        # Read `intendedSystemMode` for idempotency rather than the aggregator `systemMode`, because
+        # `systemMode` returns "inconsistent" when intent != discovered (e.g. after a no-deploy POST).
+        # Comparing against the aggregator would re-POST on every playbook run that left intent != discovered.
         additional = response.get("additionalData") or {}
         return additional.get("intendedSystemMode"), additional.get("discoveredSystemMode")
 
