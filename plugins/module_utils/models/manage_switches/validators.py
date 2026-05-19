@@ -4,227 +4,131 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""Common validators for switch-related fields."""
+"""Switch-specific validators.
+
+Domain-specific validators for switch models. Generic validators for IP, MAC,
+hostname, etc. are imported from common.validators and re-exported for convenience.
+"""
 
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
 import re
-from ipaddress import ip_address, ip_network
 from typing import Optional
 
+# Import and re-export generic validators from common module
+from ...common.validators import (
+    _normalize_optional_string,
+    _require_field,
+    validate_ip_address,
+    validate_cidr,
+    validate_ip_or_cidr_as_cidr,
+    validate_hostname,
+    validate_mac_address,
+    require_ip_address,
+    require_ip_or_cidr_as_cidr,
+    require_hostname,
+    require_mac_address,
+    validate_cidr_optional,
+    check_credentials_pair,
+)
 
-class SwitchValidators:
+
+# ------------------------------------------------------------------
+# Switch-specific validators
+# ------------------------------------------------------------------
+
+
+def validate_serial_number(v: Optional[str]) -> Optional[str]:
+    """Validate switch serial number format.
+
+    Args:
+        v: Raw serial number value.
+
+    Returns:
+        Validated serial number, or ``None`` if input is None/empty.
+
+    Raises:
+        ValueError: When the serial number contains invalid characters.
     """
-    Common validators for switch-related fields.
+    v = _normalize_optional_string(v)
+    if v is None:
+        return None
+    # Serial numbers are typically alphanumeric with optional hyphens
+    if not re.match(r"^[A-Za-z0-9_-]+$", v):
+        raise ValueError(f"Serial number must be alphanumeric with optional hyphens/underscores: {v}")
+    return v
 
-    The ``validate_*`` static methods are safe to call from Pydantic
-    ``@field_validator`` bodies.  They return ``None`` when the value is
-    absent and raise ``ValueError`` on bad input.
 
-    The ``require_*`` helpers are convenience wrappers that additionally
-    raise ``ValueError`` when the result is ``None`` (i.e. the field was
-    empty after stripping).  Use them in place of the repetitive
-    ``result = …; if result is None: raise …`` pattern.
+def require_serial_number(v: str, field_name: str = "serial_number") -> str:
+    """Validate and require a non-empty serial number.
 
-    ``check_discovery_credentials_pair`` is a shared ``@model_validator``
-    helper that enforces the mutual-presence rule for discovery credentials.
+    Args:
+        v: Raw serial number value.
+        field_name: Field name used in the error message.
+
+    Returns:
+        Validated serial number string.
+
+    Raises:
+        ValueError: When the value is empty or contains invalid characters.
     """
+    return _require_field(v, validate_serial_number, field_name)
 
-    # ------------------------------------------------------------------
-    # Low-level nullable validators (return None when absent)
-    # ------------------------------------------------------------------
 
-    @staticmethod
-    def validate_ip_address(v: Optional[str]) -> Optional[str]:
-        """Validate IPv4 or IPv6 address."""
-        if v is None:
-            return None
-        v = str(v).strip()
-        if not v:
-            return None
-        try:
-            ip_address(v)
-            return v
-        except ValueError:
-            raise ValueError(f"Invalid IP address format: {v}")
+def validate_vpc_domain(v: Optional[int]) -> Optional[int]:
+    """Validate VPC domain ID (1-1000).
 
-    @staticmethod
-    def validate_cidr(v: Optional[str]) -> Optional[str]:
-        """Validate CIDR notation (IP/mask)."""
-        if v is None:
-            return None
-        v = str(v).strip()
-        if not v:
-            return None
-        if "/" not in v:
-            raise ValueError(f"CIDR notation required (IP/mask format): {v}")
-        try:
-            ip_network(v, strict=False)
-            return v
-        except ValueError:
-            raise ValueError(f"Invalid CIDR format: {v}")
+    Args:
+        v: VPC domain ID.
 
-    @staticmethod
-    def validate_serial_number(v: Optional[str]) -> Optional[str]:
-        """Validate switch serial number format."""
-        if v is None:
-            return None
-        v = str(v).strip()
-        if not v:
-            return None
-        # Serial numbers are typically alphanumeric with optional hyphens
-        if not re.match(r"^[A-Za-z0-9_-]+$", v):
-            raise ValueError(f"Serial number must be alphanumeric with optional hyphens/underscores: {v}")
-        return v
+    Returns:
+        Validated VPC domain ID, or ``None`` if input is None.
 
-    @staticmethod
-    def validate_hostname(v: Optional[str]) -> Optional[str]:
-        """Validate hostname format."""
-        if v is None:
-            return None
-        v = str(v).strip()
-        if not v:
-            return None
-        # RFC 1123 hostname validation
-        if len(v) > 255:
-            raise ValueError("Hostname cannot exceed 255 characters")
-        # Allow alphanumeric, dots, hyphens, underscores
-        if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", v):
-            raise ValueError(f"Invalid hostname format. Must start with alphanumeric and " f"contain only alphanumeric, dots, hyphens, underscores: {v}")
-        if v.startswith(".") or v.endswith(".") or ".." in v:
-            raise ValueError(f"Invalid hostname format (dots): {v}")
-        return v
+    Raises:
+        ValueError: When the value is out of valid range.
+    """
+    if v is None:
+        return None
+    if not 1 <= v <= 1000:
+        raise ValueError(f"VPC domain must be between 1 and 1000: {v}")
+    return v
 
-    @staticmethod
-    def validate_mac_address(v: Optional[str]) -> Optional[str]:
-        """Validate MAC address format."""
-        if v is None:
-            return None
-        v = str(v).strip()
-        if not v:
-            return None
-        # Accept colon or hyphen separated MAC addresses
-        mac_pattern = r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
-        if not re.match(mac_pattern, v):
-            raise ValueError(f"Invalid MAC address format: {v}")
-        return v
 
-    @staticmethod
-    def validate_vpc_domain(v: Optional[int]) -> Optional[int]:
-        """Validate VPC domain ID (1-1000)."""
-        if v is None:
-            return None
-        if not 1 <= v <= 1000:
-            raise ValueError(f"VPC domain must be between 1 and 1000: {v}")
-        return v
+def check_discovery_credentials_pair(username: Optional[str], password: Optional[str]) -> None:
+    """Enforce mutual-presence of discovery credentials.
 
-    # ------------------------------------------------------------------
-    # Required-field helpers (raise ValueError when value is absent)
-    # ------------------------------------------------------------------
+    Both ``discovery_username`` and ``discovery_password`` must either be
+    absent together or present together.
 
-    @staticmethod
-    def require_serial_number(v: str, field_name: str = "serial_number") -> str:
-        """Validate and require a non-empty serial number.
+    Args:
+        username: discovery_username value (may be ``None``).
+        password: discovery_password value (may be ``None``).
 
-        Delegates to ``validate_serial_number`` and raises ``ValueError``
-        when the result is ``None`` (empty after stripping).
-
-        Args:
-            v: Raw serial number value from Pydantic.
-            field_name: Field name used in the error message.
-
-        Returns:
-            Validated serial number string.
-
-        Raises:
-            ValueError: When the value is empty or contains invalid characters.
-        """
-        result = SwitchValidators.validate_serial_number(v)
-        if result is None:
-            raise ValueError(f"{field_name} cannot be empty")
-        return result
-
-    @staticmethod
-    def require_hostname(v: str) -> str:
-        """Validate and require a non-empty hostname.
-
-        Args:
-            v: Raw hostname value from Pydantic.
-
-        Returns:
-            Validated hostname string.
-
-        Raises:
-            ValueError: When the value is empty or fails RFC 1123 checks.
-        """
-        result = SwitchValidators.validate_hostname(v)
-        if result is None:
-            raise ValueError("hostname cannot be empty")
-        return result
-
-    @staticmethod
-    def require_ip_address(v: str) -> str:
-        """Validate and require a non-empty IP address.
-
-        Args:
-            v: Raw IP address value from Pydantic.
-
-        Returns:
-            Validated IP address string.
-
-        Raises:
-            ValueError: When the value is empty or not a valid IPv4/v6 address.
-        """
-        result = SwitchValidators.validate_ip_address(v)
-        if result is None:
-            raise ValueError(f"Invalid IP address: {v}")
-        return result
-
-    @staticmethod
-    def validate_cidr_optional(v: Optional[str]) -> Optional[str]:
-        """Validate an optional CIDR string; pass through ``None`` unchanged.
-
-        Args:
-            v: Raw CIDR value or ``None``.
-
-        Returns:
-            Validated CIDR string, or ``None``.
-
-        Raises:
-            ValueError: When the value is present but not valid CIDR notation.
-        """
-        if v is None:
-            return None
-        result = SwitchValidators.validate_cidr(v)
-        if result is None:
-            raise ValueError(f"Invalid CIDR notation: {v}")
-        return result
-
-    @staticmethod
-    def check_discovery_credentials_pair(username: Optional[str], password: Optional[str]) -> None:
-        """Enforce mutual-presence of discovery credentials.
-
-        Both ``discovery_username`` and ``discovery_password`` must either be
-        absent together or present together.  Call from a ``@model_validator``
-        body to avoid duplicating the same four-line check across every model.
-
-        Args:
-            username: discovery_username value (may be ``None``).
-            password: discovery_password value (may be ``None``).
-
-        Raises:
-            ValueError: When exactly one of the two is provided.
-        """
-        has_user = bool(username)
-        has_pass = bool(password)
-        if has_user and not has_pass:
-            raise ValueError("discovery_password must be set when discovery_username is specified")
-        if has_pass and not has_user:
-            raise ValueError("discovery_username must be set when discovery_password is specified")
+    Raises:
+        ValueError: When exactly one of the two is provided.
+    """
+    check_credentials_pair(username, password, "discovery_username", "discovery_password")
 
 
 __all__ = [
-    "SwitchValidators",
+    # Generic validators (re-exported from common.validators)
+    "validate_ip_address",
+    "validate_cidr",
+    "validate_ip_or_cidr_as_cidr",
+    "validate_hostname",
+    "validate_mac_address",
+    "require_ip_address",
+    "require_ip_or_cidr_as_cidr",
+    "require_hostname",
+    "require_mac_address",
+    "validate_cidr_optional",
+    "check_credentials_pair",
+    # Switch-specific validators
+    "validate_serial_number",
+    "require_serial_number",
+    "validate_vpc_domain",
+    "check_discovery_credentials_pair",
 ]
+
