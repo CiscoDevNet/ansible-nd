@@ -9,11 +9,9 @@
 Based on OpenAPI schema for Nexus Dashboard Manage APIs v1.1.332.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
-
-from typing import Any, Dict, List, Optional, ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -40,31 +38,31 @@ class RMASwitchModel(NDBaseModel):
     Path: POST /fabrics/{fabricName}/switches/{switchId}/actions/provisionRMA
     """
 
-    identifiers: ClassVar[List[str]] = ["new_switch_id"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
-    exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
+    identifiers: ClassVar[list[str]] = ["new_switch_id"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    exclude_from_diff: ClassVar[list[str]] = ["password", "discovery_password"]
     # From bootstrapBase (all sourced from bootstrap API, not user config)
-    gateway_ip_mask: Optional[str] = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
-    model: Optional[str] = Field(default=None, description="Model of the bootstrap switch")
-    software_version: Optional[str] = Field(
+    gateway_ip_mask: str | None = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
+    model: str | None = Field(default=None, description="Model of the bootstrap switch")
+    software_version: str | None = Field(
         default=None,
         alias="softwareVersion",
         description="Software version of the bootstrap switch",
     )
-    image_policy: Optional[str] = Field(
+    image_policy: str | None = Field(
         default=None,
         alias="imagePolicy",
         description="Image policy associated with the switch during bootstrap",
     )
-    switch_role: Optional[SwitchRole] = Field(default=None, alias="switchRole")
+    switch_role: SwitchRole | None = Field(default=None, alias="switchRole")
 
     # From bootstrapCredential
     password: str = Field(description="Switch password to be set during bootstrap for admin user")
     discovery_auth_protocol: SnmpV3AuthProtocol = Field(alias="discoveryAuthProtocol")
-    discovery_username: Optional[str] = Field(default=None, alias="discoveryUsername")
-    discovery_password: Optional[str] = Field(default=None, alias="discoveryPassword")
+    discovery_username: str | None = Field(default=None, alias="discoveryUsername")
+    discovery_password: str | None = Field(default=None, alias="discoveryPassword")
     remote_credential_store: RemoteCredentialStore = Field(default=RemoteCredentialStore.LOCAL, alias="remoteCredentialStore")
-    remote_credential_store_key: Optional[str] = Field(default=None, alias="remoteCredentialStoreKey")
+    remote_credential_store_key: str | None = Field(default=None, alias="remoteCredentialStoreKey")
 
     # From RMASpecific
     hostname: str = Field(description="Hostname of the switch")
@@ -73,16 +71,16 @@ class RMASwitchModel(NDBaseModel):
     old_switch_id: str = Field(alias="oldSwitchId", description="SwitchId (serial number) of the switch being replaced")
     public_key: str = Field(alias="publicKey", description="Public Key")
     finger_print: str = Field(alias="fingerPrint", description="Fingerprint")
-    dhcp_bootstrap_ip: Optional[str] = Field(default=None, alias="dhcpBootstrapIp")
+    dhcp_bootstrap_ip: str | None = Field(default=None, alias="dhcpBootstrapIp")
     seed_switch: bool = Field(default=False, alias="seedSwitch")
-    data: Optional[Dict[str, Any]] = Field(
+    data: dict[str, Any] | None = Field(
         default=None,
         description="Bootstrap configuration data block (gatewayIpMask, models)",
     )
 
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
-    def validate_gateway(cls, v: Optional[str]) -> Optional[str]:
+    def validate_gateway(cls, v: str | None) -> str | None:
         return SwitchValidators.validate_cidr_optional(v)
 
     @field_validator("hostname", mode="before")
@@ -92,7 +90,7 @@ class RMASwitchModel(NDBaseModel):
 
     @field_validator("ip", "dhcp_bootstrap_ip", mode="before")
     @classmethod
-    def validate_ip(cls, v: Optional[str]) -> Optional[str]:
+    def validate_ip(cls, v: str | None) -> str | None:
         return SwitchValidators.validate_ip_address(v)
 
     @field_validator("new_switch_id", mode="before")
@@ -125,12 +123,12 @@ class RMASwitchModel(NDBaseModel):
                     )
         return self
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
         return self.model_dump(by_alias=True, exclude_none=True)
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> "RMASwitchModel":
+    def from_response(cls, response: dict[str, Any]) -> "RMASwitchModel":
         """Create model instance from API response."""
         return cls.model_validate(response)
 

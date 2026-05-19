@@ -9,11 +9,9 @@
 Based on OpenAPI schema for Nexus Dashboard Manage APIs v1.1.332.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
-
-from typing import Any, Dict, List, Optional, ClassVar, Literal, Union
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -40,10 +38,10 @@ class ShallowDiscoveryRequestModel(NDBaseModel):
     Path: POST /fabrics/{fabricName}/actions/shallowDiscovery
     """
 
-    identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
-    exclude_from_diff: ClassVar[List[str]] = ["password"]
-    seed_ip_collection: List[str] = Field(
+    identifiers: ClassVar[list[str]] = []
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
+    exclude_from_diff: ClassVar[list[str]] = ["password"]
+    seed_ip_collection: list[str] = Field(
         alias="seedIpCollection",
         min_length=1,
         description="Seed switch IP collection",
@@ -59,14 +57,14 @@ class ShallowDiscoveryRequestModel(NDBaseModel):
         alias="snmpV3AuthProtocol",
         description="SNMPv3 authentication protocols",
     )
-    username: Optional[str] = Field(default=None, description="User name for switch login")
-    password: Optional[str] = Field(default=None, description="User password for switch login")
-    remote_credential_store: Optional[RemoteCredentialStore] = Field(
+    username: str | None = Field(default=None, description="User name for switch login")
+    password: str | None = Field(default=None, description="User password for switch login")
+    remote_credential_store: RemoteCredentialStore | None = Field(
         default=None,
         alias="remoteCredentialStore",
         description="Type of credential store",
     )
-    remote_credential_store_key: Optional[str] = Field(
+    remote_credential_store_key: str | None = Field(
         default=None,
         alias="remoteCredentialStoreKey",
         description="Remote credential store key",
@@ -74,7 +72,7 @@ class ShallowDiscoveryRequestModel(NDBaseModel):
 
     @field_validator("seed_ip_collection", mode="before")
     @classmethod
-    def validate_seed_ips(cls, v: List[str]) -> List[str]:
+    def validate_seed_ips(cls, v: list[str]) -> list[str]:
         """Validate all seed IPs."""
         if not v:
             raise ValueError("At least one seed IP is required")
@@ -89,13 +87,13 @@ class ShallowDiscoveryRequestModel(NDBaseModel):
 
     @field_validator("snmp_v3_auth_protocol", mode="before")
     @classmethod
-    def normalize_snmp_auth(cls, v: Union[str, SnmpV3AuthProtocol, None]) -> SnmpV3AuthProtocol:
+    def normalize_snmp_auth(cls, v: str | SnmpV3AuthProtocol | None) -> SnmpV3AuthProtocol:
         """Normalize SNMP auth protocol (case-insensitive)."""
         return SnmpV3AuthProtocol.normalize(v)
 
     @field_validator("platform_type", mode="before")
     @classmethod
-    def normalize_platform(cls, v: Union[str, ShallowDiscoveryPlatformType, None]) -> ShallowDiscoveryPlatformType:
+    def normalize_platform(cls, v: str | ShallowDiscoveryPlatformType | None) -> ShallowDiscoveryPlatformType:
         """Normalize platform type (case-insensitive)."""
         return ShallowDiscoveryPlatformType.normalize(v)
 
@@ -107,25 +105,25 @@ class SwitchDiscoveryModel(NDBaseModel):
     For N7K user VDC deployments, the serial number format is serialNumber:vDCName.
     """
 
-    identifiers: ClassVar[List[str]] = ["serial_number"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifiers: ClassVar[list[str]] = ["serial_number"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
     hostname: str = Field(description="Switch host name")
     ip: str = Field(description="Switch IPv4/v6 address")
     serial_number: str = Field(alias="serialNumber", description="Switch serial number")
     model: str = Field(description="Switch model")
-    software_version: Optional[str] = Field(default=None, alias="softwareVersion", description="Switch software version")
-    vdc_id: Optional[int] = Field(
+    software_version: str | None = Field(default=None, alias="softwareVersion", description="Switch software version")
+    vdc_id: int | None = Field(
         default=None,
         alias="vdcId",
         ge=0,
         description="N7K VDC ID. Mandatory for N7K switch discovery",
     )
-    vdc_mac: Optional[str] = Field(
+    vdc_mac: str | None = Field(
         default=None,
         alias="vdcMac",
         description="N7K VDC Mac address. Mandatory for N7K switch discovery",
     )
-    switch_role: Optional[SwitchRole] = Field(default=None, alias="switchRole", description="Switch role")
+    switch_role: SwitchRole | None = Field(default=None, alias="switchRole", description="Switch role")
 
     @field_validator("hostname", mode="before")
     @classmethod
@@ -144,7 +142,7 @@ class SwitchDiscoveryModel(NDBaseModel):
 
     @field_validator("vdc_mac", mode="before")
     @classmethod
-    def validate_mac(cls, v: Optional[str]) -> Optional[str]:
+    def validate_mac(cls, v: str | None) -> str | None:
         return SwitchValidators.validate_mac_address(v)
 
 
@@ -155,10 +153,10 @@ class AddSwitchesRequestModel(NDBaseModel):
     Path: POST /fabrics/{fabricName}/switches
     """
 
-    identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
-    exclude_from_diff: ClassVar[List[str]] = ["password"]
-    switches: List[SwitchDiscoveryModel] = Field(min_length=1, description="The list of switches to be imported")
+    identifiers: ClassVar[list[str]] = []
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
+    exclude_from_diff: ClassVar[list[str]] = ["password"]
+    switches: list[SwitchDiscoveryModel] = Field(min_length=1, description="The list of switches to be imported")
     platform_type: PlatformType = Field(
         default=PlatformType.NX_OS,
         alias="platformType",
@@ -174,25 +172,25 @@ class AddSwitchesRequestModel(NDBaseModel):
         alias="snmpV3AuthProtocol",
         description="SNMPv3 authentication protocols",
     )
-    use_credential_for_write: Optional[bool] = Field(
+    use_credential_for_write: bool | None = Field(
         default=None,
         alias="useCredentialForWrite",
         description="Flag to use the discovery credential as LAN credential",
     )
-    username: Optional[str] = Field(default=None, description="User name for switch login")
-    password: Optional[str] = Field(default=None, description="User password for switch login")
-    remote_credential_store: Optional[RemoteCredentialStore] = Field(
+    username: str | None = Field(default=None, description="User name for switch login")
+    password: str | None = Field(default=None, description="User password for switch login")
+    remote_credential_store: RemoteCredentialStore | None = Field(
         default=None,
         alias="remoteCredentialStore",
         description="Type of credential store",
     )
-    remote_credential_store_key: Optional[str] = Field(
+    remote_credential_store_key: str | None = Field(
         default=None,
         alias="remoteCredentialStoreKey",
         description="Remote credential store key",
     )
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
         payload = self.model_dump(by_alias=True, exclude_none=True)
         # Convert nested switches to payload format
@@ -202,13 +200,13 @@ class AddSwitchesRequestModel(NDBaseModel):
 
     @field_validator("snmp_v3_auth_protocol", mode="before")
     @classmethod
-    def normalize_snmp_auth(cls, v: Union[str, SnmpV3AuthProtocol, None]) -> SnmpV3AuthProtocol:
+    def normalize_snmp_auth(cls, v: str | SnmpV3AuthProtocol | None) -> SnmpV3AuthProtocol:
         """Normalize SNMP auth protocol (case-insensitive: MD5, md5, etc.)."""
         return SnmpV3AuthProtocol.normalize(v)
 
     @field_validator("platform_type", mode="before")
     @classmethod
-    def normalize_platform_type(cls, v: Union[str, PlatformType, None]) -> PlatformType:
+    def normalize_platform_type(cls, v: str | PlatformType | None) -> PlatformType:
         """Normalize platform type (case-insensitive: NX_OS, nx-os, etc.)."""
         return PlatformType.normalize(v)
 

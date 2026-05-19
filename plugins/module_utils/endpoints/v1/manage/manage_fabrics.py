@@ -62,7 +62,7 @@ class FabricsEndpointParams(EndpointQueryParams):
     ```
     """
 
-    cluster_name: Optional[str] = Field(
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Name of the target Nexus Dashboard cluster to execute this API, in a multi-cluster deployment",
@@ -89,8 +89,8 @@ class FabricConfigDeployEndpointParams(EndpointQueryParams):
     ```
     """
 
-    force_show_run: Optional[bool] = Field(default=None, description="Force show running config before deploy")
-    incl_all_msd_switches: Optional[bool] = Field(default=None, description="Include all MSD fabric switches")
+    force_show_run: bool | None = Field(default=None, description="Force show running config before deploy")
+    incl_all_msd_switches: bool | None = Field(default=None, description="Include all MSD fabric switches")
 
 
 class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):
@@ -109,7 +109,7 @@ class _EpManageFabricsBase(FabricNameMixin, NDEndpointBaseModel):
     """
 
     _require_fabric_name: ClassVar[bool] = True
-    _path_suffix: ClassVar[Optional[str]] = None
+    _path_suffix: ClassVar[str | None] = None
 
     endpoint_params: EndpointQueryParams = Field(default_factory=EndpointQueryParams, description="Endpoint-specific query parameters")
 
@@ -225,35 +225,35 @@ class FabricsListEndpointParams(EndpointQueryParams):
     ```
     """
 
-    cluster_name: Optional[str] = Field(
+    cluster_name: str | None = Field(
         default=None,
         min_length=1,
         description="Name of the target Nexus Dashboard cluster to execute this API, in a multi-cluster deployment",
     )
 
-    category: Optional[str] = Field(
+    category: str | None = Field(
         default=None,
         description="Filter by category of fabric (fabric or fabricGroup)",
     )
 
-    filter: Optional[str] = Field(
+    filter: str | None = Field(
         default=None,
         description="Lucene format filter - Filter the response based on this filter field",
     )
 
-    max: Optional[int] = Field(
+    max: int | None = Field(
         default=None,
         ge=1,
         description="Number of records to return",
     )
 
-    offset: Optional[int] = Field(
+    offset: int | None = Field(
         default=None,
         ge=0,
         description="Number of records to skip for pagination",
     )
 
-    sort: Optional[str] = Field(
+    sort: str | None = Field(
         default=None,
         description="Sort the records by the declared fields in either ascending (default) or descending (:desc) order",
     )
@@ -510,7 +510,7 @@ class EpManageFabricsSummaryGet(_EpManageFabricsBase):
 
     class_name: Literal["EpManageFabricsSummaryGet"] = Field(default="EpManageFabricsSummaryGet", description="Class name for backward compatibility")
 
-    _path_suffix: ClassVar[Optional[str]] = "summary"
+    _path_suffix: ClassVar[str | None] = "summary"
 
     endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
 

@@ -10,13 +10,11 @@ This module validates desired switch state, performs discovery and fabric
 operations, and coordinates POAP and RMA workflows.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
@@ -168,22 +166,22 @@ class SwitchPlan:
     """
 
     # Normal-switch diff buckets (config side)
-    to_add: List["SwitchConfigModel"]
-    to_update: List["SwitchConfigModel"]
-    to_delete: List["SwitchDataModel"]
-    migration_mode: List["SwitchConfigModel"]
-    idempotent: List["SwitchConfigModel"]
+    to_add: list["SwitchConfigModel"]
+    to_update: list["SwitchConfigModel"]
+    to_delete: list["SwitchDataModel"]
+    migration_mode: list["SwitchConfigModel"]
+    idempotent: list["SwitchConfigModel"]
 
     # POAP/preprovision/swap/RMA buckets
-    to_bootstrap: List["SwitchConfigModel"]
-    normal_readd: List["SwitchConfigModel"]
-    to_preprovision: List["SwitchConfigModel"]
-    to_swap: List["SwitchConfigModel"]
-    to_rma: List["SwitchConfigModel"]
+    to_bootstrap: list["SwitchConfigModel"]
+    normal_readd: list["SwitchConfigModel"]
+    to_preprovision: list["SwitchConfigModel"]
+    to_swap: list["SwitchConfigModel"]
+    to_rma: list["SwitchConfigModel"]
 
     # Cross-cutting helpers
     poap_ips: set
-    to_delete_existing: List["SwitchDataModel"]
+    to_delete_existing: list["SwitchDataModel"]
 
 
 class SwitchDiffEngine:
@@ -191,11 +189,11 @@ class SwitchDiffEngine:
 
     @staticmethod
     def validate_configs(
-        config: Union[Dict[str, Any], List[Dict[str, Any]]],
+        config: Union[dict[str, Any], list[dict[str, Any]]],
         state: str,
         nd: NDModule,
         log: logging.Logger,
-    ) -> List[SwitchConfigModel]:
+    ) -> list[SwitchConfigModel]:
         """Validate raw module config and return typed switch configs.
 
         Args:
@@ -215,7 +213,7 @@ class SwitchDiffEngine:
         configs_list = config if isinstance(config, list) else [config]
         log.debug("Normalized to %s configuration(s)", len(configs_list))
 
-        validated_configs: List[SwitchConfigModel] = []
+        validated_configs: list[SwitchConfigModel] = []
         for idx, cfg in enumerate(configs_list):
             try:
                 validated = SwitchConfigModel.model_validate(cfg, context={"state": state})
@@ -270,8 +268,8 @@ class SwitchDiffEngine:
 
     @staticmethod
     def compute_changes(
-        proposed_configs: List[SwitchConfigModel],
-        existing: List[SwitchDataModel],
+        proposed_configs: list[SwitchConfigModel],
+        existing: list[SwitchDataModel],
         log: logging.Logger,
     ) -> "SwitchPlan":
         """Classify all proposed configs against the current fabric inventory.
@@ -319,20 +317,20 @@ class SwitchDiffEngine:
         )
 
         _idx = FabricSwitchInventory(existing)
-        existing_by_ip: Dict[str, SwitchDataModel] = _idx.by_ip()
-        existing_by_id: Dict[str, SwitchDataModel] = _idx.by_id()
+        existing_by_ip: dict[str, SwitchDataModel] = _idx.by_ip()
+        existing_by_id: dict[str, SwitchDataModel] = _idx.by_id()
 
         # Output buckets
-        to_add: List[SwitchConfigModel] = []
-        to_update: List[SwitchConfigModel] = []
-        to_delete_existing: List[SwitchDataModel] = []
-        migration_mode: List[SwitchConfigModel] = []
-        idempotent: List[SwitchConfigModel] = []
-        to_bootstrap: List[SwitchConfigModel] = []
-        normal_readd: List[SwitchConfigModel] = []
-        to_preprovision: List[SwitchConfigModel] = []
-        to_swap: List[SwitchConfigModel] = []
-        to_rma: List[SwitchConfigModel] = []
+        to_add: list[SwitchConfigModel] = []
+        to_update: list[SwitchConfigModel] = []
+        to_delete_existing: list[SwitchDataModel] = []
+        migration_mode: list[SwitchConfigModel] = []
+        idempotent: list[SwitchConfigModel] = []
+        to_bootstrap: list[SwitchConfigModel] = []
+        normal_readd: list[SwitchConfigModel] = []
+        to_preprovision: list[SwitchConfigModel] = []
+        to_swap: list[SwitchConfigModel] = []
+        to_rma: list[SwitchConfigModel] = []
         poap_ips: set = set()
 
         # Track which existing switch IDs are accounted for by a config
@@ -494,7 +492,7 @@ class SwitchDiffEngine:
 
         # Switches in fabric that no config entry accounts for
         # (only meaningful for overridden / deleted states)
-        to_delete: List[SwitchDataModel] = []
+        to_delete: list[SwitchDataModel] = []
         for sw in existing:
             if sw.switch_id and sw.switch_id not in accounted_ids and sw.fabric_management_ip not in poap_ips:
                 log.info(
@@ -539,13 +537,13 @@ class SwitchDiffEngine:
     def validate_switch_api_fields(
         nd: NDModule,
         serial: str,
-        model: Optional[str],
-        version: Optional[str],
+        model: str | None,
+        version: str | None,
         config_data,
-        bootstrap_data: Dict[str, Any],
+        bootstrap_data: dict[str, Any],
         log: logging.Logger,
         context: str,
-        hostname: Optional[str] = None,
+        hostname: str | None = None,
     ) -> None:
         """Validate user-supplied switch fields against the bootstrap API response.
 
@@ -569,7 +567,7 @@ class SwitchDiffEngine:
             None.
         """
         bs_data = bootstrap_data.get("data") or {}
-        mismatches: List[str] = []
+        mismatches: list[str] = []
 
         if model is not None and model != bootstrap_data.get("model"):
             mismatches.append(f"model: provided '{model}', " f"bootstrap reports '{bootstrap_data.get('model')}'")
@@ -596,7 +594,7 @@ class SwitchDiffEngine:
             )
 
         # Log any fields that were omitted and will be sourced from the API
-        pulled: List[str] = []
+        pulled: list[str] = []
         if model is None:
             pulled.append("model")
         if version is None:
@@ -637,8 +635,8 @@ class SwitchDiscoveryService:
 
     def discover(
         self,
-        switch_configs: List[SwitchConfigModel],
-    ) -> Dict[str, Dict[str, Any]]:
+        switch_configs: list[SwitchConfigModel],
+    ) -> dict[str, dict[str, Any]]:
         """Discover switches for the provided config list.
 
         Args:
@@ -653,7 +651,7 @@ class SwitchDiscoveryService:
         log.debug("Created %s credential group(s)", len(credential_groups))
 
         log.debug("Step 2: Bulk discovering switches")
-        all_discovered: Dict[str, Dict[str, Any]] = {}
+        all_discovered: dict[str, dict[str, Any]] = {}
         for group_key, switches in credential_groups.items():
             username, _pw_hash, auth_proto, platform_type, _preserve = group_key
             password = switches[0].password
@@ -683,12 +681,12 @@ class SwitchDiscoveryService:
 
     def bulk_discover(
         self,
-        switches: List[SwitchConfigModel],
+        switches: list[SwitchConfigModel],
         username: str,
         password: str,
         auth_proto: SnmpV3AuthProtocol,
         platform_type: PlatformType,
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         """Run one bulk discovery call for switches with shared credentials.
 
         Args:
@@ -745,7 +743,7 @@ class SwitchDiscoveryService:
 
             # Extract discovered switches from response
             switches_data = []
-            response_data: Dict[str, Any] = {}
+            response_data: dict[str, Any] = {}
             if response and isinstance(response, dict):
                 if "DATA" in response and isinstance(response["DATA"], dict):
                     response_data = response["DATA"]
@@ -770,7 +768,7 @@ class SwitchDiscoveryService:
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
 
-            discovered_results: Dict[str, Dict[str, Any]] = {}
+            discovered_results: dict[str, dict[str, Any]] = {}
             for discovered in switches_data:
                 if not isinstance(discovered, dict):
                     continue
@@ -828,10 +826,10 @@ class SwitchDiscoveryService:
 
     def build_proposed(
         self,
-        proposed_config: List[SwitchConfigModel],
-        discovered_data: Dict[str, Dict[str, Any]],
-        existing: List[SwitchDataModel],
-    ) -> List[SwitchDataModel]:
+        proposed_config: list[SwitchConfigModel],
+        discovered_data: dict[str, dict[str, Any]],
+        existing: list[SwitchDataModel],
+    ) -> list[SwitchDataModel]:
         """Build proposed switch models from discovery and inventory data.
 
         Args:
@@ -843,7 +841,7 @@ class SwitchDiscoveryService:
             List of ``SwitchDataModel`` instances for proposed state.
         """
         log = self.ctx.log
-        proposed: List[SwitchDataModel] = []
+        proposed: list[SwitchDataModel] = []
 
         for cfg in proposed_config:
             seed_ip = cfg.seed_ip
@@ -904,13 +902,13 @@ class SwitchFabricOps:
 
     def bulk_add(
         self,
-        switches: List[Tuple[SwitchConfigModel, Dict[str, Any]]],
+        switches: list[tuple[SwitchConfigModel, dict[str, Any]]],
         username: str,
         password: str,
         auth_proto: SnmpV3AuthProtocol,
         platform_type: PlatformType,
         preserve_config: bool,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Add multiple discovered switches to the fabric.
 
         Args:
@@ -1014,8 +1012,8 @@ class SwitchFabricOps:
 
     def bulk_delete(
         self,
-        switches: List[Union[SwitchDataModel, SwitchDiscoveryModel]],
-    ) -> List[str]:
+        switches: list[SwitchDataModel | SwitchDiscoveryModel],
+    ) -> list[str]:
         """Remove multiple switches from the fabric.
 
         Args:
@@ -1037,7 +1035,7 @@ class SwitchFabricOps:
             log.debug("Check mode: Skipping actual deletion")
             return []
 
-        serial_numbers: List[str] = []
+        serial_numbers: list[str] = []
         for switch in switches:
             sn = None
             if hasattr(switch, "switch_id"):
@@ -1095,7 +1093,7 @@ class SwitchFabricOps:
 
     def bulk_save_credentials(
         self,
-        switch_actions: List[Tuple[str, SwitchConfigModel]],
+        switch_actions: list[tuple[str, SwitchConfigModel]],
     ) -> None:
         """Save switch credentials grouped by username and password.
 
@@ -1111,7 +1109,7 @@ class SwitchFabricOps:
 
         log.debug("ENTER: bulk_save_credentials()")
 
-        cred_groups: Dict[Tuple[str, str], List[str]] = {}
+        cred_groups: dict[tuple[str, str], list[str]] = {}
         for sn, cfg in switch_actions:
             if not cfg.username or not cfg.password:
                 log.debug("Skipping credentials for %s: missing username or password", sn)
@@ -1167,7 +1165,7 @@ class SwitchFabricOps:
 
     def bulk_update_roles(
         self,
-        switch_actions: List[Tuple[str, SwitchConfigModel]],
+        switch_actions: list[tuple[str, SwitchConfigModel]],
     ) -> None:
         """Update switch roles in bulk.
 
@@ -1224,7 +1222,7 @@ class SwitchFabricOps:
 
         log.debug("EXIT: bulk_update_roles()")
 
-    def finalize(self, serial_numbers: Optional[List[str]] = None) -> None:
+    def finalize(self, serial_numbers: list[str] | None = None) -> None:
         """Run optional save and deploy actions for the fabric.
 
         Uses service context flags to decide whether save and deploy should be
@@ -1257,7 +1255,7 @@ class SwitchFabricOps:
 
     def post_add_processing(
         self,
-        switch_actions: List[Tuple[str, SwitchConfigModel]],
+        switch_actions: list[tuple[str, SwitchConfigModel]],
         wait_utils,
         context: str,
         all_preserve_config: bool = False,
@@ -1288,7 +1286,7 @@ class SwitchFabricOps:
             all_serials,
         )
 
-        wait_kwargs: Dict[str, Any] = {}
+        wait_kwargs: dict[str, Any] = {}
         if all_preserve_config:
             wait_kwargs["all_preserve_config"] = True
         if skip_greenfield_check:
@@ -1346,8 +1344,8 @@ class POAPHandler:
 
     def handle(
         self,
-        proposed_config: List[SwitchConfigModel],
-        existing: Optional[List[SwitchDataModel]] = None,
+        proposed_config: list[SwitchConfigModel],
+        existing: list[SwitchDataModel] | None = None,
     ) -> None:
         """Execute POAP processing for the provided switch configs.
 
@@ -1366,9 +1364,9 @@ class POAPHandler:
         log.info("Processing POAP for %s switch config(s)", len(proposed_config))
 
         # Classify entries first so check mode can report per-operation counts
-        bootstrap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel]] = []
-        preprov_entries: List[Tuple[SwitchConfigModel, PreprovisionConfigModel]] = []
-        swap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel, PreprovisionConfigModel]] = []
+        bootstrap_entries: list[tuple[SwitchConfigModel, POAPConfigModel]] = []
+        preprov_entries: list[tuple[SwitchConfigModel, PreprovisionConfigModel]] = []
+        swap_entries: list[tuple[SwitchConfigModel, POAPConfigModel, PreprovisionConfigModel]] = []
 
         for switch_cfg in proposed_config:
             has_poap = bool(switch_cfg.poap)
@@ -1463,7 +1461,7 @@ class POAPHandler:
 
         # Handle pre-provision entries
         if preprov_entries:
-            preprov_models: List[PreProvisionSwitchModel] = []
+            preprov_models: list[PreProvisionSwitchModel] = []
             for switch_cfg, preprov_cfg in preprov_entries:
                 pp_model = self._build_preprovision_model(switch_cfg, preprov_cfg)
                 preprov_models.append(pp_model)
@@ -1491,7 +1489,7 @@ class POAPHandler:
 
     def _handle_poap_bootstrap(
         self,
-        bootstrap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel]],
+        bootstrap_entries: list[tuple[SwitchConfigModel, POAPConfigModel]],
     ) -> None:
         """Process bootstrap POAP entries.
 
@@ -1516,7 +1514,7 @@ class POAPHandler:
             list(bootstrap_idx.keys()),
         )
 
-        import_models: List[BootstrapImportSwitchModel] = []
+        import_models: list[BootstrapImportSwitchModel] = []
         for switch_cfg, poap_cfg in bootstrap_entries:
             serial = poap_cfg.serial_number
             bootstrap_data = bootstrap_idx.get(serial)
@@ -1548,7 +1546,7 @@ class POAPHandler:
         self._import_bootstrap_switches(import_models)
 
         # Post-import: wait for manageability, save credentials, finalize
-        switch_actions: List[Tuple[str, SwitchConfigModel]] = []
+        switch_actions: list[tuple[str, SwitchConfigModel]] = []
         for switch_cfg, poap_cfg in bootstrap_entries:
             switch_actions.append((poap_cfg.serial_number, switch_cfg))
 
@@ -1565,7 +1563,7 @@ class POAPHandler:
         self,
         switch_cfg: SwitchConfigModel,
         poap_cfg: POAPConfigModel,
-        bootstrap_data: Optional[Dict[str, Any]],
+        bootstrap_data: dict[str, Any] | None,
     ) -> BootstrapImportSwitchModel:
         """Build a bootstrap import model from config and bootstrap data.
 
@@ -1634,7 +1632,7 @@ class POAPHandler:
                 pass
 
         # Build the data block from resolved values (replaces build_poap_data_block)
-        data_block: Optional[Dict[str, Any]] = None
+        data_block: dict[str, Any] | None = None
         if gateway_ip_mask or data_models:
             data_block = {}
             if gateway_ip_mask:
@@ -1673,7 +1671,7 @@ class POAPHandler:
 
     def _import_bootstrap_switches(
         self,
-        models: List[BootstrapImportSwitchModel],
+        models: list[BootstrapImportSwitchModel],
     ) -> None:
         """Submit bootstrap import models.
 
@@ -1784,7 +1782,7 @@ class POAPHandler:
 
     def _preprovision_switches(
         self,
-        models: List[PreProvisionSwitchModel],
+        models: list[PreProvisionSwitchModel],
     ) -> None:
         """Submit pre-provision switch models.
 
@@ -1842,8 +1840,8 @@ class POAPHandler:
 
     def _handle_poap_swap(
         self,
-        swap_entries: List[Tuple[SwitchConfigModel, POAPConfigModel, "PreprovisionConfigModel"]],
-        existing: List[SwitchDataModel],
+        swap_entries: list[tuple[SwitchConfigModel, POAPConfigModel, "PreprovisionConfigModel"]],
+        existing: list[SwitchDataModel],
     ) -> None:
         """Process POAP serial-swap entries.
 
@@ -1867,7 +1865,7 @@ class POAPHandler:
         # ------------------------------------------------------------------
         # Step 1: Validate preprovision serials exist in fabric inventory
         # ------------------------------------------------------------------
-        fabric_index: Dict[str, Dict[str, Any]] = {sw.switch_id: sw.model_dump(by_alias=True) for sw in existing if sw.switch_id}
+        fabric_index: dict[str, dict[str, Any]] = {sw.switch_id: sw.model_dump(by_alias=True) for sw in existing if sw.switch_id}
         log.debug(
             "Fabric inventory contains %s switch(es): %s",
             len(fabric_index),
@@ -1973,7 +1971,7 @@ class POAPHandler:
         # ------------------------------------------------------------------
         # Step 5: Build BootstrapImportSwitchModels and POST importBootstrap
         # ------------------------------------------------------------------
-        import_models: List[BootstrapImportSwitchModel] = []
+        import_models: list[BootstrapImportSwitchModel] = []
         for switch_cfg, poap_cfg, preprov_cfg in swap_entries:
             new_serial = poap_cfg.serial_number
             bootstrap_data = post_swap_index.get(new_serial)
@@ -2011,7 +2009,7 @@ class POAPHandler:
         # ------------------------------------------------------------------
         # Step 6: Wait for manageability, save credentials, finalize
         # ------------------------------------------------------------------
-        switch_actions: List[Tuple[str, SwitchConfigModel]] = []
+        switch_actions: list[tuple[str, SwitchConfigModel]] = []
         for switch_cfg, poap_cfg, preprov_cfg in swap_entries:
             switch_actions.append((poap_cfg.serial_number, switch_cfg))
 
@@ -2060,8 +2058,8 @@ class RMAHandler:
 
     def handle(
         self,
-        proposed_config: List[SwitchConfigModel],
-        existing: List[SwitchDataModel],
+        proposed_config: list[SwitchConfigModel],
+        existing: list[SwitchDataModel],
     ) -> None:
         """Execute RMA processing for the provided switch configs.
 
@@ -2091,7 +2089,7 @@ class RMAHandler:
             return
 
         # Collect (SwitchConfigModel, RMAConfigModel) pairs
-        rma_entries: List[Tuple[SwitchConfigModel, RMAConfigModel]] = []
+        rma_entries: list[tuple[SwitchConfigModel, RMAConfigModel]] = []
         for switch_cfg in proposed_config:
             if not switch_cfg.rma:
                 log.warning(
@@ -2127,7 +2125,7 @@ class RMAHandler:
         )
 
         # Build and submit each RMA request
-        switch_actions: List[Tuple[str, SwitchConfigModel]] = []
+        switch_actions: list[tuple[str, SwitchConfigModel]] = []
         for switch_cfg, rma_cfg in rma_entries:
             new_serial = rma_cfg.new_serial_number
             old_serial = old_switch_info[switch_cfg.seed_ip]["old_serial"]
@@ -2189,9 +2187,9 @@ class RMAHandler:
 
     def _validate_prerequisites(
         self,
-        rma_entries: List[Tuple[SwitchConfigModel, RMAConfigModel]],
-        existing: List[SwitchDataModel],
-    ) -> Dict[str, Dict[str, Any]]:
+        rma_entries: list[tuple[SwitchConfigModel, RMAConfigModel]],
+        existing: list[SwitchDataModel],
+    ) -> dict[str, dict[str, Any]]:
         """Validate RMA prerequisites for each requested replacement.
 
         Looks up the switch to be replaced by ``seed_ip`` (the fabric management
@@ -2211,9 +2209,9 @@ class RMAHandler:
 
         log.debug("ENTER: _validate_prerequisites()")
 
-        existing_by_ip: Dict[str, SwitchDataModel] = FabricSwitchInventory(existing).by_ip()
+        existing_by_ip: dict[str, SwitchDataModel] = FabricSwitchInventory(existing).by_ip()
 
-        result: Dict[str, Dict[str, Any]] = {}
+        result: dict[str, dict[str, Any]] = {}
 
         for switch_cfg, _rma_cfg in rma_entries:
             seed_ip = switch_cfg.seed_ip
@@ -2282,8 +2280,8 @@ class RMAHandler:
         self,
         switch_cfg: SwitchConfigModel,
         rma_cfg: RMAConfigModel,
-        bootstrap_data: Dict[str, Any],
-        old_switch_info: Dict[str, Any],
+        bootstrap_data: dict[str, Any],
+        old_switch_info: dict[str, Any],
     ) -> RMASwitchModel:
         """Build an RMA model from config and bootstrap data.
 
@@ -2417,7 +2415,7 @@ class NDSwitchResourceModule:
         self,
         nd: NDModule,
         results: Results,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
     ):
         """Initialize module state, services, and inventory snapshots.
 
@@ -2467,17 +2465,17 @@ class NDSwitchResourceModule:
             self.existing: NDConfigCollection = self.inventory.collection
             self.before: NDConfigCollection = self.existing.copy()
             self.sent: NDConfigCollection = NDConfigCollection(model_class=SwitchDataModel)
-            self.sent_adds: List[SwitchConfigModel] = []
-            self.proposed_cfgs: List[SwitchConfigModel] = []
+            self.sent_adds: list[SwitchConfigModel] = []
+            self.proposed_cfgs: list[SwitchConfigModel] = []
             # Plan stored here after compute_changes so check-mode output can use it
-            self._plan: Optional[SwitchPlan] = None
+            self._plan: SwitchPlan | None = None
         except Exception as e:
             msg = f"Failed to query fabric '{self.fabric}' inventory " f"during initialization: {e}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
 
         # Operation tracking
-        self.nd_logs: List[Dict[str, Any]] = []
+        self.nd_logs: list[dict[str, Any]] = []
         self.msg: str = ""
         self.output: NDOutput = NDOutput(output_level=self.module.params.get("output_level", "normal"))
         self.output.assign(before=self.before, after=self.existing)
@@ -2494,7 +2492,7 @@ class NDSwitchResourceModule:
 
         log.info("Initialized NDSwitchResourceModule for fabric: %s", self.fabric)
 
-    def _inventory_to_config_list(self, collection: "NDConfigCollection") -> List[Dict[str, Any]]:
+    def _inventory_to_config_list(self, collection: "NDConfigCollection") -> list[dict[str, Any]]:
         """Convert an inventory collection (SwitchDataModel) to gathered-format config dicts.
 
         Produces the same shape as gathered state output: seed_ip, role, auth_proto,
@@ -2518,7 +2516,7 @@ class NDSwitchResourceModule:
             )
         return result
 
-    def _proposed_to_config_list(self, configs: List["SwitchConfigModel"]) -> List[Dict[str, Any]]:
+    def _proposed_to_config_list(self, configs: list["SwitchConfigModel"]) -> list[dict[str, Any]]:
         """Serialize proposed configs for output, stripping internal fields and masking passwords."""
         result = []
         for cfg in configs:
@@ -2532,7 +2530,7 @@ class NDSwitchResourceModule:
                 self.log.warning("Could not convert config %s for output: %s", cfg.seed_ip, exc)
         return result
 
-    def _build_check_mode_output(self) -> Dict[str, Any]:
+    def _build_check_mode_output(self) -> dict[str, Any]:
         """Build before/after/diff/changed output for check mode.
 
         Since no API writes are issued in check mode, ``self.sent`` and
@@ -2549,13 +2547,13 @@ class NDSwitchResourceModule:
         """
         before_list = self._inventory_to_config_list(self.before)
         existing_by_ip = self.inventory.by_ip()
-        diff_list: List[Dict[str, Any]] = []
+        diff_list: list[dict[str, Any]] = []
 
         if self._plan is not None:
             plan = self._plan
 
             # Switches that would be deleted
-            deleted_sws: List[SwitchDataModel] = list(plan.to_delete) + list(plan.to_delete_existing)
+            deleted_sws: list[SwitchDataModel] = list(plan.to_delete) + list(plan.to_delete_existing)
             if self.state == "deleted":
                 # _handle_deleted_state fills plan.to_delete only for
                 # overridden; for state=deleted the deletions come from the
@@ -2576,7 +2574,7 @@ class NDSwitchResourceModule:
                 )
 
             # Switches that would be added (normal to_add + POAP/preprov/rma)
-            adds: List[SwitchConfigModel] = (
+            adds: list[SwitchConfigModel] = (
                 list(plan.to_add) + list(plan.normal_readd) + list(plan.to_bootstrap) + list(plan.to_preprovision) + list(plan.to_swap) + list(plan.to_rma)
             )
             for cfg in adds:
@@ -2645,7 +2643,7 @@ class NDSwitchResourceModule:
 
         changed = bool(diff_list)
         output_level = self.module.params.get("output_level", "normal")
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "output_level": output_level,
             "changed": changed,
             "before": before_list,
@@ -2689,7 +2687,7 @@ class NDSwitchResourceModule:
             if True not in self.results.failed:
                 self.existing = FabricSwitchInventory.from_fabric(self.nd, self.fabric, self.log, SwitchDataModel).collection
             # Build diff: deletes (from self.sent) + adds (from self.sent_adds)
-            diff_list: List[Dict[str, Any]] = []
+            diff_list: list[dict[str, Any]] = []
             for sw in self.sent:
                 if not sw.fabric_management_ip:
                     continue
@@ -2715,7 +2713,7 @@ class NDSwitchResourceModule:
                 except Exception as exc:
                     self.log.warning("Could not convert added config for diff: %s", exc)
             output_level = self.module.params.get("output_level", "normal")
-            fmt_kwargs: Dict[str, Any] = {
+            fmt_kwargs: dict[str, Any] = {
                 "before": self._inventory_to_config_list(self.before),
                 "after": self._inventory_to_config_list(self.existing),
                 "diff": diff_list,
@@ -2851,7 +2849,7 @@ class NDSwitchResourceModule:
     def _check_idempotent_sync(
         self,
         plan: "SwitchPlan",
-        existing_by_ip: Dict[str, "SwitchDataModel"],
+        existing_by_ip: dict[str, "SwitchDataModel"],
     ) -> bool:
         """Return True if any non-preprovision idempotent switch is out of config-sync.
 
@@ -2885,7 +2883,7 @@ class NDSwitchResourceModule:
     def _handle_merged_state(
         self,
         plan: "SwitchPlan",
-        discovered_data: Dict[str, Dict[str, Any]],
+        discovered_data: dict[str, dict[str, Any]],
     ) -> None:
         """Handle merged-state workflows for all operation types.
 
@@ -2986,7 +2984,7 @@ class NDSwitchResourceModule:
 
         # --- Normal + normal_readd bulk_add (one combined pass) -----------------
         add_configs = plan.to_add + plan.normal_readd
-        switch_actions: List[Tuple[str, SwitchConfigModel]] = []
+        switch_actions: list[tuple[str, SwitchConfigModel]] = []
         have_migration = bool(plan.migration_mode)
 
         if add_configs and discovered_data:
@@ -3058,7 +3056,7 @@ class NDSwitchResourceModule:
     def _handle_overridden_state(
         self,
         plan: "SwitchPlan",
-        discovered_data: Dict[str, Dict[str, Any]],
+        discovered_data: dict[str, dict[str, Any]],
     ) -> None:
         """Handle overridden-state reconciliation for the fabric.
 
@@ -3134,7 +3132,7 @@ class NDSwitchResourceModule:
         #   a) Orphans (in fabric, not in any config)
         #   b) POAP/preprovision mismatches (to_delete_existing from compute_changes)
         #   c) Normal switches that need field updates (to_update)
-        switches_to_delete: List[SwitchDataModel] = list(plan.to_delete)
+        switches_to_delete: list[SwitchDataModel] = list(plan.to_delete)
         for sw in plan.to_delete:
             self._log_operation("delete", sw.fabric_management_ip)
 
@@ -3176,7 +3174,7 @@ class NDSwitchResourceModule:
 
         # --- Phase 3: Combined add (normal to_add + to_update + normal_readd) ---
         add_configs = plan.to_add + plan.to_update + plan.normal_readd
-        switch_actions: List[Tuple[str, SwitchConfigModel]] = []
+        switch_actions: list[tuple[str, SwitchConfigModel]] = []
         have_migration = bool(plan.migration_mode)
 
         if add_configs and discovered_data:
@@ -3242,7 +3240,7 @@ class NDSwitchResourceModule:
     def _handle_replaced_state(
         self,
         plan: "SwitchPlan",
-        discovered_data: Dict[str, Any],
+        discovered_data: dict[str, Any],
     ) -> None:
         """Handle replaced-state reconciliation for the fabric.
 
@@ -3316,7 +3314,7 @@ class NDSwitchResourceModule:
         # Two sources of deletions (orphans intentionally excluded):
         #   a) POAP/preprovision mismatches (to_delete_existing from compute_changes)
         #   b) Normal switches that need field updates (to_update)
-        switches_to_delete: List[SwitchDataModel] = []
+        switches_to_delete: list[SwitchDataModel] = []
 
         for sw in plan.to_delete_existing:
             self.log.info("Deleting POAP/preprovision mismatch %s before re-add", sw.fabric_management_ip)
@@ -3354,7 +3352,7 @@ class NDSwitchResourceModule:
 
         # --- Phase 3: Combined add (normal to_add + to_update + normal_readd) ---
         add_configs = plan.to_add + plan.to_update + plan.normal_readd
-        switch_actions: List[Tuple[str, SwitchConfigModel]] = []
+        switch_actions: list[tuple[str, SwitchConfigModel]] = []
         have_migration = bool(plan.migration_mode)
 
         if add_configs and discovered_data:
@@ -3448,7 +3446,7 @@ class NDSwitchResourceModule:
 
     def _handle_deleted_state(
         self,
-        proposed_config: Optional[List[SwitchConfigModel]] = None,
+        proposed_config: list[SwitchConfigModel] | None = None,
     ) -> None:
         """Handle deleted-state switch removal.
 
@@ -3477,7 +3475,7 @@ class NDSwitchResourceModule:
                 self._log_operation("delete", sw.fabric_management_ip)
         else:
             existing_by_ip = self.inventory.by_ip()
-            switches_to_delete: List[SwitchDataModel] = []
+            switches_to_delete: list[SwitchDataModel] = []
             for cfg in proposed_config:
                 existing_sw = existing_by_ip.get(cfg.seed_ip)
                 if not existing_sw:

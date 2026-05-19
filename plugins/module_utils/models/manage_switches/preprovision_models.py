@@ -9,11 +9,9 @@
 Based on OpenAPI schema for Nexus Dashboard Manage APIs v1.1.332.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
-
-from typing import Any, Dict, List, Optional, ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -39,9 +37,9 @@ class PreProvisionSwitchModel(NDBaseModel):
     Path: POST /fabrics/{fabricName}/switchActions/preProvision
     """
 
-    identifiers: ClassVar[List[str]] = ["serial_number"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
-    exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
+    identifiers: ClassVar[list[str]] = ["serial_number"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    exclude_from_diff: ClassVar[list[str]] = ["password", "discovery_password"]
 
     # --- preProvisionSpecific fields (required) ---
     serial_number: str = Field(
@@ -56,7 +54,7 @@ class PreProvisionSwitchModel(NDBaseModel):
     )
 
     # --- preProvisionSpecific fields (optional) ---
-    dhcp_bootstrap_ip: Optional[str] = Field(
+    dhcp_bootstrap_ip: str | None = Field(
         default=None,
         alias="dhcpBootstrapIp",
         description="Used for device day-0 bring-up when using inband reachability",
@@ -81,17 +79,17 @@ class PreProvisionSwitchModel(NDBaseModel):
     )
 
     # --- bootstrapBase fields (optional) ---
-    image_policy: Optional[str] = Field(
+    image_policy: str | None = Field(
         default=None,
         alias="imagePolicy",
         description="Image policy associated with the switch during pre-provision",
     )
-    switch_role: Optional[SwitchRole] = Field(
+    switch_role: SwitchRole | None = Field(
         default=None,
         alias="switchRole",
         description="Role to assign to the switch",
     )
-    data: Optional[Dict[str, Any]] = Field(
+    data: dict[str, Any] | None = Field(
         default=None,
         description="Pre-provision configuration data block (gatewayIpMask, models)",
     )
@@ -106,12 +104,12 @@ class PreProvisionSwitchModel(NDBaseModel):
     )
 
     # --- bootstrapCredential fields (optional) ---
-    discovery_username: Optional[str] = Field(
+    discovery_username: str | None = Field(
         default=None,
         alias="discoveryUsername",
         description="Username for switch discovery post pre-provision",
     )
-    discovery_password: Optional[str] = Field(
+    discovery_password: str | None = Field(
         default=None,
         alias="discoveryPassword",
         description="Password for switch discovery post pre-provision",
@@ -121,7 +119,7 @@ class PreProvisionSwitchModel(NDBaseModel):
         alias="remoteCredentialStore",
         description="Type of credential store for discovery credentials",
     )
-    remote_credential_store_key: Optional[str] = Field(
+    remote_credential_store_key: str | None = Field(
         default=None,
         alias="remoteCredentialStoreKey",
         description="Remote credential store key for discovery credentials",
@@ -131,7 +129,7 @@ class PreProvisionSwitchModel(NDBaseModel):
 
     @field_validator("ip", "dhcp_bootstrap_ip", mode="before")
     @classmethod
-    def validate_ip(cls, v: Optional[str]) -> Optional[str]:
+    def validate_ip(cls, v: str | None) -> str | None:
         return SwitchValidators.validate_ip_address(v)
 
     @field_validator("hostname", mode="before")
@@ -158,12 +156,12 @@ class PreProvisionSwitchModel(NDBaseModel):
         """Derive useNewCredentials from discoveryUsername and discoveryPassword."""
         return bool(self.discovery_username and self.discovery_password)
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format matching preProvision spec."""
         return self.model_dump(by_alias=True, exclude_none=True)
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> "PreProvisionSwitchModel":
+    def from_response(cls, response: dict[str, Any]) -> "PreProvisionSwitchModel":
         """Create model instance from API response."""
         return cls.model_validate(response)
 
@@ -175,13 +173,13 @@ class PreProvisionSwitchesRequestModel(NDBaseModel):
     Path: POST /fabrics/{fabricName}/switchActions/preProvision
     """
 
-    identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
-    switches: List[PreProvisionSwitchModel] = Field(
+    identifiers: ClassVar[list[str]] = []
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
+    switches: list[PreProvisionSwitchModel] = Field(
         description="PowerOn Auto Provisioning switches",
     )
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
         return {"switches": [s.to_payload() for s in self.switches]}
 

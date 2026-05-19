@@ -17,14 +17,11 @@ Endpoints covered:
 - Rediscover switches
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-# pylint: disable=invalid-name
-__metaclass__ = type
 __author__ = "Akshayanat C S"
-# pylint: enable=invalid-name
 
-from typing import Literal, Optional
+from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
@@ -70,7 +67,7 @@ class SwitchActionsRemoveEndpointParams(TicketIdMixin, EndpointQueryParams):
     ```
     """
 
-    force: Optional[bool] = Field(default=None, description="Force removal of switches")
+    force: bool | None = Field(default=None, description="Force removal of switches")
 
 
 class SwitchActionsTicketEndpointParams(TicketIdMixin, EndpointQueryParams):

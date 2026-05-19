@@ -6,13 +6,10 @@
 
 """Common validators for switch-related fields."""
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import re
 from ipaddress import ip_address, ip_network
-from typing import Optional
 
 
 class SwitchValidators:
@@ -37,7 +34,7 @@ class SwitchValidators:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def validate_ip_address(v: Optional[str]) -> Optional[str]:
+    def validate_ip_address(v: str | None) -> str | None:
         """Validate IPv4 or IPv6 address."""
         if v is None:
             return None
@@ -51,7 +48,7 @@ class SwitchValidators:
             raise ValueError(f"Invalid IP address format: {v}")
 
     @staticmethod
-    def validate_cidr(v: Optional[str]) -> Optional[str]:
+    def validate_cidr(v: str | None) -> str | None:
         """Validate CIDR notation (IP/mask)."""
         if v is None:
             return None
@@ -67,7 +64,7 @@ class SwitchValidators:
             raise ValueError(f"Invalid CIDR format: {v}")
 
     @staticmethod
-    def validate_serial_number(v: Optional[str]) -> Optional[str]:
+    def validate_serial_number(v: str | None) -> str | None:
         """Validate switch serial number format."""
         if v is None:
             return None
@@ -80,7 +77,7 @@ class SwitchValidators:
         return v
 
     @staticmethod
-    def validate_hostname(v: Optional[str]) -> Optional[str]:
+    def validate_hostname(v: str | None) -> str | None:
         """Validate hostname format."""
         if v is None:
             return None
@@ -98,7 +95,7 @@ class SwitchValidators:
         return v
 
     @staticmethod
-    def validate_mac_address(v: Optional[str]) -> Optional[str]:
+    def validate_mac_address(v: str | None) -> str | None:
         """Validate MAC address format."""
         if v is None:
             return None
@@ -112,7 +109,7 @@ class SwitchValidators:
         return v
 
     @staticmethod
-    def validate_vpc_domain(v: Optional[int]) -> Optional[int]:
+    def validate_vpc_domain(v: int | None) -> int | None:
         """Validate VPC domain ID (1-1000)."""
         if v is None:
             return None
@@ -183,7 +180,7 @@ class SwitchValidators:
         return result
 
     @staticmethod
-    def validate_cidr_optional(v: Optional[str]) -> Optional[str]:
+    def validate_cidr_optional(v: str | None) -> str | None:
         """Validate an optional CIDR string; pass through ``None`` unchanged.
 
         Args:
@@ -203,7 +200,7 @@ class SwitchValidators:
         return result
 
     @staticmethod
-    def check_discovery_credentials_pair(username: Optional[str], password: Optional[str]) -> None:
+    def check_discovery_credentials_pair(username: str | None, password: str | None) -> None:
         """Enforce mutual-presence of discovery credentials.
 
         Both ``discovery_username`` and ``discovery_password`` must either be

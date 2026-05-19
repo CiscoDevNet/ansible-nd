@@ -9,11 +9,9 @@
 Based on OpenAPI schema for Nexus Dashboard Manage APIs v1.1.332.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
-
-from typing import List, Literal, Optional, ClassVar
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -35,22 +33,22 @@ class SwitchCredentialsRequestModel(NDBaseModel):
     Path: POST /api/v1/manage/credentials/switches
     """
 
-    identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
+    identifiers: ClassVar[list[str]] = []
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
-    switch_ids: List[str] = Field(
+    switch_ids: list[str] = Field(
         alias="switchIds",
         min_length=1,
         description="List of switch serial numbers",
     )
-    switch_username: Optional[str] = Field(default=None, alias="switchUsername", description="Switch username")
-    switch_password: Optional[str] = Field(default=None, alias="switchPassword", description="Switch password")
-    remote_credential_store_key: Optional[str] = Field(
+    switch_username: str | None = Field(default=None, alias="switchUsername", description="Switch username")
+    switch_password: str | None = Field(default=None, alias="switchPassword", description="Switch password")
+    remote_credential_store_key: str | None = Field(
         default=None,
         alias="remoteCredentialStoreKey",
         description="Remote credential store key (e.g. CyberArk path)",
     )
-    remote_credential_store_type: Optional[str] = Field(
+    remote_credential_store_type: str | None = Field(
         default=None,
         alias="remoteCredentialStoreType",
         description="Remote credential store type (e.g. 'cyberark')",
@@ -58,7 +56,7 @@ class SwitchCredentialsRequestModel(NDBaseModel):
 
     @field_validator("switch_ids", mode="before")
     @classmethod
-    def validate_switch_ids(cls, v: List[str]) -> List[str]:
+    def validate_switch_ids(cls, v: list[str]) -> list[str]:
         """Validate all switch IDs."""
         if not v:
             raise ValueError("At least one switch ID is required")
@@ -91,8 +89,8 @@ class ChangeSwitchSerialNumberRequestModel(NDBaseModel):
     Path: POST /fabrics/{fabricName}/switches/{switchId}/actions/changeSwitchSerialNumber
     """
 
-    identifiers: ClassVar[List[str]] = ["new_switch_id"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifiers: ClassVar[list[str]] = ["new_switch_id"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
     new_switch_id: str = Field(alias="newSwitchId", description="New switchId")
 
     @field_validator("new_switch_id", mode="before")

@@ -9,12 +9,9 @@
 Extracted from OpenAPI schema (manage.json) for Nexus Dashboard Manage APIs v1.1.332.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 from enum import Enum
-from typing import List, Union
 
 # =============================================================================
 # ENUMS - Extracted from OpenAPI Schema components/schemas
@@ -48,7 +45,7 @@ class SwitchRole(str, Enum):
     NEIGHBOR = "neighbor"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         """Return list of valid choices."""
         return [e.value for e in cls]
 
@@ -74,7 +71,7 @@ class SwitchRole(str, Enum):
             raise ValueError(f"Invalid switch role: {value}. Valid options: {cls.choices()}")
 
     @classmethod
-    def normalize(cls, value: Union[str, "SwitchRole", None]) -> "SwitchRole":
+    def normalize(cls, value: str | "SwitchRole" | None) -> "SwitchRole":
         """
         Normalize input to enum value (case-insensitive).
         Accepts: LEAF, leaf, border_gateway, borderGateway, etc.
@@ -114,7 +111,7 @@ class SystemMode(str, Enum):
     NOT_APPLICABLE = "notApplicable"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -135,11 +132,11 @@ class PlatformType(str, Enum):
     APIC = "apic"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
     @classmethod
-    def normalize(cls, value: Union[str, "PlatformType", None]) -> "PlatformType":
+    def normalize(cls, value: str | "PlatformType" | None) -> "PlatformType":
         """
         Normalize input to enum value (case-insensitive).
         Accepts: NX_OS, nx-os, NX-OS, ios_xe, ios-xe, etc.
@@ -172,11 +169,11 @@ class ShallowDiscoveryPlatformType(str, Enum):
     SONIC = "sonic"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
     @classmethod
-    def normalize(cls, value: Union[str, "ShallowDiscoveryPlatformType", None]) -> "ShallowDiscoveryPlatformType":
+    def normalize(cls, value: str | "ShallowDiscoveryPlatformType" | None) -> "ShallowDiscoveryPlatformType":
         """
         Normalize input to enum value (case-insensitive).
         Accepts: NX_OS, nx-os, NX-OS, ios_xe, ios-xe, etc.
@@ -221,11 +218,11 @@ class SnmpV3AuthProtocol(str, Enum):
     SHA_512_AES_256 = "sha-512-aes-256"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
     @classmethod
-    def normalize(cls, value: Union[str, "SnmpV3AuthProtocol", None]) -> "SnmpV3AuthProtocol":
+    def normalize(cls, value: str | "SnmpV3AuthProtocol" | None) -> "SnmpV3AuthProtocol":
         """
         Normalize input to enum value (case-insensitive).
         Accepts: MD5, md5, MD5_DES, md5-des, etc.
@@ -264,7 +261,7 @@ class DiscoveryStatus(str, Enum):
     NOT_APPLICABLE = "notApplicable"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -287,7 +284,7 @@ class ConfigSyncStatus(str, Enum):
     SUCCESS = "success"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -305,7 +302,7 @@ class VpcRole(str, Enum):
     NONE_ESTABLISHED = "noneEstablished"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -320,7 +317,7 @@ class RemoteCredentialStore(str, Enum):
     CYBERARK = "cyberark"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -340,7 +337,7 @@ class AnomalyLevel(str, Enum):
     UNKNOWN = "unknown"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -360,7 +357,7 @@ class AdvisoryLevel(str, Enum):
     NOT_APPLICABLE = "notApplicable"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 

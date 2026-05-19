@@ -9,14 +9,12 @@ payload construction, credential grouping, bootstrap queries, and
 multi-phase switch wait utilities.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import logging
 import time
 from copy import deepcopy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_bootstrap import (
     EpManageFabricsBootstrapGet,
@@ -40,7 +38,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.utils import (
 # =========================================================================
 
 
-def mask_password(payload: Dict[str, Any]) -> Dict[str, Any]:
+def mask_password(payload: dict[str, Any]) -> dict[str, Any]:
     """Return a deep copy of *payload* with password fields masked.
 
     Useful for safe logging of API payloads that contain credentials.
@@ -64,7 +62,7 @@ def mask_password(payload: Dict[str, Any]) -> Dict[str, Any]:
 class PayloadUtils:
     """Stateless helper for building ND Switch Resource API request payloads."""
 
-    def __init__(self, logger: Optional[logging.Logger] = None):
+    def __init__(self, logger: logging.Logger | None = None):
         """Initialize PayloadUtils.
 
         Args:
@@ -74,10 +72,10 @@ class PayloadUtils:
 
     def build_credentials_payload(
         self,
-        serial_numbers: List[str],
+        serial_numbers: list[str],
         username: str,
         password: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build payload for saving switch credentials.
 
         Args:
@@ -96,8 +94,8 @@ class PayloadUtils:
 
     def build_switch_ids_payload(
         self,
-        serial_numbers: List[str],
-    ) -> Dict[str, Any]:
+        serial_numbers: list[str],
+    ) -> dict[str, Any]:
         """Build payload with switch IDs for remove / batch operations.
 
         Args:
@@ -116,8 +114,8 @@ class PayloadUtils:
 
 def get_switch_field(
     switch,
-    field_names: List[str],
-) -> Optional[Any]:
+    field_names: list[str],
+) -> Any | None:
     """Extract a field value from a switch config, trying multiple names.
 
     Supports Pydantic models and plain dicts with both snake_case and
@@ -171,7 +169,7 @@ def determine_operation_type(switch) -> str:
 def group_switches_by_credentials(
     switches,
     log: logging.Logger,
-) -> Dict[Tuple, list]:
+) -> dict[Tuple, list]:
     """Group switches by shared credentials for bulk API operations.
 
     Args:
@@ -183,7 +181,7 @@ def group_switches_by_credentials(
         platform_type, preserve_config)`` tuple to the list of switches
         sharing those credentials.
     """
-    groups: Dict[Tuple, list] = {}
+    groups: dict[Tuple, list] = {}
 
     for switch in switches:
         password_hash = hash(switch.password)
@@ -224,7 +222,7 @@ def query_bootstrap_switches(
     nd,
     fabric: str,
     log: logging.Logger,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """GET switches currently in the bootstrap (POAP / PnP) loop.
 
     Args:
@@ -264,8 +262,8 @@ def query_bootstrap_switches(
 
 
 def build_bootstrap_index(
-    bootstrap_switches: List[Dict[str, Any]],
-) -> Dict[str, Dict[str, Any]]:
+    bootstrap_switches: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
     """Build a serial-number-keyed index from bootstrap API data.
 
     Args:
@@ -277,7 +275,7 @@ def build_bootstrap_index(
     return {sw.get("serialNumber", sw.get("serial_number", "")): sw for sw in bootstrap_switches}
 
 
-def build_poap_data_block(poap_cfg) -> Optional[Dict[str, Any]]:
+def build_poap_data_block(poap_cfg) -> dict[str, Any] | None:
     """Build optional data block for bootstrap and pre-provision models.
 
     Args:
@@ -288,7 +286,7 @@ def build_poap_data_block(poap_cfg) -> Optional[Dict[str, Any]]:
     """
     if not poap_cfg.config_data:
         return None
-    data_block: Dict[str, Any] = {}
+    data_block: dict[str, Any] = {}
     gateway = poap_cfg.config_data.gateway
     if gateway:
         data_block["gatewayIpMask"] = gateway
@@ -350,10 +348,10 @@ class SwitchWaitUtils:
         self,
         nd_module,
         fabric: str,
-        logger: Optional[logging.Logger] = None,
-        max_attempts: Optional[int] = None,
-        wait_interval: Optional[int] = None,
-        fabric_utils: Optional["FabricUtils"] = None,
+        logger: logging.Logger | None = None,
+        max_attempts: int | None = None,
+        wait_interval: int | None = None,
+        fabric_utils: "FabricUtils" | None = None,
     ):
         """Initialize SwitchWaitUtils.
 
@@ -384,7 +382,7 @@ class SwitchWaitUtils:
         self.ep_rediscover.fabric_name = fabric
 
         # Cached greenfield flag
-        self._greenfield_debug_enabled: Optional[bool] = None
+        self._greenfield_debug_enabled: bool | None = None
 
     # =====================================================================
     # Public API – Wait Methods
@@ -392,7 +390,7 @@ class SwitchWaitUtils:
 
     def wait_for_switch_manageable(
         self,
-        serial_numbers: List[str],
+        serial_numbers: list[str],
         all_preserve_config: bool = False,
         skip_greenfield_check: bool = False,
     ) -> bool:
@@ -442,7 +440,7 @@ class SwitchWaitUtils:
 
     def wait_for_rma_switch_ready(
         self,
-        serial_numbers: List[str],
+        serial_numbers: list[str],
     ) -> bool:
         """Wait for RMA replacement switches to become manageable.
 
@@ -476,9 +474,9 @@ class SwitchWaitUtils:
     def wait_for_discovery(
         self,
         seed_ip: str,
-        max_attempts: Optional[int] = None,
-        wait_interval: Optional[int] = None,
-    ) -> Optional[Dict[str, Any]]:
+        max_attempts: int | None = None,
+        wait_interval: int | None = None,
+    ) -> dict[str, Any] | None:
         """Poll until a single switch discovery completes.
 
         Args:
@@ -515,7 +513,7 @@ class SwitchWaitUtils:
     # Phase Helpers – System Mode
     # =====================================================================
 
-    def _wait_for_system_mode(self, serial_numbers: List[str]) -> bool:
+    def _wait_for_system_mode(self, serial_numbers: list[str]) -> bool:
         """Poll until all switches transition from migration mode to normal mode.
 
         Args:
@@ -548,10 +546,10 @@ class SwitchWaitUtils:
 
     def _poll_system_mode(
         self,
-        serial_numbers: List[str],
+        serial_numbers: list[str],
         target_mode: str,
         expect_match: bool,
-    ) -> Optional[List[str]]:
+    ) -> list[str] | None:
         """Poll until no switches remain in (or outside) ``target_mode``.
 
         Args:
@@ -601,11 +599,11 @@ class SwitchWaitUtils:
 
     @staticmethod
     def _filter_by_system_mode(
-        serial_numbers: List[str],
-        switch_data: List[Dict[str, Any]],
+        serial_numbers: list[str],
+        switch_data: list[dict[str, Any]],
         target_mode: str,
         expect_match: bool,
-    ) -> List[str]:
+    ) -> list[str]:
         """Return serial numbers that have NOT yet satisfied the mode check.
 
         Args:
@@ -620,7 +618,7 @@ class SwitchWaitUtils:
             Serial numbers still waiting.
         """
         switch_index = {sw.get("serialNumber"): sw for sw in switch_data}
-        remaining: List[str] = []
+        remaining: list[str] = []
         for sn in serial_numbers:
             sw = switch_index.get(sn)
             if sw is None:
@@ -636,10 +634,10 @@ class SwitchWaitUtils:
 
     @staticmethod
     def _filter_by_discovery_status(
-        serial_numbers: List[str],
-        switch_data: List[Dict[str, Any]],
+        serial_numbers: list[str],
+        switch_data: list[dict[str, Any]],
         target_state: str,
-    ) -> List[str]:
+    ) -> list[str]:
         """Return serial numbers not yet at ``target_state``.
 
         Args:
@@ -651,7 +649,7 @@ class SwitchWaitUtils:
             Serial numbers still waiting.
         """
         switch_index = {sw.get("serialNumber"): sw for sw in switch_data}
-        remaining: List[str] = []
+        remaining: list[str] = []
         for sn in serial_numbers:
             sw = switch_index.get(sn)
             if sw is None:
@@ -668,7 +666,7 @@ class SwitchWaitUtils:
 
     def _wait_for_discovery_state(
         self,
-        serial_numbers: List[str],
+        serial_numbers: list[str],
         target_state: str,
     ) -> bool:
         """Poll until all switches reach the given discovery status.
@@ -725,7 +723,7 @@ class SwitchWaitUtils:
 
     def _wait_for_switches_in_fabric(
         self,
-        serial_numbers: List[str],
+        serial_numbers: list[str],
     ) -> bool:
         """Poll until all serial numbers appear in the fabric inventory.
 
@@ -781,7 +779,7 @@ class SwitchWaitUtils:
 
     def _fetch_switch_data(
         self,
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> Optional[list[dict[str, Any]]]:
         """GET current switch data for the fabric.
 
         Returns:
@@ -801,7 +799,7 @@ class SwitchWaitUtils:
             self.log.error("Failed to fetch switch data: %s", e)
             return None
 
-    def _trigger_rediscovery(self, serial_numbers: List[str]) -> None:
+    def _trigger_rediscovery(self, serial_numbers: list[str]) -> None:
         """POST a rediscovery request for the given switches.
 
         Args:
@@ -824,7 +822,7 @@ class SwitchWaitUtils:
     def _get_discovery_status(
         self,
         seed_ip: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """GET discovery status for a single switch by IP.
 
         Args:

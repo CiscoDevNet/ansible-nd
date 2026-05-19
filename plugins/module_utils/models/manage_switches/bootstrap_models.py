@@ -9,11 +9,9 @@
 Based on OpenAPI schema for Nexus Dashboard Manage APIs v1.1.332.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
-
-from typing import Any, Dict, List, Optional, ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -41,13 +39,13 @@ class BootstrapBaseData(NDNestedModel):
     Device-reported data embedded in a bootstrap API entry.
     """
 
-    identifiers: ClassVar[List[str]] = []
-    gateway_ip_mask: Optional[str] = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
-    models: Optional[List[str]] = Field(default=None, description="Supported models for switch")
+    identifiers: ClassVar[list[str]] = []
+    gateway_ip_mask: str | None = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
+    models: list[str] | None = Field(default=None, description="Supported models for switch")
 
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
-    def validate_gateway(cls, v: Optional[str]) -> Optional[str]:
+    def validate_gateway(cls, v: str | None) -> str | None:
         return SwitchValidators.validate_cidr_optional(v)
 
 
@@ -56,26 +54,26 @@ class BootstrapBaseModel(NDBaseModel):
     Common hardware and policy properties shared across bootstrap, pre-provision, and RMA operations.
     """
 
-    identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
-    gateway_ip_mask: Optional[str] = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
-    model: Optional[str] = Field(default=None, description="Model of the bootstrap switch")
-    software_version: Optional[str] = Field(
+    identifiers: ClassVar[list[str]] = []
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
+    gateway_ip_mask: str | None = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
+    model: str | None = Field(default=None, description="Model of the bootstrap switch")
+    software_version: str | None = Field(
         default=None,
         alias="softwareVersion",
         description="Software version of the bootstrap switch",
     )
-    image_policy: Optional[str] = Field(
+    image_policy: str | None = Field(
         default=None,
         alias="imagePolicy",
         description="Image policy associated with the switch during bootstrap",
     )
-    switch_role: Optional[SwitchRole] = Field(default=None, alias="switchRole")
-    data: Optional[BootstrapBaseData] = Field(default=None, description="Additional bootstrap data")
+    switch_role: SwitchRole | None = Field(default=None, alias="switchRole")
+    data: BootstrapBaseData | None = Field(default=None, description="Additional bootstrap data")
 
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
-    def validate_gateway(cls, v: Optional[str]) -> Optional[str]:
+    def validate_gateway(cls, v: str | None) -> str | None:
         return SwitchValidators.validate_cidr_optional(v)
 
 
@@ -87,9 +85,9 @@ class BootstrapCredentialModel(NDBaseModel):
     post-bootstrap switch discovery instead of the admin password.
     """
 
-    identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
-    exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
+    identifiers: ClassVar[list[str]] = []
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
+    exclude_from_diff: ClassVar[list[str]] = ["password", "discovery_password"]
     password: str = Field(description="Switch password to be set during bootstrap for admin user")
     discovery_auth_protocol: SnmpV3AuthProtocol = Field(alias="discoveryAuthProtocol")
     use_new_credentials: bool = Field(
@@ -97,12 +95,12 @@ class BootstrapCredentialModel(NDBaseModel):
         alias="useNewCredentials",
         description="If True, use discoveryUsername and discoveryPassword",
     )
-    discovery_username: Optional[str] = Field(
+    discovery_username: str | None = Field(
         default=None,
         alias="discoveryUsername",
         description="Username to be used for switch discovery post bootstrap",
     )
-    discovery_password: Optional[str] = Field(
+    discovery_password: str | None = Field(
         default=None,
         alias="discoveryPassword",
         description="Password associated with the corresponding switch discovery user",
@@ -112,7 +110,7 @@ class BootstrapCredentialModel(NDBaseModel):
         alias="remoteCredentialStore",
         description="Type of credential store for discovery credentials",
     )
-    remote_credential_store_key: Optional[str] = Field(
+    remote_credential_store_key: str | None = Field(
         default=None,
         alias="remoteCredentialStoreKey",
         description="Remote credential store key for discovery credentials",
@@ -138,8 +136,8 @@ class BootstrapImportSpecificModel(NDBaseModel):
     Switch-identifying fields returned by the bootstrap GET API prior to import.
     """
 
-    identifiers: ClassVar[List[str]] = ["serial_number"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifiers: ClassVar[list[str]] = ["serial_number"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
     hostname: str = Field(description="Hostname of the bootstrap switch")
     ip: str = Field(description="IP address of the bootstrap switch")
     serial_number: str = Field(alias="serialNumber", description="Serial number of the bootstrap switch")
@@ -149,7 +147,7 @@ class BootstrapImportSpecificModel(NDBaseModel):
     )
     public_key: str = Field(alias="publicKey", description="Public Key")
     finger_print: str = Field(alias="fingerPrint", description="Fingerprint")
-    dhcp_bootstrap_ip: Optional[str] = Field(
+    dhcp_bootstrap_ip: str | None = Field(
         default=None,
         alias="dhcpBootstrapIp",
         description="This is used for device day-0 bring-up when using inband reachability",
@@ -163,7 +161,7 @@ class BootstrapImportSpecificModel(NDBaseModel):
 
     @field_validator("ip", "dhcp_bootstrap_ip", mode="before")
     @classmethod
-    def validate_ip(cls, v: Optional[str]) -> Optional[str]:
+    def validate_ip(cls, v: str | None) -> str | None:
         return SwitchValidators.validate_ip_address(v)
 
     @field_validator("serial_number", mode="before")
@@ -179,13 +177,13 @@ class BootstrapImportSwitchModel(NDBaseModel):
     Path: POST /fabrics/{fabricName}/switchActions/importBootstrap
     """
 
-    identifiers: ClassVar[List[str]] = ["serial_number"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
-    exclude_from_diff: ClassVar[List[str]] = ["password", "discovery_password"]
+    identifiers: ClassVar[list[str]] = ["serial_number"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
+    exclude_from_diff: ClassVar[list[str]] = ["password", "discovery_password"]
 
     serial_number: str = Field(alias="serialNumber", description="Serial number of the bootstrap switch")
-    model: Optional[str] = Field(default=None, description="Model of the bootstrap switch")
-    software_version: Optional[str] = Field(
+    model: str | None = Field(default=None, description="Model of the bootstrap switch")
+    software_version: str | None = Field(
         default=None,
         alias="softwareVersion",
         description="Software version of the bootstrap switch",
@@ -194,19 +192,19 @@ class BootstrapImportSwitchModel(NDBaseModel):
     ip: str = Field(description="IP address of the bootstrap switch")
     password: str = Field(description="Switch password to be set during bootstrap for admin user")
     discovery_auth_protocol: SnmpV3AuthProtocol = Field(alias="discoveryAuthProtocol")
-    discovery_username: Optional[str] = Field(default=None, alias="discoveryUsername")
-    discovery_password: Optional[str] = Field(default=None, alias="discoveryPassword")
+    discovery_username: str | None = Field(default=None, alias="discoveryUsername")
+    discovery_password: str | None = Field(default=None, alias="discoveryPassword")
     remote_credential_store: RemoteCredentialStore = Field(
         default=RemoteCredentialStore.LOCAL,
         alias="remoteCredentialStore",
         description="Type of credential store for discovery credentials",
     )
-    remote_credential_store_key: Optional[str] = Field(
+    remote_credential_store_key: str | None = Field(
         default=None,
         alias="remoteCredentialStoreKey",
         description="Remote credential store key for discovery credentials",
     )
-    data: Optional[Dict[str, Any]] = Field(
+    data: dict[str, Any] | None = Field(
         default=None,
         description="Bootstrap configuration data block (gatewayIpMask, models)",
     )
@@ -226,13 +224,13 @@ class BootstrapImportSwitchModel(NDBaseModel):
         description="Whether to re-add an already-seen switch",
     )
     in_inventory: bool = Field(default=False, alias="inInventory")
-    image_policy: Optional[str] = Field(
+    image_policy: str | None = Field(
         default=None,
         alias="imagePolicy",
         description="Image policy associated with the switch during bootstrap",
     )
-    switch_role: Optional[SwitchRole] = Field(default=None, alias="switchRole")
-    gateway_ip_mask: Optional[str] = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
+    switch_role: SwitchRole | None = Field(default=None, alias="switchRole")
+    gateway_ip_mask: str | None = Field(default=None, alias="gatewayIpMask", description="Gateway IP address with mask")
 
     @field_validator("ip", mode="before")
     @classmethod
@@ -255,12 +253,12 @@ class BootstrapImportSwitchModel(NDBaseModel):
         """Derive useNewCredentials from discoveryUsername and discoveryPassword."""
         return bool(self.discovery_username and self.discovery_password)
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format matching importBootstrap spec."""
         return self.model_dump(by_alias=True, exclude_none=True)
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any]) -> "BootstrapImportSwitchModel":
+    def from_response(cls, response: dict[str, Any]) -> "BootstrapImportSwitchModel":
         """Create model instance from API response."""
         return cls.model_validate(response)
 
@@ -272,11 +270,11 @@ class ImportBootstrapSwitchesRequestModel(NDBaseModel):
     Path: POST /fabrics/{fabricName}/switchActions/importBootstrap
     """
 
-    identifiers: ClassVar[List[str]] = []
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
-    switches: List[BootstrapImportSwitchModel] = Field(description="PowerOn Auto Provisioning switches")
+    identifiers: ClassVar[list[str]] = []
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
+    switches: list[BootstrapImportSwitchModel] = Field(description="PowerOn Auto Provisioning switches")
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
         return {"switches": [s.to_payload() for s in self.switches]}
 

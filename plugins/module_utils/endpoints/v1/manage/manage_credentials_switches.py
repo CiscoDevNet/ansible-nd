@@ -16,12 +16,9 @@ Endpoints covered:
 - Validate switch credentials
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-# pylint: disable=invalid-name
-__metaclass__ = type
 __author__ = "Akshayanat C S"
-# pylint: enable=invalid-name
 
 from typing import Literal
 

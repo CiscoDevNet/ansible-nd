@@ -11,12 +11,12 @@ playbooks for normal switch addition, POAP, and RMA operations.
 
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import socket
 from ipaddress import ip_address
+from typing import Any, ClassVar, Literal
+
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
     ValidationInfo,
@@ -24,7 +24,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     field_validator,
     model_validator,
 )
-from typing import Any, Dict, List, Optional, ClassVar, Literal, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import (
@@ -48,9 +47,9 @@ class ConfigDataModel(NDNestedModel):
     Maps to config.poap.config_data and config.rma.config_data in the playbook.
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
-    models: List[str] = Field(
+    models: list[str] = Field(
         alias="models",
         min_length=1,
         description="List of model of modules in switch to Bootstrap/Pre-provision/RMA",
@@ -59,7 +58,7 @@ class ConfigDataModel(NDNestedModel):
 
     @field_validator("models", mode="before")
     @classmethod
-    def validate_models_list(cls, v: Any) -> List[str]:
+    def validate_models_list(cls, v: Any) -> list[str]:
         """Validate models is a non-empty list of strings."""
         if v is None:
             raise ValueError("'models' is required in config_data. Provide a list of module model strings, e.g. models: [N9K-X9364v, N9K-vSUP]")
@@ -88,7 +87,7 @@ class POAPConfigModel(NDNestedModel):
     the user-provided value and a warning is logged.
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     # Mandatory
     serial_number: str = Field(
@@ -99,17 +98,17 @@ class POAPConfigModel(NDNestedModel):
     hostname: str = Field(description="Hostname for the switch during bootstrap")
 
     # Optional
-    discovery_username: Optional[str] = Field(
+    discovery_username: str | None = Field(
         default=None,
         alias="discoveryUsername",
         description="Username for device discovery during POAP",
     )
-    discovery_password: Optional[str] = Field(
+    discovery_password: str | None = Field(
         default=None,
         alias="discoveryPassword",
         description="Password for device discovery during POAP",
     )
-    image_policy: Optional[str] = Field(
+    image_policy: str | None = Field(
         default=None,
         alias="imagePolicy",
         description="Name of the image policy to be applied on switch",
@@ -143,7 +142,7 @@ class PreprovisionConfigModel(NDNestedModel):
     switch to pull these values from.
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     # Mandatory
     serial_number: str = Field(
@@ -160,17 +159,17 @@ class PreprovisionConfigModel(NDNestedModel):
     )
 
     # Optional
-    discovery_username: Optional[str] = Field(
+    discovery_username: str | None = Field(
         default=None,
         alias="discoveryUsername",
         description="Username for device discovery during pre-provision",
     )
-    discovery_password: Optional[str] = Field(
+    discovery_password: str | None = Field(
         default=None,
         alias="discoveryPassword",
         description="Password for device discovery during pre-provision",
     )
-    image_policy: Optional[str] = Field(
+    image_policy: str | None = Field(
         default=None,
         alias="imagePolicy",
         description="Image policy to apply during pre-provision",
@@ -207,7 +206,7 @@ class RMAConfigModel(NDNestedModel):
     or disconnected from the network before initiating the RMA operation.
     """
 
-    identifiers: ClassVar[List[str]] = []
+    identifiers: ClassVar[list[str]] = []
 
     # Required
     new_serial_number: str = Field(
@@ -217,17 +216,17 @@ class RMAConfigModel(NDNestedModel):
     )
 
     # Optional
-    image_policy: Optional[str] = Field(
+    image_policy: str | None = Field(
         default=None,
         alias="imagePolicy",
         description="Name of the image policy to be applied on the replacement switch",
     )
-    discovery_username: Optional[str] = Field(
+    discovery_username: str | None = Field(
         default=None,
         alias="discoveryUsername",
         description="Username for device discovery during RMA bootstrap",
     )
-    discovery_password: Optional[str] = Field(
+    discovery_password: str | None = Field(
         default=None,
         alias="discoveryPassword",
         description="Password for device discovery during RMA bootstrap",
@@ -255,11 +254,11 @@ class SwitchConfigModel(NDBaseModel):
     from the presence of poap, preprovision, and/or rma fields.
     """
 
-    identifiers: ClassVar[List[str]] = ["seed_ip"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifiers: ClassVar[list[str]] = ["seed_ip"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
 
     # Fields excluded from diff — only seed_ip + role are compared
-    exclude_from_diff: ClassVar[List[str]] = [
+    exclude_from_diff: ClassVar[list[str]] = [
         "username",
         "password",
         "auth_proto",
@@ -279,12 +278,12 @@ class SwitchConfigModel(NDBaseModel):
     )
 
     # Optional fields — required for merged/overridden, optional for query/deleted
-    username: Optional[str] = Field(
+    username: str | None = Field(
         default=None,
         alias="userName",
         description="Login username to the switch (required for merged/overridden states)",
     )
-    password: Optional[str] = Field(
+    password: str | None = Field(
         default=None,
         description="Login password to the switch (required for merged/overridden states)",
     )
@@ -294,7 +293,7 @@ class SwitchConfigModel(NDBaseModel):
         alias="authProto",
         description="Authentication protocol to use",
     )
-    role: Optional[SwitchRole] = Field(
+    role: SwitchRole | None = Field(
         default=None,
         description="Role to assign to the switch. None means not specified (uses controller default).",
     )
@@ -310,15 +309,15 @@ class SwitchConfigModel(NDBaseModel):
     )
 
     # POAP, Pre-provision and RMA configurations
-    poap: Optional[POAPConfigModel] = Field(
+    poap: POAPConfigModel | None = Field(
         default=None,
         description="Bootstrap POAP config (serial_number + hostname mandatory)",
     )
-    preprovision: Optional[PreprovisionConfigModel] = Field(
+    preprovision: PreprovisionConfigModel | None = Field(
         default=None,
         description="Pre-provision config (serial_number, model, version, hostname, config_data all mandatory)",
     )
-    rma: Optional[List[RMAConfigModel]] = Field(
+    rma: list[RMAConfigModel] | None = Field(
         default=None,
         description="RMA (Return Material Authorization) configurations for switch replacement",
     )
@@ -349,7 +348,7 @@ class SwitchConfigModel(NDBaseModel):
             return "rma"
         return "normal"
 
-    def to_config_dict(self) -> Dict[str, Any]:
+    def to_config_dict(self) -> dict[str, Any]:
         """Return the playbook config as a dict with all credentials stripped.
 
         Returns:
@@ -474,7 +473,7 @@ class SwitchConfigModel(NDBaseModel):
 
     @field_validator("rma", mode="before")
     @classmethod
-    def validate_rma_list_not_empty(cls, v: Optional[List]) -> Optional[List]:
+    def validate_rma_list_not_empty(cls, v: List | None) -> List | None:
         """Validate that if RMA list is provided, it is not empty."""
         if v is not None and len(v) == 0:
             raise ValueError("RMA list cannot be empty if provided")
@@ -482,13 +481,13 @@ class SwitchConfigModel(NDBaseModel):
 
     @field_validator("auth_proto", mode="before")
     @classmethod
-    def normalize_auth_proto(cls, v: Union[str, SnmpV3AuthProtocol, None]) -> SnmpV3AuthProtocol:
+    def normalize_auth_proto(cls, v: str | SnmpV3AuthProtocol | None) -> SnmpV3AuthProtocol:
         """Normalize auth_proto to handle case-insensitive input (MD5, md5, etc.)."""
         return SnmpV3AuthProtocol.normalize(v)
 
     @field_validator("role", mode="before")
     @classmethod
-    def normalize_role(cls, v: Union[str, SwitchRole, None]) -> Optional[SwitchRole]:
+    def normalize_role(cls, v: str | SwitchRole | None) -> SwitchRole | None:
         """Normalize role for case-insensitive and underscore-to-camelCase matching.
         Returns None when not specified (distinguishes from explicit 'leaf')."""
         if v is None:
@@ -497,11 +496,11 @@ class SwitchConfigModel(NDBaseModel):
 
     @field_validator("platform_type", mode="before")
     @classmethod
-    def normalize_platform_type(cls, v: Union[str, PlatformType, None]) -> PlatformType:
+    def normalize_platform_type(cls, v: str | PlatformType | None) -> PlatformType:
         """Normalize platform_type for case-insensitive matching (NX_OS, nx-os, etc.)."""
         return PlatformType.normalize(v)
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
         return self.model_dump(
             by_alias=True,
@@ -531,7 +530,7 @@ class SwitchConfigModel(NDBaseModel):
 
         platform_type = sw.additional_data.platform_type if sw.additional_data and hasattr(sw.additional_data, "platform_type") else None
 
-        data: Dict[str, Any] = {"seed_ip": sw.fabric_management_ip}
+        data: dict[str, Any] = {"seed_ip": sw.fabric_management_ip}
         if sw.switch_role is not None:
             data["role"] = sw.switch_role
         if platform_type is not None:
@@ -539,7 +538,7 @@ class SwitchConfigModel(NDBaseModel):
 
         return cls.model_validate(data)
 
-    def to_gathered_dict(self) -> Dict[str, Any]:
+    def to_gathered_dict(self) -> dict[str, Any]:
         """Return a config dict suitable for gathered output.
 
         platform_type is excluded (internal detail not needed by the user).
@@ -559,7 +558,7 @@ class SwitchConfigModel(NDBaseModel):
         return result
 
     @classmethod
-    def get_argument_spec(cls) -> Dict[str, Any]:
+    def get_argument_spec(cls) -> dict[str, Any]:
         """Return the Ansible argument spec for nd_manage_switches."""
         return dict(
             fabric=dict(type="str", required=True),
