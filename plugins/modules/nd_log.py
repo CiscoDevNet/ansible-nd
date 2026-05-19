@@ -11,7 +11,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_log
-version_added: "1.5.0"
+version_added: "1.6.0"
 short_description: Log messages from a playbook via the standard Python logging module.
 description:
 - Emit a log record under the C(nd) parent logger using the standard Python C(logging) module.
