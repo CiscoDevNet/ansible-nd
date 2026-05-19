@@ -2,9 +2,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-from typing import ClassVar, Dict, List, Literal, Optional
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -24,8 +24,8 @@ class AclModel(NDBaseModel):
 
     # --- Identifier Configuration ---
 
-    identifiers: ClassVar[Optional[List[str]]] = ["fabric_name", "name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "composite"
+    identifiers: ClassVar[list[str] | None] = ["fabric_name", "name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "composite"
 
     # --- Serialization Configuration ---
 
@@ -35,13 +35,13 @@ class AclModel(NDBaseModel):
 
     fabric_name: str = Field(alias="fabricName")
     name: str = Field(alias="name")
-    ip_version: Optional[str] = Field(default=None, alias="type")
-    description: Optional[str] = Field(default=None, alias="description")
+    ip_version: str | None = Field(default=None, alias="type")
+    description: str | None = Field(default=None, alias="description")
 
     # --- Argument Spec ---
 
     @classmethod
-    def get_argument_spec(cls) -> Dict:
+    def get_argument_spec(cls) -> dict:
         entry_spec = dict(
             sequence_number=dict(type="int", required=True),
             action=dict(type="str", required=True, choices=["permit", "deny", "remark"]),

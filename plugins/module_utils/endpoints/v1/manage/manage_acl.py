@@ -19,9 +19,9 @@ Endpoints:
   (DELETE /api/v1/manage/fabrics/{fabricName}/accessControlLists/{aclName})
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
@@ -39,9 +39,9 @@ class _EpManageAclBase(FabricNameMixin, NDEndpointBaseModel):
     Item-level endpoints also require an acl_name path parameter.
     """
 
-    acl_name: Optional[str] = Field(default=None, description="ACL name")
+    acl_name: str | None = Field(default=None, description="ACL name")
 
-    def set_identifiers(self, identifier: IdentifierKey = None):
+    def set_identifiers(self, identifier: IdentifierKey = None) -> None:
         if isinstance(identifier, tuple) and len(identifier) >= 2:
             self.fabric_name = identifier[0]
             self.acl_name = identifier[1]

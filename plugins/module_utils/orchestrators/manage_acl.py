@@ -2,11 +2,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
 import re
 from copy import deepcopy
-from typing import Any, ClassVar, Dict, List, Optional, Type
+from typing import Any, ClassVar, Type
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_acl import (
@@ -82,7 +82,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
     # Entry / ACL conversion helpers
     # -------------------------------------------------------------------------
 
-    def _entry_to_api(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+    def _entry_to_api(self, entry: dict[str, Any]) -> dict[str, Any]:
         """Convert an entry dict from Ansible snake_case to API camelCase."""
         api_entry = {}
         for key, value in entry.items():
@@ -94,7 +94,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
             api_entry[api_key] = value
         return api_entry
 
-    def _entry_from_api(self, api_entry: Dict[str, Any]) -> Dict[str, Any]:
+    def _entry_from_api(self, api_entry: dict[str, Any]) -> dict[str, Any]:
         """Convert an entry dict from API camelCase to Ansible snake_case."""
         entry = {}
         for key, value in api_entry.items():
@@ -106,7 +106,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
             entry[ansible_key] = value
         return entry
 
-    def _acl_to_api(self, acl: Dict[str, Any]) -> Dict[str, Any]:
+    def _acl_to_api(self, acl: dict[str, Any]) -> dict[str, Any]:
         """Convert an ACL dict from Ansible format to API format."""
         return {
             "name": acl["name"],
@@ -114,7 +114,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
             "entries": [self._entry_to_api(e) for e in acl.get("entries", [])],
         }
 
-    def _acl_from_api(self, api_acl: Dict[str, Any]) -> Dict[str, Any]:
+    def _acl_from_api(self, api_acl: dict[str, Any]) -> dict[str, Any]:
         """Convert an ACL dict from API format to Ansible format."""
         return {
             "name": api_acl["name"],
@@ -123,7 +123,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
             "entries": [self._entry_from_api(e) for e in api_acl.get("entries", [])],
         }
 
-    def _process_entry(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+    def _process_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
         """
         Normalize an entry from module params, stripping argspec-injected
         defaults (e.g. src_port_action="none") so they don't trigger false diffs.
@@ -173,7 +173,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
     # Input validation
     # -------------------------------------------------------------------------
 
-    def validate_config(self, state: str, config: List[Dict]) -> None:
+    def validate_config(self, state: str, config: list[dict]) -> None:
         """Validate the playbook configuration. Raises ValueError on error."""
         if not config and state in ("merged", "replaced"):
             raise ValueError("config is required when state is '{0}'".format(state))
@@ -196,7 +196,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
             for entry in acl.get("entries", []):
                 self._validate_entry(name, entry)
 
-    def _validate_entry(self, acl_name: str, entry: Dict[str, Any]) -> None:
+    def _validate_entry(self, acl_name: str, entry: dict[str, Any]) -> None:
         """Validate semantic correctness of a single ACL entry."""
         action = entry.get("action")
         seq_num = entry.get("sequence_number")
@@ -233,7 +233,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
                 "ACL '{0}' entry {1}: 'tcp_option' is only valid for tcp protocol".format(acl_name, seq_num)
             )
 
-    def _validate_port_options(self, acl_name: str, entry: Dict[str, Any], prefix: str) -> None:
+    def _validate_port_options(self, acl_name: str, entry: dict[str, Any], prefix: str) -> None:
         """Validate port action and range consistency for a given direction."""
         seq_num = entry.get("sequence_number")
         port_action = entry.get("{0}_port_action".format(prefix))
@@ -281,7 +281,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
         except Exception as e:
             raise Exception("Query all ACLs failed: {0}".format(e)) from e
 
-    def _get_all_acls(self) -> List[Dict[str, Any]]:
+    def _get_all_acls(self) -> list[dict[str, Any]]:
         """Return current ACLs as Ansible-format dicts."""
         return [self._acl_from_api(a) for a in (self.query_all() or [])]
 
@@ -289,7 +289,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
     # Diff helpers
     # -------------------------------------------------------------------------
 
-    def _find_have(self, name: str, have: List[Dict]) -> Optional[Dict]:
+    def _find_have(self, name: str, have: list[dict]) -> dict | None:
         """Return the existing ACL with the given name, or None."""
         for acl in have:
             if acl["name"] == name:
@@ -315,7 +315,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
             return False
         return all(self._entries_equal(entries1[s], entries2[s]) for s in entries1)
 
-    def _merge_entries(self, have_acl: Dict, want_acl: Dict) -> Dict:
+    def _merge_entries(self, have_acl: dict, want_acl: dict) -> dict:
         """
         Return a new ACL whose entries are have merged with want.
         Want wins on sequence-number conflicts; unmatched have entries are preserved.
@@ -329,7 +329,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
             "entries": [want_entries[s] if s in want_entries else have_entries[s] for s in merged_seqs],
         }
 
-    def _build_want(self, config: List[Dict]) -> List[Dict]:
+    def _build_want(self, config: list[dict]) -> list[dict]:
         """Build the desired-state list from module params (processes entries)."""
         result = []
         for acl in config:
@@ -372,7 +372,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
     # State execution
     # -------------------------------------------------------------------------
 
-    def run(self, state: str, config: List[Dict], check_mode: bool = False) -> Dict:
+    def run(self, state: str, config: list[dict], check_mode: bool = False) -> dict:
         """
         Execute the full module workflow for the given state and return the
         result dict ready to pass to module.exit_json().
@@ -394,9 +394,9 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
             return result
 
         # Build diffs
-        diff_create: List[Dict] = []
-        diff_replace: List[Dict] = []
-        diff_delete: List[str] = []
+        diff_create: list[dict] = []
+        diff_replace: list[dict] = []
+        diff_delete: list[str] = []
 
         if state == "merged":
             for want_acl in want:
@@ -446,7 +446,7 @@ class ManageAclOrchestrator(NDBaseOrchestrator[AclModel]):
 
         return result
 
-    def _run_gathered(self, have: List[Dict], want: List[Dict], result: Dict) -> None:
+    def _run_gathered(self, have: list[dict], want: list[dict], result: dict) -> None:
         """Populate result with gathered ACL data (no changes)."""
         if not want:
             result["acls"] = list(have)
