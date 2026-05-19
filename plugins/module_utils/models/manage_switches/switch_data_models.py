@@ -208,9 +208,7 @@ class SwitchDataModel(NDBaseModel):
         alias="serialNumber",
         description="Serial number of switch or APIC controller node",
     )
-    additional_data: AdditionalSwitchData | AdditionalAciSwitchData | None = Field(
-        default=None, alias="additionalData", description="Additional switch data"
-    )
+    additional_data: AdditionalSwitchData | AdditionalAciSwitchData | None = Field(default=None, alias="additionalData", description="Additional switch data")
     advisory_level: AdvisoryLevel | None = Field(default=None, alias="advisoryLevel")
     anomaly_level: AnomalyLevel | None = Field(default=None, alias="anomalyLevel")
     alert_suspend: str | None = Field(default=None, alias="alertSuspend")

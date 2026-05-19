@@ -60,10 +60,7 @@ class SwitchesValidate(BaseModel):
             return [SwitchConfigModel.model_validate(value)]
         if isinstance(value, list):
             try:
-                return [
-                    SwitchConfigModel.model_validate(item) if isinstance(item, dict) else item
-                    for item in value
-                ]
+                return [SwitchConfigModel.model_validate(item) if isinstance(item, dict) else item for item in value]
             except (ValidationError, ValueError) as e:
                 raise ValueError(f"Invalid format in Config Data: {e}")
         raise ValueError("Config Data must be a dict, list of dicts, or None.")
@@ -76,10 +73,7 @@ class SwitchesValidate(BaseModel):
             return None
         if isinstance(value, list):
             try:
-                return [
-                    SwitchDataModel.from_response(item) if isinstance(item, dict) else item
-                    for item in value
-                ]
+                return [SwitchDataModel.from_response(item) if isinstance(item, dict) else item for item in value]
             except (ValidationError, ValueError) as e:
                 raise ValueError(f"Invalid format in ND Response: {e}")
         raise ValueError("ND Response must be a list of dictionaries.")
@@ -124,16 +118,8 @@ class SwitchesValidate(BaseModel):
                 ip_address = nd_item.fabric_management_ip
                 switch_role = nd_item.switch_role  # SwitchRole enum or None
 
-                seed_ip_match = ignore_seed_ip or (
-                    seed_ip is not None
-                    and ip_address is not None
-                    and ip_address == seed_ip
-                )
-                role_match = ignore_role or (
-                    role_expected is not None
-                    and switch_role is not None
-                    and switch_role == role_expected
-                )
+                seed_ip_match = ignore_seed_ip or (seed_ip is not None and ip_address is not None and ip_address == seed_ip)
+                role_match = ignore_role or (role_expected is not None and switch_role is not None and switch_role == role_expected)
 
                 if seed_ip_match and role_match:
                     matched_indices.add(i)

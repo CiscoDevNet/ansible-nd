@@ -52,10 +52,7 @@ class ActionModule(ActionBase):
 
         if not HAS_PYDANTIC or not HAS_VALIDATOR:
             results["failed"] = True
-            results["msg"] = (
-                "pydantic and the ND collection validators are required "
-                "for nd_switches_validate"
-            )
+            results["msg"] = "pydantic and the ND collection validators are required " "for nd_switches_validate"
             return results
 
         args = self._task.args
@@ -111,9 +108,7 @@ class ActionModule(ActionBase):
         if validation.missing_ips:
             display.display(f"  Missing IPs: {validation.missing_ips}")
         if validation.role_mismatches:
-            display.display(
-                f"  Role mismatches: {json.dumps(validation.role_mismatches, indent=2)}"
-            )
+            display.display(f"  Role mismatches: {json.dumps(validation.role_mismatches, indent=2)}")
 
         results["failed"] = True
         results["msg"] = "Validation Failed! Please check output above."

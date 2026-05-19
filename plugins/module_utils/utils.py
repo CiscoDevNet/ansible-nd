@@ -26,6 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection impo
     NDConfigCollection,
 )
 
+
 def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
     if keys is None:
         keys = []
@@ -152,10 +153,7 @@ class ApiDataChecker:
         """
         if isinstance(data, dict) and "code" in data:
             error_msg = data.get("message", "Unknown error")
-            msg = (
-                f"{context} failed — controller returned error: "
-                f"{error_msg} (code={data['code']})"
-            )
+            msg = f"{context} failed — controller returned error: " f"{error_msg} (code={data['code']})"
             log.error(msg)
             if fail_callback is not None:
                 fail_callback(msg=msg)
@@ -267,6 +265,7 @@ class FabricSwitchInventory:
         if isinstance(response, dict):
             return response.get("switches", [])
         return []
+
 
 # =========================================================================
 # Fabric Utilities
