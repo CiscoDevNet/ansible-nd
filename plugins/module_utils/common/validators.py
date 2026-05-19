@@ -8,25 +8,23 @@
 
 These validators are reusable across different models and modules.
 They follow a consistent pattern:
-- Accept Optional[str] or other types
+- Accept str | None or other types
 - Return None when input is None or empty after stripping
 - Raise ValueError with descriptive messages on validation failure
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import re
 from ipaddress import ip_address, ip_network
-from typing import Callable, Optional
+from typing import Callable
 
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
 
 
-def _normalize_optional_string(v: Optional[str]) -> Optional[str]:
+def _normalize_optional_string(v: str | None) -> str | None:
     """Normalize an optional string value.
 
     Converts the value to string, strips whitespace, and returns ``None``
@@ -50,7 +48,7 @@ def _normalize_optional_string(v: Optional[str]) -> Optional[str]:
 
 def _require_field(
     v: str,
-    validator_func: Callable[[Optional[str]], Optional[str]],
+    validator_func: Callable[[str | None], str | None],
     field_name: str,
 ) -> str:
     """Validate and require a non-empty field value.
@@ -80,7 +78,7 @@ def _require_field(
 # ------------------------------------------------------------------
 
 
-def validate_ip_address(v: Optional[str]) -> Optional[str]:
+def validate_ip_address(v: str | None) -> str | None:
     """Validate IPv4 or IPv6 address.
 
     Args:
@@ -102,7 +100,7 @@ def validate_ip_address(v: Optional[str]) -> Optional[str]:
         raise ValueError(f"Invalid IP address format: {v}")
 
 
-def validate_cidr(v: Optional[str]) -> Optional[str]:
+def validate_cidr(v: str | None) -> str | None:
     """Validate CIDR notation (IP/mask).
 
     Args:
@@ -126,7 +124,7 @@ def validate_cidr(v: Optional[str]) -> Optional[str]:
         raise ValueError(f"Invalid CIDR format: {v}")
 
 
-def validate_ip_or_cidr_as_cidr(v: Optional[str]) -> Optional[str]:
+def validate_ip_or_cidr_as_cidr(v: str | None) -> str | None:
     """Validate IP or CIDR and normalize to CIDR notation.
 
     Accepts either a plain IP address or CIDR notation.
@@ -193,7 +191,7 @@ def require_ip_or_cidr_as_cidr(v: str) -> str:
     return _require_field(v, validate_ip_or_cidr_as_cidr, "IP or CIDR")
 
 
-def validate_cidr_optional(v: Optional[str]) -> Optional[str]:
+def validate_cidr_optional(v: str | None) -> str | None:
     """Validate an optional CIDR string; pass through ``None`` unchanged.
 
     Args:
@@ -215,7 +213,7 @@ def validate_cidr_optional(v: Optional[str]) -> Optional[str]:
 # ------------------------------------------------------------------
 
 
-def validate_hostname(v: Optional[str]) -> Optional[str]:
+def validate_hostname(v: str | None) -> str | None:
     """Validate hostname format (RFC 1123).
 
     Args:
@@ -257,7 +255,7 @@ def require_hostname(v: str) -> str:
     return _require_field(v, validate_hostname, "hostname")
 
 
-def validate_mac_address(v: Optional[str]) -> Optional[str]:
+def validate_mac_address(v: str | None) -> str | None:
     """Validate MAC address format and normalize.
 
     Accepts multiple common MAC address formats:
@@ -318,8 +316,8 @@ def require_mac_address(v: str) -> str:
 
 
 def check_credentials_pair(
-    username: Optional[str],
-    password: Optional[str],
+    username: str | None,
+    password: str | None,
     username_field: str = "username",
     password_field: str = "password",
 ) -> None:

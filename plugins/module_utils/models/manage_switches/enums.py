@@ -9,12 +9,9 @@
 Extracted from OpenAPI schema (manage.json) for Nexus Dashboard Manage APIs v1.1.332.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 from enum import Enum
-from typing import List
 
 # =============================================================================
 # ENUMS - Extracted from OpenAPI Schema components/schemas
@@ -48,7 +45,7 @@ class SwitchRole(str, Enum):
     NEIGHBOR = "neighbor"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         """Return list of valid choices."""
         return [e.value for e in cls]
 
@@ -68,7 +65,7 @@ class SystemMode(str, Enum):
     NOT_APPLICABLE = "notApplicable"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -89,7 +86,7 @@ class PlatformType(str, Enum):
     APIC = "apic"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -121,7 +118,7 @@ class SnmpV3AuthProtocol(str, Enum):
     SHA_512_AES_256 = "sha-512-aes-256"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -147,7 +144,7 @@ class DiscoveryStatus(str, Enum):
     NOT_APPLICABLE = "notApplicable"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -170,7 +167,7 @@ class ConfigSyncStatus(str, Enum):
     SUCCESS = "success"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -188,7 +185,7 @@ class VpcRole(str, Enum):
     NONE_ESTABLISHED = "noneEstablished"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -203,7 +200,7 @@ class RemoteCredentialStore(str, Enum):
     CYBERARK = "cyberark"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -223,7 +220,7 @@ class AnomalyLevel(str, Enum):
     UNKNOWN = "unknown"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 
@@ -243,7 +240,7 @@ class AdvisoryLevel(str, Enum):
     NOT_APPLICABLE = "notApplicable"
 
     @classmethod
-    def choices(cls) -> List[str]:
+    def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
 

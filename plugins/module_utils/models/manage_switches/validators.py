@@ -10,12 +10,9 @@ Domain-specific validators for switch models. Generic validators for IP, MAC,
 hostname, etc. are imported from common.validators and re-exported for convenience.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import re
-from typing import Optional
 
 # Import and re-export generic validators from common module
 from ...common.validators import (
@@ -39,7 +36,7 @@ from ...common.validators import (
 # ------------------------------------------------------------------
 
 
-def validate_serial_number(v: Optional[str]) -> Optional[str]:
+def validate_serial_number(v: str | None) -> str | None:
     """Validate switch serial number format.
 
     Args:
@@ -76,7 +73,7 @@ def require_serial_number(v: str, field_name: str = "serial_number") -> str:
     return _require_field(v, validate_serial_number, field_name)
 
 
-def validate_vpc_domain(v: Optional[int]) -> Optional[int]:
+def validate_vpc_domain(v: int | None) -> int | None:
     """Validate VPC domain ID (1-1000).
 
     Args:
@@ -95,7 +92,7 @@ def validate_vpc_domain(v: Optional[int]) -> Optional[int]:
     return v
 
 
-def check_discovery_credentials_pair(username: Optional[str], password: Optional[str]) -> None:
+def check_discovery_credentials_pair(username: str | None, password: str | None) -> None:
     """Enforce mutual-presence of discovery credentials.
 
     Both ``discovery_username`` and ``discovery_password`` must either be

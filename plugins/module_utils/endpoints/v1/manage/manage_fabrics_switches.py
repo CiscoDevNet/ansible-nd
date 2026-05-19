@@ -14,14 +14,11 @@ Endpoints covered:
 - Add switches to a fabric
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-# pylint: disable=invalid-name
-__metaclass__ = type
 __author__ = "Akshayanat C S"
-# pylint: enable=invalid-name
 
-from typing import Literal, Optional
+from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
@@ -68,7 +65,7 @@ class FabricSwitchesGetEndpointParams(FilterMixin, MaxMixin, OffsetMixin, Endpoi
     ```
     """
 
-    hostname: Optional[str] = Field(default=None, min_length=1, description="Filter by switch hostname")
+    hostname: str | None = Field(default=None, min_length=1, description="Filter by switch hostname")
 
 
 class FabricSwitchesAddEndpointParams(ClusterNameMixin, TicketIdMixin, EndpointQueryParams):

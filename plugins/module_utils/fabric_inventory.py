@@ -1,11 +1,12 @@
 # Copyright: (c) 2026, Jeet Ram (@jeeram) <jeeram@cisco.com>
+# Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Type
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
     EpManageFabricsSwitchesGet,
@@ -87,17 +88,17 @@ class FabricSwitchInventory:
         collection = inventory.collection  # NDConfigCollection
     """
 
-    def __init__(self, switches: List) -> None:
+    def __init__(self, switches: list) -> None:
         """Initialise the index from an already-parsed list of switch models.
 
         Args:
             switches: List of parsed switch model instances.
         """
-        self.switches: List = switches
-        self.collection: Optional[NDConfigCollection] = None
+        self.switches: list = switches
+        self.collection: NDConfigCollection | None = None
 
     @classmethod
-    def from_fabric(cls, nd, fabric: str, log: logging.Logger, model_class: Type) -> "FabricSwitchInventory":
+    def from_fabric(cls, nd, fabric: str, log: logging.Logger, model_class: type) -> "FabricSwitchInventory":
         """Fetch, parse, and index the switch inventory for a fabric in one call.
 
         Args:
@@ -117,7 +118,7 @@ class FabricSwitchInventory:
         instance.collection = collection
         return instance
 
-    def by_ip(self) -> Dict[str, Any]:
+    def by_ip(self) -> dict[str, Any]:
         """Return switches keyed by fabric management IP address.
 
         Returns:
@@ -126,7 +127,7 @@ class FabricSwitchInventory:
         """
         return {sw.fabric_management_ip: sw for sw in self.switches if sw.fabric_management_ip}
 
-    def by_id(self) -> Dict[str, Any]:
+    def by_id(self) -> dict[str, Any]:
         """Return switches keyed by switch ID (serial number).
 
         Returns:
@@ -136,7 +137,7 @@ class FabricSwitchInventory:
         return {sw.switch_id: sw for sw in self.switches if sw.switch_id}
 
     @staticmethod
-    def query_fabric_switches(nd, fabric: str, log: logging.Logger) -> List[Dict[str, Any]]:
+    def query_fabric_switches(nd, fabric: str, log: logging.Logger) -> list[dict[str, Any]]:
         """Fetch the raw switch inventory list for a fabric from the controller.
 
         Args:
