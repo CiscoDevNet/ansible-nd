@@ -18,7 +18,7 @@ ANSIBLE_METADATA = {
 DOCUMENTATION = r"""
 ---
 module: nd_l3out
-version_added: "1.6.0"
+version_added: "1.0.0"
 short_description: Manage L3Outs (Layer-3 Outs) on Cisco Nexus Dashboard
 description:
 - Manage L3Out (Layer-3 Out) configurations on Cisco Nexus Dashboard (ND).
@@ -61,6 +61,14 @@ options:
         - Must be 1-64 characters, containing only alphanumeric characters, underscores, and hyphens.
         type: str
         required: true
+      attach:
+        description:
+        - Whether to attach or detach the L3Out after create/update.
+        - When C(true), the L3Out will be attached (deployed) to the fabrics.
+        - When C(false), the L3Out will be detached from the fabrics.
+        - When not specified, no attachment action is performed.
+        - Only applicable when O(state) is C(merged) or C(replaced).
+        type: bool
       fabric1_name:
         description:
         - Name of the first fabric associated with the L3Out.

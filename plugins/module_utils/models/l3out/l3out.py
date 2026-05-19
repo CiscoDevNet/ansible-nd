@@ -168,6 +168,9 @@ class L3OutModel(NDBaseModel):
         # L3Out spec
         l3out_spec = dict(
             name=dict(type="str", required=True),
+            attach=dict(
+                type="bool"
+            ),  # Optional: attach/detach L3Out after create/update
             fabric1_name=dict(type="str"),
             fabric2_name=dict(type="str"),
             vrf1_name=dict(type="str"),

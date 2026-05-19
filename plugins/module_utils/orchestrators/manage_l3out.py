@@ -5,6 +5,7 @@
 from __future__ import absolute_import, division, print_function
 
 import re
+import time
 from copy import deepcopy
 from typing import Any, ClassVar, Dict, List, Optional, Type
 
@@ -12,6 +13,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_l3out import (
+    EpManageL3OutAttach,
     EpManageL3OutDelete,
     EpManageL3OutGet,
     EpManageL3OutPost,
@@ -533,7 +535,7 @@ class ManageL3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
                 )
             )
 
-        links = conn.get("links", [])
+        links = conn.get("links") or []
         for i, link in enumerate(links):
             self._validate_link(name, i, link, interface_type, l3out.get("ip_version"))
 
@@ -634,7 +636,7 @@ class ManageL3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
     ) -> None:
         """Validate static routing configuration."""
         for routes_key in ("fabric1_static_routes", "fabric2_static_routes"):
-            routes = routing.get(routes_key, [])
+            routes = routing.get(routes_key) or []
             for i, route in enumerate(routes):
                 # Required fields
                 for field in ("ip_version", "ip_prefix", "next_hop", "switch_ids"):
@@ -681,11 +683,21 @@ class ManageL3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
     # -------------------------------------------------------------------------
 
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
-        """Fetch all L3Outs for the fabric and return as a list of API dicts."""
+        """Fetch all L3Outs for the fabric and return as a list of API dicts.
+
+        The L3Out API uses query parameters for filtering by fabric name:
+        GET /api/v1/manage/l3Outs?fabricName={fabricName}
+        """
         try:
             ep = self.query_all_endpoint()
             ep.fabric_name = self.fabric_name
-            result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
+
+            # Build path with query parameter for fabric filtering
+            path = ep.path
+            if self.fabric_name:
+                path = "{0}?fabricName={1}".format(ep.path, self.fabric_name)
+
+            result = self._request(path=path, verb=ep.verb, not_found_ok=True)
             if not result:
                 return []
             if isinstance(result, dict):
@@ -778,6 +790,7 @@ class ManageL3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
 
             # Copy all provided fields
             for key in (
+                "attach",
                 "fabric1_name",
                 "fabric2_name",
                 "vrf1_name",
@@ -832,6 +845,92 @@ class ManageL3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
         ep.l3out_name = l3out_name
         return self._request(path=ep.path, verb=ep.verb, not_found_ok=True) or {}
 
+    def _attach_l3outs(
+        self,
+        attachments: List[Dict[str, Any]],
+        max_retries: int = 3,
+        retry_delay: int = 2,
+    ) -> Dict:
+        """
+        Attach or detach L3Outs.
+
+        Due to ND eventual consistency, newly created L3Outs may not be
+        immediately available for attachment. This method retries with a
+        delay if a 404 "not found" error is encountered.
+
+        Args:
+            attachments: List of dicts with 'name' and 'attach' keys.
+                        Example: [{"name": "L3Out1", "attach": true}]
+            max_retries: Maximum number of retry attempts for 404 errors.
+            retry_delay: Seconds to wait between retries.
+
+        Returns:
+            API response dict.
+        """
+        if not attachments:
+            return {}
+
+        ep = EpManageL3OutAttach()
+        data = {"attachments": attachments}
+
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                result = self._request(path=ep.path, verb=ep.verb, data=data)
+
+                # Check for failures in 207 Multi-Status response
+                if result:
+                    items = result.get("results", result.get("attachments", []))
+                    if isinstance(result, list):
+                        items = result
+
+                    not_found_names = []
+                    for item in items:
+                        if isinstance(item, dict):
+                            status = item.get("status", "")
+                            message = item.get("message", "")
+                            status_code = item.get("statusCode", 200)
+
+                            # Check for "not found" failures that might be timing-related
+                            if status == "failed" and "not found" in message.lower():
+                                not_found_names.append(item.get("name", "unknown"))
+                            elif status_code >= 400:
+                                raise Exception(
+                                    "Failed to attach/detach L3Out '{0}': {1}".format(
+                                        item.get("name", "unknown"), item
+                                    )
+                                )
+
+                    # If we have "not found" errors and more retries, wait and retry
+                    if not_found_names and attempt < max_retries:
+                        time.sleep(retry_delay)
+                        continue
+
+                    # Final attempt or no not-found errors - check for failures
+                    if not_found_names:
+                        raise Exception(
+                            "L3Out(s) not found after {0} retries: {1}".format(
+                                max_retries, ", ".join(not_found_names)
+                            )
+                        )
+
+                return result or {}
+
+            except Exception as e:
+                error_msg = str(e)
+                # Retry on 404 errors (L3Out not found due to eventual consistency)
+                if "404" in error_msg or "not found" in error_msg.lower():
+                    last_error = e
+                    if attempt < max_retries:
+                        time.sleep(retry_delay)
+                        continue
+                raise
+
+        # Should not reach here, but just in case
+        if last_error:
+            raise last_error
+        return {}
+
     # -------------------------------------------------------------------------
     # State execution
     # -------------------------------------------------------------------------
@@ -848,7 +947,16 @@ class ManageL3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
 
         result = dict(
             changed=False,
-            diff=[{"merged": [], "replaced": [], "deleted": [], "gathered": []}],
+            diff=[
+                {
+                    "merged": [],
+                    "replaced": [],
+                    "deleted": [],
+                    "gathered": [],
+                    "attached": [],
+                    "detached": [],
+                }
+            ],
             response=[],
             l3outs=[],
         )
@@ -861,6 +969,8 @@ class ManageL3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
         diff_create: List[Dict] = []
         diff_update: List[Dict] = []
         diff_delete: List[str] = []
+        # Track L3Outs that need attachment operations (name -> attach_value)
+        diff_attach: List[Dict[str, Any]] = []
 
         if state == "merged":
             for want_l3out in want:
@@ -874,6 +984,17 @@ class ManageL3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
                         diff_update.append(merged)
                         result["diff"][0]["merged"].append(want_l3out["name"])
 
+                # Track attachment operations (from original want, not merged)
+                attach_value = want_l3out.get("attach")
+                if attach_value is not None:
+                    diff_attach.append(
+                        {"name": want_l3out["name"], "attach": attach_value}
+                    )
+                    if attach_value:
+                        result["diff"][0]["attached"].append(want_l3out["name"])
+                    else:
+                        result["diff"][0]["detached"].append(want_l3out["name"])
+
         elif state == "replaced":
             for want_l3out in want:
                 have_l3out = self._find_have(want_l3out["name"], have)
@@ -884,6 +1005,17 @@ class ManageL3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
                     diff_update.append(want_l3out)
                     result["diff"][0]["replaced"].append(want_l3out["name"])
 
+                # Track attachment operations
+                attach_value = want_l3out.get("attach")
+                if attach_value is not None:
+                    diff_attach.append(
+                        {"name": want_l3out["name"], "attach": attach_value}
+                    )
+                    if attach_value:
+                        result["diff"][0]["attached"].append(want_l3out["name"])
+                    else:
+                        result["diff"][0]["detached"].append(want_l3out["name"])
+
         elif state == "deleted":
             targets = want if want else have
             for l3out in targets:
@@ -891,7 +1023,9 @@ class ManageL3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
                     diff_delete.append(l3out["name"])
                     result["diff"][0]["deleted"].append(l3out["name"])
 
-        result["changed"] = bool(diff_create or diff_update or diff_delete)
+        result["changed"] = bool(
+            diff_create or diff_update or diff_delete or diff_attach
+        )
 
         if check_mode:
             return result
@@ -906,6 +1040,11 @@ class ManageL3OutOrchestrator(NDBaseOrchestrator[L3OutModel]):
 
         for l3out_name in diff_delete:
             resp = self._delete_l3out(l3out_name)
+            result["response"].append(deepcopy(resp))
+
+        # Process attachments after create/update operations
+        if diff_attach:
+            resp = self._attach_l3outs(diff_attach)
             result["response"].append(deepcopy(resp))
 
         return result
