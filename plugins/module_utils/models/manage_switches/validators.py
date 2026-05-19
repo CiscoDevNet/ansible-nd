@@ -34,7 +34,6 @@ from ...common.validators import (
     check_credentials_pair,
 )
 
-
 # ------------------------------------------------------------------
 # Switch-specific validators
 # ------------------------------------------------------------------
@@ -131,4 +130,3 @@ __all__ = [
     "validate_vpc_domain",
     "check_discovery_credentials_pair",
 ]
-

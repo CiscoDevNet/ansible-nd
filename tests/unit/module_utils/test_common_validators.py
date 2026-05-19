@@ -62,17 +62,19 @@ class TestRequireField:
 
     def test_valid_value(self):
         """Test valid value passes through."""
+
         def dummy_validator(v):
             return v if v else None
-        
+
         result = _require_field("test", dummy_validator, "test_field")
         assert result == "test"
 
     def test_empty_value_raises(self):
         """Test empty value raises ValueError."""
+
         def dummy_validator(v):
             return None
-        
+
         with pytest.raises(ValueError, match="test_field cannot be empty"):
             _require_field("", dummy_validator, "test_field")
 
@@ -106,10 +108,10 @@ class TestValidateIpAddress:
         """Test invalid IP addresses raise ValueError."""
         with pytest.raises(ValueError, match="Invalid IP address format"):
             validate_ip_address("256.1.1.1")
-        
+
         with pytest.raises(ValueError, match="Invalid IP address format"):
             validate_ip_address("not-an-ip")
-        
+
         with pytest.raises(ValueError, match="Invalid IP address format"):
             validate_ip_address("192.168.1")
 
@@ -149,7 +151,7 @@ class TestValidateCidr:
         """Test invalid CIDR raises ValueError."""
         with pytest.raises(ValueError, match="Invalid CIDR format"):
             validate_cidr("192.168.1.0/33")
-        
+
         with pytest.raises(ValueError, match="Invalid CIDR format"):
             validate_cidr("not-a-cidr/24")
 
@@ -221,7 +223,7 @@ class TestValidateHostname:
         """Test hostname starting with invalid character."""
         with pytest.raises(ValueError, match="Must start with alphanumeric"):
             validate_hostname("-switch")
-        
+
         with pytest.raises(ValueError, match="Must start with alphanumeric"):
             validate_hostname(".switch")
 
@@ -281,7 +283,7 @@ class TestValidateMacAddress:
         """Test invalid MAC address length."""
         with pytest.raises(ValueError, match="Invalid MAC address format"):
             validate_mac_address("AA:BB:CC:DD:EE")
-        
+
         with pytest.raises(ValueError, match="Invalid MAC address format"):
             validate_mac_address("AA:BB:CC:DD:EE:FF:00")
 
@@ -289,7 +291,7 @@ class TestValidateMacAddress:
         """Test invalid characters in MAC address."""
         with pytest.raises(ValueError, match="Invalid MAC address format"):
             validate_mac_address("GG:HH:II:JJ:KK:LL")
-        
+
         with pytest.raises(ValueError, match="Invalid MAC address format"):
             validate_mac_address("not-a-mac")
 
@@ -383,6 +385,6 @@ class TestCheckCredentialsPair:
         """Test custom field names in error messages."""
         with pytest.raises(ValueError, match="api_password must be set when api_username is specified"):
             check_credentials_pair("admin", None, "api_username", "api_password")
-        
+
         with pytest.raises(ValueError, match="api_username must be set when api_password is specified"):
             check_credentials_pair(None, "password", "api_username", "api_password")

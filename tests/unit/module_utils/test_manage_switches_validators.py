@@ -70,22 +70,22 @@ class TestValidateSerialNumber:
         """Test invalid characters raise ValueError."""
         with pytest.raises(ValueError, match="Serial number must be alphanumeric"):
             validate_serial_number("ABC@123")
-        
+
         with pytest.raises(ValueError, match="Serial number must be alphanumeric"):
             validate_serial_number("ABC 123")
-        
+
         with pytest.raises(ValueError, match="Serial number must be alphanumeric"):
             validate_serial_number("ABC.123")
-        
+
         with pytest.raises(ValueError, match="Serial number must be alphanumeric"):
             validate_serial_number("ABC/123")
-        
+
         with pytest.raises(ValueError, match="Serial number must be alphanumeric"):
             validate_serial_number("ABC#123")
 
     def test_special_characters_not_allowed(self):
         """Test various special characters are rejected."""
-        invalid_chars = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '+', '=', '[', ']', '{', '}', '|', '\\', '/', '?', '.', ',', '<', '>', ' ']
+        invalid_chars = ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "+", "=", "[", "]", "{", "}", "|", "\\", "/", "?", ".", ",", "<", ">", " "]
         for char in invalid_chars:
             with pytest.raises(ValueError, match="Serial number must be alphanumeric"):
                 validate_serial_number(f"ABC{char}123")
@@ -123,14 +123,14 @@ class TestRequireSerialNumber:
         """Test with switch_id field name (common use case)."""
         with pytest.raises(ValueError, match="switch_id cannot be empty"):
             require_serial_number("", "switch_id")
-        
+
         assert require_serial_number("FOC123", "switch_id") == "FOC123"
 
     def test_peer_switch_id_field_name(self):
         """Test with peer_switch_id field name (common use case)."""
         with pytest.raises(ValueError, match="peer_switch_id cannot be empty"):
             require_serial_number("", "peer_switch_id")
-        
+
         assert require_serial_number("FOC456", "peer_switch_id") == "FOC456"
 
 
@@ -157,10 +157,10 @@ class TestValidateVpcDomain:
         """Test VPC domain ID below minimum."""
         with pytest.raises(ValueError, match="VPC domain must be between 1 and 1000"):
             validate_vpc_domain(0)
-        
+
         with pytest.raises(ValueError, match="VPC domain must be between 1 and 1000"):
             validate_vpc_domain(-1)
-        
+
         with pytest.raises(ValueError, match="VPC domain must be between 1 and 1000"):
             validate_vpc_domain(-100)
 
@@ -168,7 +168,7 @@ class TestValidateVpcDomain:
         """Test VPC domain ID above maximum."""
         with pytest.raises(ValueError, match="VPC domain must be between 1 and 1000"):
             validate_vpc_domain(1001)
-        
+
         with pytest.raises(ValueError, match="VPC domain must be between 1 and 1000"):
             validate_vpc_domain(5000)
 
@@ -202,7 +202,7 @@ class TestCheckDiscoveryCredentialsPair:
         """Test only discovery_username is provided."""
         with pytest.raises(ValueError, match="discovery_password must be set when discovery_username is specified"):
             check_discovery_credentials_pair("admin", None)
-        
+
         with pytest.raises(ValueError, match="discovery_password must be set when discovery_username is specified"):
             check_discovery_credentials_pair("admin", "")
 
@@ -210,7 +210,7 @@ class TestCheckDiscoveryCredentialsPair:
         """Test only discovery_password is provided."""
         with pytest.raises(ValueError, match="discovery_username must be set when discovery_password is specified"):
             check_discovery_credentials_pair(None, "password123")
-        
+
         with pytest.raises(ValueError, match="discovery_username must be set when discovery_password is specified"):
             check_discovery_credentials_pair("", "password123")
 
@@ -224,7 +224,7 @@ class TestCheckDiscoveryCredentialsPair:
             ("user123", "P@ssw0rd!"),
             ("discovery_user", "complex_pass_123"),
         ]
-        
+
         for username, password in valid_combinations:
             # Should not raise
             check_discovery_credentials_pair(username, password)
@@ -239,7 +239,7 @@ class TestCheckDiscoveryCredentialsPair:
             ("user", None),
             (None, "pass"),
         ]
-        
+
         for username, password in invalid_combinations:
             with pytest.raises(ValueError):
                 check_discovery_credentials_pair(username, password)
@@ -253,17 +253,17 @@ class TestValidatorIntegration:
         # Valid VPC configuration
         serial = validate_serial_number("FOC12345678")
         vpc_domain = validate_vpc_domain(100)
-        
+
         assert serial == "FOC12345678"
         assert vpc_domain == 100
 
     def test_discovery_with_valid_serial(self):
         """Test discovery credentials with serial number validation."""
         serial = require_serial_number("FOC12345", "device_serial")
-        
+
         # Valid credentials
         check_discovery_credentials_pair("admin", "password")
-        
+
         assert serial == "FOC12345"
 
     def test_multiple_validators_chain(self):
@@ -271,10 +271,10 @@ class TestValidatorIntegration:
         # Simulate validating a switch configuration
         serial = require_serial_number("FOC123456", "switch_id")
         vpc_domain = validate_vpc_domain(50)
-        
+
         # Discovery credentials optional (both None)
         check_discovery_credentials_pair(None, None)
-        
+
         assert serial == "FOC123456"
         assert vpc_domain == 50
 
@@ -283,11 +283,11 @@ class TestValidatorIntegration:
         # First validator should catch empty serial
         with pytest.raises(ValueError, match="serial_number cannot be empty"):
             require_serial_number("")
-        
+
         # Invalid VPC domain
         with pytest.raises(ValueError, match="VPC domain must be between"):
             validate_vpc_domain(2000)
-        
+
         # Incomplete credentials
         with pytest.raises(ValueError, match="discovery_password must be set"):
             check_discovery_credentials_pair("admin", None)

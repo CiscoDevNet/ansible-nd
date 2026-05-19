@@ -21,7 +21,6 @@ import re
 from ipaddress import ip_address, ip_network
 from typing import Callable, Optional
 
-
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
