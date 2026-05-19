@@ -45,6 +45,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exception
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_model import (
     VrfLiteModel,
+    VrfLitePlaybookConfigModel,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite import (
+    ManageVrfLiteOrchestrator,
 )
 
 
@@ -67,6 +71,38 @@ class _DummyWarnModule(_DummyModule):
 class _DummyQueryContext:
     def __init__(self, module):
         self.module = module
+
+
+def test_manage_vrf_lite_00050_model_exposes_module_argspec():
+    assert VrfLiteModel.get_argument_spec() == VrfLitePlaybookConfigModel.get_argument_spec()
+
+
+def test_manage_vrf_lite_00075_orchestrator_prepares_runtime_params():
+    module = _DummyModule(
+        {
+            "fabric_name": "F1",
+            "state": "merged",
+            "config_actions": {"save": True, "deploy": False, "type": "global"},
+            "verify": {"enabled": True, "retries": 2, "timeout": 9},
+        }
+    )
+    module_config = VrfLitePlaybookConfigModel.model_validate(
+        {
+            "fabric_name": "F1",
+            "state": "merged",
+            "config": [{"vrf_name": "BLUE", "vlan_id": 500}],
+        },
+        by_alias=True,
+        by_name=True,
+    )
+
+    ManageVrfLiteOrchestrator.prepare_module_params(module, module_config)
+
+    assert module.params["config"] == [{"vrf_name": "BLUE", "vlan_id": 500}]
+    assert module.params["config_actions"] == {"save": True, "deploy": False, "type": "global"}
+    assert module.params["verify"] == {"enabled": True, "retries": 2, "timeout": 9}
+    assert module.params["_changed_vrfs"] == []
+    assert module.params["_gather_filter_config"] == []
 
 
 def test_manage_vrf_lite_00100_merge_preserves_unmentioned_switch_and_interface_data():

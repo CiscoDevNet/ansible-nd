@@ -157,6 +157,11 @@ class VrfLiteModel(NDBaseModel):
     def from_config(cls, ansible_config: Dict[str, Any], **kwargs) -> "VrfLiteModel":
         return cls.model_validate(ansible_config, by_alias=True, by_name=True, **kwargs)
 
+    @classmethod
+    def get_argument_spec(cls) -> Dict[str, Any]:
+        """Return the Ansible argument spec for nd_manage_vrf_lite."""
+        return VrfLitePlaybookConfigModel.get_argument_spec()
+
     def merge(self, other: "VrfLiteModel") -> "VrfLiteModel":
         """
         Merge another VrfLiteModel into this one.
@@ -289,6 +294,10 @@ class VrfLitePlaybookConfigModel(BaseModel):
         if self.config_actions and not self.config_actions.save and self.config_actions.deploy:
             raise ValueError("config_actions.deploy=true requires config_actions.save=true")
         return self
+
+    def to_runtime_config(self) -> List[Dict[str, Any]]:
+        """Normalize playbook config into NDStateMachine runtime items."""
+        return [item.to_runtime_config() for item in (self.config or [])]
 
     @classmethod
     def get_argument_spec(cls) -> Dict[str, Any]:

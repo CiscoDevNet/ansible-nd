@@ -192,7 +192,13 @@ def query_vrf_lite_state(module: Any, fabric_name: str, filter_vrfs: set[str] | 
             attach_state = str(attach.get("lanAttachState") or "").upper()
             attached_value = attach.get("isLanAttached", attach.get("isAttached", False))
             is_attached = attached_value is True or str(attached_value).strip().lower() in ("true", "1", "yes")
-            if not is_attached:
+            # For VRF Lite, include entries that have extension values even if
+            # not yet lan-attached (pending save/deploy state).
+            has_extension_values = bool(
+                attach.get("extensionValues") and str(attach.get("extensionValues")).strip()
+                and str(attach.get("extensionValues")).strip() != "[]"
+            )
+            if not is_attached and not has_extension_values:
                 continue
 
             if serial_number:
