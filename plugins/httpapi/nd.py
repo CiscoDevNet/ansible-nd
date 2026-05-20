@@ -3,6 +3,7 @@
 # Copyright: (c) 2020, Lionel Hercot (@lhercot) <lhercot@cisco.com>
 # Copyright: (c) 2022, Akini Ross (@akinross) <akinross@cisco.com>
 # Copyright: (c) 2025, Samita Bhattacharjee (@samiib) <samitab@cisco.com>
+# Copyright: (c) 2026, Matt Tarkington (@mtarking)
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
@@ -40,10 +41,16 @@ import traceback
 import mimetypes
 import sys
 import tempfile
+from typing import Optional, Tuple
 from ansible.module_utils.six import PY3
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import ConnectionError
 from ansible.plugins.httpapi import HttpApiBase
+
+# Auth endpoint constants
+AUTH_BASE_PATH_NEW = "/api/v1/infra"
+LOGIN_ENDPOINT = "/login"
+LOGOUT_ENDPOINT = "/logout"
 
 try:
     from requests_toolbelt.multipart.encoder import MultipartEncoder
@@ -73,7 +80,10 @@ class HttpApi(HttpApiBase):
         self.status = -1
         self.info = {}
         self.version = None
-        self.auth_base_path = None
+
+        # Cached auth endpoint base path, set after first successful login to new endpoint.
+        # "" (default) means not yet detected or legacy, "/api/v1/infra" means ND 4.2.1+.
+        self.auth_base_path: str = ""
 
     def get_platform(self):
         return self.platform
@@ -113,10 +123,22 @@ class HttpApi(HttpApiBase):
     def get_url_connection(self):
         return self.connection._url
 
-    def _attempt_login(self, path, payload):
-        """Attempt login at the given path. Returns (token, status) on success, raises on fatal error, returns (None, status) on non-200."""
+    def _attempt_login(self, path: str, payload: dict) -> Tuple[Optional[str], int]:
+        """Attempt a login POST to the given path.
+
+        Args:
+            path: The API path to send the login request to.
+            payload: The login credentials payload.
+
+        Returns:
+            A tuple of (token, http_status). Token is None if the response
+            status is not 200/201 or the response body is empty.
+
+        Raises:
+            Exception: Propagates any exception raised by the underlying
+                connection send (e.g. socket errors, SSL errors).
+        """
         method = "POST"
-        full_path = self.connection.get_option("host") + path
         data = json.dumps(payload)
         self.connection.queue_message("info", "login() - connection.send({0}, LOGIN_PAYLOAD_NOT_SHOWN, {1}, {2})".format(path, method, self.headers))
         response, response_data = self.connection.send(path, data, method=method, headers=self.headers)
@@ -127,8 +149,22 @@ class HttpApi(HttpApiBase):
         token = response_json.get("jwttoken") or response_json.get("token")
         return token, status
 
-    def login(self, username, password):
-        """Log in to ND"""
+    def login(self, username: str, password: str) -> None:
+        """Authenticate to Nexus Dashboard and store the bearer token.
+
+        Supports both ND 4.2.1+ (``/api/v1/infra/login``) and legacy (``/login``)
+        auth endpoints. On first call the method auto-detects which endpoint is
+        available and caches the result in ``self.auth_base_path`` so subsequent
+        re-authentications skip detection.
+
+        Args:
+            username: The username (unused directly; credentials are read from
+                connection options or task params).
+            password: The password (unused directly; see above).
+
+        Raises:
+            ConnectionError: When authentication fails on all attempted endpoints.
+        """
         # Perform login request
         self.connection.queue_message("info", "login() - login method called for {0}".format(self.connection.get_option("host")))
         if self.connection._auth is None:
@@ -148,32 +184,30 @@ class HttpApi(HttpApiBase):
 
             try:
                 # Auto-detect auth endpoint: try new path first (ND 4.2.1+), fall back to legacy
-                if self.auth_base_path is not None:
-                    # Already detected, use cached path
-                    path = self.auth_base_path + "/login"
+                if self.auth_base_path:
+                    # Previously detected new endpoint, use cached path
+                    path = self.auth_base_path + LOGIN_ENDPOINT
                     token, self.status = self._attempt_login(path, payload)
                 else:
-                    # Try new endpoint first
-                    path = "/api/v1/infra/login"
+                    # Try new endpoint first (ND 4.2.1+)
+                    path = AUTH_BASE_PATH_NEW + LOGIN_ENDPOINT
                     try:
                         token, self.status = self._attempt_login(path, payload)
                     except Exception:
                         token, self.status = None, -1
 
                     if token is not None:
-                        self.auth_base_path = "/api/v1/infra"
-                        self.connection.queue_message("info", "login() - detected new auth endpoint: /api/v1/infra")
+                        self.auth_base_path = AUTH_BASE_PATH_NEW
+                        self.connection.queue_message("info", "login() - detected new auth endpoint: {0}".format(AUTH_BASE_PATH_NEW))
                     else:
                         # Fall back to legacy endpoint
-                        path = "/login"
+                        path = LOGIN_ENDPOINT
                         token, self.status = self._attempt_login(path, payload)
                         if token is not None:
-                            self.auth_base_path = ""
-                            self.connection.queue_message("info", "login() - detected legacy auth endpoint: /login")
-
-                full_path = self.connection.get_option("host") + path
+                            self.connection.queue_message("info", "login() - detected legacy auth endpoint: {0}".format(LOGIN_ENDPOINT))
 
                 if token is None:
+                    full_path = self.connection.get_option("host") + path
                     self.connection.queue_message("error", "login() - login status incorrect or response empty. HTTP status={0}".format(self.status))
                     json_response = "Most likely a wrong login domain was provided, the provided login_domain was {0}".format(self.get_option("login_domain"))
                     self.error = dict(code=self.status, message="Authentication failed: {0}".format(json_response))
@@ -190,15 +224,15 @@ class HttpApi(HttpApiBase):
             except Exception as e:
                 self.connection.queue_message("error", "login() - Generic Exception: {0}".format(e))
                 self.error = dict(code=self.status, message="Authentication failed: Request failed: {0}".format(e))
-                raise ConnectionError(json.dumps(self._verify_response(None, "POST", self.connection.get_option("host") + "/login", None)))
+                raise ConnectionError(json.dumps(self._verify_response(None, "POST", self.connection.get_option("host") + LOGIN_ENDPOINT, None)))
 
-    def logout(self):
+    def logout(self) -> None:
         self.connection.queue_message("info", "logout() - logout method called for {0}".format(self.connection.get_option("host")))
         method = "POST"
-        if self.auth_base_path is not None:
-            path = self.auth_base_path + "/logout"
+        if self.auth_base_path:
+            path = self.auth_base_path + LOGOUT_ENDPOINT
         else:
-            path = "/logout"
+            path = LOGOUT_ENDPOINT
 
         try:
             self.connection.queue_message("info", "logout() - connection.send({0}, {1}, {2})".format(path, method, self.headers))
