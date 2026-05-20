@@ -1,0 +1,36 @@
+---
+# Replaced state tests for nd_fabric_update_group
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+- name: "REPLACED: Replace ansible_leaf_group with a minimal config (check mode)"
+  cisco.nd.nd_fabric_update_group: &replace_leaf
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - update_group_name: ansible_leaf_group
+        execution: serial
+        contingency: continue
+        analysis: noAnalysis
+        is_maintenance: false
+        is_disruptive_update: false
+        update_group_switches:
+          - "{{ test_switch_a }}"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_leaf
+
+- name: "REPLACED: Replace ansible_leaf_group (normal mode)"
+  cisco.nd.nd_fabric_update_group: *replace_leaf
+  register: nm_replaced_leaf
+
+- name: "REPLACED: Verify replacement"
+  vars:
+    leaf_after: "{{ nm_replaced_leaf.after | selectattr('update_group_name', 'equalto', 'ansible_leaf_group') | first }}"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_leaf is changed
+      - nm_replaced_leaf is changed
+      - leaf_after.execution == "serial"
+      - leaf_after.contingency == "continue"
+      - leaf_after.analysis == "noAnalysis"
+      - leaf_after.update_group_switches | length == 1

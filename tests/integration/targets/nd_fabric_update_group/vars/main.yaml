@@ -1,0 +1,64 @@
+---
+# Variables for nd_fabric_update_group integration tests.
+#
+# `update_group_switches` and `installation_order_devices` accept either switch IP addresses
+# or switch serial numbers (switchIds). IPs are resolved to switchIds via the fabric
+# inventory before being sent on the wire.
+#
+# Override the following in your inventory or extra-vars to match a real ND 4.2 testbed:
+#   nd_test_fabric_name      - fabric in which to create update groups
+#   nd_test_update_switch_a  - IP or serial of the first switch in the fabric
+#   nd_test_update_switch_b  - IP or serial of the second switch in the fabric
+#   nd_test_nos_image_name   - filename of an NXOS image present on the ND software repository
+#   nd_test_epld_image_name  - filename of an EPLD image present on the ND software repository
+
+test_fabric_name: "{{ nd_test_fabric_name | default('SITE1') }}"
+test_switch_a: "{{ nd_test_update_switch_a | default('192.168.7.11') }}"
+test_switch_b: "{{ nd_test_update_switch_b | default('192.168.7.12') }}"
+test_nos_image_name: "{{ nd_test_nos_image_name | default('nxos.9.3.13.bin') }}"
+test_epld_image_name: "{{ nd_test_epld_image_name | default('n9000-epld.9.3.13.img') }}"
+
+# Update group configs used across tests.
+update_group_leaf:
+  update_group_name: ansible_leaf_group
+  execution: serial
+  contingency: continue
+  analysis: snapshot
+  is_maintenance: true
+  is_disruptive_update: false
+  update_group_switches:
+    - "{{ test_switch_a }}"
+    - "{{ test_switch_b }}"
+  installation_order_devices:
+    - "{{ test_switch_a }}"
+    - "{{ test_switch_b }}"
+  report_selection: basic
+  reports: noReport
+
+update_group_leaf_updated:
+  update_group_name: ansible_leaf_group
+  execution: parallel
+  contingency: pause
+  analysis: snapshot
+  is_maintenance: true
+  is_disruptive_update: false
+  update_group_switches:
+    - "{{ test_switch_a }}"
+    - "{{ test_switch_b }}"
+  installation_order_devices:
+    - "{{ test_switch_a }}"
+    - "{{ test_switch_b }}"
+  report_selection: advanced
+  reports: noReport
+
+update_group_spine:
+  update_group_name: ansible_spine_group
+  execution: parallel
+  contingency: continue
+  analysis: noAnalysis
+  is_maintenance: false
+  is_disruptive_update: false
+  update_group_switches:
+    - "{{ test_switch_a }}"
+  report_selection: noReport
+  reports: noReport

@@ -1,0 +1,193 @@
+# Copyright: (c) 2026, Allen Robel (@allenrobel) <arobel@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+"""
+Pydantic model for a fabric update group on Nexus Dashboard.
+
+A fabric update group ties together a set of switches in a fabric with the image / package install plan
+and orchestration knobs (execution mode, contingency, analysis, maintenance, reports) used by the
+Fabric Software Management workflow. Identifier: `update_group_name` (single, fabric-scoped).
+"""
+
+from __future__ import annotations
+
+from typing import Any, ClassVar, Dict, List, Literal, Optional
+
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, model_validator
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+
+
+class InstallImageDataModel(NDNestedModel):
+    """
+    # Summary
+
+    Install image data sub-block of a fabric update group.
+
+    Wire shape (under `installImageData`):
+
+    ```json
+    {
+      "epldImageName": "n9000-epld.9.3.13.img",
+      "nosImageName": "nxos.9.3.13.bin",
+      "installPackageNames": ["nxos.CSC...rpm"],
+      "uninstallPackage": true
+    }
+    ```
+
+    ## Raises
+
+    None
+    """
+
+    nos_image_name: Optional[str] = Field(default=None, alias="nosImageName")
+    epld_image_name: Optional[str] = Field(default=None, alias="epldImageName")
+    install_package_names: Optional[List[str]] = Field(default=None, alias="installPackageNames")
+    uninstall_package: Optional[bool] = Field(default=None, alias="uninstallPackage")
+
+
+class UpdateReportCheckModel(NDNestedModel):
+    """
+    # Summary
+
+    Item in the `updateReportChecks` list. Each item names a pre / post upgrade report check.
+
+    Wire shape:
+
+    ```json
+    { "reportCheckName": "sh_version" }
+    ```
+
+    ## Raises
+
+    None
+    """
+
+    report_check_name: str = Field(alias="reportCheckName")
+
+
+# Enum literal aliases for readability
+ExecutionLiteral = Literal["parallel", "serial"]
+ContingencyLiteral = Literal["continue", "pause"]
+AnalysisLiteral = Literal["snapshot", "noAnalysis", "fullAnalysis", "usePreExistingAnalysis"]
+ReportSelectionLiteral = Literal["noReport", "basic", "advanced"]
+ReportsLiteral = Literal["noReport", "usePreExistingReports", "useDefaultPreAndPostReports", "useAdvancePreAndPostReports"]
+
+
+class FabricUpdateGroupModel(NDBaseModel):
+    """
+    # Summary
+
+    Fabric update group configuration for Nexus Dashboard.
+
+    Identifier: `update_group_name` (single). Fabric scope is supplied externally by the orchestrator,
+    not stored on the model.
+
+    ## Raises
+
+    None
+    """
+
+    identifiers: ClassVar[Optional[List[str]]] = ["update_group_name"]
+    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+
+    # TODO(4.2.1) ND silently drops `installationOrderDevices` on the updateGroups create/update endpoints.
+    # The POST/PUT accept the field without error, but GET (single and list) never echoes it back. We still
+    # send it (ND may consume it during the actual upgrade run), but it must be excluded from the idempotency
+    # diff - otherwise a re-applied, unchanged config is perpetually reported as `changed` because the wire
+    # state never carries the field. Observed on ND 4.2.1, fabric SITE1.
+    exclude_from_diff: ClassVar[set] = {"installation_order_devices"}
+
+    # --- Fields ---
+
+    update_group_name: str = Field(alias="updateGroupName")
+    execution: Optional[ExecutionLiteral] = Field(default=None, alias="execution")
+    contingency: Optional[ContingencyLiteral] = Field(default=None, alias="contingency")
+    analysis: Optional[AnalysisLiteral] = Field(default=None, alias="analysis")
+    is_maintenance: Optional[bool] = Field(default=None, alias="isMaintenance")
+    is_disruptive_update: Optional[bool] = Field(default=None, alias="isDisruptiveUpdate")
+    update_group_switches: Optional[List[str]] = Field(default=None, alias="updateGroupSwitches")
+    install_image_data: Optional[InstallImageDataModel] = Field(default=None, alias="installImageData")
+    installation_order_devices: Optional[List[str]] = Field(default=None, alias="installationOrderDevices")
+    recommended_version: Optional[str] = Field(default=None, alias="recommendedVersion")
+    latest_recommended_version: Optional[str] = Field(default=None, alias="latestRecommendedVersion")
+    report_selection: Optional[ReportSelectionLiteral] = Field(default=None, alias="reportSelection")
+    reports: Optional[ReportsLiteral] = Field(default=None, alias="reports")
+    update_report_checks: Optional[List[UpdateReportCheckModel]] = Field(default=None, alias="updateReportChecks")
+
+    # --- Validators (Deserialization) ---
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_unwanted_top_level_keys(cls, data: Any) -> Any:
+        """
+        # Summary
+
+        Strip keys that ND may echo back in a GET response but that we do not store on the model.
+
+        ## Raises
+
+        None
+        """
+        if isinstance(data, dict):
+            for key in ("fabricName", "createTime", "modifyTime"):
+                data.pop(key, None)
+        return data
+
+    # --- Argument Spec ---
+
+    @classmethod
+    def get_argument_spec(cls) -> Dict:
+        return dict(
+            fabric_name=dict(type="str", required=True),
+            config=dict(
+                type="list",
+                elements="dict",
+                options=dict(
+                    update_group_name=dict(type="str", required=True),
+                    execution=dict(type="str", choices=["parallel", "serial"]),
+                    contingency=dict(type="str", choices=["continue", "pause"]),
+                    analysis=dict(
+                        type="str",
+                        choices=["snapshot", "noAnalysis", "fullAnalysis", "usePreExistingAnalysis"],
+                    ),
+                    is_maintenance=dict(type="bool"),
+                    is_disruptive_update=dict(type="bool"),
+                    update_group_switches=dict(type="list", elements="str"),
+                    install_image_data=dict(
+                        type="dict",
+                        options=dict(
+                            nos_image_name=dict(type="str"),
+                            epld_image_name=dict(type="str"),
+                            install_package_names=dict(type="list", elements="str"),
+                            uninstall_package=dict(type="bool"),
+                        ),
+                    ),
+                    installation_order_devices=dict(type="list", elements="str"),
+                    recommended_version=dict(type="str"),
+                    latest_recommended_version=dict(type="str"),
+                    report_selection=dict(type="str", choices=["noReport", "basic", "advanced"]),
+                    reports=dict(
+                        type="str",
+                        choices=[
+                            "noReport",
+                            "usePreExistingReports",
+                            "useDefaultPreAndPostReports",
+                            "useAdvancePreAndPostReports",
+                        ],
+                    ),
+                    update_report_checks=dict(
+                        type="list",
+                        elements="dict",
+                        options=dict(
+                            report_check_name=dict(type="str", required=True),
+                        ),
+                    ),
+                ),
+            ),
+            state=dict(
+                type="str",
+                default="merged",
+                choices=["merged", "replaced", "overridden", "deleted"],
+            ),
+        )

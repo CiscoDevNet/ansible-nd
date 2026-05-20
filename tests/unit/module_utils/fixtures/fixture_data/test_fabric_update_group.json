@@ -1,0 +1,308 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_fabric_update_group.py.",
+        "Keys follow the test_<module>_<NNNNN><a|b|c|...> convention from CLAUDE.md.",
+        "Fabric scope for all tests: fabric_1.",
+        "POST returns 207 with per-item status. PUT and DELETE return 204.",
+        "Switch A: fabricManagementIp=192.168.12.151, switchId=FDO12345ABC.",
+        "Switch B: fabricManagementIp=192.168.12.152, switchId=FDO12345ABD.",
+        "Tests that supply IPs in update_group_switches consume one switches-list response first (FabricContext lazy fetch)."
+    ],
+
+    "test_fabric_update_group_00100a": {
+        "TEST_NOTES": ["create happy path: POST returns 207 with status:success"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {"updateGroupName": "leaf_group", "status": "success", "message": "Update group created successful"}
+            ]
+        }
+    },
+
+    "test_fabric_update_group_00110a": {
+        "TEST_NOTES": ["create with per-item error: POST returns 207 with status:error"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "updateGroups": [
+                {"updateGroupName": "leaf_group", "status": "error", "message": "Switch not found"}
+            ]
+        }
+    },
+
+    "test_fabric_update_group_00120a": {
+        "TEST_NOTES": ["create transport failure: POST returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_fabric_update_group_00200a": {
+        "TEST_NOTES": ["update happy path: PUT returns 204"],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "No Content",
+        "DATA": {}
+    },
+
+    "test_fabric_update_group_00210a": {
+        "TEST_NOTES": ["update transport failure: PUT returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_fabric_update_group_00300a": {
+        "TEST_NOTES": ["delete happy path: DELETE returns 204"],
+        "RETURN_CODE": 204,
+        "METHOD": "DELETE",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "No Content",
+        "DATA": {}
+    },
+
+    "test_fabric_update_group_00310a": {
+        "TEST_NOTES": ["delete transport failure: DELETE returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "DELETE",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_fabric_update_group_00400a": {
+        "TEST_NOTES": [
+            "query_one happy path: GET returns single group.",
+            "updateGroupSwitches intentionally omitted - this test does NOT exercise switchId<->IP denormalization,",
+            "so the orchestrator should short-circuit without fetching the switches list."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroupName": "leaf_group",
+            "execution": "serial",
+            "contingency": "continue",
+            "analysis": "snapshot",
+            "isMaintenance": true,
+            "isDisruptiveUpdate": true
+        }
+    },
+
+    "test_fabric_update_group_00410a": {
+        "TEST_NOTES": ["query_one transport failure: GET returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_fabric_update_group_00500a": {
+        "TEST_NOTES": [
+            "query_all happy path: GET returns updateGroups list.",
+            "updateGroupSwitches intentionally omitted - this test does NOT exercise switchId<->IP denormalization."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {"updateGroupName": "g1", "execution": "serial", "contingency": "continue", "analysis": "snapshot", "isMaintenance": true, "isDisruptiveUpdate": true},
+                {"updateGroupName": "g2", "execution": "parallel", "contingency": "pause", "analysis": "noAnalysis", "isMaintenance": false, "isDisruptiveUpdate": false}
+            ]
+        }
+    },
+
+    "test_fabric_update_group_00510a": {
+        "TEST_NOTES": ["query_all 404: returns empty list"],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+
+    "test_fabric_update_group_00520a": {
+        "TEST_NOTES": ["query_all transport failure: GET returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_fabric_update_group_00600a": {
+        "TEST_NOTES": ["create_bulk happy path: POST returns 207 with two successful items"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {"updateGroupName": "g1", "status": "success", "message": "ok"},
+                {"updateGroupName": "g2", "status": "success", "message": "ok"}
+            ]
+        }
+    },
+
+    "test_fabric_update_group_00610a": {
+        "TEST_NOTES": ["create_bulk partial failure: POST returns 207 with one error"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "updateGroups": [
+                {"updateGroupName": "g1", "status": "success", "message": "ok"},
+                {"updateGroupName": "g2", "status": "error", "message": "Switch missing"}
+            ]
+        }
+    },
+
+    "test_fabric_update_group_00700a": {
+        "TEST_NOTES": ["IP-resolved create: switches-list returns both switches"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"},
+                {"fabricManagementIp": "192.168.12.152", "switchId": "FDO12345ABD"}
+            ]
+        }
+    },
+    "test_fabric_update_group_00700b": {
+        "TEST_NOTES": ["IP-resolved create: POST returns 207 with success"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [{"updateGroupName": "leaf_group", "status": "success", "message": "ok"}]
+        }
+    },
+
+    "test_fabric_update_group_00710a": {
+        "TEST_NOTES": ["IP-resolved create with unknown IP: switches-list returns a DIFFERENT IP"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "10.0.0.99", "switchId": "FDO99999XYZ"}
+            ]
+        }
+    },
+
+    "test_fabric_update_group_00720a": {
+        "TEST_NOTES": ["IP-resolved update: switches-list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"},
+                {"fabricManagementIp": "192.168.12.152", "switchId": "FDO12345ABD"}
+            ]
+        }
+    },
+    "test_fabric_update_group_00720b": {
+        "TEST_NOTES": ["IP-resolved update: PUT returns 204"],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "No Content",
+        "DATA": {}
+    },
+
+    "test_fabric_update_group_00730a": {
+        "TEST_NOTES": ["query_one denormalizes switchIds back to IPs: GET single group (consumed first)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroupName": "leaf_group",
+            "execution": "serial",
+            "contingency": "continue",
+            "analysis": "snapshot",
+            "isMaintenance": true,
+            "isDisruptiveUpdate": true,
+            "updateGroupSwitches": ["FDO12345ABC", "FDO12345ABD"],
+            "installationOrderDevices": ["FDO12345ABC", "FDO12345ABD"]
+        }
+    },
+    "test_fabric_update_group_00730b": {
+        "TEST_NOTES": ["query_one denormalizes switchIds back to IPs: switches-list (lazy fetch from denormalize)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"},
+                {"fabricManagementIp": "192.168.12.152", "switchId": "FDO12345ABD"}
+            ]
+        }
+    },
+
+    "test_fabric_update_group_00740a": {
+        "TEST_NOTES": ["query_all denormalizes switchIds back to IPs: GET list (consumed first)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {"updateGroupName": "g1", "updateGroupSwitches": ["FDO12345ABC"]},
+                {"updateGroupName": "g2", "updateGroupSwitches": ["FDO99999XYZ"]}
+            ]
+        }
+    },
+    "test_fabric_update_group_00740b": {
+        "TEST_NOTES": ["query_all denormalizes switchIds back to IPs: switches-list (lazy fetch from denormalize)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+
+    "test_fabric_update_group_00760a": {
+        "TEST_NOTES": [
+            "query_all drops the ND-managed default group named 'None'.",
+            "Groups have no switch lists, so denormalization short-circuits (no switches-list fetch)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {"updateGroupName": "g1", "execution": "serial"},
+                {"updateGroupName": "None", "execution": "parallel"},
+                {"updateGroupName": "g2", "execution": "parallel"}
+            ]
+        }
+    }
+}
