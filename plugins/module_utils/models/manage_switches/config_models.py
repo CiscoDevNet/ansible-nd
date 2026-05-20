@@ -36,7 +36,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     SwitchRole,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import (
-    SwitchValidators,
+    check_discovery_credentials_pair,
+    require_hostname,
+    require_serial_number,
+    validate_cidr,
 )
 
 
@@ -74,7 +77,7 @@ class ConfigDataModel(NDNestedModel):
         """Validate gateway is a valid CIDR."""
         if not v or not v.strip():
             raise ValueError("gateway cannot be empty")
-        return SwitchValidators.validate_cidr(v)
+        return validate_cidr(v)
 
 
 class POAPConfigModel(NDNestedModel):
@@ -118,19 +121,19 @@ class POAPConfigModel(NDNestedModel):
     @classmethod
     def validate_hostname_field(cls, v: str) -> str:
         """Validate hostname is not empty and well-formed."""
-        return SwitchValidators.require_hostname(v)
+        return require_hostname(v)
 
     @model_validator(mode="after")
     def validate_discovery_credentials_pair(self) -> "POAPConfigModel":
         """Validate that discovery_username and discovery_password are both set or both absent."""
-        SwitchValidators.check_discovery_credentials_pair(self.discovery_username, self.discovery_password)
+        check_discovery_credentials_pair(self.discovery_username, self.discovery_password)
         return self
 
     @field_validator("serial_number", mode="before")
     @classmethod
     def validate_serial_number_field(cls, v: str) -> str:
         """Validate serial_number is not empty."""
-        return SwitchValidators.require_serial_number(v)
+        return require_serial_number(v)
 
 
 class PreprovisionConfigModel(NDNestedModel):
@@ -179,19 +182,19 @@ class PreprovisionConfigModel(NDNestedModel):
     @classmethod
     def validate_hostname_field(cls, v: str) -> str:
         """Validate hostname is not empty and well-formed."""
-        return SwitchValidators.require_hostname(v)
+        return require_hostname(v)
 
     @model_validator(mode="after")
     def validate_discovery_credentials_pair(self) -> "PreprovisionConfigModel":
         """Validate that discovery_username and discovery_password are both set or both absent."""
-        SwitchValidators.check_discovery_credentials_pair(self.discovery_username, self.discovery_password)
+        check_discovery_credentials_pair(self.discovery_username, self.discovery_password)
         return self
 
     @field_validator("serial_number", mode="before")
     @classmethod
     def validate_serial_number_field(cls, v: str) -> str:
         """Validate serial_number is not empty."""
-        return SwitchValidators.require_serial_number(v)
+        return require_serial_number(v)
 
 
 class RMAConfigModel(NDNestedModel):
@@ -236,12 +239,12 @@ class RMAConfigModel(NDNestedModel):
     @classmethod
     def validate_serial_numbers(cls, v: str) -> str:
         """Validate new_serial_number is not empty."""
-        return SwitchValidators.require_serial_number(v, "new_serial_number")
+        return require_serial_number(v, "new_serial_number")
 
     @model_validator(mode="after")
     def validate_discovery_credentials_pair(self) -> "RMAConfigModel":
         """Validate that discovery_username and discovery_password are both set or both absent."""
-        SwitchValidators.check_discovery_credentials_pair(self.discovery_username, self.discovery_password)
+        check_discovery_credentials_pair(self.discovery_username, self.discovery_password)
         return self
 
 

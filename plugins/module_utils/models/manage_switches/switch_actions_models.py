@@ -21,7 +21,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import (
-    SwitchValidators,
+    validate_serial_number,
 )
 
 
@@ -62,7 +62,7 @@ class SwitchCredentialsRequestModel(NDBaseModel):
             raise ValueError("At least one switch ID is required")
         validated = []
         for serial in v:
-            result = SwitchValidators.validate_serial_number(serial)
+            result = validate_serial_number(serial)
             if result:
                 validated.append(result)
         if not validated:
@@ -96,7 +96,7 @@ class ChangeSwitchSerialNumberRequestModel(NDBaseModel):
     @field_validator("new_switch_id", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
-        result = SwitchValidators.validate_serial_number(v)
+        result = validate_serial_number(v)
         if result is None:
             raise ValueError("new_switch_id cannot be empty")
         return result

@@ -27,7 +27,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     SwitchRole,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import (
-    SwitchValidators,
+    require_hostname,
+    require_ip_address,
+    require_serial_number,
+    validate_ip_address,
+    validate_mac_address,
 )
 
 
@@ -78,7 +82,7 @@ class ShallowDiscoveryRequestModel(NDBaseModel):
             raise ValueError("At least one seed IP is required")
         validated = []
         for ip in v:
-            result = SwitchValidators.validate_ip_address(ip)
+            result = validate_ip_address(ip)
             if result:
                 validated.append(result)
         if not validated:
@@ -128,22 +132,22 @@ class SwitchDiscoveryModel(NDBaseModel):
     @field_validator("hostname", mode="before")
     @classmethod
     def validate_host(cls, v: str) -> str:
-        return SwitchValidators.require_hostname(v)
+        return require_hostname(v)
 
     @field_validator("ip", mode="before")
     @classmethod
     def validate_ip(cls, v: str) -> str:
-        return SwitchValidators.require_ip_address(v)
+        return require_ip_address(v)
 
     @field_validator("serial_number", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
-        return SwitchValidators.require_serial_number(v)
+        return require_serial_number(v)
 
     @field_validator("vdc_mac", mode="before")
     @classmethod
     def validate_mac(cls, v: str | None) -> str | None:
-        return SwitchValidators.validate_mac_address(v)
+        return validate_mac_address(v)
 
 
 class AddSwitchesRequestModel(NDBaseModel):

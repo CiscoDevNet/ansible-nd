@@ -26,7 +26,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     SwitchRole,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import (
-    SwitchValidators,
+    require_hostname,
+    require_serial_number,
+    validate_cidr,
+    validate_ip_address,
 )
 
 
@@ -130,22 +133,22 @@ class PreProvisionSwitchModel(NDBaseModel):
     @field_validator("ip", "dhcp_bootstrap_ip", mode="before")
     @classmethod
     def validate_ip(cls, v: str | None) -> str | None:
-        return SwitchValidators.validate_ip_address(v)
+        return validate_ip_address(v)
 
     @field_validator("hostname", mode="before")
     @classmethod
     def validate_host(cls, v: str) -> str:
-        return SwitchValidators.require_hostname(v)
+        return require_hostname(v)
 
     @field_validator("serial_number", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
-        return SwitchValidators.require_serial_number(v)
+        return require_serial_number(v)
 
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
     def validate_gateway(cls, v: str) -> str:
-        result = SwitchValidators.validate_cidr(v)
+        result = validate_cidr(v)
         if result is None:
             raise ValueError("gatewayIpMask must include subnet mask (e.g., 10.23.244.1/24)")
         return result

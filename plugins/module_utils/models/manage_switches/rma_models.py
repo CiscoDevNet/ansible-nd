@@ -27,7 +27,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     SwitchRole,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import (
-    SwitchValidators,
+    require_hostname,
+    require_serial_number,
+    validate_cidr_optional,
+    validate_ip_address,
 )
 
 
@@ -81,27 +84,27 @@ class RMASwitchModel(NDBaseModel):
     @field_validator("gateway_ip_mask", mode="before")
     @classmethod
     def validate_gateway(cls, v: str | None) -> str | None:
-        return SwitchValidators.validate_cidr_optional(v)
+        return validate_cidr_optional(v)
 
     @field_validator("hostname", mode="before")
     @classmethod
     def validate_host(cls, v: str) -> str:
-        return SwitchValidators.require_hostname(v)
+        return require_hostname(v)
 
     @field_validator("ip", "dhcp_bootstrap_ip", mode="before")
     @classmethod
     def validate_ip(cls, v: str | None) -> str | None:
-        return SwitchValidators.validate_ip_address(v)
+        return validate_ip_address(v)
 
     @field_validator("new_switch_id", mode="before")
     @classmethod
     def validate_serial(cls, v: str) -> str:
-        return SwitchValidators.require_serial_number(v, "new_switch_id")
+        return require_serial_number(v, "new_switch_id")
 
     @field_validator("old_switch_id", mode="before")
     @classmethod
     def validate_old_serial(cls, v: str) -> str:
-        return SwitchValidators.require_serial_number(v, "old_switch_id")
+        return require_serial_number(v, "old_switch_id")
 
     @computed_field(alias="useNewCredentials")
     @property
