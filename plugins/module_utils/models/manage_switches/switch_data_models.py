@@ -33,7 +33,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     SystemMode,
     VpcRole,
 )
-from .validators import SwitchValidators
+from .validators import require_serial_number, validate_ip_address
 
 
 class TelemetryIpCollection(NDNestedModel):
@@ -82,7 +82,7 @@ class VpcData(NDNestedModel):
     @field_validator("peer_switch_id", mode="before")
     @classmethod
     def validate_peer_serial(cls, v: str) -> str:
-        return SwitchValidators.require_serial_number(v, "peer_switch_id")
+        return require_serial_number(v, "peer_switch_id")
 
 
 class SwitchMetadata(NDNestedModel):
@@ -208,7 +208,9 @@ class SwitchDataModel(NDBaseModel):
         alias="serialNumber",
         description="Serial number of switch or APIC controller node",
     )
-    additional_data: AdditionalSwitchData | AdditionalAciSwitchData | None = Field(default=None, alias="additionalData", description="Additional switch data")
+    additional_data: AdditionalSwitchData | AdditionalAciSwitchData | None = Field(
+        default=None, alias="additionalData", description="Additional switch data"
+    )
     advisory_level: AdvisoryLevel | None = Field(default=None, alias="advisoryLevel")
     anomaly_level: AnomalyLevel | None = Field(default=None, alias="anomalyLevel")
     alert_suspend: str | None = Field(default=None, alias="alertSuspend")
@@ -241,7 +243,7 @@ class SwitchDataModel(NDBaseModel):
     def parse_additional_data(cls, v: Any) -> Any:
         """Route additionalData to the correct nested model.
 
-        The NDFC API may omit the ``usage`` field for non-ACI switches.
+        The ND API may omit the ``usage`` field for non-ACI switches.
         Default to ``"others"`` so Pydantic selects ``AdditionalSwitchData``
         and coerces ``discoveryStatus`` / ``systemMode`` as proper enums.
         """
@@ -254,12 +256,12 @@ class SwitchDataModel(NDBaseModel):
     @field_validator("switch_id", mode="before")
     @classmethod
     def validate_switch_id(cls, v: str) -> str:
-        return SwitchValidators.require_serial_number(v, "switch_id")
+        return require_serial_number(v, "switch_id")
 
     @field_validator("fabric_management_ip", mode="before")
     @classmethod
     def validate_mgmt_ip(cls, v: str | None) -> str | None:
-        return SwitchValidators.validate_ip_address(v)
+        return validate_ip_address(v)
 
     def to_payload(self) -> dict[str, Any]:
         """Convert to API payload format."""
