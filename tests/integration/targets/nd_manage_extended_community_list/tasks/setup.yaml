@@ -1,0 +1,12 @@
+---
+# Cleanup for nd_manage_extended_community_list integration tests.
+
+- name: "SETUP: Remove test extended community lists"
+  cisco.nd.nd_manage_extended_community_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - name: "{{ extended_community_list_standard.name }}"
+      - name: "{{ extended_community_list_expanded.name }}"
+      - name: "{{ extended_community_list_overridden.name }}"
+    state: deleted

@@ -131,6 +131,17 @@ class RouteMapNameMixin(BaseModel):
 
     route_map_name: str | None = Field(default=None, min_length=1, max_length=115, description="Route map name")
 
+class CommunityListNameMixin(BaseModel):
+    """Mixin for endpoints that require community_list_name parameter."""
+
+    community_list_name: str | None = Field(default=None, min_length=1, max_length=115, description="Community list name")
+
+
+class ExtendedCommunityListNameMixin(BaseModel):
+    """Mixin for endpoints that require extended_community_list_name parameter."""
+
+    extended_community_list_name: str | None = Field(default=None, min_length=1, max_length=115, description="Extended community list name")
+
 
 class TenantNameMixin(BaseModel):
     """Mixin for endpoints that require tenant_name parameter."""
