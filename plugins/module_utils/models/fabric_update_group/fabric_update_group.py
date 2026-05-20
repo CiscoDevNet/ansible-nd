@@ -11,7 +11,7 @@ Fabric Software Management workflow. Identifier: `update_group_name` (single, fa
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Dict, List, Literal, Optional
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -40,10 +40,10 @@ class InstallImageDataModel(NDNestedModel):
     None
     """
 
-    nos_image_name: Optional[str] = Field(default=None, alias="nosImageName")
-    epld_image_name: Optional[str] = Field(default=None, alias="epldImageName")
-    install_package_names: Optional[List[str]] = Field(default=None, alias="installPackageNames")
-    uninstall_package: Optional[bool] = Field(default=None, alias="uninstallPackage")
+    nos_image_name: str | None = Field(default=None, alias="nosImageName")
+    epld_image_name: str | None = Field(default=None, alias="epldImageName")
+    install_package_names: list[str] | None = Field(default=None, alias="installPackageNames")
+    uninstall_package: bool | None = Field(default=None, alias="uninstallPackage")
 
 
 class UpdateReportCheckModel(NDNestedModel):
@@ -88,8 +88,8 @@ class FabricUpdateGroupModel(NDBaseModel):
     None
     """
 
-    identifiers: ClassVar[Optional[List[str]]] = ["update_group_name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifiers: ClassVar[list[str] | None] = ["update_group_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
 
     # TODO(4.2.1) ND silently drops `installationOrderDevices` on the updateGroups create/update endpoints.
     # The POST/PUT accept the field without error, but GET (single and list) never echoes it back. We still
@@ -106,20 +106,20 @@ class FabricUpdateGroupModel(NDBaseModel):
     # --- Fields ---
 
     update_group_name: str = Field(alias="updateGroupName")
-    execution: Optional[ExecutionLiteral] = Field(default=None, alias="execution")
-    contingency: Optional[ContingencyLiteral] = Field(default=None, alias="contingency")
-    analysis: Optional[AnalysisLiteral] = Field(default=None, alias="analysis")
-    is_maintenance: Optional[bool] = Field(default=None, alias="isMaintenance")
-    is_disruptive_update: Optional[bool] = Field(default=None, alias="isDisruptiveUpdate")
-    update_group_switches: Optional[List[str]] = Field(default=None, alias="updateGroupSwitches")
+    execution: ExecutionLiteral | None = Field(default=None, alias="execution")
+    contingency: ContingencyLiteral | None = Field(default=None, alias="contingency")
+    analysis: AnalysisLiteral | None = Field(default=None, alias="analysis")
+    is_maintenance: bool | None = Field(default=None, alias="isMaintenance")
+    is_disruptive_update: bool | None = Field(default=None, alias="isDisruptiveUpdate")
+    update_group_switches: list[str] | None = Field(default=None, alias="updateGroupSwitches")
     force_created: bool = Field(default=False)
-    install_image_data: Optional[InstallImageDataModel] = Field(default=None, alias="installImageData")
-    installation_order_devices: Optional[List[str]] = Field(default=None, alias="installationOrderDevices")
-    recommended_version: Optional[str] = Field(default=None, alias="recommendedVersion")
-    latest_recommended_version: Optional[str] = Field(default=None, alias="latestRecommendedVersion")
-    report_selection: Optional[ReportSelectionLiteral] = Field(default=None, alias="reportSelection")
-    reports: Optional[ReportsLiteral] = Field(default=None, alias="reports")
-    update_report_checks: Optional[List[UpdateReportCheckModel]] = Field(default=None, alias="updateReportChecks")
+    install_image_data: InstallImageDataModel | None = Field(default=None, alias="installImageData")
+    installation_order_devices: list[str] | None = Field(default=None, alias="installationOrderDevices")
+    recommended_version: str | None = Field(default=None, alias="recommendedVersion")
+    latest_recommended_version: str | None = Field(default=None, alias="latestRecommendedVersion")
+    report_selection: ReportSelectionLiteral | None = Field(default=None, alias="reportSelection")
+    reports: ReportsLiteral | None = Field(default=None, alias="reports")
+    update_report_checks: list[UpdateReportCheckModel] | None = Field(default=None, alias="updateReportChecks")
 
     # --- Validators (Deserialization) ---
 
@@ -143,7 +143,7 @@ class FabricUpdateGroupModel(NDBaseModel):
     # --- Argument Spec ---
 
     @classmethod
-    def get_argument_spec(cls) -> Dict:
+    def get_argument_spec(cls) -> dict:
         return dict(
             fabric_name=dict(type="str", required=True),
             config=dict(
