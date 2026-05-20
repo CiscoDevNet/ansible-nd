@@ -5,20 +5,32 @@
 """
 Fabric update group orchestrator for Nexus Dashboard.
 
-Implements CRUD operations for fabric update groups via the ND Manage Fabric Software Management API.
-Fabric name is supplied by the module's top-level `fabric_name` option and propagated to every endpoint
-instance prior to path generation; per-config identifier is `update_group_name`.
+Drives fabric update group lifecycle via the ND Manage Fabric Software Management API. The write
+path uses the switch-centric "action" API, which is ghost-safe by construction: `attachGroup`
+requires at least one switch, and `detachGroup` auto-deletes a group server-side once its last
+switch is removed.
 
-`update_group_switches` and `installation_order_devices` accept either switch IP addresses or switch
-serial numbers (switchIds). IPs are resolved to switchIds via `FabricContext` before being sent on the
-wire; switchIds in GET responses are converted back to IPs so playbook authors see consistent IP-based
-output even though the wire stores serials.
+- `create` / `create_bulk` create groups and assign switches via `attachGroup`, then apply group
+  settings via `PUT /updateGroups/{name}` (the action API carries membership only).
+- `update` reconciles membership - `attachGroup` for added switches, `detachGroup` for removed
+  switches - then applies settings via PUT.
+- `delete` detaches every switch via `detachGroup`; ND deletes the emptied group. If the group is
+  a zero-switch ghost that the single GET cannot read, `delete` falls back to the group-centric
+  `DELETE /updateGroups/{name}` to free the reserved name.
+- `query_one` / `query_all` read via the group-centric GET endpoints.
 
-POST is bulk-only: the wire shape is `{"updateGroups": [...]}`, returning HTTP 207 with per-item
-`status` ("success" or "error"). `create()` wraps a single payload in the bulk shape and inspects
-the per-item status before returning. `create_bulk()` sends N groups in a single POST.
+Fabric name is supplied by the module's top-level `fabric_name` option and propagated to every
+endpoint instance prior to path generation; per-config identifier is `update_group_name`.
 
-PUT, DELETE, and per-name GET take the single update group as a flat dict / path-only.
+`update_group_switches` and `installation_order_devices` accept either switch IP addresses or
+switch serial numbers (switchIds). IPs are resolved to switchIds via `FabricContext` before being
+sent on the wire; switchIds in GET responses are converted back to IPs so playbook authors see
+consistent IP-based output even though the wire stores serials.
+
+`attachGroup` and `detachGroup` return HTTP 207 with per-item `status`. Any status other than
+`success` fails the task. ND returns `attachGroup` `status: warning` when it declines to apply a
+change pending confirmation (and leaves nothing attached); setting the `force_created` option makes
+ND apply the change and return `success` instead.
 """
 
 from __future__ import annotations
@@ -30,8 +42,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.fabri
     EpFabricUpdateGroupDelete,
     EpFabricUpdateGroupGet,
     EpFabricUpdateGroupListGet,
-    EpFabricUpdateGroupPost,
     EpFabricUpdateGroupPut,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.software_update_plan_actions import (
+    EpFabricSoftwareUpdatePlanAttachGroup,
+    EpFabricSoftwareUpdatePlanDetachGroup,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -42,39 +57,42 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types impor
 # Wire payload keys whose list-valued contents are switch identifiers (IP or switchId)
 _SWITCH_LIST_PAYLOAD_KEYS = ("updateGroupSwitches", "installationOrderDevices")
 
+# Wire payload keys that identify a group / its membership rather than its settings
+_NON_SETTINGS_PAYLOAD_KEYS = ("updateGroupName", "updateGroupSwitches")
+
 
 class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
     """
     # Summary
 
-    Orchestrator for fabric update group CRUD on Nexus Dashboard.
+    Orchestrator for fabric update group lifecycle on Nexus Dashboard.
 
     Reads `fabric_name` from module params and applies it to every endpoint instance before path
-    generation. Resolves switch IPs to switchIds (and back) via `FabricContext` so users can specify
-    either form in `update_group_switches` / `installation_order_devices`. POST is bulk-only - single
-    create calls are wrapped in `{"updateGroups": [payload]}`.
+    generation. Resolves switch IPs to switchIds (and back) via `FabricContext`. The write path
+    uses the switch-centric `attachGroup` / `detachGroup` action endpoints for membership and
+    `PUT /updateGroups/{name}` for group settings.
 
     ## Raises
 
     ### RuntimeError
 
-    - Via `create` if the create API request fails or any per-item status is "error".
-    - Via `update` if the update API request fails.
-    - Via `delete` if the delete API request fails.
-    - Via `query_one` if the query API request fails.
-    - Via `query_all` if the query API request fails.
+    - Via `create` / `create_bulk` if a request fails or any per-item `attachGroup` status is not `success`.
+    - Via `update` if a request fails or `update_group_switches` resolves to an empty set.
+    - Via `delete` if a request fails or any per-item `detachGroup` status is not `success`.
+    - Via `query_one` / `query_all` if the query API request fails.
     - Via `_resolve_switch_id` if the user-provided switch IP cannot be matched in the fabric.
     """
 
     model_class: ClassVar[Type[NDBaseModel]] = FabricUpdateGroupModel
     supports_bulk_create: ClassVar[bool] = True
 
-    create_endpoint: Type[NDEndpointBaseModel] = EpFabricUpdateGroupPost
+    create_endpoint: Type[NDEndpointBaseModel] = EpFabricSoftwareUpdatePlanAttachGroup
     update_endpoint: Type[NDEndpointBaseModel] = EpFabricUpdateGroupPut
     delete_endpoint: Type[NDEndpointBaseModel] = EpFabricUpdateGroupDelete
     query_one_endpoint: Type[NDEndpointBaseModel] = EpFabricUpdateGroupGet
     query_all_endpoint: Type[NDEndpointBaseModel] = EpFabricUpdateGroupListGet
-    create_bulk_endpoint: Type[NDEndpointBaseModel] | None = EpFabricUpdateGroupPost
+    create_bulk_endpoint: Type[NDEndpointBaseModel] | None = EpFabricSoftwareUpdatePlanAttachGroup
+    detach_group_endpoint: Type[NDEndpointBaseModel] = EpFabricSoftwareUpdatePlanDetachGroup
 
     _fabric_context: FabricContext | None = None
 
@@ -178,7 +196,7 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         `installationOrderDevices` with their matching IPs so the user sees consistent IP-based output.
 
         Denormalization is best-effort: if the switch map cannot be loaded (e.g. the inventory call
-        fails), the response is returned unmodified rather than raising — switchIds shown to the user
+        fails), the response is returned unmodified rather than raising - switchIds shown to the user
         are still correct, just not user-friendlier IPs. Per-switchId lookups that miss the map (stale
         serials) are also passed through unchanged.
 
@@ -201,50 +219,198 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         return item
 
     @staticmethod
-    def _raise_on_207_item_errors(result: Any, expected_names: list[str]) -> None:
+    def _raise_on_207_action_errors(result: Any, response_key: str, message_key: str) -> None:
         """
         # Summary
 
-        Inspect a POST 207 response of shape `{"updateGroups": [{"updateGroupName": "X", "status": "...", "message": "..."}]}`
-        and raise `RuntimeError` if any item reports `status != "success"`.
+        Inspect a 207 action response of shape `{response_key: [{updateGroupName, status, ...}]}` and
+        raise `RuntimeError` if any item reports a non-`success` status. A `status: warning` means ND
+        declined to apply the change (it left nothing attached) - so, like `failed`, it fails the
+        task. The user opts past warnings by setting `force_created`, which makes ND apply the change
+        and return `success`; `force_created` therefore governs the request, never response handling.
 
         ## Raises
 
         ### RuntimeError
 
-        - If any item in the response reports a non-success status.
+        - If any item in the response reports a status other than `success`.
         """
         if not isinstance(result, dict):
             return
-        items = result.get("updateGroups")
+        items = result.get(response_key)
         if not isinstance(items, list):
             return
-        failures = [item for item in items if isinstance(item, dict) and item.get("status") and item.get("status") != "success"]
+        failures = [item for item in items if isinstance(item, dict) and item.get("status") not in (None, "success")]
         if failures:
-            details = ", ".join(f"{item.get('updateGroupName')}: {item.get('status')} - {item.get('message')}" for item in failures)
-            raise RuntimeError(f"Per-item failures in bulk create response: {details}")
+            details = ", ".join(f"{item.get('updateGroupName')}: {item.get('status')} - {item.get(message_key)}" for item in failures)
+            raise RuntimeError(f"Per-item failures in {response_key} response: {details}")
+
+    @staticmethod
+    def _model_has_settings(model_instance: FabricUpdateGroupModel) -> bool:
+        """
+        # Summary
+
+        Return True if the model carries any group setting (i.e. any payload key beyond the group
+        name and its switch membership). When False, no settings PUT is needed.
+
+        ## Raises
+
+        None
+        """
+        return any(key not in _NON_SETTINGS_PAYLOAD_KEYS for key in model_instance.to_payload())
+
+    def _attach_item(self, model_instance: FabricUpdateGroupModel, switch_ids: list[str] | None = None) -> dict:
+        """
+        # Summary
+
+        Build a single `attachUpdateGroups` item. When `switch_ids` is None the model's
+        `update_group_switches` are resolved (IP -> switchId); otherwise the provided already-resolved
+        list is used verbatim.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If a switch IP cannot be resolved (propagated from `_resolve_switch_id`).
+        """
+        if switch_ids is None:
+            switch_ids = [self._resolve_switch_id(s) for s in (model_instance.update_group_switches or [])]
+        return {
+            "updateGroupName": model_instance.update_group_name,
+            "switchIds": switch_ids,
+            "forceCreated": model_instance.force_created,
+        }
+
+    def _attach(self, attach_items: list[dict]) -> ResponseType:
+        """
+        # Summary
+
+        POST `attachGroup` with the supplied `attachUpdateGroups` items and inspect the 207 response.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the request fails or any per-item status is not `success`.
+        """
+        api_endpoint = self._configure_endpoint(self.create_endpoint())
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data={"attachUpdateGroups": attach_items})
+        self._raise_on_207_action_errors(result, "attachUpdateGroups", "warningMessage")
+        return result
+
+    def _detach(self, detach_items: list[dict]) -> ResponseType:
+        """
+        # Summary
+
+        POST `detachGroup` with the supplied `detachUpdateGroups` items and inspect the 207 response.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the request fails or any per-item status is not `success`.
+        """
+        api_endpoint = self._configure_endpoint(self.detach_group_endpoint())
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data={"detachUpdateGroups": detach_items})
+        self._raise_on_207_action_errors(result, "detachUpdateGroups", "message")
+        return result
+
+    def _get_group_raw(self, update_group_name: str) -> dict:
+        """
+        # Summary
+
+        GET a single update group and return its raw wire dict.
+
+        ## Raises
+
+        ### Exception
+
+        - If the GET request fails (propagated from `_request`).
+        """
+        api_endpoint = self._configure_endpoint(self.query_one_endpoint())
+        api_endpoint.set_identifiers(update_group_name)
+        result = self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+        return result if isinstance(result, dict) else {}
+
+    def _get_group_raw_or_none(self, update_group_name: str) -> dict | None:
+        """
+        # Summary
+
+        GET a single update group, returning None if the group cannot be read (e.g. a zero-switch
+        ghost group, which ND returns HTTP 400 for).
+
+        ## Raises
+
+        None
+        """
+        try:
+            return self._get_group_raw(update_group_name)
+        except Exception:  # pylint: disable=broad-except
+            return None
+
+    def _delete_group(self, update_group_name: str) -> None:
+        """
+        # Summary
+
+        Issue the group-centric `DELETE /updateGroups/{name}`. Used as a fallback to free the name of
+        a zero-switch ghost group that `detachGroup` cannot act on.
+
+        ## Raises
+
+        ### Exception
+
+        - If the DELETE request fails (propagated from `_request`).
+        """
+        api_endpoint = self._configure_endpoint(self.delete_endpoint())
+        api_endpoint.set_identifiers(update_group_name)
+        self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+
+    def _apply_settings(self, model_instance: FabricUpdateGroupModel, current_raw: dict | None = None) -> None:
+        """
+        # Summary
+
+        Apply group settings via `PUT /updateGroups/{name}`. The action API carries membership only,
+        so settings are PUT separately. PUT is a full replace requiring all of `updateGroupName`,
+        `execution`, `contingency`, `analysis`, `isMaintenance`, `isDisruptiveUpdate`, and
+        `updateGroupSwitches`; the body is built by overlaying the user's explicitly-set fields onto a
+        GET of the current group, so every required field is present and `updateGroupSwitches` echoes
+        the group's actual membership (PUT moves no switches). Skipped entirely when the model carries
+        no settings.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If a switch IP cannot be resolved, or the GET / PUT request fails.
+        """
+        if not self._model_has_settings(model_instance):
+            return
+        if current_raw is None:
+            current_raw = self._get_group_raw(model_instance.update_group_name)
+        merged = FabricUpdateGroupModel.from_response(current_raw)
+        merged.merge(model_instance)
+        api_endpoint = self._configure_endpoint(self.update_endpoint())
+        api_endpoint.set_identifiers(model_instance.update_group_name)
+        payload = self._resolve_switches_in_payload(merged.to_payload())
+        self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
 
     def create(self, model_instance: FabricUpdateGroupModel, **kwargs) -> ResponseType:
         """
         # Summary
 
-        Create a single fabric update group. Resolves any IPs in `update_group_switches` /
-        `installation_order_devices` to switchIds, wraps the payload in the bulk `{"updateGroups": [...]}`
-        shape required by the ND POST endpoint, and inspects per-item status in the 207 response.
+        Create a fabric update group: `attachGroup` creates the group and assigns its switches, then
+        any group settings are applied via PUT.
 
         ## Raises
 
         ### RuntimeError
 
-        - If a switch IP cannot be resolved, the POST request fails, or any per-item status is not "success".
+        - If a switch IP cannot be resolved, a request fails, or `attachGroup` reports a non-success status.
         """
         try:
-            api_endpoint = self._configure_endpoint(self.create_endpoint())
-            payload = self._resolve_switches_in_payload(model_instance.to_payload())
-            body = {"updateGroups": [payload]}
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=body)
-            self._raise_on_207_item_errors(result, [model_instance.update_group_name])
-            return result
+            self._attach([self._attach_item(model_instance)])
+            self._apply_settings(model_instance)
+            return {}
         except Exception as e:
             raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -252,23 +418,21 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         """
         # Summary
 
-        Create multiple fabric update groups in a single POST. Resolves switch IPs to switchIds on each
-        payload before sending. The wire endpoint accepts a list of groups under the `updateGroups` key
-        and returns per-item status in a 207 response.
+        Create multiple fabric update groups: a single `attachGroup` POST assigns switches for all
+        groups, then group settings are applied per group via PUT.
 
         ## Raises
 
         ### RuntimeError
 
-        - If a switch IP cannot be resolved, the POST request fails, or any per-item status is not "success".
+        - If a switch IP cannot be resolved, a request fails, or `attachGroup` reports a non-success status.
         """
         try:
-            api_endpoint = self._configure_endpoint(self.create_bulk_endpoint())  # pyright: ignore[reportOptionalCall]
-            payloads = [self._resolve_switches_in_payload(m.to_payload()) for m in model_instances]
-            body = {"updateGroups": payloads}
-            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=body)
-            self._raise_on_207_item_errors(result, [m.update_group_name for m in model_instances])
-            return result
+            attach_items = [self._attach_item(m) for m in model_instances]
+            self._attach(attach_items)
+            for model_instance in model_instances:
+                self._apply_settings(model_instance)
+            return {}
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
 
@@ -276,21 +440,33 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         """
         # Summary
 
-        Update a single fabric update group by name. Resolves any IPs in `update_group_switches` /
-        `installation_order_devices` to switchIds before sending. PUT body is the flat group dict
-        (no `updateGroups` wrapper).
+        Update a fabric update group: reconcile membership against the current wire state
+        (`attachGroup` for added switches, `detachGroup` for removed switches), then apply settings
+        via PUT.
 
         ## Raises
 
         ### RuntimeError
 
-        - If a switch IP cannot be resolved or the PUT request fails.
+        - If `update_group_switches` resolves to an empty set (an empty update group is not permitted -
+          use `state: deleted`), a switch IP cannot be resolved, a request fails, or an action
+          endpoint reports a non-success status.
         """
         try:
-            api_endpoint = self._configure_endpoint(self.update_endpoint())
-            api_endpoint.set_identifiers(model_instance.update_group_name)
-            payload = self._resolve_switches_in_payload(model_instance.to_payload())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+            update_group_name = model_instance.update_group_name
+            current_raw = self._get_group_raw(update_group_name)
+            current_ids = list(current_raw.get("updateGroupSwitches") or [])
+            desired_ids = [self._resolve_switch_id(s) for s in (model_instance.update_group_switches or [])]
+            if not desired_ids:
+                raise RuntimeError("update_group_switches must be non-empty; an empty update group is not permitted (use state: deleted)")
+            to_add = [s for s in desired_ids if s not in current_ids]
+            to_remove = [s for s in current_ids if s not in desired_ids]
+            if to_add:
+                self._attach([self._attach_item(model_instance, switch_ids=to_add)])
+            if to_remove:
+                self._detach([{"updateGroupName": update_group_name, "switchIds": to_remove}])
+            self._apply_settings(model_instance, current_raw=current_raw)
+            return {}
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
 
@@ -298,18 +474,25 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         """
         # Summary
 
-        Delete a single fabric update group by name.
+        Delete a fabric update group by detaching every switch via `detachGroup` (ND deletes the
+        emptied group). If the group cannot be read by the single GET (a zero-switch ghost group),
+        fall back to the group-centric `DELETE /updateGroups/{name}` to free the reserved name.
 
         ## Raises
 
         ### RuntimeError
 
-        - If the DELETE request fails.
+        - If a request fails or `detachGroup` reports a non-success status.
         """
         try:
-            api_endpoint = self._configure_endpoint(self.delete_endpoint())
-            api_endpoint.set_identifiers(model_instance.update_group_name)
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+            update_group_name = model_instance.update_group_name
+            current_raw = self._get_group_raw_or_none(update_group_name)
+            switch_ids = list(current_raw.get("updateGroupSwitches") or []) if current_raw else []
+            if switch_ids:
+                self._detach([{"updateGroupName": update_group_name, "switchIds": switch_ids}])
+            else:
+                self._delete_group(update_group_name)
+            return {}
         except Exception as e:
             raise RuntimeError(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
 

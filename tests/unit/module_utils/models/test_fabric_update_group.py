@@ -651,3 +651,108 @@ def test_fabric_update_group_00710() -> None:
     desired = FabricUpdateGroupModel(**common, installation_order_devices=["FDO2", "FDO1"])
 
     assert current.get_diff(desired, exclude_unset=True) is True
+
+
+# =============================================================================
+# Test: force_created flag
+# =============================================================================
+
+
+def test_fabric_update_group_00800() -> None:
+    """
+    # Summary
+
+    Verify `force_created` defaults to False on bare construction.
+
+    ## Test
+
+    - Construct model with only the required field
+    - `force_created` is False
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupModel.__init__()
+    """
+    with does_not_raise():
+        instance = FabricUpdateGroupModel(update_group_name="g1")
+
+    assert instance.force_created is False
+
+
+def test_fabric_update_group_00810() -> None:
+    """
+    # Summary
+
+    Verify `force_created` is excluded from both the diff and the PUT payload.
+
+    `force_created` is an `attachGroup`-only operational flag, not part of the `updateGroup` resource
+    schema. It must never reach the settings PUT body and must never trigger a false `changed`.
+
+    ## Test
+
+    - `force_created` is in `exclude_from_diff` and `payload_exclude_fields`
+    - `to_payload()` omits it even when set True
+    - `to_diff_dict()` omits it even when set True
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupModel (exclude_from_diff / payload_exclude_fields)
+    - FabricUpdateGroupModel.to_payload()
+    - FabricUpdateGroupModel.to_diff_dict()
+    """
+    assert "force_created" in FabricUpdateGroupModel.exclude_from_diff
+    assert "force_created" in FabricUpdateGroupModel.payload_exclude_fields
+
+    instance = FabricUpdateGroupModel(
+        update_group_name="g1",
+        update_group_switches=["FDO1"],
+        force_created=True,
+    )
+
+    assert "force_created" not in instance.to_payload()
+    assert "forceCreated" not in instance.to_payload()
+    assert "force_created" not in instance.to_diff_dict()
+    assert "forceCreated" not in instance.to_diff_dict()
+
+
+def test_fabric_update_group_00820() -> None:
+    """
+    # Summary
+
+    Verify `from_config` reads `force_created` from an Ansible config dict.
+
+    ## Test
+
+    - Config dict sets `force_created: True`
+    - The model attribute holds True
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupModel.from_config()
+    """
+    config = dict(SAMPLE_ANSIBLE_CONFIG, force_created=True)
+
+    with does_not_raise():
+        instance = FabricUpdateGroupModel.from_config(config)
+
+    assert instance.force_created is True
+
+
+def test_fabric_update_group_00830() -> None:
+    """
+    # Summary
+
+    Verify `get_argument_spec` exposes `force_created` as a bool option defaulting to False.
+
+    ## Test
+
+    - `config.options.force_created` is type bool with default False
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupModel.get_argument_spec()
+    """
+    options = FabricUpdateGroupModel.get_argument_spec()["config"]["options"]
+
+    assert options["force_created"]["type"] == "bool"
+    assert options["force_created"]["default"] is False

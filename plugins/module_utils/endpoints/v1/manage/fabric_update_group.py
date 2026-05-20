@@ -11,8 +11,6 @@ under the ND Manage Fabric Software Management API.
 
 - `EpFabricUpdateGroupListGet` - List update groups in a fabric
   (GET /api/v1/manage/fabrics/{fabric_name}/updateGroups)
-- `EpFabricUpdateGroupPost` - Create one or more update groups in a fabric
-  (POST /api/v1/manage/fabrics/{fabric_name}/updateGroups)
 - `EpFabricUpdateGroupGet` - Get a specific update group by name
   (GET /api/v1/manage/fabrics/{fabric_name}/updateGroups/{update_group_name})
 - `EpFabricUpdateGroupPut` - Update an existing update group
@@ -108,41 +106,6 @@ class EpFabricUpdateGroupListGet(_EpFabricUpdateGroupBase):
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.GET
-
-
-class EpFabricUpdateGroupPost(_EpFabricUpdateGroupBase):
-    """
-    # Summary
-
-    ND Manage Fabric Update Group POST endpoint.
-
-    ## Path
-
-    - `/api/v1/manage/fabrics/{fabric_name}/updateGroups`
-
-    ## Verb
-
-    - POST
-
-    ## Usage
-
-    ```python
-    ep = EpFabricUpdateGroupPost()
-    ep.fabric_name = "SITE1"
-    rest_send.path = ep.path
-    rest_send.verb = ep.verb
-    rest_send.payload = {...}
-    ```
-    """
-
-    _require_update_group_name: ClassVar[bool] = False
-
-    class_name: Literal["EpFabricUpdateGroupPost"] = Field(default="EpFabricUpdateGroupPost", frozen=True, description="Class name for backward compatibility")
-
-    @property
-    def verb(self) -> HttpVerbEnum:
-        """Return the HTTP verb for this endpoint."""
-        return HttpVerbEnum.POST
 
 
 class EpFabricUpdateGroupGet(_EpFabricUpdateGroupBase):

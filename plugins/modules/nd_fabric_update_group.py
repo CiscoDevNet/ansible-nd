@@ -16,7 +16,7 @@ description:
 - Manage fabric update groups under O(fabric_name) on Cisco Nexus Dashboard (ND).
 - A fabric update group ties together a set of switches with an image / package install plan and orchestration knobs
   (execution mode, contingency, analysis, maintenance, reports) used by the Fabric Software Management workflow.
-- This is the ND 4.2 successor to image policies in ND 3.x / NDFC.
+- This is the ND 4.2 successor to image policies in ND 3.x.
 author:
 - Allen Robel (@allenrobel)
 options:
@@ -71,8 +71,16 @@ options:
         - The list of switches that belong to this update group.
         - Each entry may be a switch fabric management IP address or a switch serial number (switchId).
         - Switch IP addresses are resolved to switchIds via the fabric inventory before the request is sent.
+        - An update group must contain at least one switch; ND does not permit a zero-switch group.
         type: list
         elements: str
+      force_created:
+        description:
+        - Whether to force creation of the update group past ND pre-flight switch warnings.
+        - When V(false), an ND warning (for example, that upgrading the selected switches would impact all
+          roles in the fabric) fails the task. Set V(true) to acknowledge such warnings and apply anyway.
+        type: bool
+        default: false
       installation_order_devices:
         description:
         - The order in which switches are upgraded when O(config.execution=serial).

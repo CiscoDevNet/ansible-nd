@@ -96,7 +96,12 @@ class FabricUpdateGroupModel(NDBaseModel):
     # send it (ND may consume it during the actual upgrade run), but it must be excluded from the idempotency
     # diff - otherwise a re-applied, unchanged config is perpetually reported as `changed` because the wire
     # state never carries the field. Observed on ND 4.2.1, fabric SITE1.
-    exclude_from_diff: ClassVar[set] = {"installation_order_devices"}
+    #
+    # `force_created` is an attachGroup-only operational flag (whether ND forces past pre-flight switch
+    # warnings), not a field of the `updateGroup` resource. It is excluded from the diff so it never
+    # produces a false `changed`, and from the payload so it never leaks into the settings PUT body.
+    exclude_from_diff: ClassVar[set] = {"installation_order_devices", "force_created"}
+    payload_exclude_fields: ClassVar[set] = {"force_created"}
 
     # --- Fields ---
 
@@ -107,6 +112,7 @@ class FabricUpdateGroupModel(NDBaseModel):
     is_maintenance: Optional[bool] = Field(default=None, alias="isMaintenance")
     is_disruptive_update: Optional[bool] = Field(default=None, alias="isDisruptiveUpdate")
     update_group_switches: Optional[List[str]] = Field(default=None, alias="updateGroupSwitches")
+    force_created: bool = Field(default=False)
     install_image_data: Optional[InstallImageDataModel] = Field(default=None, alias="installImageData")
     installation_order_devices: Optional[List[str]] = Field(default=None, alias="installationOrderDevices")
     recommended_version: Optional[str] = Field(default=None, alias="recommendedVersion")
@@ -154,6 +160,7 @@ class FabricUpdateGroupModel(NDBaseModel):
                     is_maintenance=dict(type="bool"),
                     is_disruptive_update=dict(type="bool"),
                     update_group_switches=dict(type="list", elements="str"),
+                    force_created=dict(type="bool", default=False),
                     install_image_data=dict(
                         type="dict",
                         options=dict(

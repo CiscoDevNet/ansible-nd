@@ -7,10 +7,11 @@
 """
 Unit tests for `FabricUpdateGroupOrchestrator`.
 
-Verifies that the orchestrator drives `RestSend` correctly for fabric update group CRUD,
-wraps create payloads in `{"updateGroups": [...]}` for the bulk POST endpoint, inspects
-per-item status in 207 responses, sends a flat PUT body, extracts `updateGroups` from
-`query_all`, and resolves `fabric_name` from `RestSend` params.
+Verifies the orchestrator drives `RestSend` against the switch-centric action API: `create` /
+`create_bulk` attach switches via `attachGroup`, `update` reconciles membership via
+`attachGroup` / `detachGroup`, `delete` detaches all switches (ND auto-deletes the empty group),
+and group settings are applied via `PUT /updateGroups/{name}`. Reads (`query_one` / `query_all`)
+stay on the group-centric GET endpoints.
 """
 
 # pylint: disable=disallowed-name,protected-access,redefined-outer-name,too-many-lines
@@ -62,8 +63,8 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     return rest_send
 
 
-def _build_model(update_group_name: str = "leaf_group") -> FabricUpdateGroupModel:
-    """Build a minimal valid `FabricUpdateGroupModel`."""
+def _build_model(update_group_name: str = "leaf_group", force_created: bool = False) -> FabricUpdateGroupModel:
+    """Build a `FabricUpdateGroupModel` with full settings and two switchId-form switches."""
     return FabricUpdateGroupModel(
         update_group_name=update_group_name,
         execution="serial",
@@ -72,6 +73,7 @@ def _build_model(update_group_name: str = "leaf_group") -> FabricUpdateGroupMode
         is_maintenance=True,
         is_disruptive_update=True,
         update_group_switches=["FDO1", "FDO2"],
+        force_created=force_created,
     )
 
 
@@ -84,7 +86,7 @@ def test_fabric_update_group_00010() -> None:
     """
     # Summary
 
-    Verify `FabricUpdateGroupOrchestrator` instantiates and exposes expected ClassVars / endpoint fields.
+    Verify `FabricUpdateGroupOrchestrator` instantiates and exposes the expected ClassVars.
 
     ## Test
 
@@ -139,23 +141,26 @@ def test_fabric_update_group_00100() -> None:
     """
     # Summary
 
-    Verify `create` issues POST against the collection URL with `{"updateGroups": [payload]}` body.
+    Verify `create` attaches switches via `attachGroup` then applies settings via PUT.
 
     ## Test
 
-    - POST against `/api/v1/manage/fabrics/fabric_1/updateGroups`
-    - Body wraps the single payload in the `updateGroups` array
-    - Payload contains `updateGroupName: leaf_group`
-    - 207 with `status: success` returns normally
+    - attachGroup POST (207 success), GET the created group, PUT merged settings
+    - The final call is the PUT against the per-name URL
+    - The PUT body carries the user's settings overlaid on the GET defaults
 
     ## Classes and Methods
 
     - FabricUpdateGroupOrchestrator.create()
+    - FabricUpdateGroupOrchestrator._attach()
+    - FabricUpdateGroupOrchestrator._apply_settings()
     """
     method_name = inspect.stack()[0][3]
 
     def responses():
         yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+        yield responses_fabric_update_group(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -165,32 +170,30 @@ def test_fabric_update_group_00100() -> None:
     with does_not_raise():
         instance.create(model)
 
-    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups"
-    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group"
+    assert rest_send.verb == HttpVerbEnum.PUT.value
     body = rest_send.committed_payload
     assert isinstance(body, dict)
-    assert "updateGroups" in body
-    assert len(body["updateGroups"]) == 1
-    payload_item = body["updateGroups"][0]
-    assert payload_item["updateGroupName"] == "leaf_group"
-    assert payload_item["execution"] == "serial"
+    assert "attachUpdateGroups" not in body
+    assert body["updateGroupName"] == "leaf_group"
+    assert body["execution"] == "serial"
+    assert body["contingency"] == "continue"
+    assert body["analysis"] == "snapshot"
+    assert body["isMaintenance"] is True
+    assert body["isDisruptiveUpdate"] is True
+    assert body["updateGroupSwitches"] == ["FDO1", "FDO2"]
 
 
 def test_fabric_update_group_00110() -> None:
     """
     # Summary
 
-    Verify `create` raises `RuntimeError` when a 207 response contains an item with `status: error`.
-
-    ## Test
-
-    - 207 with `{"updateGroups": [{updateGroupName, status: error}]}`
-    - `RuntimeError` is raised with the per-item error message
+    Verify `create` raises `RuntimeError` when `attachGroup` returns a 207 item with `status: failed`.
 
     ## Classes and Methods
 
     - FabricUpdateGroupOrchestrator.create()
-    - FabricUpdateGroupOrchestrator._raise_on_207_item_errors()
+    - FabricUpdateGroupOrchestrator._raise_on_207_action_errors()
     """
     method_name = inspect.stack()[0][3]
 
@@ -202,7 +205,7 @@ def test_fabric_update_group_00110() -> None:
     instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
     model = _build_model()
 
-    with pytest.raises(RuntimeError, match=r"Create failed for .*leaf_group.*error.*Switch not found"):
+    with pytest.raises(RuntimeError, match=r"Create failed for .*leaf_group.*failed.*Switch not found"):
         instance.create(model)
 
 
@@ -211,11 +214,6 @@ def test_fabric_update_group_00120() -> None:
     # Summary
 
     Verify `create` wraps a transport failure in `RuntimeError` mentioning the identifier.
-
-    ## Test
-
-    - POST returns 500
-    - `RuntimeError` matches `Create failed for .*leaf_group`
 
     ## Classes and Methods
 
@@ -235,6 +233,142 @@ def test_fabric_update_group_00120() -> None:
         instance.create(model)
 
 
+def test_fabric_update_group_00130() -> None:
+    """
+    # Summary
+
+    Verify `create` raises when `attachGroup` returns `status: warning` and `force_created` is False.
+
+    ## Test
+
+    - Model has `force_created=False`
+    - attachGroup 207 with `status: warning`
+    - `RuntimeError` is raised so the user must explicitly opt in to force
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.create()
+    - FabricUpdateGroupOrchestrator._raise_on_207_action_errors()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    model = _build_model(force_created=False)
+
+    with pytest.raises(RuntimeError, match=r"Create failed for .*leaf_group.*warning"):
+        instance.create(model)
+
+
+def test_fabric_update_group_00135() -> None:
+    """
+    # Summary
+
+    Verify `create` raises on an `attachGroup` `status: warning` even when `force_created` is True.
+
+    ND returns `status: warning` only when it did NOT apply the attach (verified live: a non-forced
+    warning leaves a zero-switch ghost group). `force_created` governs the request `forceCreated`
+    value, not response interpretation - a `warning` always means nothing was attached, so it always
+    fails the task.
+
+    ## Test
+
+    - Model has `force_created=True`
+    - attachGroup 207 with `status: warning` still raises `RuntimeError`
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.create()
+    - FabricUpdateGroupOrchestrator._raise_on_207_action_errors()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    model = _build_model(force_created=True)
+
+    with pytest.raises(RuntimeError, match=r"Create failed for .*leaf_group.*warning"):
+        instance.create(model)
+
+
+def test_fabric_update_group_00140() -> None:
+    """
+    # Summary
+
+    Verify `create` sends `forceCreated: true` in the `attachGroup` body when `force_created` is True.
+
+    ## Test
+
+    - Model has `force_created=True` and no settings
+    - The attachGroup body item carries `forceCreated: true`
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.create()
+    - FabricUpdateGroupOrchestrator._attach_item()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["FDO1", "FDO2"], force_created=True)
+
+    with does_not_raise():
+        instance.create(model)
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/attachGroup"
+    body = rest_send.committed_payload
+    assert body == {"attachUpdateGroups": [{"updateGroupName": "leaf_group", "switchIds": ["FDO1", "FDO2"], "forceCreated": True}]}
+
+
+def test_fabric_update_group_00150() -> None:
+    """
+    # Summary
+
+    Verify `create` with no settings issues only the `attachGroup` POST (no follow-up PUT).
+
+    ## Test
+
+    - Model carries only name + switches
+    - The single call is the attachGroup POST
+    - The body is `{"attachUpdateGroups": [{updateGroupName, switchIds, forceCreated}]}`
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.create()
+    - FabricUpdateGroupOrchestrator._attach()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["FDO1", "FDO2"])
+
+    with does_not_raise():
+        instance.create(model)
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/attachGroup"
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    body = rest_send.committed_payload
+    assert body == {"attachUpdateGroups": [{"updateGroupName": "leaf_group", "switchIds": ["FDO1", "FDO2"], "forceCreated": False}]}
+
+
 # =============================================================================
 # Test: update
 # =============================================================================
@@ -244,12 +378,12 @@ def test_fabric_update_group_00200() -> None:
     """
     # Summary
 
-    Verify `update` issues PUT against per-name URL with a flat group dict (no `updateGroups` wrapper).
+    Verify `update` reconciles membership (attach added, detach removed) and applies settings.
 
     ## Test
 
-    - PUT against `/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group`
-    - Body is the flat payload (`updateGroupName: leaf_group` at the top level)
+    - GET current group (membership FDO1, FDO9), attach FDO2, detach FDO9, PUT settings
+    - The final call is the PUT carrying the desired membership and settings
 
     ## Classes and Methods
 
@@ -259,6 +393,9 @@ def test_fabric_update_group_00200() -> None:
 
     def responses():
         yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+        yield responses_fabric_update_group(f"{method_name}c")
+        yield responses_fabric_update_group(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -271,10 +408,9 @@ def test_fabric_update_group_00200() -> None:
     assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group"
     assert rest_send.verb == HttpVerbEnum.PUT.value
     body = rest_send.committed_payload
-    assert isinstance(body, dict)
-    assert "updateGroups" not in body
     assert body["updateGroupName"] == "leaf_group"
     assert body["execution"] == "serial"
+    assert body["updateGroupSwitches"] == ["FDO1", "FDO2"]
 
 
 def test_fabric_update_group_00210() -> None:
@@ -301,6 +437,76 @@ def test_fabric_update_group_00210() -> None:
         instance.update(model)
 
 
+def test_fabric_update_group_00220() -> None:
+    """
+    # Summary
+
+    Verify `update` with an added switch and no settings issues only GET + `attachGroup`.
+
+    ## Test
+
+    - Current membership FDO1, FDO2; desired adds FDO3; no settings on the model
+    - The final call is the attachGroup POST carrying only the added switch
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.update()
+    - FabricUpdateGroupOrchestrator._attach()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["FDO1", "FDO2", "FDO3"])
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/attachGroup"
+    body = rest_send.committed_payload
+    assert body == {"attachUpdateGroups": [{"updateGroupName": "leaf_group", "switchIds": ["FDO3"], "forceCreated": False}]}
+
+
+def test_fabric_update_group_00230() -> None:
+    """
+    # Summary
+
+    Verify `update` with a removed switch and no settings issues only GET + `detachGroup`.
+
+    ## Test
+
+    - Current membership FDO1, FDO2; desired keeps only FDO1; no settings on the model
+    - The final call is the detachGroup POST carrying only the removed switch
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.update()
+    - FabricUpdateGroupOrchestrator._detach()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["FDO1"])
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/detachGroup"
+    body = rest_send.committed_payload
+    assert body == {"detachUpdateGroups": [{"updateGroupName": "leaf_group", "switchIds": ["FDO2"]}]}
+
+
 # =============================================================================
 # Test: delete
 # =============================================================================
@@ -310,12 +516,75 @@ def test_fabric_update_group_00300() -> None:
     """
     # Summary
 
-    Verify `delete` issues DELETE against per-name URL with no body.
+    Verify `delete` detaches all of the group's switches (ND auto-deletes the emptied group).
 
     ## Test
 
-    - DELETE against `/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group`
-    - 204 returns normally
+    - GET current group to learn membership, then detachGroup POST with all switchIds
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.delete()
+    - FabricUpdateGroupOrchestrator._detach()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    model = _build_model()
+
+    with does_not_raise():
+        instance.delete(model)
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/detachGroup"
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    body = rest_send.committed_payload
+    assert body == {"detachUpdateGroups": [{"updateGroupName": "leaf_group", "switchIds": ["FDO1", "FDO2"]}]}
+
+
+def test_fabric_update_group_00310() -> None:
+    """
+    # Summary
+
+    Verify `delete` raises `RuntimeError` when `detachGroup` returns a 207 item with `status: failed`.
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.delete()
+    - FabricUpdateGroupOrchestrator._raise_on_207_action_errors()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    model = _build_model()
+
+    with pytest.raises(RuntimeError, match=r"Delete failed for .*leaf_group.*failed"):
+        instance.delete(model)
+
+
+def test_fabric_update_group_00320() -> None:
+    """
+    # Summary
+
+    Verify `delete` falls back to the group-centric DELETE when GET-single cannot read the group.
+
+    A zero-switch ghost group returns HTTP 400 on the single GET; `delete` then issues the
+    group-centric `DELETE /updateGroups/{name}` to free the reserved name.
+
+    ## Test
+
+    - GET single returns 400, `delete` issues DELETE against the per-name URL
 
     ## Classes and Methods
 
@@ -325,6 +594,7 @@ def test_fabric_update_group_00300() -> None:
 
     def responses():
         yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -338,30 +608,6 @@ def test_fabric_update_group_00300() -> None:
     assert rest_send.verb == HttpVerbEnum.DELETE.value
 
 
-def test_fabric_update_group_00310() -> None:
-    """
-    # Summary
-
-    Verify `delete` wraps a transport failure in `RuntimeError` mentioning the identifier.
-
-    ## Classes and Methods
-
-    - FabricUpdateGroupOrchestrator.delete()
-    """
-    method_name = inspect.stack()[0][3]
-
-    def responses():
-        yield responses_fabric_update_group(f"{method_name}a")
-
-    gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
-    model = _build_model()
-
-    with pytest.raises(RuntimeError, match=r"Delete failed for .*leaf_group"):
-        instance.delete(model)
-
-
 # =============================================================================
 # Test: query_one
 # =============================================================================
@@ -371,7 +617,7 @@ def test_fabric_update_group_00400() -> None:
     """
     # Summary
 
-    Verify `query_one` issues GET against per-name URL and returns the flat dict.
+    Verify `query_one` issues GET against the per-name URL and returns the flat dict.
 
     ## Classes and Methods
 
@@ -512,7 +758,12 @@ def test_fabric_update_group_00600() -> None:
     """
     # Summary
 
-    Verify `create_bulk` sends a single POST with all groups in the `updateGroups` array.
+    Verify `create_bulk` sends one `attachGroup` POST for all groups, then per-group settings PUTs.
+
+    ## Test
+
+    - One attachGroup POST with both groups in `attachUpdateGroups`
+    - A GET + PUT for each group's settings
 
     ## Classes and Methods
 
@@ -522,6 +773,10 @@ def test_fabric_update_group_00600() -> None:
 
     def responses():
         yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+        yield responses_fabric_update_group(f"{method_name}c")
+        yield responses_fabric_update_group(f"{method_name}d")
+        yield responses_fabric_update_group(f"{method_name}e")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
@@ -531,23 +786,20 @@ def test_fabric_update_group_00600() -> None:
     with does_not_raise():
         instance.create_bulk(models)
 
-    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups"
-    body = rest_send.committed_payload
-    assert isinstance(body, dict)
-    assert len(body["updateGroups"]) == 2
-    assert [g["updateGroupName"] for g in body["updateGroups"]] == ["g1", "g2"]
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups/g2"
+    assert rest_send.verb == HttpVerbEnum.PUT.value
 
 
 def test_fabric_update_group_00610() -> None:
     """
     # Summary
 
-    Verify `create_bulk` raises `RuntimeError` when any item in the 207 response has status:error.
+    Verify `create_bulk` raises `RuntimeError` when any `attachGroup` 207 item has `status: failed`.
 
     ## Classes and Methods
 
     - FabricUpdateGroupOrchestrator.create_bulk()
-    - FabricUpdateGroupOrchestrator._raise_on_207_item_errors()
+    - FabricUpdateGroupOrchestrator._raise_on_207_action_errors()
     """
     method_name = inspect.stack()[0][3]
 
@@ -559,7 +811,7 @@ def test_fabric_update_group_00610() -> None:
     instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
     models = [_build_model("g1"), _build_model("g2")]
 
-    with pytest.raises(RuntimeError, match=r"Bulk create failed.*g2.*error.*Switch missing"):
+    with pytest.raises(RuntimeError, match=r"Bulk create failed.*g2.*failed.*Switch missing"):
         instance.create_bulk(models)
 
 
@@ -572,19 +824,17 @@ def test_fabric_update_group_00700() -> None:
     """
     # Summary
 
-    Verify `create` resolves switch IPs in `update_group_switches` and `installation_order_devices`
-    to switchIds via `FabricContext` before sending.
+    Verify `create` resolves switch IPs to switchIds in the `attachGroup` body.
 
     ## Test
 
-    - Switches-list returns two switches (IP -> switchId map)
-    - POST is issued with payload containing switchIds, not IPs
-    - The serial-form entry in `update_group_switches` is passed through unchanged
+    - Switches-list returns the IP -> switchId map
+    - The attachGroup body carries switchIds; the serial-form entry passes through unchanged
 
     ## Classes and Methods
 
     - FabricUpdateGroupOrchestrator.create()
-    - FabricUpdateGroupOrchestrator._resolve_switches_in_payload()
+    - FabricUpdateGroupOrchestrator._attach_item()
     - FabricUpdateGroupOrchestrator._resolve_switch_id()
     """
     method_name = inspect.stack()[0][3]
@@ -596,33 +846,23 @@ def test_fabric_update_group_00700() -> None:
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
     instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
-
     model = FabricUpdateGroupModel(
         update_group_name="leaf_group",
-        execution="serial",
-        contingency="continue",
-        analysis="snapshot",
-        is_maintenance=True,
-        is_disruptive_update=True,
-        # First two entries are IPs, third is a switchId pass-through
         update_group_switches=["192.168.12.151", "192.168.12.152", "FDO_PASSTHROUGH"],
-        installation_order_devices=["192.168.12.152", "192.168.12.151"],
     )
 
     with does_not_raise():
         instance.create(model)
 
     body = rest_send.committed_payload
-    payload_item = body["updateGroups"][0]
-    assert payload_item["updateGroupSwitches"] == ["FDO12345ABC", "FDO12345ABD", "FDO_PASSTHROUGH"]
-    assert payload_item["installationOrderDevices"] == ["FDO12345ABD", "FDO12345ABC"]
+    assert body["attachUpdateGroups"][0]["switchIds"] == ["FDO12345ABC", "FDO12345ABD", "FDO_PASSTHROUGH"]
 
 
 def test_fabric_update_group_00710() -> None:
     """
     # Summary
 
-    Verify `create` raises `RuntimeError` if a user-supplied switch IP cannot be resolved in the fabric.
+    Verify `create` raises `RuntimeError` if a user-supplied switch IP cannot be resolved.
 
     ## Classes and Methods
 
@@ -637,16 +877,7 @@ def test_fabric_update_group_00710() -> None:
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
     instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
-
-    model = FabricUpdateGroupModel(
-        update_group_name="leaf_group",
-        execution="serial",
-        contingency="continue",
-        analysis="snapshot",
-        is_maintenance=True,
-        is_disruptive_update=True,
-        update_group_switches=["192.168.12.151"],
-    )
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["192.168.12.151"])
 
     with pytest.raises(RuntimeError, match=r"Create failed for .*leaf_group.*No switch found with fabricManagementIp '192\.168\.12\.151'"):
         instance.create(model)
@@ -656,23 +887,24 @@ def test_fabric_update_group_00720() -> None:
     """
     # Summary
 
-    Verify `update` resolves switch IPs to switchIds in the PUT body.
+    Verify `update` resolves switch IPs to switchIds for both membership reconciliation and the PUT body.
 
     ## Classes and Methods
 
     - FabricUpdateGroupOrchestrator.update()
-    - FabricUpdateGroupOrchestrator._resolve_switches_in_payload()
+    - FabricUpdateGroupOrchestrator._resolve_switch_id()
     """
     method_name = inspect.stack()[0][3]
 
     def responses():
         yield responses_fabric_update_group(f"{method_name}a")
         yield responses_fabric_update_group(f"{method_name}b")
+        yield responses_fabric_update_group(f"{method_name}c")
+        yield responses_fabric_update_group(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
     instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
-
     model = FabricUpdateGroupModel(
         update_group_name="leaf_group",
         execution="serial",
@@ -686,6 +918,8 @@ def test_fabric_update_group_00720() -> None:
     with does_not_raise():
         instance.update(model)
 
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group"
+    assert rest_send.verb == HttpVerbEnum.PUT.value
     body = rest_send.committed_payload
     assert body["updateGroupSwitches"] == ["FDO12345ABC", "FDO12345ABD"]
 
@@ -695,11 +929,6 @@ def test_fabric_update_group_00730() -> None:
     # Summary
 
     Verify `query_one` denormalizes switchIds back to IPs in the response.
-
-    ## Test
-
-    - GET returns updateGroupSwitches / installationOrderDevices as switchIds
-    - Result has those lists rewritten to fabricManagementIp values
 
     ## Classes and Methods
 
@@ -728,14 +957,7 @@ def test_fabric_update_group_00740() -> None:
     """
     # Summary
 
-    Verify `query_all` denormalizes switchIds back to IPs in every list item, leaving unresolvable
-    switchIds (those not present in the fabric switch map) unchanged.
-
-    ## Test
-
-    - GET list returns two groups: g1 has a known switchId, g2 has an unknown one
-    - g1.updateGroupSwitches resolves to ["192.168.12.151"]
-    - g2.updateGroupSwitches stays as ["FDO99999XYZ"] (unresolvable)
+    Verify `query_all` denormalizes switchIds back to IPs, leaving unresolvable switchIds unchanged.
 
     ## Classes and Methods
 
@@ -781,15 +1003,6 @@ def test_fabric_update_group_00760() -> None:
     # Summary
 
     Verify `query_all` drops the ND-managed default update group named "None".
-
-    ND returns a system-managed default group (the literal name "None") holding switches not assigned
-    to any user-defined group. It must not appear in query results, otherwise `state: overridden` would
-    attempt to delete a group ND manages itself.
-
-    ## Test
-
-    - GET list returns three groups: g1, "None", g2
-    - `query_all` returns only g1 and g2
 
     ## Classes and Methods
 

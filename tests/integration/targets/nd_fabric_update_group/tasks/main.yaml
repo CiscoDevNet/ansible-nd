@@ -14,6 +14,7 @@
 #   nd_test_fabric_name      - fabric to use (default: SITE1)
 #   nd_test_update_switch_a  - serial of first switch in fabric
 #   nd_test_update_switch_b  - serial of second switch in fabric
+#   nd_test_update_switch_c  - serial of a third switch, disjoint from a and b
 #   nd_test_nos_image_name   - NXOS image filename in ND software repo
 #   nd_test_epld_image_name  - EPLD image filename in ND software repo
 
