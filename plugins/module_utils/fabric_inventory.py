@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Type
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
     EpManageFabricsSwitchesGet,
@@ -14,58 +14,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
     NDConfigCollection,
 )
-
-# =========================================================================
-# Exceptions
-# =========================================================================
-
-
-class SwitchOperationError(Exception):
-    """Raised when a switch operation fails."""
-
-
-# =========================================================================
-# API Response Validation
-# =========================================================================
-
-
-class ApiDataChecker:
-    """Detect controller-embedded errors in API response DATA payloads.
-
-    The Nexus Dashboard API signals certain errors by embedding an error
-    object inside ``DATA`` as ``{"code": <N>, "message": "<reason>"}`` even
-    when the transport-level result is marked successful.  Any payload dict
-    that contains a ``"code"`` key is treated as an error; the absence of
-    ``"code"`` means the payload is a genuine data body.
-    """
-
-    @staticmethod
-    def check(
-        data: Any,
-        context: str,
-        log: logging.Logger,
-        fail_callback=None,
-    ) -> None:
-        """Fail or raise if the response DATA contains an embedded error code.
-
-        Args:
-            data: Value returned by ``nd.request()`` or extracted from
-                  ``response_current["DATA"]``.
-            context: Human-readable description of the operation.
-            log: Logger instance.
-            fail_callback: Optional callable (e.g. ``module.fail_json``) that
-                           accepts a ``msg`` keyword argument.  When provided
-                           it is called on error instead of raising
-                           ``SwitchOperationError``.
-        """
-        if isinstance(data, dict) and "code" in data:
-            error_msg = data.get("message", "Unknown error")
-            msg = f"{context} failed \u2014 controller returned error: " f"{error_msg} (code={data['code']})"
-            log.error(msg)
-            if fail_callback is not None:
-                fail_callback(msg=msg)
-            else:
-                raise SwitchOperationError(msg)
+from ansible_collections.cisco.nd.plugins.module_utils.utils import (
+    ApiDataChecker,
+)
 
 
 # =========================================================================

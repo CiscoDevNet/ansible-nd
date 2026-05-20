@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
@@ -64,10 +64,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.co
     PreprovisionConfigModel,
     RMAConfigModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
+    FabricSwitchInventory,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.utils import (
     ApiDataChecker,
     FabricUtils,
-    FabricSwitchInventory,
     SwitchOperationError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
