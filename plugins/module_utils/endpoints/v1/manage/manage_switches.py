@@ -18,6 +18,7 @@ in the ND Manage API.
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -73,7 +74,7 @@ class _EpManageSwitchesBase(FabricNameMixin, NDEndpointBaseModel):
         """
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        segments = ["fabrics", self.fabric_name, "switches"]
+        segments = ["fabrics", quote(self.fabric_name, safe=""), "switches"]
         base_path = BasePath.path(*segments)
         query_string = self.lucene_params.to_query_string()
         if query_string:
@@ -180,7 +181,7 @@ class EpManageSwitchActionsDeploy(FabricNameMixin, NDEndpointBaseModel):
         """
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", self.fabric_name, "switchActions", "deploy")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "switchActions", "deploy")
 
     @property
     def verb(self) -> HttpVerbEnum:

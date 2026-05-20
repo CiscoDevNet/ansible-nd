@@ -15,7 +15,7 @@ version_added: "1.4.0"
 short_description: Manage loopback interfaces on Cisco Nexus Dashboard
 description:
 - Manage loopback interfaces on Cisco Nexus Dashboard.
-- It supports creating, updating, querying, and deleting loopback interfaces on switches within a fabric.
+- It supports creating, updating, and deleting loopback interfaces on switches within a fabric.
 author:
 - Allen Robel (@allenrobel)
 options:

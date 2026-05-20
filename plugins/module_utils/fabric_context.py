@@ -97,7 +97,7 @@ class FabricContext:
         """
         # Summary
 
-        Return the cached fabric detail dict, fetching it from the `/fabrics/{fabric_name}` endpoint on first access.
+        Return the cached fabric detail dict, fetching it from the `/api/v1/manage/fabrics/{fabric_name}/summary` endpoint on first access.
 
         Returns `None` if the fabric does not exist.
 
