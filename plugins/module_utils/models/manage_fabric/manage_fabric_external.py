@@ -415,4 +415,3 @@ class FabricExternalConnectivityModel(FabricBaseModel):
 
     # Core Management Configuration
     management: ExternalConnectivityManagementModel | None = Field(description="External Connectivity management configuration", default=None)
-
