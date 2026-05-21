@@ -553,7 +553,7 @@ def test_fabric_update_group_00600() -> None:
 
     ## Test
 
-    - `fabric_name`, `state`, `config` are top-level keys
+    - `fabric_name`, `state`, `config`, `auto_assign` are top-level keys
     - `state` choices are merged/replaced/overridden/deleted (no `query` - the ND collection has no
       `query` state; `gathered` is the planned read mechanism)
     - `config.options.update_group_name` is required
@@ -565,7 +565,7 @@ def test_fabric_update_group_00600() -> None:
     """
     spec = FabricUpdateGroupModel.get_argument_spec()
 
-    assert set(spec.keys()) == {"fabric_name", "config", "state"}
+    assert set(spec.keys()) == {"fabric_name", "config", "state", "auto_assign"}
     assert spec["fabric_name"]["required"] is True
     assert spec["state"]["choices"] == ["merged", "replaced", "overridden", "deleted"]
     assert spec["config"]["type"] == "list"
@@ -579,6 +579,33 @@ def test_fabric_update_group_00600() -> None:
     assert "nos_image_name" in options["install_image_data"]["options"]
     assert options["update_report_checks"]["type"] == "list"
     assert options["update_report_checks"]["options"]["report_check_name"]["required"] is True
+
+
+def test_fabric_update_group_00610() -> None:
+    """
+    # Summary
+
+    Verify `get_argument_spec` exposes `auto_assign` as a string option with the propose algorithm choices.
+
+    `auto_assign` triggers ND's fabric-wide `propose` action, which auto-generates update groups by
+    algorithm. It is a top-level option (the action is fabric-scoped, not per-group) and has no
+    default - its absence means "do not auto-assign".
+
+    ## Test
+
+    - `auto_assign` is a top-level key of type `str`
+    - Its `choices` are `roleBased` and `evenOdd` (ND wire enum values, kept verbatim)
+    - It has no `default` key
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupModel.get_argument_spec()
+    """
+    spec = FabricUpdateGroupModel.get_argument_spec()
+
+    assert spec["auto_assign"]["type"] == "str"
+    assert spec["auto_assign"]["choices"] == ["roleBased", "evenOdd"]
+    assert "default" not in spec["auto_assign"]
 
 
 # =============================================================================

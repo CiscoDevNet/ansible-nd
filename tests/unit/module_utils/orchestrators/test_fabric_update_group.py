@@ -1022,3 +1022,68 @@ def test_fabric_update_group_00760() -> None:
 
     names = {g["updateGroupName"] for g in result}
     assert names == {"g1", "g2"}
+
+
+# =============================================================================
+# Test: propose (auto-assign)
+# =============================================================================
+
+
+@pytest.mark.parametrize("algorithm", ["roleBased", "evenOdd"], ids=["roleBased", "evenOdd"])
+def test_fabric_update_group_00800(algorithm: str) -> None:
+    """
+    # Summary
+
+    Verify `propose` POSTs the chosen algorithm to the `softwareUpdatePlan` propose action endpoint.
+
+    ## Test
+
+    - `propose` is called with `roleBased` / `evenOdd`
+    - The request is a POST to `.../softwareUpdatePlan/actions/propose`
+    - The request body is `{"algorithm": <algorithm>}`
+    - The propose plan dict is returned
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.propose()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.propose(algorithm)
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/propose"
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.committed_payload == {"algorithm": algorithm}
+    assert isinstance(result, dict)
+    assert "updateGroups" in result
+
+
+def test_fabric_update_group_00810() -> None:
+    """
+    # Summary
+
+    Verify `propose` wraps a transport failure in `RuntimeError` mentioning the fabric.
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.propose()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+
+    with pytest.raises(RuntimeError, match=r"Auto-assign \(propose\) failed for fabric 'fabric_1'"):
+        instance.propose("roleBased")

@@ -44,6 +44,9 @@
 
     - name: Run deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
+
+    - name: Run auto-assign (propose) tests
+      ansible.builtin.include_tasks: auto_assign.yaml
   module_defaults:
     cisco.nd.nd_fabric_update_group:
       timeout: 300

@@ -192,6 +192,7 @@ class FabricUpdateGroupModel(NDBaseModel):
                     ),
                 ),
             ),
+            auto_assign=dict(type="str", choices=["roleBased", "evenOdd"]),
             state=dict(
                 type="str",
                 default="merged",

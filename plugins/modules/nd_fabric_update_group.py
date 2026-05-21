@@ -139,6 +139,18 @@ options:
             - The name of the report check to run.
             type: str
             required: true
+  auto_assign:
+    description:
+    - Auto-generate fabric update groups by algorithm instead of listing them explicitly in O(config).
+    - V(roleBased) groups switches by their role. V(evenOdd) splits switches into an odd and an even group.
+    - This triggers the Nexus Dashboard fabric-wide auto-assign action, which generates the update
+      groups and applies them immediately. Nexus Dashboard names the generated groups itself, in the
+      form C(fabric_platform_role) for V(roleBased) or C(fabric_platform_OddGroup) /
+      C(fabric_platform_EvenGroup) for V(evenOdd).
+    - O(auto_assign) is mutually exclusive with O(config), and is only valid with O(state=merged) or O(state=overridden).
+    - In check mode no change is reported, because the auto-assign action cannot be previewed.
+    type: str
+    choices: [ roleBased, evenOdd ]
   state:
     description:
     - The desired state of the fabric update groups on the Cisco Nexus Dashboard.
@@ -191,6 +203,12 @@ EXAMPLES = r"""
     config:
       - update_group_name: leaf_group
     state: deleted
+
+- name: Auto-assign update groups by switch role
+  cisco.nd.nd_fabric_update_group:
+    fabric_name: SITE1
+    auto_assign: roleBased
+    state: merged
 """
 
 RETURN = r"""
@@ -200,8 +218,50 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_group.fabric_update_group import FabricUpdateGroupModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_update_group import FabricUpdateGroupOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
+
+
+def _run_auto_assign(module: AnsibleModule) -> NDOutput:
+    """
+    # Summary
+
+    Run the fabric-wide auto-assign (`propose`) action, bypassing `NDStateMachine` whose per-group
+    config-diff state model does not apply to a single fabric-level action. The update groups are
+    snapshotted before and after so `changed` reflects whether the regrouping altered the fabric.
+    In check mode the `propose` action is skipped (it cannot be previewed) and no change is reported.
+
+    ## Raises
+
+    ### Exception
+
+    - Propagated from the orchestrator if a query or the `propose` request fails.
+    """
+    output = NDOutput(output_level=module.params.get("output_level", "normal"))
+
+    sender = Sender()
+    sender.ansible_module = module
+    rest_send_params = dict(module.params)
+    rest_send_params["check_mode"] = module.check_mode
+    rest_send = RestSend(rest_send_params)
+    rest_send.sender = sender
+    rest_send.response_handler = ResponseHandler()
+
+    orchestrator = FabricUpdateGroupOrchestrator(rest_send=rest_send, results=Results())
+
+    before = NDConfigCollection.from_api_response(response_data=orchestrator.query_all(), model_class=FabricUpdateGroupModel)
+    if not module.check_mode:
+        orchestrator.propose(module.params["auto_assign"])
+    after = NDConfigCollection.from_api_response(response_data=orchestrator.query_all(), model_class=FabricUpdateGroupModel)
+
+    output.assign(before=before, after=after)
+    return output
 
 
 def main():
@@ -211,8 +271,23 @@ def main():
     module = AnsibleModule(
         argument_spec=argument_spec,
         supports_check_mode=True,
+        mutually_exclusive=[["config", "auto_assign"]],
     )
     require_pydantic(module)
+
+    auto_assign = module.params.get("auto_assign")
+    if auto_assign is not None:
+        state = module.params["state"]
+        if state not in ("merged", "overridden"):
+            module.fail_json(msg=f"auto_assign is only valid with state 'merged' or 'overridden', got '{state}'.")
+
+        output = NDOutput(output_level=module.params.get("output_level", "normal"))
+        try:
+            output = _run_auto_assign(module)
+            module.exit_json(**output.format())
+        except Exception as e:
+            module.fail_json(msg=f"Module execution failed: {str(e)}", **output.format())
+        return
 
     nd_state_machine = NDStateMachine(
         module=module,

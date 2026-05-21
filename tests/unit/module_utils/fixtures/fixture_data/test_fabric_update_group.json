@@ -596,5 +596,32 @@
                 {"updateGroupName": "g2", "execution": "parallel"}
             ]
         }
+    },
+
+    "test_fabric_update_group_00800a": {
+        "TEST_NOTES": [
+            "propose (auto-assign): POST returns 200 with the resulting plan.",
+            "Shared by the roleBased and evenOdd parametrized cases - the response is algorithm-agnostic."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/propose",
+        "MESSAGE": "OK",
+        "DATA": {
+            "softwareUpdateSummary": {"fabricName": "fabric_1", "totalSwitches": 2, "switchesToBeUpdated": 0, "updatePlanStatus": "none"},
+            "tableHeaders": {"autoAssignGroups": ["roleBased", "evenOdd"]},
+            "updateGroups": [
+                {"updateGroupName": "fabric_1_N9K_leaf", "updateGroupPlatform": "n9k", "switchCount": 2, "updateGroupSwitches": ["FDO1", "FDO2"]}
+            ]
+        }
+    },
+
+    "test_fabric_update_group_00810a": {
+        "TEST_NOTES": ["propose transport failure: POST returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/propose",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
     }
 }

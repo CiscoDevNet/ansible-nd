@@ -47,6 +47,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.fabri
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.software_update_plan_actions import (
     EpFabricSoftwareUpdatePlanAttachGroup,
     EpFabricSoftwareUpdatePlanDetachGroup,
+    EpFabricSoftwareUpdatePlanPropose,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -80,6 +81,7 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
     - Via `update` if a request fails or `update_group_switches` resolves to an empty set.
     - Via `delete` if a request fails or any per-item `detachGroup` status is not `success`.
     - Via `query_one` / `query_all` if the query API request fails.
+    - Via `propose` if the auto-assign request fails.
     - Via `_resolve_switch_id` if the user-provided switch IP cannot be matched in the fabric.
     """
 
@@ -93,6 +95,7 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
     query_all_endpoint: Type[NDEndpointBaseModel] = EpFabricUpdateGroupListGet
     create_bulk_endpoint: Type[NDEndpointBaseModel] | None = EpFabricSoftwareUpdatePlanAttachGroup
     detach_group_endpoint: Type[NDEndpointBaseModel] = EpFabricSoftwareUpdatePlanDetachGroup
+    propose_endpoint: Type[NDEndpointBaseModel] = EpFabricSoftwareUpdatePlanPropose
 
     _fabric_context: FabricContext | None = None
 
@@ -547,3 +550,23 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
             return [self._denormalize_switches_in_response(item) for item in items]
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
+
+    def propose(self, algorithm: str) -> ResponseType:
+        """
+        # Summary
+
+        Auto-assign update groups fabric-wide via the `propose` action endpoint. ND generates the
+        update groups itself from `algorithm` (`roleBased` or `evenOdd`) and applies the result
+        immediately; the action returns HTTP 200 with the resulting plan.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the request fails.
+        """
+        try:
+            api_endpoint = self._configure_endpoint(self.propose_endpoint())
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data={"algorithm": algorithm})
+        except Exception as e:
+            raise RuntimeError(f"Auto-assign (propose) failed for fabric '{self.fabric_name}': {e}") from e

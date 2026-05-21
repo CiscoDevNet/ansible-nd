@@ -14,6 +14,8 @@ one switch, and `detachGroup` auto-deletes a group server-side once its last swi
   (POST /api/v1/manage/fabrics/{fabric_name}/softwareUpdatePlan/actions/attachGroup)
 - `EpFabricSoftwareUpdatePlanDetachGroup` - Detach switches from an update group
   (POST /api/v1/manage/fabrics/{fabric_name}/softwareUpdatePlan/actions/detachGroup)
+- `EpFabricSoftwareUpdatePlanPropose` - Auto-assign update groups fabric-wide by algorithm
+  (POST /api/v1/manage/fabrics/{fabric_name}/softwareUpdatePlan/actions/propose)
 """
 
 from __future__ import annotations
@@ -118,6 +120,61 @@ class EpFabricSoftwareUpdatePlanDetachGroup(FabricNameMixin, NDEndpointBaseModel
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "softwareUpdatePlan", "actions", "detachGroup")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """
+        # Summary
+
+        Return `HttpVerbEnum.POST`.
+
+        ## Raises
+
+        None
+        """
+        return HttpVerbEnum.POST
+
+
+class EpFabricSoftwareUpdatePlanPropose(FabricNameMixin, NDEndpointBaseModel):
+    """
+    # Summary
+
+    Auto-assign update groups fabric-wide (the GUI "Auto-generate groups" action).
+
+    ND generates the update groups itself based on the requested algorithm and applies the result
+    immediately - it is not a preview.
+
+    - Path: `/api/v1/manage/fabrics/{fabric_name}/softwareUpdatePlan/actions/propose`
+    - Verb: POST
+    - Body: `{"algorithm": "roleBased"}`  # or "evenOdd"
+
+    ## Raises
+
+    ### ValueError
+
+    - Via `path` property if `fabric_name` is not set.
+    """
+
+    class_name: Literal["EpFabricSoftwareUpdatePlanPropose"] = Field(
+        default="EpFabricSoftwareUpdatePlanPropose", frozen=True, description="Class name for backward compatibility"
+    )
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the propose action endpoint path. `fabric_name` is percent-encoded with `safe=""`.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `fabric_name` is not set before accessing `path`.
+        """
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "softwareUpdatePlan", "actions", "propose")
 
     @property
     def verb(self) -> HttpVerbEnum:
