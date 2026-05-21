@@ -584,9 +584,6 @@ class VxlanEbgpManagementModel(NDNestedModel):
     tcam_allocation: bool = Field(
         alias="tcamAllocation", description=("TCAM commands are automatically generated for VxLAN and vPC Fabric Peering when Enabled"), default=True
     )
-    allow_smart_switch_onboarding: bool = Field(
-        alias="allowSmartSwitchOnboarding", description="Enable onboarding of smart switches to Hypershield for firewall service", default=False
-    )
 
     # Queuing / QoS
     default_queuing_policy: bool = Field(alias="defaultQueuingPolicy", description="Enable Default Queuing Policies", default=False)
@@ -719,6 +716,9 @@ class VxlanEbgpManagementModel(NDNestedModel):
     macsec_report_timer: int = Field(alias="macsecReportTimer", description="MACsec Operational Status periodic report timer in minutes", default=5)
 
     # Hypershield / Connectivity
+    allow_smart_switch_onboarding: bool = Field(
+        alias="allowSmartSwitchOnboarding", description="Enable onboarding of smart switches to Hypershield for firewall service", default=False
+    )
     enable_dpu_pinning: bool = Field(
         alias="enableDpuPinning", description="Enable pinning of VRFs and networks to specific DPUs on smart switches", default=False
     )

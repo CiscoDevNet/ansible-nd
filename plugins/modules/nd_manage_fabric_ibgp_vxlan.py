@@ -21,6 +21,7 @@ description:
 - It supports creating, updating, replacing, and deleting iBGP VXLAN fabrics.
 author:
 - Mike Wiebe (@mwiebe)
+- Matt Tarkington (@mtarking)
 options:
   config:
     description:
@@ -395,12 +396,12 @@ options:
             default: "0.0.0.0"
           bgp_loopback_id:
             description:
-            - The BGP loopback interface ID (0-1023).
+            - The BGP routing loopback interface ID (0-1023).
             type: int
             default: 0
           nve_loopback_id:
             description:
-            - The NVE loopback interface ID (0-1023).
+            - The NVE VTEP loopback interface ID (0-1023).
             type: int
             default: 1
           anycast_loopback_id:
@@ -425,7 +426,7 @@ options:
             default: ""
           link_state_routing_tag:
             description:
-            - The link state routing tag.
+            - The link state underlay routing tag.
             type: str
             default: UNDERLAY
           bgp_authentication:
@@ -1326,6 +1327,11 @@ options:
             - Enable onboarding of smart switches to Hypershield for firewall service.
             type: bool
             default: false
+          enable_dpu_pinning:
+            description:
+            - Enable pinning of VRFs and networks to specific DPUs on smart switches.
+            type: bool
+            default: false
           connectivity_domain_name:
             description:
             - Domain name to connect to Hypershield.
@@ -1575,7 +1581,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only iBGP VXLAN fabric type (C(vxlanIbgp)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
 - The O(config.management.bgp_asn) field is required when creating a fabric.

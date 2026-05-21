@@ -21,6 +21,7 @@ description:
 - It supports creating, updating, replacing, and deleting External Connectivity fabrics.
 author:
 - Mike Wiebe (@mwiebe)
+- Matt Tarkington (@mtarking)
 options:
   config:
     description:
@@ -616,7 +617,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only External Connectivity fabric type (C(externalConnectivity)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
 - The O(config.management.bgp_asn) field is required when creating a fabric.

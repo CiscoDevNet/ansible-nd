@@ -945,11 +945,14 @@ class VxlanIbgpManagementModel(NDNestedModel):
         description="Skip Overlay Network Interface Attachments for Brownfield and Host Port Resync cases",
         default=False,
     )
+
+    # Hypershield / Connectivity
     allow_smart_switch_onboarding: bool = Field(
         alias="allowSmartSwitchOnboarding", description="Enable onboarding of smart switches to Hypershield for firewall service", default=False
     )
-
-    # Hypershield / Connectivity
+    enable_dpu_pinning: bool = Field(
+        alias="enableDpuPinning", description="Enable pinning of VRFs and networks to specific DPUs on smart switches", default=False
+    )
     connectivity_domain_name: str | None = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
     hypershield_connectivity_proxy_server: str | None = Field(
         alias="hypershieldConnectivityProxyServer",
