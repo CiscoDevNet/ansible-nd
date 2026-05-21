@@ -16,6 +16,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions import (
     _build_want_attachment_maps,
     _post_attachment_payload,
+    custom_vrf_lite_delete,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     get_config_actions,
@@ -103,6 +104,22 @@ def test_manage_vrf_lite_00075_orchestrator_prepares_runtime_params():
     assert module.params["verify"] == {"enabled": True, "retries": 2, "timeout": 9}
     assert module.params["_changed_vrfs"] == []
     assert module.params["_gather_filter_config"] == []
+
+
+def test_manage_vrf_lite_00080_query_reuses_cached_gathered_have(monkeypatch):
+    cached_have = [{"vrf_name": "BLUE", "vlan_id": 500, "attach": []}]
+    module = _DummyModule({"state": "gathered", "fabric_name": "FABRIC1", "_have": cached_have, "_have_loaded": True})
+
+    def _fail_query(**kwargs):
+        del kwargs
+        pytest.fail("gathered query should reuse the state machine query result")
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query.query_vrf_lite_state",
+        _fail_query,
+    )
+
+    assert custom_vrf_lite_query_all(_DummyQueryContext(module)) == cached_have
 
 
 def test_manage_vrf_lite_00100_merge_preserves_unmentioned_switch_and_interface_data():
@@ -440,6 +457,52 @@ def test_manage_vrf_lite_00493_attachment_deploy_false_flows_into_attachment_pay
     )
 
     assert payloads["SN1"]["deployment"] is False
+
+
+def test_manage_vrf_lite_00494_delete_uses_requested_attachment_intent(monkeypatch):
+    posted_payloads = []
+    module = _DummyModule(
+        {
+            "fabric_name": "FABRIC1",
+            "state": "deleted",
+            "config": [{"vrf_name": "BLUE", "attach": [{"ip_address": "10.0.0.2"}]}],
+            "_ip_to_sn_mapping": {"10.0.0.1": "SN1", "10.0.0.2": "SN2"},
+        }
+    )
+    existing_model = VrfLiteModel.from_config(
+        {
+            "vrf_name": "BLUE",
+            "vlan_id": 500,
+            "attach": [
+                {"ip_address": "10.0.0.1", "vrf_lite": [{"interface": "Ethernet1/10"}]},
+                {"ip_address": "10.0.0.2", "vrf_lite": [{"interface": "Ethernet1/11"}]},
+            ],
+        }
+    )
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions._get_current_vrf_entry",
+        lambda _module, _fabric_name, _vrf_name: {
+            "vrf_name": "BLUE",
+            "vlan_id": 500,
+            "attach": [
+                {"ip_address": "10.0.0.1", "vrf_lite": [{"interface": "Ethernet1/10"}]},
+                {"ip_address": "10.0.0.2", "vrf_lite": [{"interface": "Ethernet1/11"}]},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions.NDModuleV2",
+        lambda _module: object(),
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions._post_attachment_payload",
+        lambda _nd_v2, _fabric_name, _vrf_name, lan_attach_list: posted_payloads.extend(lan_attach_list) or {"ok": True},
+    )
+
+    assert custom_vrf_lite_delete(module=module, model_instance=existing_model) is True
+    assert [payload["serialNumber"] for payload in posted_payloads] == ["SN2"]
+    assert module.params["_changed_vrfs"] == ["BLUE"]
 
 
 def test_manage_vrf_lite_00495_delete_query_filters_vrfs_without_managed_attachments(monkeypatch):

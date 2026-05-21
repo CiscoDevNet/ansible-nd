@@ -83,6 +83,8 @@
     that:
       - verify_result.failed == false
       - verify_result.gathered is defined
+      - verify_result.gathered | length == 1
+      - verify_result.gathered[0].attach | default([]) | length == 1
   tags: delete
 
 # TC2 - Delete VRF Lite with specific config (without deploy)
@@ -129,6 +131,8 @@
     that:
       - verify_result.failed == false
       - verify_result.gathered is defined
+      - verify_result.gathered | length == 1
+      - verify_result.gathered[0].attach | default([]) | length == 0
   tags: delete
 
 # TC2b - Delete VRF Lite with deploy=true path
@@ -217,6 +221,8 @@
     that:
       - verify_result.failed == false
       - verify_result.gathered is defined
+      - verify_result.gathered | length == 1
+      - verify_result.gathered[0].attach | default([]) | length == 0
   tags: delete
 
 # TC3 - Idempotence test for deletion (no deploy)
@@ -297,6 +303,8 @@
     that:
       - verify_result.failed == false
       - verify_result.gathered is defined
+      - verify_result.gathered | length == 1
+      - verify_result.gathered[0].attach | default([]) | length == 0
   tags: delete
 
 # TC5 - Delete with config_actions save+deploy
@@ -355,6 +363,29 @@
           | list
           | length
         ) > 0
+  tags: delete
+
+- name: DELETE - TC5 - GATHER - Verify config_actions delete result in ND
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: tc5_verify_result
+  tags: delete
+
+- name: DELETE - TC5 - ASSERT - Verify VRF Lite deleted after config_actions delete
+  ansible.builtin.assert:
+    that:
+      - tc5_verify_result.failed == false
+      - tc5_verify_result.gathered is defined
+      - tc5_verify_result.gathered | length == 1
+      - tc5_verify_result.gathered[0].attach | default([]) | length == 0
   tags: delete
 
 # TC6 - check_mode should not apply delete configuration changes
@@ -422,6 +453,8 @@
     that:
       - tc6_verify_result.failed == false
       - tc6_verify_result.gathered is defined
+      - tc6_verify_result.gathered | length == 1
+      - tc6_verify_result.gathered[0].attach | default([]) | length == 1
   tags: delete
 
 # TC7 - Delete with empty config must be rejected (guard against accidental purge)

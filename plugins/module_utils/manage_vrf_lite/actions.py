@@ -270,6 +270,48 @@ def _build_have_attachment_map(module: Any, current_vrf: dict[str, Any] | None) 
     return have_map
 
 
+def _get_delete_config_for_vrf(module: Any, vrf_name: str) -> dict[str, Any] | None:
+    """Return the user's delete intent for this VRF, when state is deleted."""
+    if module.params.get("state") != "deleted":
+        return None
+
+    for item in module.params.get("config") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("vrf_name", "")).strip() == vrf_name:
+            return item
+
+    return None
+
+
+def _attachment_serials(module: Any, attachments: Any, have_map: dict[str, dict[str, Any]]) -> list[str]:
+    serials: list[str] = []
+    seen: set[str] = set()
+
+    for attach in attachments or []:
+        switch_identifier = attach.get("ip_address") if isinstance(attach, dict) else getattr(attach, "ip_address", None)
+        serial_number = _resolve_serial(module, switch_identifier)
+        if serial_number in have_map and serial_number not in seen:
+            serials.append(serial_number)
+            seen.add(serial_number)
+
+    return serials
+
+
+def _serials_to_detach_for_delete(module: Any, vrf_name: str, model_instance: Any, have_map: dict[str, dict[str, Any]]) -> list[str]:
+    delete_config = _get_delete_config_for_vrf(module, vrf_name)
+    if delete_config is not None:
+        attachments = delete_config.get("attach") or []
+        if attachments:
+            return _attachment_serials(module, attachments, have_map)
+        return sorted(have_map.keys())
+
+    if model_instance.attach:
+        return _attachment_serials(module, model_instance.attach, have_map)
+
+    return sorted(have_map.keys())
+
+
 def _resolve_vrf_vlan_id(model_instance: Any, current_vrf: dict[str, Any] | None) -> int:
     if model_instance.vlan_id is not None:
         return int(model_instance.vlan_id)
@@ -401,6 +443,44 @@ def _post_attachment_payload(nd_v2: Any, fabric_name: str, vrf_name: str, lan_at
     return response
 
 
+class AttachmentReconciler:
+    """Build the attachment POST payloads needed to reconcile one VRF."""
+
+    def __init__(self, module: Any, nd_v2: Any, model_instance: Any, current_vrf: dict[str, Any] | None) -> None:
+        self.module = module
+        self.nd_v2 = nd_v2
+        self.model_instance = model_instance
+        self.current_vrf = current_vrf
+        self.vrf_name = model_instance.vrf_name
+        self.have_map = _build_have_attachment_map(module, current_vrf)
+
+    def sync_payloads(self, replace_mode: bool) -> list[dict[str, Any]]:
+        changes: list[dict[str, Any]] = []
+        want_map, want_payloads = _build_want_attachment_maps(self.module, self.nd_v2, self.model_instance, self.current_vrf)
+
+        for serial_number, want_cfg in want_map.items():
+            have_cfg = self.have_map.get(serial_number)
+            if have_cfg is None or _is_update_needed(want_cfg, have_cfg):
+                changes.append(want_payloads[serial_number])
+
+        if replace_mode:
+            vlan_for_detach = self.current_vrf.get("vlan_id") if self.current_vrf else None
+            for serial_number in sorted(self.have_map.keys()):
+                if serial_number in want_map:
+                    continue
+                changes.append(_build_detach_payload(self.module, self.vrf_name, serial_number, vlan_for_detach))
+
+        return changes
+
+    def detach_payloads(self) -> list[dict[str, Any]]:
+        if not self.have_map:
+            return []
+
+        serials_to_detach = _serials_to_detach_for_delete(self.module, self.vrf_name, self.model_instance, self.have_map)
+        vlan_for_detach = self.current_vrf.get("vlan_id") if self.current_vrf else None
+        return [_build_detach_payload(self.module, self.vrf_name, serial, vlan_for_detach) for serial in serials_to_detach]
+
+
 def _sync_vrf_attachments(module: Any, model_instance: Any, replace_mode: bool) -> dict[str, Any]:
     fabric_name = module.params.get("fabric_name")
     vrf_name = model_instance.vrf_name
@@ -411,22 +491,8 @@ def _sync_vrf_attachments(module: Any, model_instance: Any, replace_mode: bool) 
     nd_v2 = NDModuleV2(module)
     current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
 
-    have_map = _build_have_attachment_map(module, current_vrf)
-    want_map, want_payloads = _build_want_attachment_maps(module, nd_v2, model_instance, current_vrf)
-
-    changes: list[dict[str, Any]] = []
-
-    for serial_number, want_cfg in want_map.items():
-        have_cfg = have_map.get(serial_number)
-        if have_cfg is None or _is_update_needed(want_cfg, have_cfg):
-            changes.append(want_payloads[serial_number])
-
-    if replace_mode:
-        vlan_for_detach = current_vrf.get("vlan_id") if current_vrf else None
-        for serial_number in sorted(have_map.keys()):
-            if serial_number in want_map:
-                continue
-            changes.append(_build_detach_payload(module, vrf_name, serial_number, vlan_for_detach))
+    reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
+    changes = reconciler.sync_payloads(replace_mode=replace_mode)
 
     if not changes:
         return current_vrf or {}
@@ -463,26 +529,15 @@ def custom_vrf_lite_delete(model_instance: Any, module: Any) -> bool:
     if not current_vrf:
         return False
 
-    have_map = _build_have_attachment_map(module, current_vrf)
-    if not have_map:
-        return False
-
-    serials_to_detach = []
-    if model_instance.attach:
-        for attach in model_instance.attach:
-            serial_number = _resolve_serial(module, attach.ip_address)
-            if serial_number in have_map:
-                serials_to_detach.append(serial_number)
-    else:
-        serials_to_detach = sorted(have_map.keys())
-
-    if not serials_to_detach:
-        return False
-
-    vlan_for_detach = current_vrf.get("vlan_id")
-    detach_payloads = [_build_detach_payload(module, vrf_name, serial, vlan_for_detach) for serial in serials_to_detach]
-
     nd_v2 = NDModuleV2(module)
+    reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
+    if not reconciler.have_map:
+        return False
+
+    detach_payloads = reconciler.detach_payloads()
+    if not detach_payloads:
+        return False
+
     _post_attachment_payload(nd_v2, fabric_name, vrf_name, detach_payloads)
 
     _mark_changed_vrf(module, vrf_name)

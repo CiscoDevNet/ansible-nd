@@ -270,6 +270,8 @@ def custom_vrf_lite_query_all(nrm: Any) -> list[dict[str, Any]]:
         raise ValueError("fabric_name must be set")
 
     if state == "gathered":
+        if module.params.get("_have_loaded") and isinstance(module.params.get("_have"), list):
+            return module.params["_have"]
         config = module.params.get("_gather_filter_config") or []
     else:
         config = module.params.get("config") or []
@@ -300,4 +302,5 @@ def custom_vrf_lite_query_all(nrm: Any) -> list[dict[str, Any]]:
         have = [item for item in have if item.get("attach")]
         module.params["_have"] = have
 
+    module.params["_have_loaded"] = True
     return have
