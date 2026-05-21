@@ -1,0 +1,287 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_fabric_prepare_update.py (orchestrator).",
+        "Keys follow the test_<module>_<NNNNN><a|b|c|...> convention from CLAUDE.md.",
+        "Fabric scope for all tests: fabric_1.",
+        "FabricPrepareUpdateOrchestrator drives two endpoints:",
+        "  GET  /api/v1/manage/fabrics/{fabric}/softwareUpdatePlan/summary  -> {updateGroups: [...]}",
+        "  POST /api/v1/manage/fabrics/{fabric}/softwareUpdatePlan/actions/stage -> 202 (empty body)",
+        "Per-switch imageStagedStatus / imageValidatedStatus enum: none|inProgress|success|failed|skipped.",
+        "Summary bodies are modeled on a live ND 4.2.1 softwareUpdatePlan/summary capture."
+    ],
+
+    "test_fabric_prepare_update_00100a": {
+        "TEST_NOTES": ["preflight_role_check happy path: single-role (leaf) update group"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "prep_leaf",
+                    "updateGroupStatus": "none",
+                    "stageValidatePercentage": 0,
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO1", "switchName": "leaf-1", "switchRole": "leaf", "imageStagedStatus": "none", "imageValidatedStatus": "none", "switchStageValidatePercentage": 0, "selectedVersion": "10.3.8"},
+                        {"switchId": "FDO2", "switchName": "leaf-2", "switchRole": "leaf", "imageStagedStatus": "none", "imageValidatedStatus": "none", "switchStageValidatePercentage": 0, "selectedVersion": "10.3.8"}
+                    ]
+                }
+            ]
+        }
+    },
+
+    "test_fabric_prepare_update_00110a": {
+        "TEST_NOTES": ["preflight_role_check mixed-role: update group spans leaf + spine"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "prep_mixed",
+                    "updateGroupStatus": "none",
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO1", "switchName": "leaf-1", "switchRole": "leaf", "imageStagedStatus": "none", "imageValidatedStatus": "none"},
+                        {"switchId": "FDO3", "switchName": "spine-1", "switchRole": "spine", "imageStagedStatus": "none", "imageValidatedStatus": "none"}
+                    ]
+                }
+            ]
+        }
+    },
+
+    "test_fabric_prepare_update_00120a": {
+        "TEST_NOTES": ["preflight_role_check group not found: requested name absent from the summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "other_group",
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO9", "switchName": "leaf-9", "switchRole": "leaf", "imageStagedStatus": "none", "imageValidatedStatus": "none"}
+                    ]
+                }
+            ]
+        }
+    },
+
+    "test_fabric_prepare_update_00130a": {
+        "TEST_NOTES": ["get_summary transport failure: controller returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"message": "Internal Server Error"}
+    },
+
+    "test_fabric_prepare_update_00200a": {
+        "TEST_NOTES": ["status_snapshot: fully staged + validated leaf group (also exercises snapshot_fully_prepared)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "prep_leaf",
+                    "updateGroupStatus": "stageSuccess",
+                    "stageValidatePercentage": 100,
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO2", "switchName": "leaf-2", "switchRole": "leaf", "switchManagementIP": "192.168.12.155", "imageStagedStatus": "success", "imageValidatedStatus": "success", "switchStageValidatePercentage": 100, "selectedVersion": "10.3.8"},
+                        {"switchId": "FDO1", "switchName": "leaf-1", "switchRole": "leaf", "switchManagementIP": "192.168.12.151", "imageStagedStatus": "success", "imageValidatedStatus": "success", "switchStageValidatePercentage": 100, "selectedVersion": "10.3.8"}
+                    ]
+                }
+            ]
+        }
+    },
+
+    "test_fabric_prepare_update_00210a": {
+        "TEST_NOTES": ["status_snapshot group not found: requested name absent from the summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {"updateGroups": []}
+    },
+
+    "test_fabric_prepare_update_00400a": {
+        "TEST_NOTES": ["stage happy path: actions/stage POST returns 202 with an empty body"],
+        "RETURN_CODE": 202,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/stage",
+        "MESSAGE": "Accepted",
+        "DATA": {}
+    },
+
+    "test_fabric_prepare_update_00410a": {
+        "TEST_NOTES": ["stage transport failure: controller returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/stage",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"message": "Internal Server Error"}
+    },
+
+    "test_fabric_prepare_update_00500a": {
+        "TEST_NOTES": ["wait_for_completion poll 1: staging in progress"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "prep_leaf",
+                    "updateGroupStatus": "inProgress",
+                    "stageValidatePercentage": 40,
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO1", "switchName": "leaf-1", "switchRole": "leaf", "imageStagedStatus": "inProgress", "imageValidatedStatus": "none"},
+                        {"switchId": "FDO2", "switchName": "leaf-2", "switchRole": "leaf", "imageStagedStatus": "inProgress", "imageValidatedStatus": "none"}
+                    ]
+                }
+            ]
+        }
+    },
+
+    "test_fabric_prepare_update_00500b": {
+        "TEST_NOTES": ["wait_for_completion poll 2: staging complete (staged + validated)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "prep_leaf",
+                    "updateGroupStatus": "stageSuccess",
+                    "stageValidatePercentage": 100,
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO1", "switchName": "leaf-1", "switchRole": "leaf", "imageStagedStatus": "success", "imageValidatedStatus": "success"},
+                        {"switchId": "FDO2", "switchName": "leaf-2", "switchRole": "leaf", "imageStagedStatus": "success", "imageValidatedStatus": "success"}
+                    ]
+                }
+            ]
+        }
+    },
+
+    "test_fabric_prepare_update_00510a": {
+        "TEST_NOTES": ["wait_for_completion: one switch reports a staging failure"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "prep_leaf",
+                    "updateGroupStatus": "stageFailed",
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO1", "switchName": "leaf-1", "switchRole": "leaf", "imageStagedStatus": "success", "imageValidatedStatus": "success"},
+                        {"switchId": "FDO2", "switchName": "leaf-2", "switchRole": "leaf", "imageStagedStatus": "failed", "imageValidatedStatus": "none"}
+                    ]
+                }
+            ]
+        }
+    },
+
+    "test_fabric_prepare_update_00520a": {
+        "TEST_NOTES": ["wait_for_completion timeout: staging still in progress when the deadline passes"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "prep_leaf",
+                    "updateGroupStatus": "inProgress",
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO1", "switchName": "leaf-1", "switchRole": "leaf", "imageStagedStatus": "inProgress", "imageValidatedStatus": "none"}
+                    ]
+                }
+            ]
+        }
+    },
+
+    "test_fabric_prepare_update_00530a": {
+        "TEST_NOTES": ["wait_for_completion poll 1: transient transport failure (500) - must be retried"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"message": "Internal Server Error"}
+    },
+    "test_fabric_prepare_update_00530b": {
+        "TEST_NOTES": ["wait_for_completion poll 2: poll recovers, staging in progress"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "prep_leaf",
+                    "updateGroupStatus": "inProgress",
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO1", "switchName": "leaf-1", "switchRole": "leaf", "imageStagedStatus": "inProgress", "imageValidatedStatus": "none"}
+                    ]
+                }
+            ]
+        }
+    },
+    "test_fabric_prepare_update_00530c": {
+        "TEST_NOTES": ["wait_for_completion poll 3: staging complete"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "prep_leaf",
+                    "updateGroupStatus": "stageSuccess",
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO1", "switchName": "leaf-1", "switchRole": "leaf", "imageStagedStatus": "success", "imageValidatedStatus": "success"}
+                    ]
+                }
+            ]
+        }
+    },
+
+    "test_fabric_prepare_update_00540a": {
+        "TEST_NOTES": ["wait_for_completion: sustained poll failure 1 of 4 (500)"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"message": "Internal Server Error"}
+    },
+    "test_fabric_prepare_update_00540b": {
+        "TEST_NOTES": ["wait_for_completion: sustained poll failure 2 of 4 (500)"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"message": "Internal Server Error"}
+    },
+    "test_fabric_prepare_update_00540c": {
+        "TEST_NOTES": ["wait_for_completion: sustained poll failure 3 of 4 (500)"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"message": "Internal Server Error"}
+    },
+    "test_fabric_prepare_update_00540d": {
+        "TEST_NOTES": ["wait_for_completion: sustained poll failure 4 of 4 (500) - exceeds the retry budget"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"message": "Internal Server Error"}
+    }
+}
