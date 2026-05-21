@@ -193,31 +193,118 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         return self._query_current_state()
 
     def create(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
-        if self._module().check_mode:
-            return model_instance.to_config()
-
-        return self._run_vrf_lite_action(
-            self._sync_vrf_attachments,
-            model_instance,
-            replace_mode=False,
-        )
-
-    def update(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
+        """Create VRF Lite attachment intent by posting required attach rows."""
         module = self._module()
         if module.check_mode:
             return model_instance.to_config()
 
-        return self._run_vrf_lite_action(
-            self._sync_vrf_attachments,
-            model_instance,
-            replace_mode=module.params.get("state") in ("replaced", "overridden"),
-        )
+        fabric_name = module.params.get("fabric_name")
+        vrf_name = model_instance.vrf_name
+
+        try:
+            _ensure_vrf_exists(module, vrf_name)
+            validate_vrf_lite_write_guardrails(module=module, model_instance=model_instance)
+
+            nd_v2 = NDModuleV2(module)
+            current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
+            reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
+            changes = reconciler.sync_payloads(replace_mode=False)
+
+            if not changes:
+                return current_vrf or {}
+
+            response = _post_attachment_payload(nd_v2, fabric_name, vrf_name, changes)
+            _mark_changed_vrf(module, vrf_name)
+            return response
+        except NDModuleError as error:
+            error_dict = error.to_dict()
+            if "msg" in error_dict:
+                error_dict["api_error_msg"] = error_dict.pop("msg")
+            _raise_vrf_lite_error(msg="Create failed for {0}: {1}".format(model_instance.get_identifier_value(), error.msg), **error_dict)
+        except VrfLiteResourceError:
+            raise
+        except Exception as error:
+            _raise_vrf_lite_error(
+                msg="Create failed for {0}: {1}".format(model_instance.get_identifier_value(), error),
+                exception_type=type(error).__name__,
+            )
+
+    def update(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
+        """Update VRF Lite attachment intent by posting changed attach/detach rows."""
+        module = self._module()
+        if module.check_mode:
+            return model_instance.to_config()
+
+        fabric_name = module.params.get("fabric_name")
+        vrf_name = model_instance.vrf_name
+        replace_mode = module.params.get("state") in ("replaced", "overridden")
+
+        try:
+            _ensure_vrf_exists(module, vrf_name)
+            validate_vrf_lite_write_guardrails(module=module, model_instance=model_instance)
+
+            nd_v2 = NDModuleV2(module)
+            current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
+            reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
+            changes = reconciler.sync_payloads(replace_mode=replace_mode)
+
+            if not changes:
+                return current_vrf or {}
+
+            response = _post_attachment_payload(nd_v2, fabric_name, vrf_name, changes)
+            _mark_changed_vrf(module, vrf_name)
+            return response
+        except NDModuleError as error:
+            error_dict = error.to_dict()
+            if "msg" in error_dict:
+                error_dict["api_error_msg"] = error_dict.pop("msg")
+            _raise_vrf_lite_error(msg="Update failed for {0}: {1}".format(model_instance.get_identifier_value(), error.msg), **error_dict)
+        except VrfLiteResourceError:
+            raise
+        except Exception as error:
+            _raise_vrf_lite_error(
+                msg="Update failed for {0}: {1}".format(model_instance.get_identifier_value(), error),
+                exception_type=type(error).__name__,
+            )
 
     def delete(self, model_instance: Any, **kwargs: Any) -> bool:
-        if self._module().check_mode:
+        """Detach VRF Lite attachment intent by posting detach rows."""
+        module = self._module()
+        if module.check_mode:
             return True
 
-        return self._run_vrf_lite_action(self._detach_vrf_attachments, model_instance)
+        fabric_name = module.params.get("fabric_name")
+        vrf_name = model_instance.vrf_name
+
+        try:
+            current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
+            if not current_vrf:
+                return False
+
+            nd_v2 = NDModuleV2(module)
+            reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
+            if not reconciler.have_map:
+                return False
+
+            detach_payloads = reconciler.detach_payloads()
+            if not detach_payloads:
+                return False
+
+            _post_attachment_payload(nd_v2, fabric_name, vrf_name, detach_payloads)
+            _mark_changed_vrf(module, vrf_name)
+            return True
+        except NDModuleError as error:
+            error_dict = error.to_dict()
+            if "msg" in error_dict:
+                error_dict["api_error_msg"] = error_dict.pop("msg")
+            _raise_vrf_lite_error(msg="Delete failed for {0}: {1}".format(model_instance.get_identifier_value(), error.msg), **error_dict)
+        except VrfLiteResourceError:
+            raise
+        except Exception as error:
+            _raise_vrf_lite_error(
+                msg="Delete failed for {0}: {1}".format(model_instance.get_identifier_value(), error),
+                exception_type=type(error).__name__,
+            )
 
     # Gathered state (read-only query)
 
@@ -271,19 +358,6 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
     # VRF Lite resource behavior
 
-    def _run_vrf_lite_action(self, action: Any, *args: Any, **kwargs: Any) -> Any:
-        try:
-            return action(*args, **kwargs)
-        except NDModuleError as error:
-            error_dict = error.to_dict()
-            if "msg" in error_dict:
-                error_dict["api_error_msg"] = error_dict.pop("msg")
-            _raise_vrf_lite_error(msg=error.msg, **error_dict)
-        except VrfLiteResourceError:
-            raise
-        except Exception as error:
-            _raise_vrf_lite_error(msg=str(error), exception_type=type(error).__name__)
-
     def _query_current_state(self) -> list[dict[str, Any]]:
         module = self._module()
         fabric_name = module.params.get("fabric_name")
@@ -327,49 +401,6 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
         module.params["_have_loaded"] = True
         return have
-
-    def _sync_vrf_attachments(self, model_instance: Any, replace_mode: bool) -> dict[str, Any]:
-        module = self._module()
-        fabric_name = module.params.get("fabric_name")
-        vrf_name = model_instance.vrf_name
-
-        _ensure_vrf_exists(module, vrf_name)
-        validate_vrf_lite_write_guardrails(module=module, model_instance=model_instance)
-
-        nd_v2 = NDModuleV2(module)
-        current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
-
-        reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
-        changes = reconciler.sync_payloads(replace_mode=replace_mode)
-
-        if not changes:
-            return current_vrf or {}
-
-        response = _post_attachment_payload(nd_v2, fabric_name, vrf_name, changes)
-        _mark_changed_vrf(module, vrf_name)
-        return response
-
-    def _detach_vrf_attachments(self, model_instance: Any) -> bool:
-        module = self._module()
-        fabric_name = module.params.get("fabric_name")
-        vrf_name = model_instance.vrf_name
-
-        current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
-        if not current_vrf:
-            return False
-
-        nd_v2 = NDModuleV2(module)
-        reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
-        if not reconciler.have_map:
-            return False
-
-        detach_payloads = reconciler.detach_payloads()
-        if not detach_payloads:
-            return False
-
-        _post_attachment_payload(nd_v2, fabric_name, vrf_name, detach_payloads)
-        _mark_changed_vrf(module, vrf_name)
-        return True
 
     def _execute_config_actions(self, result: dict[str, Any]) -> dict[str, Any]:
         module = self._module()

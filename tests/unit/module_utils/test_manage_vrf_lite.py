@@ -510,7 +510,7 @@ def test_manage_vrf_lite_00494_delete_uses_requested_attachment_intent(monkeypat
         lambda _nd_v2, _fabric_name, _vrf_name, lan_attach_list: posted_payloads.extend(lan_attach_list) or {"ok": True},
     )
 
-    assert _vrf_lite_orchestrator(module)._detach_vrf_attachments(model_instance=existing_model) is True
+    assert _vrf_lite_orchestrator(module).delete(model_instance=existing_model) is True
     assert [payload["serialNumber"] for payload in posted_payloads] == ["SN2"]
     assert module.params["_changed_vrfs"] == ["BLUE"]
 
