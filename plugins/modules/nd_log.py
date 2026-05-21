@@ -56,11 +56,7 @@ EXAMPLES = r"""
 
 - name: Query Nexus Dashboard version
   cisco.nd.nd_version:
-    host: nd_host
-    username: admin
-    password: SomeSecretPassword
     state: query
-  delegate_to: localhost
   register: query_result
 
 - name: Log completion
