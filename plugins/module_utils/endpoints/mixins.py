@@ -11,6 +11,8 @@ fields to endpoint models without duplication.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
     Field,
