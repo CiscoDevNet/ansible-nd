@@ -291,6 +291,53 @@ def test_fabric_prepare_update_00210() -> None:
         instance.status_snapshot(["prep_leaf"])
 
 
+def test_fabric_prepare_update_00220() -> None:
+    """
+    # Summary
+
+    Verify `preflight_role_check` and `status_snapshot` reuse a caller-supplied `summary` rather
+    than fetching it again, so the prepare-update startup costs a single summary GET.
+
+    ## Test
+
+    - The summary is fetched once via `get_summary`
+    - That summary object is passed to both `preflight_role_check` and `status_snapshot`
+    - Exactly one GET is issued across all three calls
+
+    ## Classes and Methods
+
+    - FabricPrepareUpdateOrchestrator.get_summary()
+    - FabricPrepareUpdateOrchestrator.preflight_role_check()
+    - FabricPrepareUpdateOrchestrator.status_snapshot()
+    """
+    method_name = inspect.stack()[0][3]
+    get_count = 0
+
+    def responses():
+        nonlocal get_count
+        # Three identical summary responses are made available so a regression (a stray fetch in
+        # preflight_role_check or status_snapshot) succeeds instead of raising on an exhausted
+        # generator - the get_count assertion below is what catches the extra request.
+        get_count += 1
+        yield responses_fabric_prepare_update(f"{method_name}a")
+        get_count += 1
+        yield responses_fabric_prepare_update(f"{method_name}a")
+        get_count += 1
+        yield responses_fabric_prepare_update(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricPrepareUpdateOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        summary = instance.get_summary()
+        instance.preflight_role_check(["prep_leaf"], summary=summary)
+        snapshot = instance.status_snapshot(["prep_leaf"], summary=summary)
+
+    assert get_count == 1
+    assert [group["update_group_name"] for group in snapshot] == ["prep_leaf"]
+
+
 # =============================================================================
 # Test: snapshot_fully_prepared (pure)
 # =============================================================================

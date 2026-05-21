@@ -108,6 +108,27 @@
         "DATA": {"updateGroups": []}
     },
 
+    "test_fabric_prepare_update_00220a": {
+        "TEST_NOTES": ["preflight_role_check + status_snapshot summary reuse: single-role (leaf) update group"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "prep_leaf",
+                    "updateGroupStatus": "none",
+                    "stageValidatePercentage": 0,
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO1", "switchName": "leaf-1", "switchRole": "leaf", "imageStagedStatus": "none", "imageValidatedStatus": "none", "switchStageValidatePercentage": 0, "selectedVersion": "10.3.8"},
+                        {"switchId": "FDO2", "switchName": "leaf-2", "switchRole": "leaf", "imageStagedStatus": "none", "imageValidatedStatus": "none", "switchStageValidatePercentage": 0, "selectedVersion": "10.3.8"}
+                    ]
+                }
+            ]
+        }
+    },
+
     "test_fabric_prepare_update_00400a": {
         "TEST_NOTES": ["stage happy path: actions/stage POST returns 202 with an empty body"],
         "RETURN_CODE": 202,

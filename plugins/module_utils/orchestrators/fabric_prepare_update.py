@@ -226,13 +226,15 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
             )
         return resolved
 
-    def preflight_role_check(self, update_group_names: list[str]) -> None:
+    def preflight_role_check(self, update_group_names: list[str], summary: SoftwareUpdatePlanSummaryModel | None = None) -> None:
         """
         # Summary
 
         Fail before staging if any requested update group spans more than one switch role. Nexus
         Dashboard will not prepare a mixed-role update group (for example, leaf + spine together),
         because simultaneous reloads across roles can disrupt fabric functionality.
+
+        Pass an already-fetched `summary` to reuse it; when omitted, the summary is fetched.
 
         ## Raises
 
@@ -241,7 +243,8 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
         - If a requested update group is missing from the summary.
         - If a requested update group contains switches of more than one role.
         """
-        summary = self.get_summary()
+        if summary is None:
+            summary = self.get_summary()
         for group in self._resolve_groups(summary, update_group_names):
             roles = sorted({s.switch_role for s in (group.update_group_switches or []) if s.switch_role})
             if len(roles) > 1:
@@ -283,7 +286,7 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
             ],
         }
 
-    def status_snapshot(self, update_group_names: list[str]) -> list[dict[str, Any]]:
+    def status_snapshot(self, update_group_names: list[str], summary: SoftwareUpdatePlanSummaryModel | None = None) -> list[dict[str, Any]]:
         """
         # Summary
 
@@ -291,13 +294,16 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
         dicts (one per group, in request order). Used for the module's `before` / `after` output
         and as the input to the idempotency decision.
 
+        Pass an already-fetched `summary` to reuse it; when omitted, the summary is fetched.
+
         ## Raises
 
         ### RuntimeError
 
         - If a requested update group is missing from the summary.
         """
-        summary = self.get_summary()
+        if summary is None:
+            summary = self.get_summary()
         return [self._group_to_snapshot(group) for group in self._resolve_groups(summary, update_group_names)]
 
     @staticmethod

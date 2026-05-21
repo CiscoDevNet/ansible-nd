@@ -155,9 +155,12 @@ def _run_prepare(module: AnsibleModule) -> dict:
     update_groups = module.params["update_groups"]
 
     # Pre-flight: ND will not prepare an update group that spans more than one switch role.
-    orchestrator.preflight_role_check(update_groups)
+    # Fetch the summary once and reuse it for both the role check and the `before` snapshot,
+    # so startup costs a single GET instead of two.
+    summary = orchestrator.get_summary()
+    orchestrator.preflight_role_check(update_groups, summary=summary)
 
-    before = orchestrator.status_snapshot(update_groups)
+    before = orchestrator.status_snapshot(update_groups, summary=summary)
 
     if FabricPrepareUpdateOrchestrator.snapshot_fully_prepared(before):
         # Every switch is already staged and validated for the update group's configured image.
