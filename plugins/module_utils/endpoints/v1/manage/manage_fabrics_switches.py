@@ -182,6 +182,8 @@ class EpManageFabricsSwitchesGet(_EpManageFabricsSwitchesBase):
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.GET
+
+
 class EpManageFabricsSwitchesPost(_EpManageFabricsSwitchesBase):
     """
     # Summary

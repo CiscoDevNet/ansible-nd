@@ -145,7 +145,7 @@ class ApiDataChecker:
         """
         log.debug(f"ApiDataChecker.check: Checking response for context: {context}")
         log.debug(f"ApiDataChecker.check: data type={type(data)}, has 'error'={'error' in data if isinstance(data, dict) else 'N/A'}")
-        
+
         # Check for error object in response (some APIs return this structure)
         if isinstance(data, dict) and "error" in data:
             error_obj = data.get("error", {})
@@ -163,7 +163,7 @@ class ApiDataChecker:
                     return  # Should not reach here
                 else:
                     raise SwitchOperationError(msg)
-        
+
         # Check for code in data payload (embedded error pattern)
         if isinstance(data, dict) and "code" in data:
             error_msg = data.get("message", "Unknown error")
@@ -175,7 +175,7 @@ class ApiDataChecker:
                 return  # Should not reach here
             else:
                 raise SwitchOperationError(msg)
-        
+
         log.debug("ApiDataChecker.check: No errors detected in response")
 
 

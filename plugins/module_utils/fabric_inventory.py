@@ -18,7 +18,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.utils import (
     ApiDataChecker,
 )
 
-
 # =========================================================================
 # Fabric Switch Inventory
 # =========================================================================
