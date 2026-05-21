@@ -41,7 +41,7 @@ notes:
   effective level, and each handler). To make C(nd_log) messages visible, ensure both C(loggers.nd.level) (or the inherited level)
   and the relevant handler's C(level) in C(ND_LOGGING_CONFIG) are at or below O(severity).
 author:
-- Allen Robel (@quantumonion)
+- Allen Robel (@allenrobel)
 """
 
 EXAMPLES = r"""
