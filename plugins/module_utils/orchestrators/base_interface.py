@@ -17,7 +17,8 @@ with interface-type-specific payload construction and query filtering.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import ClassVar, Iterable
+from collections.abc import Iterable
+from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
     EpManageInterfacesDeploy,
@@ -150,6 +151,8 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
         - If the model has no `mode` attribute and the subclass has not overridden this method.
         """
+        # getattr (not direct access): ModelType is bound to NDBaseModel, which has no `mode`. The
+        # attribute is duck-typed -- present on most interface models, absent on some (e.g. loopback).
         return getattr(model_instance, "mode")
 
     def validate_switches_capable(self, model_instances: Iterable[ModelType]) -> None:

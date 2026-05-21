@@ -208,7 +208,7 @@ class InterfaceCapabilityPreflight:
         if key in self._cache:
             return self._cache[key]
         result = self._query_get(self._build_endpoint(interface_type, mode).path)
-        switches = (result.get("switches") or []) if result else []
+        switches = result.get("switches") or []
         self._cache[key] = switches
         return switches
 
@@ -265,6 +265,8 @@ class InterfaceCapabilityPreflight:
         for sid in sorted(offenders):
             parts = [f"switchId={sid}"]
             if self._fabric_context is not None:
+                # Soft lookup: FabricContext.get_switch_ip() raises on miss; here a missing IP should
+                # only yield a less-detailed message, not mask the capability error being reported.
                 switch_ip = self._fabric_context.switch_map_by_id.get(sid)
                 if switch_ip:
                     parts.append(f"switch_ip={switch_ip}")
