@@ -32,8 +32,8 @@ from typing import Any, ClassVar
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
-    BasePath,
+from ansible_collections.cisco.nd.plugins.module_utils.constants import (
+    SYSTEM_INJECTED_TEMPLATE_KEYS,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_config_templates import (
     EpManageConfigTemplateParametersGet,
@@ -51,9 +51,15 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
     EpManageSwitchActionsDeployPost,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
+    EpManageFabricsSwitchesGet,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import (
     HttpVerbEnum,
     OperationType,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
+    FabricSwitchInventory,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import (
     PlaybookPolicyConfig,
@@ -71,6 +77,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.po
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_crud import (
     PolicyCreateBulk,
     PolicyUpdate,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.switch_data_models import (
+    SwitchDataModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
     NDConfigCollection,
@@ -92,43 +101,25 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Resul
 # =============================================================================
 
 
-def _looks_like_ip(value):
-    """Return True if *value* looks like a dotted-quad IPv4 address.
-
-    Args:
-        value: String to check.
-
-    Returns:
-        True if the value matches a dotted-quad IPv4 pattern, False otherwise.
-    """
-    parts = value.split(".")
-    if len(parts) == 4:
-        return all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
-    return False
-
-
-def _needs_resolution(value):
+def _needs_resolution(value) -> bool:
     """Return True if the switch identifier needs IP/hostname → serial resolution.
 
-    Serial numbers are alphanumeric strings (e.g. ``FDO25031SY4``).
-    IPs look like dotted quads.  Hostnames contain dots or look like FQDNs.
-    If the value is already a serial number we can skip the fabric API call.
+    Serial numbers are alphanumeric strings (e.g. ``FDO25031SY4``) and contain
+    no dots.  IPv4 addresses and hostnames/FQDNs always contain dots, so a
+    simple dot-presence check is a sufficient (and inexpensive) gate to avoid
+    an unnecessary fabric inventory API call when every identifier is already
+    a serial number.  Actual IP-vs-hostname resolution is delegated to
+    :class:`FabricSwitchInventory` lookups (``by_ip()`` / hostname map).
 
     Args:
         value: Switch identifier string to inspect.
 
     Returns:
-        True if the value looks like an IP or hostname, False if it
-        appears to be a serial number already.
+        True if the value contains a ``.`` (IP/hostname), False otherwise.
     """
     if not value:
         return False
-    v = str(value).strip()
-    if _looks_like_ip(v):
-        return True
-    if "." in v:
-        return True
-    return False
+    return "." in str(value).strip()
 
 
 class NDPolicyModule:
@@ -216,6 +207,11 @@ class NDPolicyModule:
         self._call_path: str | None = None
         self._call_verb: HttpVerbEnum | None = None
         self._call_payload: dict | None = None
+
+        # Lazily-populated fabric switch inventory (shared by
+        # resolve_switch_identifiers and _get_fabric_switches so a single
+        # GET /fabrics/{name}/switches serves the whole module run).
+        self._inventory: FabricSwitchInventory | None = None
 
         self.log.info(f"Initialized NDPolicyModule for fabric: {self.fabric_name}, state: {self.state}")
 
@@ -405,11 +401,13 @@ class NDPolicyModule:
         as a plain string.
 
         Resolution logic:
-            1. If the value does NOT look like an IP or hostname it is
-               assumed to be a serial number already → pass through.
-            2. If the value looks like an IP or hostname, query the fabric
-               switch inventory and resolve it to a serial number.
-            3. If resolution fails, fail with a clear error.
+            1. If the value does NOT look like an IP or hostname (no ``.``)
+               it is assumed to be a serial number already → pass through.
+            2. Otherwise the fabric switch inventory is consulted via
+               :class:`FabricSwitchInventory` to map management IP or
+               hostname → switch serial number.
+            3. If resolution fails, raise ``NDModuleError`` with a clear
+               message.
 
         Args:
             config: Flat config list from ``translate_config()``.
@@ -420,34 +418,28 @@ class NDPolicyModule:
         if config is None:
             return []
 
-        needs_lookup = set()
+        # Cheap gate — skip the fabric inventory GET when every identifier
+        # already looks like a serial number.
+        needs_any = False
         for entry in config:
-            switch_value = entry.get("switch")
-            if isinstance(switch_value, list):
-                for switch_entry in switch_value:
-                    val = switch_entry.get("serial_number") or switch_entry.get("ip") or ""
+            sv = entry.get("switch")
+            if isinstance(sv, list):
+                for se in sv:
+                    val = se.get("serial_number") or se.get("ip") or ""
                     if _needs_resolution(val):
-                        needs_lookup.add(val)
-            elif isinstance(switch_value, str) and _needs_resolution(switch_value):
-                needs_lookup.add(switch_value)
+                        needs_any = True
+                        break
+            elif isinstance(sv, str) and _needs_resolution(sv):
+                needs_any = True
+            if needs_any:
+                break
 
-        if not needs_lookup:
+        if not needs_any:
             return config
 
-        switches = self._query_fabric_switches()
-
-        ip_map = {}
-        hostname_map = {}
-        for switch in switches:
-            switch_id = switch.get("switchId") or switch.get("serialNumber")
-            if not switch_id:
-                continue
-            fabric_ip = switch.get("fabricManagementIp") or switch.get("ip")
-            if fabric_ip:
-                ip_map[str(fabric_ip).strip()] = switch_id
-            hostname = switch.get("hostname")
-            if hostname:
-                hostname_map[str(hostname).strip().lower()] = switch_id
+        inventory = self._get_inventory()
+        ip_map = inventory.by_ip()
+        hostname_map = {sw.hostname.strip().lower(): sw for sw in inventory.switches if sw.hostname}
 
         def _resolve(identifier):
             if identifier is None:
@@ -455,7 +447,8 @@ class NDPolicyModule:
             value = str(identifier).strip()
             if not value:
                 return value
-            return ip_map.get(value) or hostname_map.get(value.lower())
+            sw = ip_map.get(value) or hostname_map.get(value.lower())
+            return sw.switch_id if sw is not None else None
 
         for entry in config:
             switch_value = entry.get("switch")
@@ -493,37 +486,37 @@ class NDPolicyModule:
 
         return config
 
-    def _query_fabric_switches(self) -> list[dict]:
-        """Query all switches for the fabric and return raw switch records.
+    def _get_inventory(self) -> FabricSwitchInventory:
+        """Fetch (once) and cache the fabric switch inventory.
 
-        Uses RestSend save_settings/restore_settings to temporarily force
-        check_mode=False so that this read-only GET always hits the controller,
-        even when the module is running in Ansible check mode.
+        Delegates to :meth:`FabricSwitchInventory.from_fabric` which performs
+        the ``GET /fabrics/{name}/switches`` call and parses results into
+        typed ``SwitchDataModel`` instances.  Uses RestSend save/restore so
+        the GET always hits the controller even in Ansible check mode.
+
+        The result is memoised on ``self._inventory`` so multiple callers
+        share a single API round-trip per module run.
 
         Returns:
-            List of switch record dicts from the fabric inventory API.
+            Populated :class:`FabricSwitchInventory` instance.
         """
-        path = f"{BasePath.path('fabrics', self.fabric_name, 'switches')}?max=10000"
+        if self._inventory is not None:
+            return self._inventory
+
+        # Stamp the path/verb stash so any synthetic register that follows
+        # an empty switch list still reflects the inventory GET.
+        ep = EpManageFabricsSwitchesGet()
+        ep.fabric_name = self.fabric_name
+        self._record_call(ep, None)
 
         rest_send = self.nd._get_rest_send()
         rest_send.save_settings()
         rest_send.check_mode = False
         try:
-            # Stamp stash so any synthetic register that follows an empty
-            # switch list reflects this GET.  No ep object here, so set
-            # path/verb directly; payload is None for GETs.
-            self._call_path = path
-            self._call_verb = HttpVerbEnum.GET
-            self._call_payload = None
-            response = self.nd.request(path)
+            self._inventory = FabricSwitchInventory.from_fabric(self.nd, self.fabric_name, self.log, SwitchDataModel)
         finally:
             rest_send.restore_settings()
-
-        if isinstance(response, list):
-            return response
-        if isinstance(response, dict):
-            return response.get("switches", [])
-        return []
+        return self._inventory
 
     def validate_translated_config(self, translated_config):
         """Validate the translated (flat) config before handing it to manage_state.
@@ -909,7 +902,7 @@ class NDPolicyModule:
             switches = self._get_fabric_switches()
             if not switches:
                 self.log.warning("No switches found in fabric")
-                # Keep the GET stash from _query_fabric_switches so the
+                # Keep the GET stash from _get_inventory so the
                 # "no switches" row carries the actual lookup path/verb.
                 self._register_result(
                     action="policy_gathered",
@@ -1006,8 +999,8 @@ class NDPolicyModule:
     def _get_fabric_switches(self) -> list[str]:
         """Fetch all switch serial numbers in the current fabric.
 
-        Delegates to ``_query_fabric_switches()`` for the API call and
-        extracts serial numbers from the raw switch records.
+        Delegates to :meth:`_get_inventory` and projects the typed
+        ``SwitchDataModel`` instances down to their serial-number strings.
 
         Returns:
             List of serial number strings.
@@ -1015,16 +1008,12 @@ class NDPolicyModule:
         self.log.debug("ENTER: _get_fabric_switches()")
 
         try:
-            records = self._query_fabric_switches()
+            inventory = self._get_inventory()
         except Exception as exc:
             self.log.warning(f"Failed to fetch fabric switches: {exc}")
             return []
 
-        switches = []
-        for sw in records:
-            sn = sw.get("serialNumber") or sw.get("switchId") or sw.get("switchDbID")
-            if sn:
-                switches.append(sn)
+        switches = [sw.switch_id for sw in inventory.switches if sw.switch_id]
 
         self.log.info(f"Found {len(switches)} switches in fabric '{self.fabric_name}'")
         self.log.debug(f"EXIT: _get_fabric_switches() -> {switches}")
@@ -1082,29 +1071,11 @@ class NDPolicyModule:
         self.log.debug(f"Converted policy {policy_id} to config: {config_entry}")
         return config_entry
 
-    # ND system-injected keys present in templateInputs that are
-    # NOT real template parameters.  Stripped from gathered output so
-    # the result can be fed directly into state=merged.
-    _SYSTEM_INJECTED_KEYS: ClassVar[frozenset] = frozenset(
-        {
-            "FABRIC_NAME",
-            "MARK_DELETED",
-            "POLICY_DESC",
-            "POLICY_GROUP_ID",
-            "POLICY_ID",
-            "PRIORITY",
-            "SECENTITY",
-            "SECENTTYPE",
-            "SERIAL_NUMBER",
-            "SOURCE",
-            "SWITCH_DB_ID",
-        }
-    )
-
     def _clean_template_inputs(self, template_name: str, raw_inputs: dict[str, Any]) -> dict[str, Any]:
         """Remove system-injected keys from template inputs.
 
-        Strips keys listed in ``_SYSTEM_INJECTED_KEYS`` and keeps
+        Strips keys listed in ``SYSTEM_INJECTED_TEMPLATE_KEYS`` (defined in
+        ``constants.py`` and shared with policy-group resources) and keeps
         everything else as a real template variable.
 
         Args:
@@ -1119,7 +1090,7 @@ class NDPolicyModule:
         cleaned = {}
         stripped_keys = []
         for k, v in raw_inputs.items():
-            if k in self._SYSTEM_INJECTED_KEYS:
+            if k in SYSTEM_INJECTED_TEMPLATE_KEYS:
                 stripped_keys.append(k)
             else:
                 cleaned[k] = v
