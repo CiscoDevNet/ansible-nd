@@ -78,68 +78,21 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 
 
-class NDLog:
+def log_message(severity: str, msg: str) -> None:
     """
     # Summary
 
-    Log a message via the standard Python `logging` module under the `nd` parent logger.
+    Emit `msg` at `severity` on the `nd.nd_log` logger.
 
-    The severity selects which `logging.Logger` method is called (`debug`, `info`, `warning`, `error`, or `critical`).
+    `severity` selects which `logging.Logger` method is called (`debug`, `info`, `warning`, `error`, or `critical`). The module's
+    argument spec `choices` constraint guarantees `severity` is one of `CRITICAL`, `DEBUG`, `ERROR`, `INFO`, or `WARNING`, so
+    `severity.lower()` always names a valid `logging.Logger` method.
 
     ## Raises
 
-    ### ValueError
-
-    - If `msg` is not provided in `params`.
+    None
     """
-
-    def __init__(self, params: dict) -> None:
-        """
-        # Summary
-
-        Initialize the `NDLog` instance from an Ansible module's `params` dict.
-
-        ## Raises
-
-        ### ValueError
-
-        - If `params["msg"]` is `None`.
-        """
-        self.class_name = self.__class__.__name__
-        self.log = logging.getLogger(f"nd.{self.class_name}")
-
-        self.params = params
-        self.message = self.params.get("msg")
-        self.severity = self.params.get("severity")
-
-        if self.message is None:
-            raise ValueError("Exiting. Missing mandatory parameter: msg")
-
-        if self.severity is None:
-            self.severity = "DEBUG"
-
-        self.result: dict = {"changed": False, "failed": False}
-
-    def msg(self) -> None:
-        """
-        # Summary
-
-        Emit `self.message` at severity `self.severity` on the `nd.NDLog` logger.
-
-        ## Raises
-
-        None
-        """
-        if self.severity == "CRITICAL":
-            self.log.critical(self.message)
-        elif self.severity == "DEBUG":
-            self.log.debug(self.message)
-        elif self.severity == "ERROR":
-            self.log.error(self.message)
-        elif self.severity == "INFO":
-            self.log.info(self.message)
-        elif self.severity == "WARNING":
-            self.log.warning(self.message)
+    getattr(logging.getLogger("nd.nd_log"), severity.lower())(msg)
 
 
 def main() -> None:
@@ -166,13 +119,9 @@ def main() -> None:
 
     setup_logging(module)
 
-    try:
-        nd_log = NDLog(module.params)
-        nd_log.msg()
-    except ValueError as error:
-        module.fail_json(msg=str(error))
+    log_message(module.params["severity"], module.params["msg"])
 
-    module.exit_json(**nd_log.result)
+    module.exit_json(changed=False, failed=False)
 
 
 if __name__ == "__main__":
