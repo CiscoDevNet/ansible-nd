@@ -169,6 +169,23 @@ class InterfaceCapabilityPreflight:
             raise RuntimeError(f"GET {path} failed {self._rest_send.error_summary}")
         return self._rest_send.response_current.get("DATA", {})
 
+    def _build_endpoint(self, interface_type: str, mode: str) -> EpManageFabricsCapableSwitchesGet:
+        """
+        # Summary
+
+        Build a populated `EpManageFabricsCapableSwitchesGet` for `(interface_type, mode)` in this fabric. Single source of
+        truth for the `capableSwitches` URL — used both for the live request and for the verification hint in error messages.
+
+        ## Raises
+
+        None
+        """
+        ep = EpManageFabricsCapableSwitchesGet()
+        ep.fabric_name = self._fabric_name
+        ep.endpoint_params.interface_type = interface_type
+        ep.endpoint_params.mode = mode
+        return ep
+
     def get_capable_switches(self, interface_type: str, mode: str) -> list[dict]:
         """
         # Summary
@@ -190,11 +207,7 @@ class InterfaceCapabilityPreflight:
         key = (interface_type, mode)
         if key in self._cache:
             return self._cache[key]
-        ep = EpManageFabricsCapableSwitchesGet()
-        ep.fabric_name = self._fabric_name
-        ep.endpoint_params.interface_type = interface_type
-        ep.endpoint_params.mode = mode
-        result = self._query_get(ep.path)
+        result = self._query_get(self._build_endpoint(interface_type, mode).path)
         switches = (result.get("switches") or []) if result else []
         self._cache[key] = switches
         return switches
@@ -258,7 +271,7 @@ class InterfaceCapabilityPreflight:
                     parts.append(f"switch_ip={switch_ip}")
             offender_descriptions.append("(" + ", ".join(parts) + ")")
 
-        endpoint_path = f"/api/v1/manage/fabrics/{self._fabric_name}/capableSwitches?interfaceType={interface_type}&mode={mode}"
+        endpoint_path = self._build_endpoint(interface_type, mode).path
         raise RuntimeError(
             f"The following switches are not capable of hosting interface_type='{interface_type}' "
             f"mode='{mode}' in fabric '{self._fabric_name}': {', '.join(offender_descriptions)}. "
