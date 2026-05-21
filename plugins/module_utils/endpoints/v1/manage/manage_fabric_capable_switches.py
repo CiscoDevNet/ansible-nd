@@ -24,12 +24,9 @@ from __future__ import annotations
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import _EpManageFabricsBase
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
 
 
 class CapableSwitchesEndpointParams(EndpointQueryParams):
@@ -72,7 +69,7 @@ class CapableSwitchesEndpointParams(EndpointQueryParams):
     )
 
 
-class EpManageFabricsCapableSwitchesGet(FabricNameMixin, NDEndpointBaseModel):
+class EpManageFabricsCapableSwitchesGet(_EpManageFabricsBase):
     """
     # Summary
 
@@ -115,41 +112,34 @@ class EpManageFabricsCapableSwitchesGet(FabricNameMixin, NDEndpointBaseModel):
         description="Class name for backward compatibility",
     )
 
-    _require_fabric_name: ClassVar[bool] = True
-    _path_suffix: ClassVar[str] = "capableSwitches"
+    _path_suffix: ClassVar[str | None] = "capableSwitches"
 
     endpoint_params: CapableSwitchesEndpointParams = Field(
         default_factory=CapableSwitchesEndpointParams,
         description="Endpoint-specific query parameters (interface_type, mode).",
     )
 
-    def set_identifiers(self, identifier: IdentifierKey = None):
-        """Set the fabric_name from the identifier value."""
-        self.fabric_name = identifier
-
     @property
     def path(self) -> str:
         """
         # Summary
 
-        Build the endpoint path with fabric name, capableSwitches suffix, and required query string.
+        Validate the required query parameters, then delegate to `_EpManageFabricsBase.path` to build the path with the
+        fabric name, `capableSwitches` suffix, and query string.
 
         ## Raises
 
         ### ValueError
 
-        - If `fabric_name` is not set
         - If `interface_type` is not set
         - If `mode` is not set
+        - If `fabric_name` is not set
         """
-        if self.fabric_name is None:
-            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         if self.endpoint_params.interface_type is None:
             raise ValueError(f"{type(self).__name__}.path: endpoint_params.interface_type must be set before accessing path.")
         if self.endpoint_params.mode is None:
             raise ValueError(f"{type(self).__name__}.path: endpoint_params.mode must be set before accessing path.")
-        base_path = BasePath.path("fabrics", self.fabric_name, self._path_suffix)
-        return f"{base_path}?{self.endpoint_params.to_query_string()}"
+        return super().path
 
     @property
     def verb(self) -> HttpVerbEnum:
