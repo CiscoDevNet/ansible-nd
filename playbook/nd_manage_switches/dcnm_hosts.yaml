@@ -1,0 +1,16 @@
+all:
+  vars:
+    ansible_user: "admin"
+    ansible_password: "idgeR09!"
+    switch_password: "idgeR09!"
+    ansible_python_interpreter: python
+    ansible_httpapi_validate_certs: false
+    ansible_httpapi_use_ssl: true
+    ansible_httpapi_login_domain: "mcfg"
+  children:
+    ndfc:
+      vars:
+        ansible_connection: ansible.netcommon.httpapi
+        ansible_network_os: cisco.nd.nd
+      hosts:
+        10.122.84.115

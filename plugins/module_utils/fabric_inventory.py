@@ -111,8 +111,11 @@ class FabricSwitchInventory:
             nd.module.fail_json(msg=msg)
             return []
 
+        # Check the full response (not just DATA) for error objects
+        # The request() method only returns DATA, but error details are
+        # in the full response_current structure
         ApiDataChecker.check(
-            response,
+            nd.rest_send.response_current,
             f"Switch inventory query for fabric '{fabric}'",
             log,
             nd.module.fail_json,

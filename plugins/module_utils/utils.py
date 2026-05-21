@@ -143,14 +143,40 @@ class ApiDataChecker:
                            it is called on error instead of raising
                            ``SwitchOperationError``.
         """
+        log.debug(f"ApiDataChecker.check: Checking response for context: {context}")
+        log.debug(f"ApiDataChecker.check: data type={type(data)}, has 'error'={'error' in data if isinstance(data, dict) else 'N/A'}")
+        
+        # Check for error object in response (some APIs return this structure)
+        if isinstance(data, dict) and "error" in data:
+            error_obj = data.get("error", {})
+            log.debug(f"ApiDataChecker.check: Found error object: {error_obj}")
+            if isinstance(error_obj, dict) and "code" in error_obj:
+                # Extract message from nested structure
+                error_msg = error_obj.get("message", "Unknown error")
+                if isinstance(error_msg, dict):
+                    error_msg = error_msg.get("message") or error_msg.get("status") or str(error_msg)
+                msg = f"{context} failed — controller returned error: " f"{error_msg} (code={error_obj['code']})"
+                log.error(msg)
+                if fail_callback is not None:
+                    log.debug(f"ApiDataChecker.check: Calling fail_callback with msg: {msg}")
+                    fail_callback(msg=msg)
+                    return  # Should not reach here
+                else:
+                    raise SwitchOperationError(msg)
+        
+        # Check for code in data payload (embedded error pattern)
         if isinstance(data, dict) and "code" in data:
             error_msg = data.get("message", "Unknown error")
             msg = f"{context} failed — controller returned error: " f"{error_msg} (code={data['code']})"
             log.error(msg)
             if fail_callback is not None:
+                log.debug(f"ApiDataChecker.check: Calling fail_callback with msg: {msg}")
                 fail_callback(msg=msg)
+                return  # Should not reach here
             else:
                 raise SwitchOperationError(msg)
+        
+        log.debug("ApiDataChecker.check: No errors detected in response")
 
 
 # =========================================================================
