@@ -27,6 +27,10 @@ options:
   severity:
     description:
     - Case-sensitive logging severity (must be UPPERCASE) at which to log C(msg).
+    - The record is only written if O(severity) is greater than or equal to both the level of the C(nd) logger and the level of every
+      handler attached to it, as configured in the JSON file referenced by C(ND_LOGGING_CONFIG). If either level is more restrictive,
+      the call is silently discarded and the module still reports C(changed=false, failed=false).
+    - For example, setting O(severity=INFO) while the JSON config has C(loggers.nd.level) set to C(WARNING) will not write anything.
     required: false
     default: DEBUG
     choices: ['CRITICAL', 'DEBUG', 'ERROR', 'INFO', 'WARNING']
