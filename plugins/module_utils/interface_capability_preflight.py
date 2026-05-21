@@ -95,6 +95,7 @@ class InterfaceCapabilityPreflight:
         self._fabric_name = fabric_name
         self._fabric_context = fabric_context
         self._cache: dict[tuple[str, str], list[dict]] = {}
+        self._id_cache: dict[tuple[str, str], set[str]] = {}
 
     @classmethod
     def supported_modes(cls, interface_type: str) -> frozenset[str]:
@@ -214,7 +215,12 @@ class InterfaceCapabilityPreflight:
 
         - If the underlying GET request fails (other than 404).
         """
-        return {sw["switchId"] for sw in self.get_capable_switches(interface_type, mode) if sw.get("switchId")}
+        key = (interface_type, mode)
+        if key in self._id_cache:
+            return self._id_cache[key]
+        switch_ids = {sw["switchId"] for sw in self.get_capable_switches(interface_type, mode) if sw.get("switchId")}
+        self._id_cache[key] = switch_ids
+        return switch_ids
 
     def validate(self, interface_type: str, mode: str, switch_ids: set[str]) -> None:
         """
@@ -270,3 +276,4 @@ class InterfaceCapabilityPreflight:
         None
         """
         self._cache.clear()
+        self._id_cache.clear()
