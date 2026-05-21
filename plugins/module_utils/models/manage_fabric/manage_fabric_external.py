@@ -4,11 +4,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
-
-from typing import List, Optional, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -84,7 +82,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
 
     # Name under management section is optional for backward compatibility
-    name: Optional[str] = Field(description="Fabric name", min_length=1, max_length=64, default="")
+    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default="")
 
     # AAA
     aaa: bool = Field(
@@ -114,7 +112,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
 
     # Bootstrap Subnet Collection
-    bootstrap_subnet_collection: List[BootstrapSubnetModel] = Field(
+    bootstrap_subnet_collection: list[BootstrapSubnetModel] = Field(
         alias="bootstrapSubnetCollection",
         description="List of IPv4 or IPv6 subnets to be used for bootstrap",
         default_factory=list,
@@ -167,12 +165,12 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
 
     # DNS
-    dns_collection: List[str] = Field(
+    dns_collection: list[str] = Field(
         alias="dnsCollection",
         description="List of IPv4 and IPv6 DNS addresses",
         default_factory=list,
     )
-    dns_vrf_collection: List[str] = Field(
+    dns_vrf_collection: list[str] = Field(
         alias="dnsVrfCollection",
         description=("DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server"),
         default_factory=list,
@@ -270,7 +268,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
         description="Enable MPLS Handoff",
         default=False,
     )
-    mpls_loopback_identifier: Optional[int] = Field(
+    mpls_loopback_identifier: int | None = Field(
         alias="mplsLoopbackIdentifier",
         description="Underlay MPLS Loopback Identifier",
         default=None,
@@ -322,7 +320,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
 
     # Backup / Restore
-    real_time_backup: Optional[bool] = Field(
+    real_time_backup: bool | None = Field(
         alias="realTimeBackup",
         description=("Hourly Fabric Backup only if there is any config deployment since last backup"),
         default=None,
@@ -336,7 +334,7 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
 
     # Scheduled Backup
-    scheduled_backup: Optional[bool] = Field(
+    scheduled_backup: bool | None = Field(
         alias="scheduledBackup",
         description="Enable backup at the specified time daily",
         default=None,
@@ -362,16 +360,16 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     )
 
     # Hypershield / Connectivity
-    connectivity_domain_name: Optional[str] = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
-    hypershield_connectivity_proxy_server: Optional[str] = Field(
+    connectivity_domain_name: str | None = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
+    hypershield_connectivity_proxy_server: str | None = Field(
         alias="hypershieldConnectivityProxyServer",
         description="IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication",
         default=None,
     )
-    hypershield_connectivity_proxy_server_port: Optional[int] = Field(
+    hypershield_connectivity_proxy_server_port: int | None = Field(
         alias="hypershieldConnectivityProxyServerPort", description="Proxy port number for communication with Hypershield", default=None
     )
-    hypershield_connectivity_source_intf: Optional[str] = Field(
+    hypershield_connectivity_source_intf: str | None = Field(
         alias="hypershieldConnectivitySourceIntf", description="Loopback interface on smart switch for communication with Hypershield", default=None
     )
 
@@ -416,11 +414,5 @@ class FabricExternalConnectivityModel(FabricBaseModel):
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.EXTERNAL_CONNECTIVITY
 
     # Core Management Configuration
-    management: Optional[ExternalConnectivityManagementModel] = Field(description="External Connectivity management configuration", default=None)
+    management: ExternalConnectivityManagementModel | None = Field(description="External Connectivity management configuration", default=None)
 
-
-# Export all models for external use
-__all__ = [
-    "ExternalConnectivityManagementModel",
-    "FabricExternalConnectivityModel",
-]

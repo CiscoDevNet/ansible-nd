@@ -4,14 +4,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import re
 
-# from datetime import datetime
-from typing import List, Optional, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -103,19 +100,19 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # Core iBGP Configuration
     bgp_asn: str = Field(alias="bgpAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]")
-    site_id: Optional[str] = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN", default="")
+    site_id: str | None = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN", default="")
 
     # Name under management section is optional for backward compatibility, but if provided must be non-empty string
-    name: Optional[str] = Field(description="Fabric name", min_length=1, max_length=64, default="")
+    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default="")
 
     # Fabric Designer Settings - unsupported at this time
-    # border_count: Optional[int] = Field(alias="borderCount", description="Number of border switches", ge=0, le=32, default=0)
-    # breakout_spine_interfaces: Optional[bool] = Field(alias="breakoutSpineInterfaces", description="Enable breakout spine interfaces", default=False)
-    # designer_use_robot_password: Optional[bool] = Field(alias="designerUseRobotPassword", description="Use robot password for designer", default=False)
-    # leaf_count: Optional[int] = Field(alias="leafCount", description="Number of leaf switches", ge=1, le=128, default=1)
-    # spine_count: Optional[int] = Field(alias="spineCount", description="Number of spine switches", ge=1, le=32, default=1)
-    # vrf_lite_ipv6_subnet_range: Optional[str] = Field(alias="vrfLiteIpv6SubnetRange", description="VRF Lite IPv6 subnet range", default="fd00::a33:0/112")
-    # vrf_lite_ipv6_subnet_target_mask: Optional[int] = Field(
+    # border_count: int | None = Field(alias="borderCount", description="Number of border switches", ge=0, le=32, default=0)
+    # breakout_spine_interfaces: bool | None = Field(alias="breakoutSpineInterfaces", description="Enable breakout spine interfaces", default=False)
+    # designer_use_robot_password: bool | None = Field(alias="designerUseRobotPassword", description="Use robot password for designer", default=False)
+    # leaf_count: int | None = Field(alias="leafCount", description="Number of leaf switches", ge=1, le=128, default=1)
+    # spine_count: int | None = Field(alias="spineCount", description="Number of spine switches", ge=1, le=32, default=1)
+    # vrf_lite_ipv6_subnet_range: str | None = Field(alias="vrfLiteIpv6SubnetRange", description="VRF Lite IPv6 subnet range", default="fd00::a33:0/112")
+    # vrf_lite_ipv6_subnet_target_mask: int | None = Field(
     #     alias="vrfLiteIpv6SubnetTargetMask",
     #     description="VRF Lite IPv6 subnet target mask", ge=112, le=128, default=126)
 
@@ -247,7 +244,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
 
     # Bootstrap Settings
     day0_bootstrap: bool = Field(alias="day0Bootstrap", description="Automatic IP Assignment For POAP", default=False)
-    bootstrap_subnet_collection: List[BootstrapSubnetModel] = Field(
+    bootstrap_subnet_collection: list[BootstrapSubnetModel] = Field(
         alias="bootstrapSubnetCollection", description="List of IPv4 or IPv6 subnets to be used for bootstrap", default_factory=list
     )
 
@@ -316,11 +313,11 @@ class VxlanIbgpManagementModel(NDNestedModel):
         alias="unNumberedDhcpEndAddress", description="Switch Loopback DHCP Scope End Address. Must be a subset of IGP/BGP Loopback Prefix Pool", default=""
     )
     inband_management: bool = Field(alias="inbandManagement", description="Manage switches with only Inband connectivity", default=False)
-    inband_dhcp_servers: List[str] = Field(alias="inbandDhcpServers", description="List of external DHCP server IP addresses (Max 3)", default_factory=list)
-    seed_switch_core_interfaces: List[str] = Field(
+    inband_dhcp_servers: list[str] = Field(alias="inbandDhcpServers", description="List of external DHCP server IP addresses (Max 3)", default_factory=list)
+    seed_switch_core_interfaces: list[str] = Field(
         alias="seedSwitchCoreInterfaces", description="Seed switch fabric interfaces. Core-facing interface list on seed switch", default_factory=list
     )
-    spine_switch_core_interfaces: List[str] = Field(
+    spine_switch_core_interfaces: list[str] = Field(
         alias="spineSwitchCoreInterfaces", description="Spine switch fabric interfaces. Core-facing interface list on all spines", default_factory=list
     )
 
@@ -823,13 +820,13 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
 
     # DNS / NTP / Syslog Collections
-    ntp_server_collection: List[str] = Field(default_factory=lambda: ["string"], alias="ntpServerCollection")
-    ntp_server_vrf_collection: List[str] = Field(default_factory=lambda: ["string"], alias="ntpServerVrfCollection")
-    dns_collection: List[str] = Field(default_factory=lambda: ["5.192.28.174"], alias="dnsCollection")
-    dns_vrf_collection: List[str] = Field(default_factory=lambda: ["string"], alias="dnsVrfCollection")
-    syslog_server_collection: List[str] = Field(default_factory=lambda: ["string"], alias="syslogServerCollection")
-    syslog_server_vrf_collection: List[str] = Field(default_factory=lambda: ["string"], alias="syslogServerVrfCollection")
-    syslog_severity_collection: List[int] = Field(
+    ntp_server_collection: list[str] = Field(default_factory=lambda: ["string"], alias="ntpServerCollection")
+    ntp_server_vrf_collection: list[str] = Field(default_factory=lambda: ["string"], alias="ntpServerVrfCollection")
+    dns_collection: list[str] = Field(default_factory=lambda: ["5.192.28.174"], alias="dnsCollection")
+    dns_vrf_collection: list[str] = Field(default_factory=lambda: ["string"], alias="dnsVrfCollection")
+    syslog_server_collection: list[str] = Field(default_factory=lambda: ["string"], alias="syslogServerCollection")
+    syslog_server_vrf_collection: list[str] = Field(default_factory=lambda: ["string"], alias="syslogServerVrfCollection")
+    syslog_severity_collection: list[int] = Field(
         default_factory=lambda: [7], alias="syslogSeverityCollection", description="List of Syslog severity values, one per Syslog server"
     )
 
@@ -953,16 +950,16 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
 
     # Hypershield / Connectivity
-    connectivity_domain_name: Optional[str] = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
-    hypershield_connectivity_proxy_server: Optional[str] = Field(
+    connectivity_domain_name: str | None = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
+    hypershield_connectivity_proxy_server: str | None = Field(
         alias="hypershieldConnectivityProxyServer",
         description="IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication",
         default=None,
     )
-    hypershield_connectivity_proxy_server_port: Optional[int] = Field(
+    hypershield_connectivity_proxy_server_port: int | None = Field(
         alias="hypershieldConnectivityProxyServerPort", description="Proxy port number for communication with Hypershield", default=None
     )
-    hypershield_connectivity_source_intf: Optional[str] = Field(
+    hypershield_connectivity_source_intf: str | None = Field(
         alias="hypershieldConnectivitySourceIntf", description="Loopback interface on smart switch for communication with Hypershield", default=None
     )
 
@@ -1051,7 +1048,7 @@ class FabricIbgpModel(FabricBaseModel):
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.VXLAN_IBGP
 
     # Core Management Configuration
-    management: Optional[VxlanIbgpManagementModel] = Field(description="iBGP VXLAN management configuration", default=None)
+    management: VxlanIbgpManagementModel | None = Field(description="iBGP VXLAN management configuration", default=None)
 
     def _post_validate_consistency(self) -> None:
         """Propagate BGP ASN to site_id if site_id is empty."""
@@ -1064,10 +1061,3 @@ class FabricIbgpModel(FabricBaseModel):
             else:
                 # Already plain decimal
                 self.management.site_id = bgp_asn
-
-
-# Export all models for external use
-__all__ = [
-    "FabricIbgpModel",
-    "VxlanIbgpManagementModel",
-]

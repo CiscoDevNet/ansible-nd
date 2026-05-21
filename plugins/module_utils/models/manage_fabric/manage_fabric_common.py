@@ -27,12 +27,10 @@ Common Pydantic models shared across fabric types (iBGP, eBGP, External Connecti
 - `TelemetrySettingsModel` - Complete telemetry configuration
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import re
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -84,12 +82,12 @@ class ExternalStreamingSettingsModel(NDNestedModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
-    email: List[Dict[str, Any]] = Field(description="Email streaming configuration", default_factory=list)
-    message_bus: List[Dict[str, Any]] = Field(alias="messageBus", description="Message bus configuration", default_factory=list)
-    syslog: Dict[str, Any] = Field(
+    email: list[dict[str, Any]] = Field(description="Email streaming configuration", default_factory=list)
+    message_bus: list[dict[str, Any]] = Field(alias="messageBus", description="Message bus configuration", default_factory=list)
+    syslog: dict[str, Any] = Field(
         description="Syslog streaming configuration", default_factory=lambda: {"collectionSettings": {"anomalies": []}, "facility": "", "servers": []}
     )
-    webhooks: List[Dict[str, Any]] = Field(description="Webhook configuration", default_factory=list)
+    webhooks: list[dict[str, Any]] = Field(description="Webhook configuration", default_factory=list)
 
 
 class LocationModel(NDNestedModel):
@@ -126,7 +124,7 @@ class NetflowExporterModel(NDNestedModel):
     exporter_ip: str = Field(alias="exporterIp", description="IP address of the netflow collector")
     vrf: str = Field(description="VRF name for the exporter", default="management")
     source_interface_name: str = Field(alias="sourceInterfaceName", description="Source interface name")
-    udp_port: Optional[int] = Field(alias="udpPort", description="UDP port for netflow export", ge=1, le=65535, default=None)
+    udp_port: int | None = Field(alias="udpPort", description="UDP port for netflow export", ge=1, le=65535, default=None)
 
 
 class NetflowMonitorModel(NDNestedModel):
@@ -180,11 +178,11 @@ class NetflowSettingsModel(NDNestedModel):
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     netflow: bool = Field(description="Enable netflow collection", default=False)
-    netflow_exporter_collection: List[NetflowExporterModel] = Field(
+    netflow_exporter_collection: list[NetflowExporterModel] = Field(
         alias="netflowExporterCollection", description="List of netflow exporters", default_factory=list
     )
-    netflow_record_collection: List[NetflowRecordModel] = Field(alias="netflowRecordCollection", description="List of netflow records", default_factory=list)
-    netflow_monitor_collection: List[NetflowMonitorModel] = Field(
+    netflow_record_collection: list[NetflowRecordModel] = Field(alias="netflowRecordCollection", description="List of netflow records", default_factory=list)
+    netflow_monitor_collection: list[NetflowMonitorModel] = Field(
         alias="netflowMonitorCollection", description="List of netflow monitors", default_factory=list
     )
 
@@ -317,23 +315,3 @@ class TelemetrySettingsModel(NDNestedModel):
     energy_management: TelemetryEnergyManagementModel = Field(
         alias="energyManagement", description="Energy management settings", default_factory=TelemetryEnergyManagementModel
     )
-
-
-# Export all models for external use
-__all__ = [
-    "BGP_ASN_RE",
-    "BootstrapSubnetModel",
-    "ExternalStreamingSettingsModel",
-    "LocationModel",
-    "NetflowExporterModel",
-    "NetflowMonitorModel",
-    "NetflowRecordModel",
-    "NetflowSettingsModel",
-    "TelemetryAnalysisSettingsModel",
-    "TelemetryEnergyManagementModel",
-    "TelemetryFlowCollectionModel",
-    "TelemetryMicroburstModel",
-    "TelemetryNasExportSettingsModel",
-    "TelemetryNasModel",
-    "TelemetrySettingsModel",
-]

@@ -768,7 +768,8 @@ def main():
         # Manage state
         nd_state_machine.manage_state()
 
-        module.exit_json(**nd_state_machine.output.format())
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except NDStateMachineError as e:
         module.fail_json(msg=str(e))

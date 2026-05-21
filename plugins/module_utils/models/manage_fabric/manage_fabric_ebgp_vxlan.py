@@ -4,12 +4,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import re
-from typing import List, Optional, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -98,8 +96,8 @@ class VxlanEbgpManagementModel(NDNestedModel):
     type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
 
     # Core eBGP Configuration
-    bgp_asn: Optional[str] = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].", default=None)
-    site_id: Optional[str] = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN for Spines", default="")
+    bgp_asn: str | None = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].", default=None)
+    site_id: str | None = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN for Spines", default="")
     bgp_as_mode: BgpAsModeEnum = Field(
         alias="bgpAsMode",
         description=(
@@ -113,7 +111,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         description=("Automatically allocate and track BGP ASN for leafs, borders and border gateways in Multi-AS mode"),
         default=True,
     )
-    bgp_asn_range: Optional[str] = Field(
+    bgp_asn_range: str | None = Field(
         alias="bgpAsnRange", description=("BGP ASN range for auto-allocation (minimum: 1 or 1.0, maximum: 4294967295 or 65535.65535)"), default=None
     )
     bgp_allow_as_in_num: int = Field(alias="bgpAllowAsInNum", description="Number of occurrences of ASN allowed in the BGP AS-path", default=1)
@@ -133,16 +131,16 @@ class VxlanEbgpManagementModel(NDNestedModel):
     evpn: bool = Field(description=("Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric"), default=True)
     route_map_tag: int = Field(alias="routeMapTag", description="Tag for Route Map FABRIC-RMAP-REDIST-SUBNET. (Min:0, Max:4294967295)", default=12345)
     disable_route_map_tag: bool = Field(alias="disableRouteMapTag", description="No match tag for Route Map FABRIC-RMAP-REDIST-SUBNET", default=False)
-    leaf_bgp_as: Optional[str] = Field(alias="leafBgpAs", description="BGP Autonomous System Number for Leafs 1-4294967295 | 1-65535[.0-65535]", default=None)
-    border_bgp_as: Optional[str] = Field(
+    leaf_bgp_as: str | None = Field(alias="leafBgpAs", description="BGP Autonomous System Number for Leafs 1-4294967295 | 1-65535[.0-65535]", default=None)
+    border_bgp_as: str | None = Field(
         alias="borderBgpAs", description="BGP Autonomous System Number for Borders 1-4294967295 | 1-65535[.0-65535]", default=None
     )
-    super_spine_bgp_as: Optional[str] = Field(
+    super_spine_bgp_as: str | None = Field(
         alias="superSpineBgpAs", description="BGP Autonomous System Number for Super Spines 1-4294967295 | 1-65535[.0-65535]", default=None
     )
 
     # Propagated from FabricEbgpModel
-    name: Optional[str] = Field(description="Fabric name", min_length=1, max_length=64, default="")
+    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default="")
 
     # Network Addressing
     bgp_loopback_id: int = Field(alias="bgpLoopbackId", description="Underlay Routing Loopback Id", ge=0, le=1023, default=0)
@@ -244,7 +242,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     mvpn_vrf_route_import_id: bool = Field(
         alias="mvpnVrfRouteImportId", description="Enable MVPN VRI ID Generation For Tenant Routed Multicast With IPv4 Underlay", default=True
     )
-    mvpn_vrf_route_import_id_range: Optional[str] = Field(
+    mvpn_vrf_route_import_id_range: str | None = Field(
         alias="mvpnVrfRouteImportIdRange",
         description=(
             "MVPN VRI ID (minimum: 1, maximum: 65535) for vPC, applicable when TRM enabled "
@@ -385,7 +383,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     # Bootstrap / Day-0 / DHCP
     day0_bootstrap: bool = Field(alias="day0Bootstrap", description="Automatic IP Assignment For POAP", default=False)
-    bootstrap_subnet_collection: List[BootstrapSubnetModel] = Field(
+    bootstrap_subnet_collection: list[BootstrapSubnetModel] = Field(
         alias="bootstrapSubnetCollection", description="List of IPv4 or IPv6 subnets to be used for bootstrap", default_factory=list
     )
     local_dhcp_server: bool = Field(alias="localDhcpServer", description="Automatic IP Assignment For POAP From Local DHCP Server", default=False)
@@ -402,10 +400,10 @@ class VxlanEbgpManagementModel(NDNestedModel):
     netflow_settings: NetflowSettingsModel = Field(alias="netflowSettings", description="Netflow configuration", default_factory=NetflowSettingsModel)
 
     # Backup / Restore
-    real_time_backup: Optional[bool] = Field(
+    real_time_backup: bool | None = Field(
         alias="realTimeBackup", description=("Backup hourly only if there is any config deployment since last backup"), default=None
     )
-    scheduled_backup: Optional[bool] = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=None)
+    scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=None)
     scheduled_backup_time: str = Field(
         alias="scheduledBackupTime", description=("Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)"), default=""
     )
@@ -453,29 +451,29 @@ class VxlanEbgpManagementModel(NDNestedModel):
     )
 
     # DNS / NTP / Syslog Collections
-    ntp_server_collection: List[str] = Field(
+    ntp_server_collection: list[str] = Field(
         default_factory=lambda: ["string"], alias="ntpServerCollection", description="List of NTP server IPv4/IPv6 addresses and/or hostnames"
     )
-    ntp_server_vrf_collection: List[str] = Field(
+    ntp_server_vrf_collection: list[str] = Field(
         default_factory=lambda: ["string"],
         alias="ntpServerVrfCollection",
         description=("NTP Server VRFs. One VRF for all NTP servers or a list of VRFs, one per NTP server"),
     )
-    dns_collection: List[str] = Field(default_factory=lambda: ["5.192.28.174"], alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses")
-    dns_vrf_collection: List[str] = Field(
+    dns_collection: list[str] = Field(default_factory=lambda: ["5.192.28.174"], alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses")
+    dns_vrf_collection: list[str] = Field(
         default_factory=lambda: ["string"],
         alias="dnsVrfCollection",
         description=("DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server"),
     )
-    syslog_server_collection: List[str] = Field(
+    syslog_server_collection: list[str] = Field(
         default_factory=lambda: ["string"], alias="syslogServerCollection", description="List of Syslog server IPv4/IPv6 addresses and/or hostnames"
     )
-    syslog_server_vrf_collection: List[str] = Field(
+    syslog_server_vrf_collection: list[str] = Field(
         default_factory=lambda: ["string"],
         alias="syslogServerVrfCollection",
         description=("Syslog Server VRFs. One VRF for all Syslog servers or a list of VRFs, one per Syslog server"),
     )
-    syslog_severity_collection: List[int] = Field(
+    syslog_severity_collection: list[int] = Field(
         default_factory=lambda: [7], alias="syslogSeverityCollection", description="List of Syslog severity values, one per Syslog server"
     )
 
@@ -650,7 +648,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     dlb_mixed_mode_default: DlbMixedModeDefaultEnum = Field(
         alias="dlbMixedModeDefault", description="Default load balancing mode for policy driven mixed mode DLB", default=DlbMixedModeDefaultEnum.ECMP
     )
-    flowlet_aging: Optional[int] = Field(
+    flowlet_aging: int | None = Field(
         alias="flowletAging",
         description=(
             "Flowlet aging timer in microseconds. Valid range depends on platform: "
@@ -679,7 +677,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     ai_load_sharing: bool = Field(
         alias="aiLoadSharing", description=("Enable IP load sharing using source and destination address for AI workloads"), default=False
     )
-    priority_flow_control_watch_interval: Optional[int] = Field(
+    priority_flow_control_watch_interval: int | None = Field(
         alias="priorityFlowControlWatchInterval",
         description=("Acceptable values from 101 to 1000 (milliseconds). Leave blank for system default (100ms)."),
         default=None,
@@ -724,22 +722,22 @@ class VxlanEbgpManagementModel(NDNestedModel):
     enable_dpu_pinning: bool = Field(
         alias="enableDpuPinning", description="Enable pinning of VRFs and networks to specific DPUs on smart switches", default=False
     )
-    connectivity_domain_name: Optional[str] = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
-    hypershield_connectivity_proxy_server: Optional[str] = Field(
+    connectivity_domain_name: str | None = Field(alias="connectivityDomainName", description="Domain name to connect to Hypershield", default=None)
+    hypershield_connectivity_proxy_server: str | None = Field(
         alias="hypershieldConnectivityProxyServer",
         description="IPv4 address, IPv6 address, or DNS name of the proxy server for Hypershield communication",
         default=None,
     )
-    hypershield_connectivity_proxy_server_port: Optional[int] = Field(
+    hypershield_connectivity_proxy_server_port: int | None = Field(
         alias="hypershieldConnectivityProxyServerPort", description="Proxy port number for communication with Hypershield", default=None
     )
-    hypershield_connectivity_source_intf: Optional[str] = Field(
+    hypershield_connectivity_source_intf: str | None = Field(
         alias="hypershieldConnectivitySourceIntf", description="Loopback interface on smart switch for communication with Hypershield", default=None
     )
 
     @field_validator("bgp_asn")
     @classmethod
-    def validate_bgp_asn(cls, value: Optional[str]) -> Optional[str]:
+    def validate_bgp_asn(cls, value: str | None) -> str | None:
         """
         # Summary
 
@@ -809,7 +807,7 @@ class FabricEbgpModel(FabricBaseModel):
     _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.VXLAN_EBGP
 
     # Core Management Configuration
-    management: Optional[VxlanEbgpManagementModel] = Field(description="eBGP VXLAN management configuration", default=None)
+    management: VxlanEbgpManagementModel | None = Field(description="eBGP VXLAN management configuration", default=None)
 
     def _post_validate_consistency(self) -> None:
         """Propagate BGP ASN to site_id if site_id is empty."""
@@ -820,10 +818,3 @@ class FabricEbgpModel(FabricBaseModel):
                 self.management.site_id = str(int(high) * 65536 + int(low))
             else:
                 self.management.site_id = bgp_asn
-
-
-# Export all models for external use
-__all__ = [
-    "FabricEbgpModel",
-    "VxlanEbgpManagementModel",
-]

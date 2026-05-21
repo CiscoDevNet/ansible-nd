@@ -20,18 +20,15 @@ Optionally override `_post_validate_consistency()` for type-specific logic
 (e.g. site_id propagation from BGP ASN).
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
-__metaclass__ = type
-
-import re
-from typing import Dict, List, Optional, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import NdFabricName
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
     Field,
-    field_validator,
     model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
@@ -71,16 +68,16 @@ class FabricBaseModel(NDBaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     # ── ClassVars (shared across all fabric models) ──
-    identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
+    identifiers: ClassVar[list[str] | None] = ["fabric_name"]
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "single"
 
     # Subclass must set this to the appropriate FabricTypeEnum member
     _fabric_type: ClassVar[FabricTypeEnum]
 
     # ── Basic Fabric Properties ──
     category: Literal["fabric"] = Field(description="Resource category", default="fabric")
-    fabric_name: str = Field(alias="name", description="Fabric name", min_length=1, max_length=64)
-    location: Optional[LocationModel] = Field(description="Geographic location of the fabric", default=None)
+    fabric_name: NdFabricName
+    location: LocationModel | None = Field(description="Geographic location of the fabric", default=None)
 
     # ── License, Telemetry, and Operations ──
     license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License Tier for ffabric.", default=LicenseTierEnum.ESSENTIALS)
@@ -107,28 +104,12 @@ class FabricBaseModel(NDBaseModel):
     # ── Optional Advanced Settings ──
     # NOTE: `management` is intentionally NOT defined here — subclasses define it
     # with their specific management model type.
-    telemetry_settings: Optional[TelemetrySettingsModel] = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
+    telemetry_settings: TelemetrySettingsModel | None = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
     external_streaming_settings: ExternalStreamingSettingsModel = Field(
         alias="externalStreamingSettings", description="External streaming settings", default_factory=ExternalStreamingSettingsModel
     )
 
     # ── Validators ──
-
-    @field_validator("fabric_name")
-    @classmethod
-    def validate_fabric_name(cls, value: str) -> str:
-        """
-        # Summary
-
-        Validate fabric name format and characters.
-
-        ## Raises
-
-        - `ValueError` - If name contains invalid characters or format
-        """
-        if not re.match(r"^[a-zA-Z0-9_-]+$", value):
-            raise ValueError(f"Fabric name can only contain letters, numbers, underscores, and hyphens, got: {value}")
-        return value
 
     @model_validator(mode="after")
     def validate_fabric_consistency(self):
@@ -166,7 +147,7 @@ class FabricBaseModel(NDBaseModel):
         pass
 
     @classmethod
-    def get_argument_spec(cls) -> Dict:
+    def get_argument_spec(cls) -> dict:
         return dict(
             state={
                 "type": "str",
