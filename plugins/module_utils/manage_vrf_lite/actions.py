@@ -7,17 +7,12 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 import ipaddress
-from collections.abc import Callable
 from typing import Any
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     _is_update_needed,
     _raise_vrf_lite_error,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exceptions import (
-    VrfLiteResourceError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
     query_vrf_lite_state,
@@ -30,10 +25,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_p
     build_vrf_lite_extension_values,
     normalize_vrf_lite_list,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.validation import (
-    validate_vrf_lite_write_guardrails,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule as NDModuleV2
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender as NDSender
@@ -479,88 +470,3 @@ class AttachmentReconciler:
         serials_to_detach = _serials_to_detach_for_delete(self.module, self.vrf_name, self.model_instance, self.have_map)
         vlan_for_detach = self.current_vrf.get("vlan_id") if self.current_vrf else None
         return [_build_detach_payload(self.module, self.vrf_name, serial, vlan_for_detach) for serial in serials_to_detach]
-
-
-def _sync_vrf_attachments(module: Any, model_instance: Any, replace_mode: bool) -> dict[str, Any]:
-    fabric_name = module.params.get("fabric_name")
-    vrf_name = model_instance.vrf_name
-
-    _ensure_vrf_exists(module, vrf_name)
-    validate_vrf_lite_write_guardrails(module=module, model_instance=model_instance)
-
-    nd_v2 = NDModuleV2(module)
-    current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
-
-    reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
-    changes = reconciler.sync_payloads(replace_mode=replace_mode)
-
-    if not changes:
-        return current_vrf or {}
-
-    response = _post_attachment_payload(nd_v2, fabric_name, vrf_name, changes)
-    _mark_changed_vrf(module, vrf_name)
-    return response
-
-
-def custom_vrf_lite_create(model_instance: Any, module: Any) -> dict[str, Any]:
-    if module.check_mode:
-        return model_instance.to_config()
-
-    return _sync_vrf_attachments(module=module, model_instance=model_instance, replace_mode=False)
-
-
-def custom_vrf_lite_update(model_instance: Any, module: Any) -> dict[str, Any]:
-    if module.check_mode:
-        return model_instance.to_config()
-
-    state = module.params.get("state")
-    replace_mode = state in ("replaced", "overridden")
-    return _sync_vrf_attachments(module=module, model_instance=model_instance, replace_mode=replace_mode)
-
-
-def custom_vrf_lite_delete(model_instance: Any, module: Any) -> bool:
-    if module.check_mode:
-        return True
-
-    fabric_name = module.params.get("fabric_name")
-    vrf_name = model_instance.vrf_name
-
-    current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
-    if not current_vrf:
-        return False
-
-    nd_v2 = NDModuleV2(module)
-    reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
-    if not reconciler.have_map:
-        return False
-
-    detach_payloads = reconciler.detach_payloads()
-    if not detach_payloads:
-        return False
-
-    _post_attachment_payload(nd_v2, fabric_name, vrf_name, detach_payloads)
-
-    _mark_changed_vrf(module, vrf_name)
-    return True
-
-
-def _wrap_action_errors(func: Callable[..., Any]) -> Callable[..., Any]:
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return func(*args, **kwargs)
-        except NDModuleError as error:
-            error_dict = error.to_dict()
-            if "msg" in error_dict:
-                error_dict["api_error_msg"] = error_dict.pop("msg")
-            _raise_vrf_lite_error(msg=error.msg, **error_dict)
-        except VrfLiteResourceError:
-            raise
-        except Exception as error:
-            _raise_vrf_lite_error(msg=str(error), exception_type=type(error).__name__)
-
-    return wrapper
-
-
-custom_vrf_lite_create = _wrap_action_errors(custom_vrf_lite_create)
-custom_vrf_lite_update = _wrap_action_errors(custom_vrf_lite_update)
-custom_vrf_lite_delete = _wrap_action_errors(custom_vrf_lite_delete)

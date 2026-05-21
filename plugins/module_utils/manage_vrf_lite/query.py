@@ -12,10 +12,6 @@ from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     request_with_verify_settings,
-    _raise_vrf_lite_error,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exceptions import (
-    VrfLiteResourceError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_endpoints import (
     VrfLiteEndpoints,
@@ -25,7 +21,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_p
     parse_vrf_lite_extension_values,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule as NDModuleV2
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 
 
 def _coerce_list(data: Any) -> list[dict[str, Any]]:
@@ -258,49 +253,3 @@ def query_vrf_lite_state(module: Any, fabric_name: str, filter_vrfs: set[str] | 
     module.params["_raw_vrf_attachment_map"] = raw_vrf_attachment_map
 
     return result
-
-
-def custom_vrf_lite_query_all(nrm: Any) -> list[dict[str, Any]]:
-    """Query all normalized VRF Lite state for reconciliation workflows."""
-    module = nrm.module
-    fabric_name = module.params.get("fabric_name")
-    state = module.params.get("state", "merged")
-
-    if not fabric_name:
-        raise ValueError("fabric_name must be set")
-
-    if state == "gathered":
-        if module.params.get("_have_loaded") and isinstance(module.params.get("_have"), list):
-            return module.params["_have"]
-        config = module.params.get("_gather_filter_config") or []
-    else:
-        config = module.params.get("config") or []
-
-    filter_vrfs = _build_filter_set(config)
-    try:
-        have = query_vrf_lite_state(
-            module=module,
-            fabric_name=fabric_name,
-            filter_vrfs=(filter_vrfs if filter_vrfs else None),
-        )
-    except NDModuleError as error:
-        error_dict = error.to_dict()
-        if "msg" in error_dict:
-            error_dict["api_error_msg"] = error_dict.pop("msg")
-        _raise_vrf_lite_error(msg="Failed to query VRF Lite state: {0}".format(error.msg), fabric=fabric_name, **error_dict)
-    except VrfLiteResourceError:
-        raise
-    except Exception as error:
-        _raise_vrf_lite_error(
-            msg="Failed to query VRF Lite state: {0}".format(str(error)),
-            fabric=fabric_name,
-            exception_type=type(error).__name__,
-        )
-
-    module.params["_have"] = have
-    if state in ("deleted", "overridden"):
-        have = [item for item in have if item.get("attach")]
-        module.params["_have"] = have
-
-    module.params["_have_loaded"] = True
-    return have

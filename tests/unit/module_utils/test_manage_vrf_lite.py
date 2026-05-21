@@ -16,7 +16,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions import (
     _build_want_attachment_maps,
     _post_attachment_payload,
-    custom_vrf_lite_delete,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     get_config_actions,
@@ -26,10 +25,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common im
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy import (
     _needs_deployment,
     _target_vrfs_for_deploy,
-    custom_vrf_lite_deploy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
-    custom_vrf_lite_query_all,
     query_vrf_lite_state,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_payloads import (
@@ -51,6 +48,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vr
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite import (
     ManageVrfLiteOrchestrator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
 
 class _DummyModule:
@@ -69,9 +69,18 @@ class _DummyWarnModule(_DummyModule):
         self.warnings.append(msg)
 
 
-class _DummyQueryContext:
-    def __init__(self, module):
-        self.module = module
+def _vrf_lite_orchestrator(module):
+    sender = Sender()
+    sender.ansible_module = module
+    rest_send = RestSend(
+        {
+            "check_mode": module.check_mode,
+            "state": module.params.get("state"),
+        }
+    )
+    rest_send.sender = sender
+    rest_send.response_handler = ResponseHandler()
+    return ManageVrfLiteOrchestrator(rest_send=rest_send)
 
 
 def test_manage_vrf_lite_00050_model_exposes_module_argspec():
@@ -115,11 +124,11 @@ def test_manage_vrf_lite_00080_query_reuses_cached_gathered_have(monkeypatch):
         pytest.fail("gathered query should reuse the state machine query result")
 
     monkeypatch.setattr(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query.query_vrf_lite_state",
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.query_vrf_lite_state",
         _fail_query,
     )
 
-    assert custom_vrf_lite_query_all(_DummyQueryContext(module)) == cached_have
+    assert _vrf_lite_orchestrator(module)._query_current_state() == cached_have
 
 
 def test_manage_vrf_lite_00100_merge_preserves_unmentioned_switch_and_interface_data():
@@ -399,10 +408,11 @@ def test_manage_vrf_lite_00491_deploy_targets_honor_vrf_and_attachment_intent():
     assert _target_vrfs_for_deploy(module) == ["GREEN", "YELLOW"]
 
 
-def test_manage_vrf_lite_00492_custom_deploy_filters_changed_vrfs_by_deploy_intent():
+def test_manage_vrf_lite_00492_deploy_filters_changed_vrfs_by_deploy_intent():
     module = _DummyModule(
         {
             "check_mode": True,
+            "fabric_name": "FABRIC1",
             "_changed_vrfs": ["BLUE", "GREEN", "RED"],
             "config_actions": {"save": True, "deploy": True, "type": "switch"},
             "config": [
@@ -413,7 +423,7 @@ def test_manage_vrf_lite_00492_custom_deploy_filters_changed_vrfs_by_deploy_inte
         }
     )
 
-    result = custom_vrf_lite_deploy(module=module, fabric_name="FABRIC1", result={"changed": True})
+    result = _vrf_lite_orchestrator(module)._execute_config_actions(result={"changed": True})
 
     assert result["target_vrfs"] == ["GREEN"]
     assert result["planned_actions"] == [
@@ -481,7 +491,7 @@ def test_manage_vrf_lite_00494_delete_uses_requested_attachment_intent(monkeypat
     )
 
     monkeypatch.setattr(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions._get_current_vrf_entry",
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite._get_current_vrf_entry",
         lambda _module, _fabric_name, _vrf_name: {
             "vrf_name": "BLUE",
             "vlan_id": 500,
@@ -492,15 +502,15 @@ def test_manage_vrf_lite_00494_delete_uses_requested_attachment_intent(monkeypat
         },
     )
     monkeypatch.setattr(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions.NDModuleV2",
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.NDModuleV2",
         lambda _module: object(),
     )
     monkeypatch.setattr(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions._post_attachment_payload",
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite._post_attachment_payload",
         lambda _nd_v2, _fabric_name, _vrf_name, lan_attach_list: posted_payloads.extend(lan_attach_list) or {"ok": True},
     )
 
-    assert custom_vrf_lite_delete(module=module, model_instance=existing_model) is True
+    assert _vrf_lite_orchestrator(module)._detach_vrf_attachments(model_instance=existing_model) is True
     assert [payload["serialNumber"] for payload in posted_payloads] == ["SN2"]
     assert module.params["_changed_vrfs"] == ["BLUE"]
 
@@ -509,14 +519,14 @@ def test_manage_vrf_lite_00495_delete_query_filters_vrfs_without_managed_attachm
     module = _DummyModule({"state": "deleted", "fabric_name": "FABRIC1", "config": []})
 
     monkeypatch.setattr(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query.query_vrf_lite_state",
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.query_vrf_lite_state",
         lambda module, fabric_name, filter_vrfs=None: [
             {"vrf_name": "EMPTY", "attach": []},
             {"vrf_name": "BLUE", "attach": [{"ip_address": "10.0.0.1"}]},
         ],
     )
 
-    have = custom_vrf_lite_query_all(_DummyQueryContext(module))
+    have = _vrf_lite_orchestrator(module)._query_current_state()
 
     assert have == [{"vrf_name": "BLUE", "attach": [{"ip_address": "10.0.0.1"}]}]
     assert module.params["_have"] == have
