@@ -35,6 +35,11 @@ options:
     default: DEBUG
     choices: ['CRITICAL', 'DEBUG', 'ERROR', 'INFO', 'WARNING']
     type: str
+notes:
+- The Python C(logging) module applies level checks at both the logger and the handler. A record is emitted only when its severity
+  is greater than or equal to the most restrictive level along the chain (C(nd) logger, any ancestor loggers consulted for the
+  effective level, and each handler). To make C(nd_log) messages visible, ensure both C(loggers.nd.level) (or the inherited level)
+  and the relevant handler's C(level) in C(ND_LOGGING_CONFIG) are at or below O(severity).
 author:
 - Allen Robel (@quantumonion)
 """
