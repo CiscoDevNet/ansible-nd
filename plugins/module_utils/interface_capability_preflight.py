@@ -35,8 +35,8 @@ class InterfaceCapabilityPreflight:
     Lazily fetches the set of switches capable of hosting a given `(interface_type, mode)` pair from
     the ND Manage `capableSwitches` endpoint, caches by `(interface_type, mode)`, and validates a
     user-supplied set of switch IDs against that capable set. On failure, raises `RuntimeError` with a
-    single aggregate message naming the offending switches (`switch_ip` / `switch_name` / `model` when
-    `fabric_context` is injected).
+    single aggregate message naming the offending switches (enriched with `switch_ip` when `fabric_context`
+    is injected).
 
     The `(interface_type, mode)` taxonomy is captured experimentally (ND 4.2, 2026-05-11) and enforced
     client-side before any API call — invalid combos raise `ValueError` without consuming a round trip.
@@ -85,7 +85,7 @@ class InterfaceCapabilityPreflight:
 
         - rest_send: configured `RestSend` (sender, response handler, params already wired).
         - fabric_name: target fabric for the capability query.
-        - fabric_context: optional `FabricContext` used to enrich error messages with `switch_ip` / `switch_name` / `model`.
+        - fabric_context: optional `FabricContext` used to enrich error messages with each offending switch's `switch_ip`.
 
         ## Raises
 
@@ -243,8 +243,7 @@ class InterfaceCapabilityPreflight:
         `RuntimeError` with a single aggregate message naming the offending switches.
 
         When `fabric_context` was injected at construction, the error message enriches each offender with its
-        `switch_ip`, `switch_name`, and `model`. When `fabric_context` is not available, the message names only the
-        offending `switchId` values.
+        `switch_ip`. When `fabric_context` is not available, the message names only the offending `switchId` values.
 
         ## Raises
 
