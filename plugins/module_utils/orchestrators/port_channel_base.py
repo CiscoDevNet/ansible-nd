@@ -273,9 +273,7 @@ class PortChannelBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 interfaces = result.get("interfaces", []) or []
                 port_channels = [iface for iface in interfaces if iface.get("interfaceType") == "portChannel"]
                 managed = [
-                    iface
-                    for iface in port_channels
-                    if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_types
+                    iface for iface in port_channels if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in managed_types
                 ]
                 for iface in managed:
                     iface["switchIp"] = switch_ip
