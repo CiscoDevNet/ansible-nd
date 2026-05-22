@@ -16,7 +16,6 @@ with interface-type-specific payload construction and query filtering.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Iterable
 from typing import ClassVar
 
@@ -55,9 +54,11 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
 
     deploy: bool = True
 
-    # Subclasses override to enable capability preflight (e.g. `interface_type: ClassVar[str] = "loopback"`).
-    # An empty string opts out — used by interface types with no capability endpoint (e.g. future breakout).
+    # Subclasses opt in to capability preflight by setting BOTH ClassVars (e.g. loopback sets
+    # `interface_type = "loopback"` and `interface_mode = "managed"`). Leaving `interface_type` as ""
+    # opts out — used by interface types with no capability endpoint (e.g. future breakout).
     interface_type: ClassVar[str] = ""
+    interface_mode: ClassVar[str] = ""
 
     _fabric_context: FabricContext | None = None
     _capability_preflight: InterfaceCapabilityPreflight | None = None
@@ -138,59 +139,36 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             )
         return self._capability_preflight
 
-    def _resolve_mode(self, model_instance: ModelType) -> str:
-        """
-        # Summary
-
-        Return the `mode` string for a model instance, used to key the capability preflight cache. Defaults to
-        `model_instance.mode`. Subclasses override only when the model has no `mode` attribute or the mapping is non-trivial.
-
-        ## Raises
-
-        ### AttributeError
-
-        - If the model has no `mode` attribute and the subclass has not overridden this method.
-        """
-        # getattr (not direct access): ModelType is bound to NDBaseModel, which has no `mode`. The
-        # attribute is duck-typed -- present on most interface models, absent on some (e.g. loopback).
-        return getattr(model_instance, "mode")
-
     def validate_switches_capable(self, model_instances: Iterable[ModelType]) -> None:
         """
         # Summary
 
         Pre-flight the set of target switches against the ND `capableSwitches` endpoint for this orchestrator's
-        `interface_type` and the per-instance `mode`. Groups instances by `(interface_type, mode)` so a single GET covers
-        all instances sharing the same pair. On failure, raises a single aggregate `RuntimeError` naming every offending
-        switch across all groups.
+        `interface_type` and `interface_mode` ClassVars. A single GET covers every target switch. On failure, raises a
+        `RuntimeError` naming every offending switch.
 
         When `interface_type` is `""` (default on the base class) this method is a no-op — subclasses opt in by setting
-        the `ClassVar`.
+        both the `interface_type` and `interface_mode` ClassVars.
 
         ## Raises
 
         ### RuntimeError
 
-        - If one or more switches are not capable of hosting the requested `(interface_type, mode)` pair.
+        - If one or more switches are not capable of hosting the requested `(interface_type, interface_mode)` pair.
+        - If the orchestrator sets `interface_type` but leaves `interface_mode` empty.
         - If no switch matches a given `switch_ip` in the fabric.
         - If the underlying capability GET request fails.
         """
         if not self.interface_type:
             return
-        groups: dict[tuple[str, str], set[str]] = defaultdict(set)
-        for model_instance in model_instances:
-            mode = self._resolve_mode(model_instance)
-            switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            groups[(self.interface_type, mode)].add(switch_id)
-
-        errors: list[str] = []
-        for (interface_type, mode), switch_ids in groups.items():
-            try:
-                self.capability_preflight.validate(interface_type, mode, switch_ids)
-            except RuntimeError as e:
-                errors.append(str(e))
-        if errors:
-            raise RuntimeError(" | ".join(errors))
+        if not self.interface_mode:
+            raise RuntimeError(
+                f"{type(self).__name__} sets interface_type but not interface_mode; both ClassVars are required to enable capability preflight."
+            )
+        switch_ids = {self._resolve_switch_id(model_instance.switch_ip) for model_instance in model_instances}
+        if not switch_ids:
+            return
+        self.capability_preflight.validate(self.interface_type, self.interface_mode, switch_ids)
 
     def validate_prerequisites(self) -> None:
         """

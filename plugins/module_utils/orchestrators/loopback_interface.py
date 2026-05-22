@@ -75,6 +75,7 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
     interface_type: ClassVar[str] = "loopback"
+    interface_mode: ClassVar[str] = "managed"
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
     update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
@@ -83,19 +84,6 @@ class LoopbackInterfaceOrchestrator(NDBaseInterfaceOrchestrator[LoopbackInterfac
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
-
-    def _resolve_mode(self, model_instance: LoopbackInterfaceModel) -> str:
-        """
-        # Summary
-
-        Return the capability-preflight mode for a loopback interface. `LoopbackInterfaceModel` has no top-level `mode`
-        field -- `mode` is hardcoded to `managed` on the nested `LoopbackConfigDataModel` -- so this always returns `managed`.
-
-        ## Raises
-
-        None
-        """
-        return "managed"
 
     def create(self, model_instance: LoopbackInterfaceModel, **kwargs) -> ResponseType:
         """

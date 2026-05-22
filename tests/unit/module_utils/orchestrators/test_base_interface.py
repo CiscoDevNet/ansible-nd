@@ -8,9 +8,9 @@
 Unit tests for `NDBaseInterfaceOrchestrator`.
 
 Verifies the shared interface-orchestrator infrastructure: lazy `FabricContext`, switch IP-to-serial
-resolution, fabric pre-flight validation, endpoint configuration, deploy/remove queue de-duplication,
-and bulk `deploy_pending` / `remove_pending` flush against the `interfaceActions/deploy` and
-`interfaceActions/remove` endpoints.
+resolution, fabric pre-flight validation, capability-preflight gating, endpoint configuration,
+deploy/remove queue de-duplication, and bulk `deploy_pending` / `remove_pending` flush against the
+`interfaceActions/deploy` and `interfaceActions/remove` endpoints.
 
 Uses `_StubInterfaceOrchestrator`, a minimal concrete subclass, to satisfy `NDBaseOrchestrator`'s
 Pydantic field requirements without coupling these tests to any per-feature orchestrator.
@@ -24,6 +24,7 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import inspect
+from types import SimpleNamespace
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -59,6 +60,15 @@ class _StubInterfaceOrchestrator(NDBaseInterfaceOrchestrator):
     delete_endpoint: type[NDEndpointBaseModel] = NDEndpointBaseModel
     query_one_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesGet
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
+
+
+class _StubOptedInOrchestrator(_StubInterfaceOrchestrator):
+    """Stub that opts in to capability preflight via `interface_type` but omits `interface_mode`.
+
+    Used to verify `validate_switches_capable` raises a clear error for a half-configured subclass.
+    """
+
+    interface_type = "loopback"
 
 
 def responses_base_interface(key: str):
@@ -766,3 +776,63 @@ def test_base_interface_00720() -> None:
         instance.remove_pending()
 
     assert instance._pending_removes == [("loopback10", "FDO12345ABC")]
+
+
+# =============================================================================
+# Test: validate_switches_capable
+# =============================================================================
+
+
+def test_base_interface_00800() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` is a no-op when `interface_type` is `""` (the opted-out base default).
+
+    ## Test
+
+    - `_StubInterfaceOrchestrator` leaves `interface_type` as `""`
+    - `validate_switches_capable` returns without resolving switches or raising, even for a non-empty input
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubInterfaceOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+
+def test_base_interface_00810() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` raises a clear `RuntimeError` when a subclass sets `interface_type` but leaves `interface_mode` empty.
+
+    ## Test
+
+    - `_StubOptedInOrchestrator` sets `interface_type` but inherits the empty `interface_mode`
+    - `validate_switches_capable` raises `RuntimeError` naming the class and both ClassVars
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubOptedInOrchestrator(rest_send=rest_send)
+
+    match = r"_StubOptedInOrchestrator sets interface_type but not interface_mode"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
