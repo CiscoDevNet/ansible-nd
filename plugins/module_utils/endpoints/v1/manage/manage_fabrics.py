@@ -25,6 +25,8 @@ in the ND Manage API.
   (GET /api/v1/manage/fabrics/{fabric_name}/summary)
 - `EpManageFabricConfigDeployPost` - Deploy pending config for a fabric
   (POST /api/v1/manage/fabrics/{fabric_name}/actions/configDeploy)
+- `EpManageFabricsDeploymentFreezeGet` - Get deployment freeze mode for a fabric
+  (GET /api/v1/manage/fabrics/{fabric_name}/deploymentFreeze)
 """
 
 from __future__ import annotations
@@ -584,3 +586,56 @@ class EpManageFabricConfigDeployPost(_EpManageFabricsBase):
     def verb(self) -> HttpVerbEnum:
         """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.POST
+
+
+class EpManageFabricsDeploymentFreezeGet(_EpManageFabricsBase):
+    """
+    # Summary
+
+    ND Manage Fabrics Deployment Freeze GET Endpoint
+
+    ## Description
+
+    Endpoint to retrieve the current deployment freeze mode for a specific fabric. When deployment freeze is enabled, configuration changes
+    cannot be deployed from the controller to switches, but changes can still be made on the controller.
+
+    The fabric name is a required path parameter. The response shape is ``{"deploymentFreeze": <bool>}``.
+
+    ## Path
+
+    - ``/api/v1/manage/fabrics/{fabric_name}/deploymentFreeze``
+    - ``/api/v1/manage/fabrics/{fabric_name}/deploymentFreeze?clusterName=cluster1``
+
+    ## Verb
+
+    - GET
+
+    ## Raises
+
+    ### ValueError
+
+    - If `fabric_name` is not set when accessing `path`
+
+    ## Usage
+
+    ```python
+    ep = EpManageFabricsDeploymentFreezeGet()
+    ep.fabric_name = "my-fabric"
+    rest_send.path = ep.path
+    rest_send.verb = ep.verb
+    # Path: /api/v1/manage/fabrics/my-fabric/deploymentFreeze
+    ```
+    """
+
+    class_name: Literal["EpManageFabricsDeploymentFreezeGet"] = Field(
+        default="EpManageFabricsDeploymentFreezeGet", frozen=True, description="Class name for backward compatibility"
+    )
+
+    _path_suffix: ClassVar[Optional[str]] = "deploymentFreeze"
+
+    endpoint_params: FabricsEndpointParams = Field(default_factory=FabricsEndpointParams, description="Endpoint-specific query parameters")
+
+    @property
+    def verb(self) -> HttpVerbEnum:
+        """Return the HTTP verb for this endpoint."""
+        return HttpVerbEnum.GET
