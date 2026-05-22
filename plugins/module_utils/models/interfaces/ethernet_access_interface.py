@@ -23,6 +23,8 @@ wrapping or flattening.
                 - `admin_state`, `access_vlan`, `bpdu_guard`, `speed`, `policy_type`, etc.
 """
 
+from __future__ import annotations
+
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (

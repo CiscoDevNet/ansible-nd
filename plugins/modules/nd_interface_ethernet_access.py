@@ -264,7 +264,8 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS ethernet accessHost interfaces only (interface_type C(ethernet), mode C(access), network_os_type C(nx-os), policy_type C(accessHost)). These values are hardcoded by the module and are not user-configurable.
+- This module manages NX-OS ethernet accessHost interfaces only (interface_type C(ethernet), mode C(access), network_os_type C(nx-os),
+  policy_type C(accessHost)). These values are hardcoded by the module and are not user-configurable.
 - Interfaces that are port-channel members have restricted mutability.
 """
 
