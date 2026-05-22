@@ -145,7 +145,7 @@ options:
                     description:
                     - The port-channel mode.
                     type: str
-                    choices: [ on, active, passive ]
+                    choices: [ 'on', active, passive ]
                   ports:
                     description:
                     - The list of member ethernet interface names for this port-channel.
