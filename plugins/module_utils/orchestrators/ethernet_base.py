@@ -199,7 +199,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return
 
         changed_fields = set()
-        for field_name in policy.model_fields:
+        for field_name in type(policy).model_fields:
             value = getattr(policy, field_name)
             if value is not None and field_name != "policy_type":
                 changed_fields.add(field_name)
