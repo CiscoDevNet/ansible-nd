@@ -179,7 +179,7 @@ options:
                     description:
                     - The port-channel mode.
                     type: str
-                    choices: [ on, active, passive ]
+                    choices: [ 'on', active, passive ]
                   port_type_edge_trunk:
                     description:
                     - Configure the port-channel as an edge trunk port (PortFast on trunk).
