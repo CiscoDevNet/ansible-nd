@@ -86,7 +86,20 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
     PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[set[str]] = {"description", "admin_state", "extra_config"}
 
-    _pending_normalizes: list[tuple[str, str]] = []
+    def model_post_init(self, __context) -> None:
+        """
+        # Summary
+
+        Initialize ethernet-specific mutable private state after Pydantic model construction. Extends
+        `NDBaseInterfaceOrchestrator.model_post_init` to add the normalize queue, so it is initialized
+        the same way as the sibling `_pending_deploys` / `_pending_removes` queues.
+
+        ## Raises
+
+        None
+        """
+        super().model_post_init(__context)
+        self._pending_normalizes: list[tuple[str, str]] = []
 
     def _managed_policy_types(self) -> set[str]:
         """
