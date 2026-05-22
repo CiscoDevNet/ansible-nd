@@ -296,7 +296,6 @@ EXAMPLES = r"""
                 - Ethernet1/1
     deploy: false
     state: merged
-
 """
 
 RETURN = r"""
