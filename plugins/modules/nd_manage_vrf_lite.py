@@ -275,6 +275,7 @@ def main() -> None:
 
         result = nd_state_machine.output.format()
         result.setdefault("current", result.get("after", []))
+        result = nd_state_machine.model_orchestrator.normalize_delete_result(result)
 
         deploy_result = nd_state_machine.model_orchestrator.deploy_pending(result)
         if deploy_result:

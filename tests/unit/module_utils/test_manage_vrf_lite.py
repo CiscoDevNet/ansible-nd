@@ -532,6 +532,93 @@ def test_manage_vrf_lite_00495_delete_query_filters_vrfs_without_managed_attachm
     assert module.params["_have"] == have
 
 
+def test_manage_vrf_lite_00495a_noop_delete_result_is_not_changed():
+    before = [{"vrf_name": "BLUE", "attach": [{"ip_address": "10.0.0.1"}]}]
+    module = _DummyModule(
+        {
+            "state": "deleted",
+            "fabric_name": "FABRIC1",
+            "_vrf_lite_delete_attempted": True,
+            "_vrf_lite_delete_posted": False,
+        }
+    )
+
+    result = _vrf_lite_orchestrator(module).normalize_delete_result(
+        {
+            "changed": True,
+            "before": before,
+            "after": [],
+            "current": [],
+            "diff": before,
+        }
+    )
+
+    assert result["changed"] is False
+    assert result["after"] == before
+    assert result["current"] == before
+    assert result["diff"] == []
+
+
+def test_manage_vrf_lite_00495b_delete_refresh_runs_when_verify_disabled(monkeypatch):
+    refreshed = [{"vrf_name": "BLUE", "attach": [{"ip_address": "10.0.0.1"}]}]
+    module = _DummyModule(
+        {
+            "state": "deleted",
+            "fabric_name": "FABRIC1",
+            "verify": {"enabled": False},
+            "_vrf_lite_delete_posted": True,
+        }
+    )
+    orchestrator = _vrf_lite_orchestrator(module)
+
+    monkeypatch.setattr(orchestrator, "_query_current_state", lambda: refreshed)
+
+    result = orchestrator.refresh_verified_state({"changed": True, "after": [], "current": []})
+
+    assert result["after"] == refreshed
+    assert result["current"] == refreshed
+
+
+def test_manage_vrf_lite_00495c_delete_unknown_attachment_warns_and_noops(monkeypatch):
+    module = _DummyModule(
+        {
+            "fabric_name": "FABRIC1",
+            "state": "deleted",
+            "config": [{"vrf_name": "BLUE", "attach": [{"ip_address": "10.0.0.99"}]}],
+            "_ip_to_sn_mapping": {"10.0.0.1": "SN1", "10.0.0.99": "SN99"},
+            "_warnings": [],
+        }
+    )
+    existing_model = VrfLiteModel.from_config(
+        {
+            "vrf_name": "BLUE",
+            "vlan_id": 500,
+            "attach": [{"ip_address": "10.0.0.1", "vrf_lite": [{"interface": "Ethernet1/10"}]}],
+        }
+    )
+
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite._get_current_vrf_entry",
+        lambda _module, _fabric_name, _vrf_name: {
+            "vrf_name": "BLUE",
+            "vlan_id": 500,
+            "attach": [{"ip_address": "10.0.0.1", "vrf_lite": [{"interface": "Ethernet1/10"}]}],
+        },
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.NDModuleV2",
+        lambda _module: object(),
+    )
+    monkeypatch.setattr(
+        "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite._post_attachment_payload",
+        lambda *_args, **_kwargs: pytest.fail("unknown attachment delete must not post a detach payload"),
+    )
+
+    assert _vrf_lite_orchestrator(module).delete(model_instance=existing_model) is False
+    assert module.params["_vrf_lite_delete_posted"] is False
+    assert any("No matching VRF Lite attachment" in warning for warning in module.params["_warnings"])
+
+
 def test_manage_vrf_lite_00496_verify_retry_policy_is_applied_to_reads():
     class _FakeRestSend:
         def __init__(self):

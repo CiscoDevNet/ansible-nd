@@ -146,6 +146,8 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
         # Initialize runtime state
         module.params["_changed_vrfs"] = []
+        module.params["_vrf_lite_delete_attempted"] = False
+        module.params["_vrf_lite_delete_posted"] = False
         module.params["_not_in_sync_vrfs"] = []
         module.params["_ip_to_sn_mapping"] = {}
         module.params["_sn_to_ip_mapping"] = {}
@@ -275,6 +277,8 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
         fabric_name = module.params.get("fabric_name")
         vrf_name = model_instance.vrf_name
+        module.params["_vrf_lite_delete_attempted"] = True
+        module.params["_vrf_lite_delete_posted"] = False
 
         try:
             current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
@@ -288,9 +292,11 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
             detach_payloads = reconciler.detach_payloads()
             if not detach_payloads:
+                self._warn_no_delete_match(vrf_name, model_instance)
                 return False
 
             _post_attachment_payload(nd_v2, fabric_name, vrf_name, detach_payloads)
+            module.params["_vrf_lite_delete_posted"] = True
             _mark_changed_vrf(module, vrf_name)
             return True
         except NDModuleError as error:
@@ -346,7 +352,8 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         """Re-query state after write to confirm changes were applied."""
         module = self._module()
         verify_settings = get_verify_settings(module.params)
-        if not verify_settings.get("enabled", True):
+        delete_refresh_required = module.params.get("state") == "deleted" and module.params.get("_vrf_lite_delete_posted")
+        if not verify_settings.get("enabled", True) and not delete_refresh_required:
             return result
         if module.check_mode or not result.get("changed"):
             return result
@@ -357,6 +364,43 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         return result
 
     # VRF Lite resource behavior
+
+    def normalize_delete_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Correct generic object-delete output for VRF Lite attachment deletes."""
+        module = self._module()
+        if module.params.get("state") != "deleted":
+            return result
+
+        if module.params.get("_vrf_lite_delete_posted"):
+            return result
+
+        if module.params.get("_vrf_lite_delete_attempted"):
+            before = result.get("before", [])
+            result["changed"] = False
+            result["after"] = before
+            result["current"] = before
+            result["diff"] = []
+
+        return result
+
+    def _warn_no_delete_match(self, vrf_name: str, model_instance: Any) -> None:
+        module = self._module()
+        requested_attachments = []
+        for item in module.params.get("config") or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("vrf_name", "")).strip() == vrf_name:
+                requested_attachments = item.get("attach") or []
+                break
+
+        if not requested_attachments and getattr(model_instance, "attach", None):
+            requested_attachments = model_instance.attach or []
+
+        if requested_attachments:
+            append_runtime_warning(
+                module.params,
+                "No matching VRF Lite attachment was found to delete for VRF '{0}'. No detach payload was sent.".format(vrf_name),
+            )
 
     def _query_current_state(self) -> list[dict[str, Any]]:
         module = self._module()
