@@ -73,15 +73,11 @@ class PortChannelAccessPolicyModel(NDNestedModel):
     bpdu_filter: BpduFilterEnum | None = Field(default=None, alias="bpduFilter", description="Configure spanning-tree BPDU filter")
     bpdu_guard: BpduGuardEnum | None = Field(default=None, alias="bpduGuard", description="Enable spanning-tree BPDU guard")
     cdp: bool | None = Field(default=None, alias="cdp", description="Enable CDP on the interface")
-    copy_description: bool | None = Field(
-        default=None, alias="copyDescription", description="Propagate the port-channel description to all member interfaces"
-    )
+    copy_description: bool | None = Field(default=None, alias="copyDescription", description="Propagate the port-channel description to all member interfaces")
     description: AsciiDescription = Field(default=None, alias="description", max_length=254, description="Interface description")
     duplex_mode: DuplexModeEnum | None = Field(default=None, alias="duplexMode", description="Port duplex mode")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
-    lacp_port_priority: int | None = Field(
-        default=None, alias="lacpPortPriority", ge=1, le=65535, description="LACP port priority (1-65535, default 32768)"
-    )
+    lacp_port_priority: int | None = Field(default=None, alias="lacpPortPriority", ge=1, le=65535, description="LACP port priority (1-65535, default 32768)")
     lacp_rate: LacpRateEnum | None = Field(default=None, alias="lacpRate", description="LACP rate (normal=30s, fast=1s)")
     lacp_suspend: bool | None = Field(default=None, alias="lacpSuspend", description="Suspend port if LACP PDUs not received")
     monitor: bool | None = Field(default=None, alias="monitor", description="Enable switchport monitor for SPAN/ERSPAN")
