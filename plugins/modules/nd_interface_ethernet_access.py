@@ -74,6 +74,16 @@ options:
                     - The access VLAN for the interface.
                     - Valid range is 1-4094.
                     type: int
+                  bandwidth:
+                    description:
+                    - Bandwidth value of the interface in kilobits.
+                    - Valid range is 1-100000000.
+                    type: int
+                  bpdu_filter:
+                    description:
+                    - Spanning-tree BPDU filter setting for the interface.
+                    type: str
+                    choices: [ enable, disable, default ]
                   bpdu_guard:
                     description:
                     - BPDU guard setting for the interface.
@@ -83,6 +93,16 @@ options:
                     description:
                     - Whether Cisco Discovery Protocol is enabled on the interface.
                     type: bool
+                  debounce_timer:
+                    description:
+                    - Link debounce timer (in milliseconds).
+                    - Valid range is 0-20000.
+                    type: int
+                  debounce_linkup_timer:
+                    description:
+                    - Link debounce timer for link-up event (in milliseconds).
+                    - Valid range is 1000-10000.
+                    type: int
                   description:
                     description:
                     - The description of the interface.
@@ -93,15 +113,42 @@ options:
                     - The duplex mode of the interface.
                     type: str
                     choices: [ auto, full, half ]
+                  error_detection_acl:
+                    description:
+                    - Whether error detection for access-list installation failures is enabled.
+                    type: bool
                   extra_config:
                     description:
                     - Additional CLI configuration commands to apply to the interface.
                     type: str
+                  fec:
+                    description:
+                    - The forward error correction (FEC) mode for the interface.
+                    type: str
+                    choices: [ "auto", "fcFec", "off", "rsCons16", "rsFec", "rsIEEE" ]
+                  inherit_bandwidth:
+                    description:
+                    - Inherit bandwidth (in kilobits) for sub-interfaces.
+                    - Valid range is 1-100000000.
+                    type: int
+                  link_type:
+                    description:
+                    - Spanning-tree link type.
+                    type: str
+                    choices: [ auto, pointToPoint, shared ]
+                  monitor:
+                    description:
+                    - Whether switchport monitor for SPAN / ERSPAN is enabled.
+                    type: bool
                   mtu:
                     description:
                     - The MTU setting for the interface.
                     type: str
                     choices: [ default, jumbo ]
+                  negotiate_auto:
+                    description:
+                    - Whether link auto-negotiation is enabled.
+                    type: bool
                   netflow:
                     description:
                     - Whether netflow is enabled on the interface.
@@ -146,6 +193,48 @@ options:
                     - The speed setting for the interface.
                     type: str
                     choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb ]
+                  storm_control:
+                    description:
+                    - Whether traffic storm control is enabled on the interface.
+                    type: bool
+                  storm_control_action:
+                    description:
+                    - Storm control action on threshold violation.
+                    type: str
+                    choices: [ shutdown, trap, default ]
+                  storm_control_broadcast_level:
+                    description:
+                    - Broadcast storm control level in percentage (format V(whole.decimal), range 0.00-100.00).
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_broadcast_level_pps).
+                    type: float
+                  storm_control_broadcast_level_pps:
+                    description:
+                    - Broadcast storm control level in packets per second.
+                    - Valid range is 0-200000000.
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_broadcast_level).
+                    type: int
+                  storm_control_multicast_level:
+                    description:
+                    - Multicast storm control level in percentage (format V(whole.decimal), range 0.00-100.00).
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_multicast_level_pps).
+                    type: float
+                  storm_control_multicast_level_pps:
+                    description:
+                    - Multicast storm control level in packets per second.
+                    - Valid range is 0-200000000.
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_multicast_level).
+                    type: int
+                  storm_control_unicast_level:
+                    description:
+                    - Unicast storm control level in percentage (format V(whole.decimal), range 0.00-100.00).
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_unicast_level_pps).
+                    type: float
+                  storm_control_unicast_level_pps:
+                    description:
+                    - Unicast storm control level in packets per second.
+                    - Valid range is 0-200000000.
+                    - Mutually exclusive with O(config[].config_data.network_os.policy.storm_control_unicast_level).
+                    type: int
   deploy:
     description:
     - Whether to deploy interface changes after mutations are complete.
