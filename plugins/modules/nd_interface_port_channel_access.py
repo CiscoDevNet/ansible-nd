@@ -232,7 +232,8 @@ extends_documentation_fragment:
 - cisco.nd.check_mode
 notes:
 - This module is only supported on Nexus Dashboard.
-- This module manages NX-OS port-channel accessPoHost interfaces only (interface_type C(portChannel), mode C(access), network_os_type C(nx-os), policy_type C(accessPoHost)). These values are hardcoded by the module and are not user-configurable.
+- This module manages NX-OS port-channel accessPoHost interfaces only (interface_type C(portChannel), mode C(access),
+  network_os_type C(nx-os), policy_type C(accessPoHost)). These values are hardcoded by the module and are not user-configurable.
 - The port-channel policy is the source of truth for member interface configuration.
 """
 
