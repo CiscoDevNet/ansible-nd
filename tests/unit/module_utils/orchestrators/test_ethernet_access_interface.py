@@ -28,7 +28,10 @@ from __future__ import annotations
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_access_interface import (
+    EthernetAccessConfigDataModel,
     EthernetAccessInterfaceModel,
+    EthernetAccessNetworkOSModel,
+    EthernetAccessPolicyModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_access_interface import (
     EthernetAccessInterfaceOrchestrator,
@@ -77,6 +80,19 @@ def _build_orchestrator(gen_responses: ResponseGenerator, fabric_name: str = "fa
     """Construct an orchestrator with the file-based RestSend injected."""
     rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, params=params)
     return EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+
+
+def _build_access_model(policy_kwargs: dict, interface_name: str = "Ethernet1/1", switch_ip: str = "192.168.1.1") -> EthernetAccessInterfaceModel:
+    """Build an `EthernetAccessInterfaceModel` whose policy carries exactly `policy_kwargs`."""
+    return EthernetAccessInterfaceModel(
+        switch_ip=switch_ip,
+        interface_name=interface_name,
+        config_data=EthernetAccessConfigDataModel(
+            network_os=EthernetAccessNetworkOSModel(
+                policy=EthernetAccessPolicyModel(**policy_kwargs),
+            ),
+        ),
+    )
 
 
 # =============================================================================
@@ -335,3 +351,190 @@ def test_ethernet_access_orchestrator_00420() -> None:
 
     with pytest.raises(RuntimeError, match=r"Query all failed.*missing_fabric"):
         orchestrator.query_all()
+
+
+# =============================================================================
+# Test: port-channel membership enforcement (create / update / create_bulk)
+# =============================================================================
+
+
+def test_ethernet_access_orchestrator_00500() -> None:
+    """
+    # Summary
+
+    Verify `create` raises `RuntimeError` when the target interface is an existing port-channel member and a
+    non-whitelisted policy field is being changed.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 as a member of port-channel 10
+    - The model changes `access_vlan`, which is not in `PORT_CHANNEL_MODIFIABLE_FIELDS`
+    - `create` raises `RuntimeError` naming the port-channel and the rejected field
+    - No deploy is queued (the check raises before the POST)
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.create()
+    - EthernetBaseOrchestrator._existing_interface()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_access("test_create_pc_member_blocked_00500a")
+        yield responses_access("test_create_pc_member_blocked_00500b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({"access_vlan": 100})
+
+    with pytest.raises(RuntimeError, match=r"Create failed for.*member of port-channel 10.*access_vlan"):
+        instance.create(model)
+
+    assert instance._pending_deploys == []
+
+
+def test_ethernet_access_orchestrator_00510() -> None:
+    """
+    # Summary
+
+    Verify `create` succeeds on a port-channel member when only whitelisted policy fields are being changed.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 as a member of port-channel 10
+    - The model changes only `description`, which is in `PORT_CHANNEL_MODIFIABLE_FIELDS`
+    - `create` does not raise; the POST is issued and a deploy is queued
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.create()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_access("test_create_pc_member_whitelisted_00510a")
+        yield responses_access("test_create_pc_member_whitelisted_00510b")
+        yield responses_access("test_create_pc_member_whitelisted_00510c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({"description": "uplink to host"})
+
+    with does_not_raise():
+        instance.create(model)
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces"
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+
+
+def test_ethernet_access_orchestrator_00520() -> None:
+    """
+    # Summary
+
+    Verify `create` succeeds when the target interface is not a port-channel member, even when a
+    non-whitelisted policy field is being changed.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 with no `portChannelId` (not a port-channel member)
+    - The model changes `access_vlan` (non-whitelisted), which is allowed because there is no membership
+    - `create` does not raise; the POST is issued and a deploy is queued
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.create()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_access("test_create_not_pc_member_00520a")
+        yield responses_access("test_create_not_pc_member_00520b")
+        yield responses_access("test_create_not_pc_member_00520c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({"access_vlan": 100})
+
+    with does_not_raise():
+        instance.create(model)
+
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+
+
+def test_ethernet_access_orchestrator_00530() -> None:
+    """
+    # Summary
+
+    Verify `update` enforces port-channel membership restrictions, raising `RuntimeError` when a
+    non-whitelisted policy field is changed on an existing port-channel member.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 as a member of port-channel 10
+    - The model changes `access_vlan` (non-whitelisted)
+    - `update` raises `RuntimeError`; no deploy is queued
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.update()
+    - EthernetBaseOrchestrator._existing_interface()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_access("test_update_pc_member_blocked_00530a")
+        yield responses_access("test_update_pc_member_blocked_00530b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({"access_vlan": 100})
+
+    with pytest.raises(RuntimeError, match=r"Update failed for.*member of port-channel 10.*access_vlan"):
+        instance.update(model)
+
+    assert instance._pending_deploys == []
+
+
+def test_ethernet_access_orchestrator_00540() -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` enforces port-channel membership restrictions, raising `RuntimeError` when a
+    non-whitelisted policy field is changed on an existing port-channel member.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 as a member of port-channel 10
+    - The single bulk model changes `access_vlan` (non-whitelisted)
+    - `create_bulk` raises `RuntimeError`; no deploy is queued
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.create_bulk()
+    - EthernetBaseOrchestrator._existing_interface()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_access("test_create_bulk_pc_member_blocked_00540a")
+        yield responses_access("test_create_bulk_pc_member_blocked_00540b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({"access_vlan": 100})
+
+    with pytest.raises(RuntimeError, match=r"Bulk create failed.*member of port-channel 10.*access_vlan"):
+        instance.create_bulk([model])
+
+    assert instance._pending_deploys == []
