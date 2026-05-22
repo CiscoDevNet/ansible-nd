@@ -1007,4 +1007,3 @@ def test_endpoints_api_v1_manage_fabrics_00930():
         instance.endpoint_params.cluster_name = "cluster1"
         result = instance.path
     assert result == "/api/v1/manage/fabrics/my-fabric/deploymentFreeze?clusterName=cluster1"
-
