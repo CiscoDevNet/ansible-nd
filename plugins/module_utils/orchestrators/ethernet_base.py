@@ -91,8 +91,9 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Initialize ethernet-specific mutable private state after Pydantic model construction. Extends
-        `NDBaseInterfaceOrchestrator.model_post_init` to add the normalize queue, so it is initialized
-        the same way as the sibling `_pending_deploys` / `_pending_removes` queues.
+        `NDBaseInterfaceOrchestrator.model_post_init` to add the normalize queue (initialized the same
+        way as the sibling `_pending_deploys` / `_pending_removes` queues) and the per-switch interface
+        cache read by `_switch_interfaces`.
 
         ## Raises
 
@@ -100,6 +101,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         super().model_post_init(__context)
         self._pending_normalizes: list[tuple[str, str]] = []
+        self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
 
     def _managed_policy_types(self) -> set[str]:
         """
@@ -130,6 +132,44 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         pair = (interface_name, switch_id)
         if pair not in self._pending_normalizes:
             self._pending_normalizes.append(pair)
+
+    def _switch_interfaces(self, switch_id: str) -> dict[str, dict]:
+        """
+        # Summary
+
+        Return every interface on `switch_id`, keyed by lower-cased interface name. The underlying
+        `interfaceList` GET is issued at most once per switch per module run; the result is cached so
+        that `query_all` and the port-channel membership check share a single fetch per switch rather
+        than each querying the controller independently.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_request` if the interface-list API request fails with a non-404 status.
+        """
+        if switch_id not in self._switch_interfaces_cache:
+            api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+            interfaces = result.get("interfaces", []) or [] if isinstance(result, dict) else []
+            self._switch_interfaces_cache[switch_id] = {iface["interfaceName"].lower(): iface for iface in interfaces if iface.get("interfaceName")}
+        return self._switch_interfaces_cache[switch_id]
+
+    def _existing_interface(self, interface_name: str, switch_id: str) -> dict | None:
+        """
+        # Summary
+
+        Return the current wire-state dict for `interface_name` on `switch_id`, or `None` when the
+        interface is absent from the switch inventory. Backed by the `_switch_interfaces` cache, so
+        repeated lookups across `create` / `update` / `create_bulk` add no further requests.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - Via `_switch_interfaces` if the interface-list API request fails.
+        """
+        return self._switch_interfaces(switch_id).get(interface_name.lower())
 
     def _check_port_channel_restrictions(self, model_instance: ModelType, existing_data: dict | None = None) -> None:
         """
@@ -223,20 +263,24 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Create an ethernet interface configuration. Resolves `switch_ip` from the model instance, checks port-channel
-        membership restrictions, injects `switchId`, and wraps the payload in an `interfaces` array. Queues a deploy
-        for later bulk execution via `deploy_pending`.
+        Create an ethernet interface configuration. Resolves `switch_ip` from the model instance, fetches the
+        interface's current wire state to enforce port-channel membership restrictions, injects `switchId`, and
+        wraps the payload in an `interfaces` array. Queues a deploy for later bulk execution via `deploy_pending`.
+
+        An `existing_data` keyword argument, when supplied, overrides the fetched wire state (used by tests).
 
         ## Raises
 
         ### RuntimeError
 
         - If the interface is a port-channel member and non-whitelisted fields are being modified.
+        - If the interface-list query used to resolve port-channel membership fails.
         - If the create API request fails.
         """
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            self._check_port_channel_restrictions(model_instance, kwargs.get("existing_data"))
+            existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_port_channel_restrictions(model_instance, existing_data)
             api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
             payload = model_instance.to_payload()
             payload["switchId"] = switch_id
@@ -251,20 +295,24 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Update an ethernet interface configuration. Resolves `switch_ip` from the model instance, checks port-channel
-        membership restrictions, injects `switchId` into the payload. Queues a deploy for later bulk execution
-        via `deploy_pending`.
+        Update an ethernet interface configuration. Resolves `switch_ip` from the model instance, fetches the
+        interface's current wire state to enforce port-channel membership restrictions, injects `switchId` into
+        the payload. Queues a deploy for later bulk execution via `deploy_pending`.
+
+        An `existing_data` keyword argument, when supplied, overrides the fetched wire state (used by tests).
 
         ## Raises
 
         ### RuntimeError
 
         - If the interface is a port-channel member and non-whitelisted fields are being modified.
+        - If the interface-list query used to resolve port-channel membership fails.
         - If the update API request fails.
         """
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
-            self._check_port_channel_restrictions(model_instance, kwargs.get("existing_data"))
+            existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_port_channel_restrictions(model_instance, existing_data)
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(model_instance.interface_name)
             payload = model_instance.to_payload()
@@ -306,22 +354,26 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         # Summary
 
         Create multiple ethernet interfaces in bulk. Groups interfaces by switch and sends one POST per switch with all
-        interfaces in the `interfaces` array, reducing API calls from N to one-per-switch. Port-channel membership
-        restrictions are checked for each interface. Queues deploys for all created interfaces for later bulk execution
-        via `deploy_pending`.
+        interfaces in the `interfaces` array, reducing API calls from N to one-per-switch. Each interface's current wire
+        state is fetched (one cached `interfaceList` GET per switch) to enforce port-channel membership restrictions.
+        Queues deploys for all created interfaces for later bulk execution via `deploy_pending`.
+
+        An `existing_data` keyword argument, when supplied, overrides the fetched wire state (used by tests).
 
         ## Raises
 
         ### RuntimeError
 
         - If any interface is a port-channel member and non-whitelisted fields are being modified.
+        - If the interface-list query used to resolve port-channel membership fails.
         - If any create API request fails.
         """
         try:
             groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
             for model_instance in model_instances:
                 switch_id = self._resolve_switch_id(model_instance.switch_ip)
-                self._check_port_channel_restrictions(model_instance, kwargs.get("existing_data"))
+                existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+                self._check_port_channel_restrictions(model_instance, existing_data)
                 payload = model_instance.to_payload()
                 payload["switchId"] = switch_id
                 groups[switch_id].append((model_instance.interface_name, payload))
@@ -431,11 +483,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             self.validate_prerequisites()
             all_interfaces = []
             for switch_ip, switch_id in self._switches_to_query().items():
-                api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
-                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-                if not result:
-                    continue
-                interfaces = result.get("interfaces", []) or []
+                interfaces = list(self._switch_interfaces(switch_id).values())
                 ethernet_interfaces = [iface for iface in interfaces if iface.get("interfaceType") == "ethernet"]
                 managed = [
                     iface
