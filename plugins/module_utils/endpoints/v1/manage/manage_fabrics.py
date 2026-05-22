@@ -33,7 +33,7 @@ from __future__ import annotations
 
 __metaclass__ = type
 
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
