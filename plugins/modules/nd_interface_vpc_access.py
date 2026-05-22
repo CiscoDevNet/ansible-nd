@@ -209,7 +209,7 @@ options:
                     description:
                     - Port-channel mode.
                     type: str
-                    choices: [ on, active, passive ]
+                    choices: [ 'on', active, passive ]
                   port_type_edge_trunk:
                     description:
                     - Enable spanning-tree edge port (PortFast) behavior.
