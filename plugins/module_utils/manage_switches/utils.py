@@ -169,7 +169,7 @@ def determine_operation_type(switch) -> str:
 def group_switches_by_credentials(
     switches,
     log: logging.Logger,
-) -> dict[Tuple, list]:
+) -> dict[tuple, list]:
     """Group switches by shared credentials for bulk API operations.
 
     Args:
@@ -181,7 +181,7 @@ def group_switches_by_credentials(
         platform_type, preserve_config)`` tuple to the list of switches
         sharing those credentials.
     """
-    groups: dict[Tuple, list] = {}
+    groups: dict[tuple, list] = {}
 
     for switch in switches:
         password_hash = hash(switch.password)
@@ -779,7 +779,7 @@ class SwitchWaitUtils:
 
     def _fetch_switch_data(
         self,
-    ) -> Optional[list[dict[str, Any]]]:
+    ) -> list[dict[str, Any]] | None:
         """GET current switch data for the fabric.
 
         Returns:

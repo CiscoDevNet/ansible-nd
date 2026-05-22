@@ -476,7 +476,7 @@ class SwitchConfigModel(NDBaseModel):
 
     @field_validator("rma", mode="before")
     @classmethod
-    def validate_rma_list_not_empty(cls, v: List | None) -> List | None:
+    def validate_rma_list_not_empty(cls, v: list | None) -> list | None:
         """Validate that if RMA list is provided, it is not empty."""
         if v is not None and len(v) == 0:
             raise ValueError("RMA list cannot be empty if provided")
@@ -529,7 +529,7 @@ class SwitchConfigModel(NDBaseModel):
                 making it impossible to construct a valid config entry.
         """
         if not sw.fabric_management_ip:
-            raise ValueError(f"Switch {sw.switch_id!r} has no fabric_management_ip — " "cannot build a gathered config entry without a seed IP.")
+            raise ValueError(f"Switch {sw.switch_id!r} has no fabric_management_ip — cannot build a gathered config entry without a seed IP.")
 
         platform_type = sw.additional_data.platform_type if sw.additional_data and hasattr(sw.additional_data, "platform_type") else None
 
