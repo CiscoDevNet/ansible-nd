@@ -47,8 +47,12 @@ def responses_access(key: str):
     return load_fixture("test_ethernet_access_interface")[key]
 
 
-def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> RestSend:
-    """Build a RestSend wired to the file-based Sender and the real ResponseHandler."""
+def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1", params: dict | None = None) -> RestSend:
+    """Build a RestSend wired to the file-based Sender and the real ResponseHandler.
+
+    `params` is merged into the RestSend params so tests can supply `state` and `config`,
+    which `query_all` reads via `_switches_to_query` to scope the switches it queries.
+    """
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
     sender.gen = gen_responses
@@ -58,7 +62,10 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    rest_send = RestSend({"check_mode": False, "fabric_name": fabric_name})
+    rest_send_params = {"check_mode": False, "fabric_name": fabric_name}
+    if params:
+        rest_send_params.update(params)
+    rest_send = RestSend(rest_send_params)
     rest_send.sender = sender
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
@@ -66,9 +73,9 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     return rest_send
 
 
-def _build_orchestrator(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> EthernetAccessInterfaceOrchestrator:
+def _build_orchestrator(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1", params: dict | None = None) -> EthernetAccessInterfaceOrchestrator:
     """Construct an orchestrator with the file-based RestSend injected."""
-    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name)
+    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, params=params)
     return EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
 
 
@@ -175,11 +182,12 @@ def test_ethernet_access_orchestrator_00400() -> None:
     """
     # Summary
 
-    Verify `query_all` validates the fabric, iterates all switches, filters to accessHost interfaces only,
-    and injects `switchIp` onto each kept interface.
+    Verify `query_all` validates the fabric, iterates the switches named in the config, filters to accessHost
+    interfaces only, and injects `switchIp` onto each kept interface.
 
     ## Test
 
+    - state is `merged`; config references both switches in the fabric
     - Fabric summary (validate_prerequisites) returns 200
     - Switches list returns two switches
     - Switch 1 returns: accessHost + trunkHost (the trunkHost should be filtered out)
@@ -202,7 +210,10 @@ def test_ethernet_access_orchestrator_00400() -> None:
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        orchestrator = _build_orchestrator(gen_responses)
+        orchestrator = _build_orchestrator(
+            gen_responses,
+            params={"state": "merged", "config": [{"switch_ip": "192.168.1.1"}, {"switch_ip": "192.168.1.2"}]},
+        )
         result = orchestrator.query_all()
 
     assert isinstance(result, list)
@@ -217,6 +228,86 @@ def test_ethernet_access_orchestrator_00400() -> None:
 
     # Filtered out: the trunkHost interface on switch 1
     assert "Ethernet1/2" not in by_name
+
+
+def test_ethernet_access_orchestrator_00410() -> None:
+    """
+    # Summary
+
+    Verify `query_all` skips fabric switches absent from the user config for non-overridden states, so the
+    interface-list request count scales with config size, not fabric size.
+
+    ## Test
+
+    - state is `merged`; config references only switch 192.168.1.10
+    - Fabric summary returns 200; switches list returns two switches (192.168.1.10 and 192.168.1.11)
+    - Only switch 192.168.1.10 is queried for interfaces; 192.168.1.11 is never requested
+    - Result contains only the accessHost interface on 192.168.1.10
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._switches_to_query()
+    - EthernetBaseOrchestrator.query_all()
+    """
+
+    def responses():
+        yield responses_access("test_query_all_config_scoped_00410a")
+        yield responses_access("test_query_all_config_scoped_00410b")
+        yield responses_access("test_query_all_config_scoped_00410c")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(
+            gen_responses,
+            params={"state": "merged", "config": [{"switch_ip": "192.168.1.10"}]},
+        )
+        result = orchestrator.query_all()
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "Ethernet1/1"
+    assert result[0]["switchIp"] == "192.168.1.10"
+
+
+def test_ethernet_access_orchestrator_00415() -> None:
+    """
+    # Summary
+
+    Verify `query_all` stays fabric-wide for `state: overridden`: every switch in the fabric is queried even
+    when the user config is empty.
+
+    ## Test
+
+    - state is `overridden`; config is empty
+    - Fabric summary returns 200; switches list returns two switches
+    - Both switches are queried for interfaces despite the empty config
+    - Result contains the accessHost interface from each switch
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._switches_to_query()
+    - EthernetBaseOrchestrator.query_all()
+    """
+
+    def responses():
+        yield responses_access("test_query_all_overridden_fabric_wide_00415a")
+        yield responses_access("test_query_all_overridden_fabric_wide_00415b")
+        yield responses_access("test_query_all_overridden_fabric_wide_00415c")
+        yield responses_access("test_query_all_overridden_fabric_wide_00415d")
+
+    gen_responses = ResponseGenerator(responses())
+
+    with does_not_raise():
+        orchestrator = _build_orchestrator(
+            gen_responses,
+            params={"state": "overridden", "config": []},
+        )
+        result = orchestrator.query_all()
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert {iface["interfaceName"] for iface in result} == {"Ethernet1/1", "Ethernet2/1"}
 
 
 def test_ethernet_access_orchestrator_00420() -> None:
