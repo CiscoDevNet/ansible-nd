@@ -369,7 +369,6 @@ EXAMPLES = r"""
               access_vlan: 100
     deploy: false
     state: merged
-
 """
 
 RETURN = r"""
