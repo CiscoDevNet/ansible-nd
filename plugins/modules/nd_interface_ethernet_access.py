@@ -469,7 +469,9 @@ def expand_config(config_list):
 
     expanded = []
     for group in config_list:
-        interface_names = group.get("interface_names", [])
+        # `or []` (not a `.get` default) so an explicit `interface_names: ~` in YAML,
+        # which yields None, is treated as empty -- consistent with the validators above.
+        interface_names = group.get("interface_names") or []
         for name in interface_names:
             item = copy.deepcopy(group)
             item.pop("interface_names", None)
