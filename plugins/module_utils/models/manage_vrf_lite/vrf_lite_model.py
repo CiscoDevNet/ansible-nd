@@ -149,6 +149,19 @@ class VrfLiteModel(NDBaseModel):
             raise ValueError("vrf_name must be a non-empty string")
         return str(value).strip()
 
+    def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
+        """Exclude nested attachment deploy field from diff comparison."""
+        return self.model_dump(
+            by_alias=True,
+            exclude_none=True,
+            exclude={
+                "deploy": True,
+                "attach": {"__all__": {"deploy": True}},
+            },
+            mode="json",
+            **kwargs,
+        )
+
     @classmethod
     def from_response(cls, response: Dict[str, Any], **kwargs) -> "VrfLiteModel":
         return cls.model_validate(response, by_alias=True, by_name=True, **kwargs)

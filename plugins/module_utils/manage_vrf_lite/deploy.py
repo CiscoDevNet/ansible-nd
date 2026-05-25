@@ -59,19 +59,15 @@ def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
 
 
 def _needs_deployment(result: dict[str, Any], module: Any) -> bool:
+    """Return True only when actual config changes were applied.
+
+    Deploying against the controller when no configuration changed would
+    violate Ansible's idempotency contract.  A VRF that is still PENDING
+    from a previous run is a controller-side timing concern; the module
+    re-deploys only when the user's intent has actually been modified.
+    """
     if result.get("changed"):
         return True
 
     changed_vrfs = module.params.get("_changed_vrfs") or []
-    if changed_vrfs:
-        return True
-
-    not_in_sync = set(module.params.get("_not_in_sync_vrfs") or [])
-    if not not_in_sync:
-        return False
-
-    target_vrfs = set(_target_vrfs_for_deploy(module))
-    if not target_vrfs:
-        return False
-
-    return len(target_vrfs & not_in_sync) > 0
+    return bool(changed_vrfs)

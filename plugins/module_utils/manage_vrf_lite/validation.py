@@ -6,7 +6,6 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
-import ipaddress
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
@@ -15,6 +14,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common im
     append_runtime_warning,
     request_with_verify_settings,
     _raise_vrf_lite_error,
+    _resolve_serial,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_endpoints import (
     VrfLiteEndpoints,
@@ -32,19 +32,6 @@ def _coerce_switch_list(response: Any) -> list[dict[str, Any]]:
             return [item for item in switches if isinstance(item, dict)]
 
     return []
-
-
-def _is_ip_literal(value: Any) -> bool:
-    if not isinstance(value, str):
-        return False
-    text = value.strip()
-    if not text:
-        return False
-    try:
-        ipaddress.ip_address(text)
-        return True
-    except ValueError:
-        return False
 
 
 def _normalize_role(switch_data: dict[str, Any]) -> str:
@@ -69,27 +56,6 @@ def _is_external_connectivity_switch(switch_data: dict[str, Any]) -> bool:
         fabric_type = raw.get("fabricType") or raw.get("fabric_type")
 
     return str(fabric_type or "").strip().lower() == "externalconnectivity"
-
-
-def _resolve_serial(module: Any, switch_identifier: str) -> str:
-    if switch_identifier is None:
-        return ""
-
-    text = str(switch_identifier).strip()
-    if not text:
-        return ""
-
-    ip_to_sn = module.params.get("_ip_to_sn_mapping") or {}
-    if text in ip_to_sn:
-        return ip_to_sn[text]
-
-    if _is_ip_literal(text):
-        _raise_vrf_lite_error(
-            msg=("Switch identifier '{0}' appears to be an IP, but it could not " "be resolved to a fabric switch serial number.").format(text),
-            switch_id=text,
-        )
-
-    return text
 
 
 def _load_switch_inventory(module: Any, fabric_name: str) -> dict[str, dict[str, Any]]:
@@ -179,7 +145,10 @@ def validate_vrf_lite_write_guardrails(module: Any, model_instance: Any) -> None
     """
     Validate switch existence, role suitability, and platform support hints.
     """
-    attachments = model_instance.attach or []
+    if hasattr(model_instance, "switch_ip"):
+        attachments = [model_instance]
+    else:
+        attachments = model_instance.attach or []
     if not attachments:
         return
 
@@ -188,7 +157,8 @@ def validate_vrf_lite_write_guardrails(module: Any, model_instance: Any) -> None
     inventory = _load_switch_inventory(module, fabric_name)
 
     for attach in attachments:
-        serial_number = _resolve_serial(module, attach.ip_address)
+        switch_identifier = getattr(attach, "switch_ip", None) or getattr(attach, "ip_address", None)
+        serial_number = _resolve_serial(module, switch_identifier)
         if not serial_number:
             continue
 
@@ -200,7 +170,8 @@ def validate_vrf_lite_write_guardrails(module: Any, model_instance: Any) -> None
                 vrf_name=vrf_name,
             )
 
-        if not attach.vrf_lite:
+        vrf_lite_entries = getattr(attach, "extensions", None) or getattr(attach, "vrf_lite", None)
+        if not vrf_lite_entries:
             continue
 
         switch_data = inventory[serial_number]

@@ -273,9 +273,11 @@ def main() -> None:
         nd_state_machine = NDStateMachine(module=module, model_orchestrator=ManageVrfLiteOrchestrator)
         nd_state_machine.manage_state()
 
+        module.params["_changed_vrfs"] = sorted({item.vrf_name for item in nd_state_machine.sent})
+
         result = nd_state_machine.output.format()
         result.setdefault("current", result.get("after", []))
-        result = nd_state_machine.model_orchestrator.normalize_delete_result(result)
+        result = nd_state_machine.model_orchestrator.format_public_output(result)
 
         deploy_result = nd_state_machine.model_orchestrator.deploy_pending(result)
         if deploy_result:

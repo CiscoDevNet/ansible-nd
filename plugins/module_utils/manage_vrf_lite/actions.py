@@ -6,13 +6,13 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
-import ipaddress
+import json
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
-    _is_update_needed,
     _raise_vrf_lite_error,
+    _resolve_serial,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
     query_vrf_lite_state,
@@ -24,6 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_p
     build_instance_values,
     build_vrf_lite_extension_values,
     normalize_vrf_lite_list,
+    parse_instance_values,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -128,52 +129,6 @@ def _request_vrf_lite_payload(nd_v2: Any, path: str, verb: HttpVerbEnum, payload
     return response.get("DATA", {})
 
 
-def _is_ip_literal(value: Any) -> bool:
-    if not isinstance(value, str):
-        return False
-    candidate = value.strip()
-    if not candidate:
-        return False
-    try:
-        ipaddress.ip_address(candidate)
-        return True
-    except ValueError:
-        return False
-
-
-def _resolve_serial(module: Any, switch_identifier: str) -> str:
-    """Resolve management IP to serial when mapping is available."""
-    if switch_identifier is None:
-        return ""
-
-    text = str(switch_identifier).strip()
-    if not text:
-        return ""
-
-    mapping = module.params.get("_ip_to_sn_mapping") or {}
-    if text in mapping:
-        return mapping[text]
-
-    if _is_ip_literal(text):
-        _raise_vrf_lite_error(
-            msg="Switch identifier '{0}' appears to be an IP, but it could not be resolved to a serial number.".format(text),
-            switch_id=text,
-        )
-
-    return text
-
-
-def _mark_changed_vrf(module: Any, vrf_name: str) -> None:
-    changed_vrfs = module.params.get("_changed_vrfs")
-    if not isinstance(changed_vrfs, list):
-        changed_vrfs = []
-
-    if vrf_name not in changed_vrfs:
-        changed_vrfs.append(vrf_name)
-
-    module.params["_changed_vrfs"] = changed_vrfs
-
-
 def _ensure_vrf_exists(module: Any, vrf_name: str) -> None:
     known_vrfs = module.params.get("_known_vrfs") or []
     if vrf_name in known_vrfs:
@@ -231,168 +186,159 @@ def _reserve_dot1q_if_needed(nd_v2: Any, vrf_name: str, serial_number: str, lite
     return updated
 
 
-def _get_current_vrf_entry(module: Any, fabric_name: str, vrf_name: str) -> dict[str, Any] | None:
-    current = query_vrf_lite_state(module=module, fabric_name=fabric_name, filter_vrfs=set([vrf_name]))
-    if not current:
-        return None
-    return current[0]
+def _raw_attachment_entry(module: Any, vrf_name: str, serial_number: str) -> dict[str, Any]:
+    raw_vrf_attachment_map = module.params.get("_raw_vrf_attachment_map") or {}
+    raw_attachment_map = raw_vrf_attachment_map.get(vrf_name, {}) if isinstance(raw_vrf_attachment_map, dict) else {}
+    raw_attach = raw_attachment_map.get(serial_number) if isinstance(raw_attachment_map, dict) else None
+    return raw_attach if isinstance(raw_attach, dict) else {}
 
 
-def _build_have_attachment_map(module: Any, current_vrf: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    have_map: dict[str, dict[str, Any]] = {}
+def _empty_vrf_lite_extension_values(existing_extension_values: Any) -> str:
+    rendered = build_vrf_lite_extension_values(
+        [],
+        existing_extension_values=existing_extension_values,
+    )
+    if rendered:
+        return rendered
 
-    if not current_vrf:
-        return have_map
-
-    vlan_id = current_vrf.get("vlan_id")
-    for attach in current_vrf.get("attach", []) or []:
-        switch_identifier = attach.get("ip_address")
-        serial_number = _resolve_serial(module, switch_identifier)
-        if not serial_number:
-            continue
-
-        have_map[serial_number] = {
-            "vlan_id": vlan_id,
-            "import_evpn_rt": attach.get("import_evpn_rt") or "",
-            "export_evpn_rt": attach.get("export_evpn_rt") or "",
-            "vrf_lite": normalize_vrf_lite_list(attach.get("vrf_lite") or []),
-        }
-
-    return have_map
-
-
-def _get_delete_config_for_vrf(module: Any, vrf_name: str) -> dict[str, Any] | None:
-    """Return the user's delete intent for this VRF, when state is deleted."""
-    if module.params.get("state") != "deleted":
-        return None
-
-    for item in module.params.get("config") or []:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("vrf_name", "")).strip() == vrf_name:
-            return item
-
-    return None
-
-
-def _attachment_serials(module: Any, attachments: Any, have_map: dict[str, dict[str, Any]]) -> list[str]:
-    serials: list[str] = []
-    seen: set[str] = set()
-
-    for attach in attachments or []:
-        switch_identifier = attach.get("ip_address") if isinstance(attach, dict) else getattr(attach, "ip_address", None)
-        serial_number = _resolve_serial(module, switch_identifier)
-        if serial_number in have_map and serial_number not in seen:
-            serials.append(serial_number)
-            seen.add(serial_number)
-
-    return serials
-
-
-def _serials_to_detach_for_delete(module: Any, vrf_name: str, model_instance: Any, have_map: dict[str, dict[str, Any]]) -> list[str]:
-    delete_config = _get_delete_config_for_vrf(module, vrf_name)
-    if delete_config is not None:
-        attachments = delete_config.get("attach") or []
-        if attachments:
-            return _attachment_serials(module, attachments, have_map)
-        return sorted(have_map.keys())
-
-    if model_instance.attach:
-        return _attachment_serials(module, model_instance.attach, have_map)
-
-    return sorted(have_map.keys())
-
-
-def _resolve_vrf_vlan_id(model_instance: Any, current_vrf: dict[str, Any] | None) -> int:
-    if model_instance.vlan_id is not None:
-        return int(model_instance.vlan_id)
-
-    if isinstance(current_vrf, dict):
-        current_vlan = current_vrf.get("vlan_id")
-        if current_vlan not in (None, ""):
-            try:
-                return int(current_vlan)
-            except (TypeError, ValueError):
-                pass
-
-    _raise_vrf_lite_error(
-        msg=("vlan_id is required for VRF '{0}' because the current VRF VLAN " "could not be determined from the controller.").format(model_instance.vrf_name),
-        vrf_name=model_instance.vrf_name,
+    return build_vrf_lite_extension_values(
+        [],
+        existing_extension_values={
+            "VRF_LITE_CONN": json.dumps({"VRF_LITE_CONN": []}, separators=(",", ":")),
+            "MULTISITE_CONN": json.dumps({"MULTISITE_CONN": []}, separators=(",", ":")),
+        },
     )
 
 
-def _build_want_attachment_maps(
+def _build_instance_values_for_payload(import_evpn_rt: Any, export_evpn_rt: Any, existing_instance_values: Any = None) -> str:
+    existing = parse_instance_values(existing_instance_values)
+    if not existing:
+        return build_instance_values(import_evpn_rt, export_evpn_rt)
+
+    existing["switchRouteTargetImportEvpn"] = import_evpn_rt or ""
+    existing["switchRouteTargetExportEvpn"] = export_evpn_rt or ""
+    for key in ("loopbackId", "loopbackIpAddress", "loopbackIpV6Address"):
+        existing.setdefault(key, "")
+
+    return json.dumps(existing, separators=(",", ":"))
+
+
+def _entry_extensions(entry: Any) -> list[dict[str, Any]]:
+    extensions = getattr(entry, "extensions", None) or []
+    return [
+        item.model_dump(by_alias=False, exclude_none=True) if hasattr(item, "model_dump") else dict(item)
+        for item in extensions
+    ]
+
+
+def _try_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _entry_vlan_id(module: Any, entry: Any, raw_attach: dict[str, Any] | None = None) -> int:
+    if getattr(entry, "vlan_id", None) is not None:
+        return int(entry.vlan_id)
+
+    vlan_map = module.params.get("_vrf_lite_vrf_vlan_map") or {}
+    mapped_vlan = vlan_map.get(entry.vrf_name)
+    if mapped_vlan not in (None, ""):
+        vlan = _try_int(mapped_vlan)
+        if vlan is not None:
+            return vlan
+
+    if isinstance(raw_attach, dict) and raw_attach.get("vlan") not in (None, ""):
+        vlan = _try_int(raw_attach.get("vlan"))
+        if vlan is not None:
+            return vlan
+
+    _raise_vrf_lite_error(
+        msg=("vlan_id is required for VRF '{0}' because the current VRF VLAN " "could not be determined from the controller.").format(entry.vrf_name),
+        vrf_name=entry.vrf_name,
+        switch_ip=entry.switch_ip,
+    )
+    raise RuntimeError("unreachable")  # _raise_vrf_lite_error always raises
+
+
+def build_attach_payload_for_entry(module: Any, nd_v2: Any, entry: Any) -> dict[str, Any]:
+    """Build one NDFC attachment row for one flat VRF Lite entry."""
+    serial_number = _resolve_serial(module, entry.switch_ip)
+    raw_attach = _raw_attachment_entry(module, entry.vrf_name, serial_number)
+    vlan_id = _entry_vlan_id(module, entry, raw_attach)
+
+    resolved_extensions = []
+    for lite_item in normalize_vrf_lite_list(_entry_extensions(entry)):
+        resolved_extensions.append(_reserve_dot1q_if_needed(nd_v2, entry.vrf_name, serial_number, lite_item))
+
+    extension_values = build_vrf_lite_extension_values(
+        resolved_extensions,
+        existing_extension_values=raw_attach.get("extension_values") if isinstance(raw_attach, dict) else None,
+    )
+    instance_values = _build_instance_values_for_payload(
+        getattr(entry, "import_evpn_rt", None),
+        getattr(entry, "export_evpn_rt", None),
+        raw_attach.get("instance_values") if isinstance(raw_attach, dict) else None,
+    )
+
+    return {
+        "fabric": module.params.get("fabric_name"),
+        "vrfName": entry.vrf_name,
+        "serialNumber": serial_number,
+        "vlan": vlan_id,
+        "deployment": True,
+        "isAttached": True,
+        "extensionValues": extension_values,
+        "instanceValues": instance_values,
+        "freeformConfig": "",
+    }
+
+
+def _build_detach_payload(
     module: Any,
-    nd_v2: Any,
-    model_instance: Any,
-    current_vrf: dict[str, Any] | None,
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Return (want_normalized_map, want_payload_map) keyed by serial number."""
-
-    want_normalized: dict[str, dict[str, Any]] = {}
-    want_payloads: dict[str, dict[str, Any]] = {}
-
-    vrf_name = model_instance.vrf_name
-    raw_vrf_attachment_map = module.params.get("_raw_vrf_attachment_map") or {}
-    raw_attachment_map = raw_vrf_attachment_map.get(vrf_name, {}) if isinstance(raw_vrf_attachment_map, dict) else {}
-
-    attachments = model_instance.attach or []
-    vlan_id = None
-    if attachments:
-        vlan_id = _resolve_vrf_vlan_id(model_instance=model_instance, current_vrf=current_vrf)
-
-    for attach in attachments:
-        serial_number = _resolve_serial(module, attach.ip_address)
-        if not serial_number:
-            continue
-
-        lite_items = [item.model_dump(by_alias=False, exclude_none=True) for item in (attach.vrf_lite or [])]
-        lite_items = normalize_vrf_lite_list(lite_items)
-        resolved_lite_items: list[dict[str, Any]] = []
-        for lite_item in lite_items:
-            resolved_lite_items.append(_reserve_dot1q_if_needed(nd_v2, vrf_name, serial_number, lite_item))
-
-        raw_attach = raw_attachment_map.get(serial_number) if isinstance(raw_attachment_map, dict) else None
-        extension_values = build_vrf_lite_extension_values(
-            resolved_lite_items,
-            existing_extension_values=raw_attach.get("extension_values") if isinstance(raw_attach, dict) else None,
-        )
-        instance_values = build_instance_values(attach.import_evpn_rt, attach.export_evpn_rt)
-
-        want_normalized[serial_number] = {
-            "vlan_id": vlan_id,
-            "import_evpn_rt": attach.import_evpn_rt or "",
-            "export_evpn_rt": attach.export_evpn_rt or "",
-            "vrf_lite": normalize_vrf_lite_list(resolved_lite_items),
-        }
-
-        want_payloads[serial_number] = {
-            "fabric": module.params.get("fabric_name"),
-            "vrfName": vrf_name,
-            "serialNumber": serial_number,
-            "vlan": vlan_id if vlan_id is not None else 0,
-            "deployment": model_instance.deploy is not False and attach.deploy is not False,
-            "isAttached": True,
-            "extensionValues": extension_values,
-            "instanceValues": instance_values,
-            "freeformConfig": "",
-        }
-
-    return want_normalized, want_payloads
-
-
-def _build_detach_payload(module: Any, vrf_name: str, serial_number: str, vlan_id: int | None) -> dict[str, Any]:
+    vrf_name: str,
+    serial_number: str,
+    vlan_id: Any,
+    extension_values: Any = None,
+    instance_values: Any = None,
+) -> dict[str, Any]:
+    # NDFC does not support a true "detach" on VRF Lite attachments.
+    # The correct way to remove VRF Lite config from a switch is to POST
+    # the attachment row with deployment=True, isAttached=True, and empty
+    # extensionValues/instanceValues. This clears the VRF Lite extension
+    # data while keeping the switch attachment itself intact.
     return {
         "fabric": module.params.get("fabric_name"),
         "vrfName": vrf_name,
         "serialNumber": serial_number,
         "vlan": vlan_id if vlan_id is not None else 0,
-        "deployment": False,
-        "isAttached": False,
-        "extensionValues": "",
-        "instanceValues": build_instance_values("", ""),
+        "deployment": True,
+        "isAttached": True,
+        "extensionValues": _empty_vrf_lite_extension_values(extension_values),
+        "instanceValues": instance_values if instance_values not in (None, "") else build_instance_values("", ""),
         "freeformConfig": "",
     }
+
+
+def build_detach_payload_for_entry(module: Any, entry: Any) -> dict[str, Any]:
+    """Build one NDFC row that removes VRF Lite data for one flat entry."""
+    serial_number = _resolve_serial(module, entry.switch_ip)
+    raw_attach = _raw_attachment_entry(module, entry.vrf_name, serial_number)
+    vlan_id = getattr(entry, "vlan_id", None)
+    if vlan_id in (None, ""):
+        vlan_id = raw_attach.get("vlan")
+    if vlan_id in (None, ""):
+        vlan_id = (module.params.get("_vrf_lite_vrf_vlan_map") or {}).get(entry.vrf_name)
+
+    return _build_detach_payload(
+        module=module,
+        vrf_name=entry.vrf_name,
+        serial_number=serial_number,
+        vlan_id=vlan_id,
+        extension_values=raw_attach.get("extension_values"),
+        instance_values=raw_attach.get("instance_values"),
+    )
 
 
 def _collect_attachment_failures(response: Any) -> list[str]:
@@ -432,41 +378,3 @@ def _post_attachment_payload(nd_v2: Any, fabric_name: str, vrf_name: str, lan_at
             response=response,
         )
     return response
-
-
-class AttachmentReconciler:
-    """Build the attachment POST payloads needed to reconcile one VRF."""
-
-    def __init__(self, module: Any, nd_v2: Any, model_instance: Any, current_vrf: dict[str, Any] | None) -> None:
-        self.module = module
-        self.nd_v2 = nd_v2
-        self.model_instance = model_instance
-        self.current_vrf = current_vrf
-        self.vrf_name = model_instance.vrf_name
-        self.have_map = _build_have_attachment_map(module, current_vrf)
-
-    def sync_payloads(self, replace_mode: bool) -> list[dict[str, Any]]:
-        changes: list[dict[str, Any]] = []
-        want_map, want_payloads = _build_want_attachment_maps(self.module, self.nd_v2, self.model_instance, self.current_vrf)
-
-        for serial_number, want_cfg in want_map.items():
-            have_cfg = self.have_map.get(serial_number)
-            if have_cfg is None or _is_update_needed(want_cfg, have_cfg):
-                changes.append(want_payloads[serial_number])
-
-        if replace_mode:
-            vlan_for_detach = self.current_vrf.get("vlan_id") if self.current_vrf else None
-            for serial_number in sorted(self.have_map.keys()):
-                if serial_number in want_map:
-                    continue
-                changes.append(_build_detach_payload(self.module, self.vrf_name, serial_number, vlan_for_detach))
-
-        return changes
-
-    def detach_payloads(self) -> list[dict[str, Any]]:
-        if not self.have_map:
-            return []
-
-        serials_to_detach = _serials_to_detach_for_delete(self.module, self.vrf_name, self.model_instance, self.have_map)
-        vlan_for_detach = self.current_vrf.get("vlan_id") if self.current_vrf else None
-        return [_build_detach_payload(self.module, self.vrf_name, serial, vlan_for_detach) for serial in serials_to_detach]

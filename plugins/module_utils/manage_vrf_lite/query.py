@@ -105,9 +105,114 @@ def _query_vrf_attachments(module: Any, nd_v2: Any, fabric_name: str, vrf_names:
     return _coerce_list(response)
 
 
-def query_vrf_lite_state(module: Any, fabric_name: str, filter_vrfs: set[str] | None = None) -> list[dict[str, Any]]:
+def _query_vrf_switch_details(
+    module: Any,
+    nd_v2: Any,
+    fabric_name: str,
+    vrf_name: str,
+    serial_numbers: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Return per-switch VRF attachment details keyed by serial number.
+
+    This makes one additional API call per VRF that has attachments lacking
+    ``extensionValues`` in the bulk list response (e.g. PENDING state rows).
+    On fabrics with many VRFs this may add latency; it is skipped entirely
+    when all attachments already carry ``extensionValues``.
+    """
+    if not serial_numbers:
+        return {}
+
+    path = VrfLiteEndpoints.vrf_switch(fabric_name, vrf_name, ",".join(serial_numbers))
+    response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.GET)
+
+    detail_map: dict[str, dict[str, Any]] = {}
+    for vrf_switch in _coerce_list(response):
+        for switch_detail in vrf_switch.get("switchDetailsList") or []:
+            if not isinstance(switch_detail, dict):
+                continue
+
+            serial_number = switch_detail.get("serialNumber")
+            if not serial_number:
+                continue
+
+            detail_map[str(serial_number).strip()] = switch_detail
+
+    return detail_map
+
+
+def _value_from_attachment_or_detail(attach: dict[str, Any], detail: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in attach:
+            value = attach.get(key)
+            if value is not None:
+                return value
+
+    for key in keys:
+        value = detail.get(key)
+        if value is not None:
+            return value
+
+    return None
+
+
+def _flatten_to_entries(nested: list[dict[str, Any]], module: Any = None) -> list[dict[str, Any]]:
+    """Convert nested VRF list into a flat list of per-(vrf, switch) entries.
+
+    Each entry has the shape expected by ``VrfLiteAttachmentEntry``:
+    ``vrf_name``, ``switch_ip``, ``vlan_id``, ``deploy``, ``import_evpn_rt``,
+    ``export_evpn_rt``, and ``extensions``. VRFs without attachments produce
+    no entries; the state machine handles their absence via diff identifiers.
+    """
+    entries: list[dict[str, Any]] = []
+    for vrf in nested or []:
+        if not isinstance(vrf, dict):
+            continue
+        vrf_name = vrf.get("vrf_name")
+        if not vrf_name:
+            continue
+        vrf_level_vlan = vrf.get("vlan_id")
+        for attach in vrf.get("attach") or []:
+            if not isinstance(attach, dict):
+                continue
+            switch_identifier = attach.get("ip_address")
+            if not switch_identifier:
+                continue
+            switch_ip = switch_identifier
+            mapping = {}
+            if module is not None and isinstance(getattr(module, "params", None), dict):
+                mapping = module.params.get("_ip_to_sn_mapping") or {}
+            if switch_identifier in mapping:
+                switch_ip = mapping[switch_identifier]
+            entry: dict[str, Any] = {
+                "vrf_name": vrf_name,
+                "switch_ip": switch_ip,
+                "vlan_id": vrf_level_vlan,
+                "deploy": attach.get("deploy"),
+                "import_evpn_rt": attach.get("import_evpn_rt"),
+                "export_evpn_rt": attach.get("export_evpn_rt"),
+            }
+            extensions = attach.get("vrf_lite")
+            if extensions:
+                entry["extensions"] = extensions
+            entries.append({k: v for k, v in entry.items() if v is not None})
+
+    entries.sort(key=lambda item: (item.get("vrf_name", ""), item.get("switch_ip", "")))
+    return entries
+
+
+def query_vrf_lite_state(
+    module: Any,
+    fabric_name: str,
+    filter_vrfs: set[str] | None = None,
+    flat: bool = False,
+) -> list[dict[str, Any]]:
     """
     Query controller state and return normalized vrf-lite config shape.
+
+    When ``flat=True`` returns a flat list of per-(vrf_name, switch_ip)
+    attachment entries shaped for ``VrfLiteAttachmentEntry``. When
+    ``flat=False`` (default) returns the legacy nested list of VRFs with an
+    ``attach`` sub-list per VRF.
     """
     nd_v2 = NDModuleV2(module)
 
@@ -145,6 +250,43 @@ def query_vrf_lite_state(module: Any, fabric_name: str, filter_vrfs: set[str] | 
 
     not_in_sync_vrfs: set[str] = set()
     raw_vrf_attachment_map: dict[str, dict[str, dict[str, Any]]] = {}
+    switch_detail_map: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for vrf_attach in attachment_objects:
+        vrf_name = vrf_attach.get("vrfName")
+        if not vrf_name:
+            continue
+
+        vrf_name = str(vrf_name).strip()
+        if filter_vrfs and vrf_name not in filter_vrfs:
+            continue
+
+        serials_to_enrich: list[str] = []
+        for attach in vrf_attach.get("lanAttachList") or []:
+            if not isinstance(attach, dict):
+                continue
+
+            if "extensionValues" in attach:
+                continue
+
+            attach_state = str(attach.get("lanAttachState") or attach.get("lanAttachedState") or "").upper()
+            attached_value = attach.get("isLanAttached", attach.get("isAttached", False))
+            is_attached = attached_value is True or str(attached_value).strip().lower() in ("true", "1", "yes")
+            if not is_attached and attach_state not in ("PENDING", "OUT-OF-SYNC", "FAILED"):
+                continue
+
+            serial_number = attach.get("switchSerialNo") or attach.get("serialNumber")
+            if serial_number:
+                serials_to_enrich.append(str(serial_number).strip())
+
+        for serial_number, switch_detail in _query_vrf_switch_details(
+            module=module,
+            nd_v2=nd_v2,
+            fabric_name=fabric_name,
+            vrf_name=vrf_name,
+            serial_numbers=sorted(set(serials_to_enrich)),
+        ).items():
+            switch_detail_map[(vrf_name, serial_number)] = switch_detail
 
     for vrf_attach in attachment_objects:
         vrf_name = vrf_attach.get("vrfName")
@@ -175,6 +317,7 @@ def query_vrf_lite_state(module: Any, fabric_name: str, filter_vrfs: set[str] | 
 
             serial_number = attach.get("switchSerialNo") or attach.get("serialNumber")
             serial_number = str(serial_number).strip() if serial_number else ""
+            switch_detail = switch_detail_map.get((vrf_name, serial_number), {})
 
             ip_address = attach.get("ipAddress")
             if ip_address:
@@ -184,30 +327,40 @@ def query_vrf_lite_state(module: Any, fabric_name: str, filter_vrfs: set[str] | 
             else:
                 continue
 
-            attach_state = str(attach.get("lanAttachState") or "").upper()
-            attached_value = attach.get("isLanAttached", attach.get("isAttached", False))
+            attach_state = str(
+                _value_from_attachment_or_detail(attach, switch_detail, "lanAttachState", "lanAttachedState") or ""
+            ).upper()
+            attached_value = attach.get(
+                "isLanAttached",
+                attach.get("isAttached", switch_detail.get("islanAttached", switch_detail.get("isLanAttached", False))),
+            )
             is_attached = attached_value is True or str(attached_value).strip().lower() in ("true", "1", "yes")
+            extension_values = _value_from_attachment_or_detail(attach, switch_detail, "extensionValues")
             # For VRF Lite, include entries that have extension values even if
             # not yet lan-attached (pending save/deploy state).
             has_extension_values = bool(
-                attach.get("extensionValues") and str(attach.get("extensionValues")).strip()
-                and str(attach.get("extensionValues")).strip() != "[]"
+                extension_values and str(extension_values).strip()
+                and str(extension_values).strip() != "[]"
             )
             if not is_attached and not has_extension_values:
                 continue
 
+            instance_values_raw = _value_from_attachment_or_detail(attach, switch_detail, "instanceValues")
+            vrf_vlan_raw = _value_from_attachment_or_detail(attach, switch_detail, "vlanId", "vlan")
+            attachment_vlan_raw = _value_from_attachment_or_detail(switch_detail, attach, "vlan", "vlanId")
+
             if serial_number:
                 raw_vrf_attachment_map.setdefault(vrf_name, {})[serial_number] = {
-                    "extension_values": attach.get("extensionValues"),
-                    "instance_values": attach.get("instanceValues"),
-                    "vlan": attach.get("vlanId") if attach.get("vlanId") not in (None, "") else attach.get("vlan"),
+                    "extension_values": extension_values,
+                    "instance_values": instance_values_raw,
+                    "vlan": attachment_vlan_raw,
                 }
 
-            instance_values = parse_instance_values(attach.get("instanceValues"))
+            instance_values = parse_instance_values(instance_values_raw)
             import_evpn_rt = instance_values.get("switchRouteTargetImportEvpn")
             export_evpn_rt = instance_values.get("switchRouteTargetExportEvpn")
 
-            vrf_lite_list = parse_vrf_lite_extension_values(attach.get("extensionValues"))
+            vrf_lite_list = parse_vrf_lite_extension_values(extension_values)
             managed_fields_present = bool(vrf_lite_list) or import_evpn_rt not in (None, "") or export_evpn_rt not in (None, "")
             if not managed_fields_present:
                 continue
@@ -219,23 +372,18 @@ def query_vrf_lite_state(module: Any, fabric_name: str, filter_vrfs: set[str] | 
                 entry["deploy"] = True
 
             if entry.get("vlan_id") is None:
-                vlan = attach.get("vlanId")
-                if vlan in (None, ""):
-                    vlan = attach.get("vlan")
                 try:
-                    if vlan not in (None, ""):
-                        entry["vlan_id"] = int(vlan)
+                    if vrf_vlan_raw not in (None, ""):
+                        entry["vlan_id"] = int(vrf_vlan_raw)
                 except Exception:
                     pass
 
             attach_item = {
                 "ip_address": ip_address,
                 "deploy": deployed,
+                "import_evpn_rt": import_evpn_rt if import_evpn_rt is not None else "",
+                "export_evpn_rt": export_evpn_rt if export_evpn_rt is not None else "",
             }
-            if import_evpn_rt not in (None, ""):
-                attach_item["import_evpn_rt"] = import_evpn_rt
-            if export_evpn_rt not in (None, ""):
-                attach_item["export_evpn_rt"] = export_evpn_rt
 
             if vrf_lite_list:
                 attach_item["vrf_lite"] = vrf_lite_list
@@ -251,5 +399,12 @@ def query_vrf_lite_state(module: Any, fabric_name: str, filter_vrfs: set[str] | 
     module.params["_not_in_sync_vrfs"] = sorted(not_in_sync_vrfs)
     module.params["_known_vrfs"] = sorted(known_vrfs)
     module.params["_raw_vrf_attachment_map"] = raw_vrf_attachment_map
+    module.params["_vrf_lite_vrf_vlan_map"] = {
+        item.get("vrf_name"): item.get("vlan_id")
+        for item in result
+        if item.get("vrf_name") and item.get("vlan_id") is not None
+    }
 
+    if flat:
+        return _flatten_to_entries(result, module=module)
     return result

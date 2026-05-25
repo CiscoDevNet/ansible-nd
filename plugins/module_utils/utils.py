@@ -37,8 +37,18 @@ def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remo
     return result
 
 
-def issubset(subset: Any, superset: Any) -> bool:
-    """Check if subset is contained in superset."""
+def issubset(subset: Any, superset: Any, allow_superset: bool = False) -> bool:
+    """Check if subset is contained in superset.
+
+    Args:
+        subset: The value to check.
+        superset: The value to check against.
+        allow_superset: When True, list element matching is one-directional:
+            an element in ``subset`` is considered matched when it is a subset
+            of a candidate in ``superset``, even if the candidate has
+            additional keys.  When False (default) both directions are
+            required, which is equivalent to equality for lists of dicts.
+    """
     if type(subset) is not type(superset):
         return False
 
@@ -50,7 +60,11 @@ def issubset(subset: Any, superset: Any) -> bool:
             remaining = list(superset)
             for item in subset:
                 for index, candidate in enumerate(remaining):
-                    if issubset(item, candidate) and issubset(candidate, item):
+                    if allow_superset:
+                        match = issubset(item, candidate, allow_superset=True)
+                    else:
+                        match = issubset(item, candidate) and issubset(candidate, item)
+                    if match:
                         del remaining[index]
                         break
                 else:
@@ -65,7 +79,7 @@ def issubset(subset: Any, superset: Any) -> bool:
         if key not in superset:
             return False
 
-        if not issubset(value, superset[key]):
+        if not issubset(value, superset[key], allow_superset=allow_superset):
             return False
 
     return True

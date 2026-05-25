@@ -6,8 +6,8 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
-import json
-from typing import Any
+import ipaddress
+from typing import Any, NoReturn
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exceptions import (
     VrfLiteResourceError,
@@ -19,7 +19,7 @@ DEFAULT_CONFIG_ACTION_TYPE = "switch"
 CONFIG_ACTION_TYPE_CHOICES = ("switch", "global")
 
 
-def _raise_vrf_lite_error(msg: str, **details: Any) -> None:
+def _raise_vrf_lite_error(msg: str, **details: Any) -> NoReturn:
     raise VrfLiteResourceError(msg=msg, **details)
 
 
@@ -33,6 +33,46 @@ def _get_params(source: Any) -> dict[str, Any]:
         return params
 
     return {}
+
+
+def _is_ip_literal(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+
+    text = value.strip()
+    if not text:
+        return False
+
+    try:
+        ipaddress.ip_address(text)
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_serial(module: Any, switch_identifier: Any) -> str:
+    """Resolve a switch management IP to serial when the query cache has it."""
+    if switch_identifier is None:
+        return ""
+
+    text = str(switch_identifier).strip()
+    if not text:
+        return ""
+
+    mapping = module.params.get("_ip_to_sn_mapping") or {}
+    if text in mapping:
+        return mapping[text]
+
+    if _is_ip_literal(text):
+        _raise_vrf_lite_error(
+            msg=(
+                "Switch identifier '{0}' appears to be an IP, but it could not "
+                "be resolved to a fabric switch serial number."
+            ).format(text),
+            switch_id=text,
+        )
+
+    return text
 
 
 def append_runtime_warning(source: Any, message: str) -> None:
@@ -60,20 +100,6 @@ def get_runtime_warnings(source: Any) -> list[str]:
         seen.add(text)
         normalized.append(text)
     return normalized
-
-
-def _canonicalize_for_compare(value: Any) -> Any:
-    """Normalize nested structures for deterministic comparison."""
-    if isinstance(value, dict):
-        return {key: _canonicalize_for_compare(item) for key, item in sorted(value.items())}
-    if isinstance(value, list):
-        normalized_items = [_canonicalize_for_compare(item) for item in value]
-        return sorted(normalized_items, key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=True))
-    return value
-
-
-def _is_update_needed(want: dict[str, Any], have: dict[str, Any]) -> bool:
-    return _canonicalize_for_compare(want) != _canonicalize_for_compare(have)
 
 
 def get_verify_settings(source: Any) -> dict[str, Any]:

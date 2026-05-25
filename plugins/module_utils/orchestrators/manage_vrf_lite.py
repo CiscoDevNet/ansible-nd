@@ -7,6 +7,7 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 import json
+from collections import defaultdict
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
@@ -18,20 +19,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpFabricVrfsAttachmentsGet,
     EpFabricVrfsAttachmentsPost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_model import (
-    VrfLiteModel,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions import (
-    AttachmentReconciler,
     _ensure_vrf_exists,
-    _get_current_vrf_entry,
-    _mark_changed_vrf,
     _post_attachment_payload,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
-    NDBaseOrchestrator,
+    build_attach_payload_for_entry,
+    build_detach_payload_for_entry,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     append_runtime_warning,
@@ -48,6 +41,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy im
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exceptions import (
     VrfLiteResourceError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.config_transform import (
+    explode_playbook_to_entries,
+    group_attachment_entries_to_vrfs,
+    replacement_scope_vrfs,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
     _build_filter_set,
     query_vrf_lite_state,
@@ -58,47 +56,41 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_e
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.validation import (
     validate_vrf_lite_write_guardrails,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_attachment_entry import (
+    VrfLiteAttachmentEntry,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule as NDModuleV2
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
+    NDBaseOrchestrator,
+)
 
 
 class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
-    """VRF Lite resource adapter for the generic ND state machine.
+    """Attachment-level VRF Lite adapter for the generic ND state machine."""
 
-    The base state machine still decides merged/replaced/overridden/deleted
-    lifecycle. This orchestrator adapts those generic method calls to VRF
-    Lite's attachment API: create/update are attachment sync POSTs, delete is a
-    detach POST, query is normalized from several controller reads, and deploy
-    is a separate save/deploy action.
-    """
+    model_class: ClassVar[type[NDBaseModel]] = VrfLiteAttachmentEntry
+    supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_delete: ClassVar[bool] = True
 
-    model_class: ClassVar[type[NDBaseModel]] = VrfLiteModel
-
-    # Endpoint declarations document the controller surface.
-    # VRF Lite uses a POST-based sub-resource API, so generic CRUD methods
-    # are intentionally overridden.
     create_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsPost
     update_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsPost
     delete_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsPost
     query_one_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsGet
     query_all_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsGet
-
-    # Module params preparation (called before orchestrator creation)
+    create_bulk_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsPost
+    delete_bulk_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsPost
 
     @staticmethod
     def prepare_module_params(module: Any, module_config: Any, normalized_config: list[dict[str, Any]] | None = None) -> None:
-        """Set up module.params for the orchestrator and state machine.
-
-        Handles input validation, config_actions normalization, gathered state
-        preparation, and runtime state initialization. Called once from the
-        module's main() before NDStateMachine creation.
-        """
+        """Normalize module params while preserving nested playbook config."""
         state = module_config.state
         if normalized_config is None:
             normalized_config = module_config.to_runtime_config()
         config_actions = get_config_actions(module.params)
         verify_settings = get_verify_settings(module.params)
 
-        # Validate gathered + explicit save/deploy conflict
         if state == "gathered":
             raw_module_args = ManageVrfLiteOrchestrator._get_raw_module_args()
             raw_config_actions = raw_module_args.get("config_actions")
@@ -118,19 +110,17 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                 "type": config_actions.get("type", "switch"),
             }
 
-        # Validate deploy requires save
         if config_actions.get("deploy") and not config_actions.get("save"):
             module.fail_json(msg="Invalid config_actions: config_actions.deploy=true requires config_actions.save=true")
 
-        # Warn about force on non-deleted states
         if module_config.force and state != "deleted":
             append_runtime_warning(
                 module.params,
                 "Parameter 'force' only applies to state 'deleted'. Ignoring force for state '{0}'.".format(state),
             )
 
-        # Normalize module params
         module.params["config"] = normalized_config
+        module.params["_vrf_lite_nested_config"] = list(normalized_config)
         module.params["config_actions"] = config_actions
         module.params["verify"] = verify_settings
 
@@ -140,24 +130,20 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         else:
             module.params["_gather_filter_config"] = []
 
-        # Validate deleted requires config
-        if state == "deleted" and not module.params.get("config"):
+        if state == "deleted" and not normalized_config:
             module.fail_json(msg="Config parameter is required for state 'deleted'. Specify one or more vrf_name entries in config.")
 
-        # Initialize runtime state
         module.params["_changed_vrfs"] = []
-        module.params["_vrf_lite_delete_attempted"] = False
-        module.params["_vrf_lite_delete_posted"] = False
+        module.params["_replace_scope_vrfs"] = []
         module.params["_not_in_sync_vrfs"] = []
         module.params["_ip_to_sn_mapping"] = {}
         module.params["_sn_to_ip_mapping"] = {}
+        module.params["_vrf_lite_vrf_vlan_map"] = {}
         module.params["_have"] = []
         module.params["_have_loaded"] = False
         module.params["_raw_vrf_attachment_map"] = {}
         module.params["_fabric_switch_inventory"] = {}
-        module.params["_warnings"] = (
-            list(module.params.get("_warnings")) if isinstance(module.params.get("_warnings"), list) else []
-        )
+        module.params["_warnings"] = list(module.params.get("_warnings")) if isinstance(module.params.get("_warnings"), list) else []
 
     @staticmethod
     def _get_raw_module_args() -> dict[str, Any]:
@@ -182,144 +168,122 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         except Exception:
             return {}
 
-    # Private helpers
-
     def _module(self) -> Any:
-        """Access the AnsibleModule instance through REST infrastructure."""
         return self.rest_send.sender.ansible_module
 
-    # CRUD operations adapt generic state-machine calls to VRF Lite's
-    # attachment sub-resource API.
+    def _public_scope_vrfs(self) -> list[str]:
+        module = self._module()
+        state = module.params.get("state", "merged")
+        if state == "gathered":
+            config = module.params.get("_gather_filter_config") or []
+        else:
+            config = module.params.get("_vrf_lite_nested_config") or module.params.get("config") or []
+        return replacement_scope_vrfs(config)
+
+    def normalize_proposed_config(self, config: list[dict[str, Any]], current: list[dict[str, Any]], state: str) -> list[dict[str, Any]]:
+        """Explode nested user config into flat attachment entries for the state machine."""
+        module = self._module()
+        if state == "replaced":
+            module.params["_replace_scope_vrfs"] = replacement_scope_vrfs(config)
+        return explode_playbook_to_entries(config=config, module=module, state=state, current_entries=current)
+
+    def get_replaced_deletion_items(
+        self,
+        before: NDConfigCollection,
+        proposed: NDConfigCollection,
+        existing: NDConfigCollection,
+    ) -> list[NDBaseModel]:
+        """Delete omitted attachments only for VRFs mentioned by replaced state."""
+        scope_vrfs = set(self._module().params.get("_replace_scope_vrfs") or [])
+        if not scope_vrfs:
+            return []
+
+        proposed_keys = set(proposed.keys())
+        items = []
+        for item in before:
+            if getattr(item, "vrf_name", None) not in scope_vrfs:
+                continue
+            if item.get_identifier_value() in proposed_keys:
+                continue
+            current = existing.get(item.get_identifier_value())
+            if current is not None:
+                items.append(current)
+        return items
 
     def query_all(self, **kwargs: Any) -> list[dict[str, Any]]:
-        return self._query_current_state()
+        return self._query_current_state(flat=True)
 
     def create(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
-        """Create VRF Lite attachment intent by posting required attach rows."""
-        module = self._module()
-        if module.check_mode:
-            return model_instance.to_config()
-
-        fabric_name = module.params.get("fabric_name")
-        vrf_name = model_instance.vrf_name
-
-        try:
-            _ensure_vrf_exists(module, vrf_name)
-            validate_vrf_lite_write_guardrails(module=module, model_instance=model_instance)
-
-            nd_v2 = NDModuleV2(module)
-            current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
-            reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
-            changes = reconciler.sync_payloads(replace_mode=False)
-
-            if not changes:
-                return current_vrf or {}
-
-            response = _post_attachment_payload(nd_v2, fabric_name, vrf_name, changes)
-            _mark_changed_vrf(module, vrf_name)
-            return response
-        except NDModuleError as error:
-            error_dict = error.to_dict()
-            if "msg" in error_dict:
-                error_dict["api_error_msg"] = error_dict.pop("msg")
-            _raise_vrf_lite_error(msg="Create failed for {0}: {1}".format(model_instance.get_identifier_value(), error.msg), **error_dict)
-        except VrfLiteResourceError:
-            raise
-        except Exception as error:
-            _raise_vrf_lite_error(
-                msg="Create failed for {0}: {1}".format(model_instance.get_identifier_value(), error),
-                exception_type=type(error).__name__,
-            )
+        return self.create_bulk([model_instance], **kwargs)
 
     def update(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
-        """Update VRF Lite attachment intent by posting changed attach/detach rows."""
+        return self._post_attach_entries([model_instance])
+
+    def delete(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.delete_bulk([model_instance], **kwargs)
+
+    def create_bulk(self, model_instances: list[Any], **kwargs: Any) -> dict[str, Any]:
+        return self._post_attach_entries(model_instances)
+
+    def delete_bulk(self, model_instances: list[Any], **kwargs: Any) -> dict[str, Any]:
+        return self._post_detach_entries(model_instances)
+
+    def _validate_attach_entries(self, entries: list[Any]) -> None:
+        module = self._module()
+        seen_vrfs = set()
+        for entry in entries:
+            if entry.vrf_name not in seen_vrfs:
+                _ensure_vrf_exists(module, entry.vrf_name)
+                seen_vrfs.add(entry.vrf_name)
+            validate_vrf_lite_write_guardrails(module=module, model_instance=entry)
+
+    def _post_grouped_rows(self, rows_by_vrf: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+        module = self._module()
+        nd_v2 = NDModuleV2(module)
+        responses = []
+        for vrf_name in sorted(rows_by_vrf):
+            rows = rows_by_vrf[vrf_name]
+            if not rows:
+                continue
+            responses.append(
+                {
+                    "vrf_name": vrf_name,
+                    "response": _post_attachment_payload(nd_v2, module.params.get("fabric_name"), vrf_name, rows),
+                }
+            )
+        return {"response": responses}
+
+    def _post_attach_entries(self, entries: list[Any]) -> dict[str, Any]:
+        if not entries:
+            return {}
         module = self._module()
         if module.check_mode:
-            return model_instance.to_config()
+            return {"planned": [entry.to_config() for entry in entries]}
 
-        fabric_name = module.params.get("fabric_name")
-        vrf_name = model_instance.vrf_name
-        replace_mode = module.params.get("state") in ("replaced", "overridden")
+        self._validate_attach_entries(entries)
+        nd_v2 = NDModuleV2(module)
+        rows_by_vrf: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for entry in entries:
+            rows_by_vrf[entry.vrf_name].append(build_attach_payload_for_entry(module, nd_v2, entry))
+        return self._post_grouped_rows(rows_by_vrf)
 
-        try:
-            _ensure_vrf_exists(module, vrf_name)
-            validate_vrf_lite_write_guardrails(module=module, model_instance=model_instance)
-
-            nd_v2 = NDModuleV2(module)
-            current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
-            reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
-            changes = reconciler.sync_payloads(replace_mode=replace_mode)
-
-            if not changes:
-                return current_vrf or {}
-
-            response = _post_attachment_payload(nd_v2, fabric_name, vrf_name, changes)
-            _mark_changed_vrf(module, vrf_name)
-            return response
-        except NDModuleError as error:
-            error_dict = error.to_dict()
-            if "msg" in error_dict:
-                error_dict["api_error_msg"] = error_dict.pop("msg")
-            _raise_vrf_lite_error(msg="Update failed for {0}: {1}".format(model_instance.get_identifier_value(), error.msg), **error_dict)
-        except VrfLiteResourceError:
-            raise
-        except Exception as error:
-            _raise_vrf_lite_error(
-                msg="Update failed for {0}: {1}".format(model_instance.get_identifier_value(), error),
-                exception_type=type(error).__name__,
-            )
-
-    def delete(self, model_instance: Any, **kwargs: Any) -> bool:
-        """Detach VRF Lite attachment intent by posting detach rows."""
+    def _post_detach_entries(self, entries: list[Any]) -> dict[str, Any]:
+        if not entries:
+            return {}
         module = self._module()
         if module.check_mode:
-            return True
+            return {"planned": [entry.to_config() for entry in entries]}
 
-        fabric_name = module.params.get("fabric_name")
-        vrf_name = model_instance.vrf_name
-        module.params["_vrf_lite_delete_attempted"] = True
-        module.params["_vrf_lite_delete_posted"] = False
-
-        try:
-            current_vrf = _get_current_vrf_entry(module, fabric_name, vrf_name)
-            if not current_vrf:
-                return False
-
-            nd_v2 = NDModuleV2(module)
-            reconciler = AttachmentReconciler(module=module, nd_v2=nd_v2, model_instance=model_instance, current_vrf=current_vrf)
-            if not reconciler.have_map:
-                return False
-
-            detach_payloads = reconciler.detach_payloads()
-            if not detach_payloads:
-                self._warn_no_delete_match(vrf_name, model_instance)
-                return False
-
-            _post_attachment_payload(nd_v2, fabric_name, vrf_name, detach_payloads)
-            module.params["_vrf_lite_delete_posted"] = True
-            _mark_changed_vrf(module, vrf_name)
-            return True
-        except NDModuleError as error:
-            error_dict = error.to_dict()
-            if "msg" in error_dict:
-                error_dict["api_error_msg"] = error_dict.pop("msg")
-            _raise_vrf_lite_error(msg="Delete failed for {0}: {1}".format(model_instance.get_identifier_value(), error.msg), **error_dict)
-        except VrfLiteResourceError:
-            raise
-        except Exception as error:
-            _raise_vrf_lite_error(
-                msg="Delete failed for {0}: {1}".format(model_instance.get_identifier_value(), error),
-                exception_type=type(error).__name__,
-            )
-
-    # Gathered state (read-only query)
+        rows_by_vrf: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for entry in entries:
+            rows_by_vrf[entry.vrf_name].append(build_detach_payload_for_entry(module, entry))
+        return self._post_grouped_rows(rows_by_vrf)
 
     def gather(self) -> dict[str, Any]:
-        """Execute gathered-state workflow and return formatted output."""
-        module = self._module()
-        gathered = self._query_current_state()
+        flat_gathered = self._query_current_state(flat=True)
+        gathered = group_attachment_entries_to_vrfs(flat_gathered, module=self._module(), include_vrfs=self._public_scope_vrfs())
         output = {
-            "output_level": module.params.get("output_level", "normal"),
+            "output_level": self._module().params.get("output_level", "normal"),
             "changed": False,
             "before": gathered,
             "after": gathered,
@@ -331,13 +295,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         }
         return self.inject_runtime_metadata(output)
 
-    # Deploy (config save + VRF deployments after state reconciliation)
-
     def deploy_pending(self, result: dict[str, Any]) -> dict[str, Any] | None:
-        """Execute save/deploy actions if config_actions are enabled.
-
-        Returns deploy result dict, or None if no deploy actions are needed.
-        """
         module = self._module()
         config_actions = get_config_actions(module.params)
 
@@ -346,63 +304,36 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
         return self._execute_config_actions(result)
 
-    # Post-operation utilities
-
     def refresh_verified_state(self, result: dict[str, Any]) -> dict[str, Any]:
-        """Re-query state after write to confirm changes were applied."""
         module = self._module()
         verify_settings = get_verify_settings(module.params)
-        delete_refresh_required = module.params.get("state") == "deleted" and module.params.get("_vrf_lite_delete_posted")
-        if not verify_settings.get("enabled", True) and not delete_refresh_required:
+        if not verify_settings.get("enabled", True):
             return result
         if module.check_mode or not result.get("changed"):
             return result
 
-        refreshed = self._query_current_state()
-        result["after"] = refreshed
-        result["current"] = refreshed
+        refreshed = self._query_current_state(flat=True)
+        result["after"] = group_attachment_entries_to_vrfs(refreshed, module=module, include_vrfs=self._public_scope_vrfs())
+        result["current"] = result["after"]
         return result
 
-    # VRF Lite resource behavior
-
-    def normalize_delete_result(self, result: dict[str, Any]) -> dict[str, Any]:
-        """Correct generic object-delete output for VRF Lite attachment deletes."""
+    def format_public_output(self, result: dict[str, Any]) -> dict[str, Any]:
         module = self._module()
-        if module.params.get("state") != "deleted":
-            return result
-
-        if module.params.get("_vrf_lite_delete_posted"):
-            return result
-
-        if module.params.get("_vrf_lite_delete_attempted"):
-            before = result.get("before", [])
-            result["changed"] = False
-            result["after"] = before
-            result["current"] = before
-            result["diff"] = []
-
-        return result
-
-    def _warn_no_delete_match(self, vrf_name: str, model_instance: Any) -> None:
-        module = self._module()
-        requested_attachments = []
-        for item in module.params.get("config") or []:
-            if not isinstance(item, dict):
+        state = module.params.get("state", "merged")
+        scoped_empty_keys = {"before", "after", "current", "gathered"}
+        include_vrfs = self._public_scope_vrfs() if state in ("deleted", "replaced", "overridden", "gathered") else []
+        for key in ("before", "after", "current", "proposed", "diff", "gathered"):
+            value = result.get(key)
+            if not isinstance(value, list):
                 continue
-            if str(item.get("vrf_name", "")).strip() == vrf_name:
-                requested_attachments = item.get("attach") or []
-                break
+            has_flat_entries = any(isinstance(item, VrfLiteAttachmentEntry) for item in value)
+            should_preserve_empty_scope = not value and include_vrfs and key in scoped_empty_keys
+            if has_flat_entries or should_preserve_empty_scope:
+                result[key] = group_attachment_entries_to_vrfs(value, module=module, include_vrfs=include_vrfs)
+        result.setdefault("current", result.get("after", []))
+        return result
 
-        if not requested_attachments and getattr(model_instance, "attach", None):
-            requested_attachments = model_instance.attach or []
-
-        if requested_attachments:
-            append_runtime_warning(
-                module.params,
-                "No matching VRF Lite attachment was found to delete for VRF '{0}'. No detach payload was sent.".format(vrf_name),
-            )
-
-    def _query_current_state(self) -> list[dict[str, Any]]:
+    def _query_current_state(self, flat: bool = True) -> list[dict[str, Any]]:
         module = self._module()
         fabric_name = module.params.get("fabric_name")
         state = module.params.get("state", "merged")
@@ -412,10 +343,11 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
         if state == "gathered":
             if module.params.get("_have_loaded") and isinstance(module.params.get("_have"), list):
-                return module.params["_have"]
+                have = module.params["_have"]
+                return have if flat else group_attachment_entries_to_vrfs(have, module=module, include_vrfs=self._public_scope_vrfs())
             config = module.params.get("_gather_filter_config") or []
         else:
-            config = module.params.get("config") or []
+            config = module.params.get("_vrf_lite_nested_config") or module.params.get("config") or []
 
         filter_vrfs = _build_filter_set(config)
         try:
@@ -423,6 +355,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                 module=module,
                 fabric_name=fabric_name,
                 filter_vrfs=(filter_vrfs if filter_vrfs else None),
+                flat=True,
             )
         except NDModuleError as error:
             error_dict = error.to_dict()
@@ -439,12 +372,8 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             )
 
         module.params["_have"] = have
-        if state in ("deleted", "overridden"):
-            have = [item for item in have if item.get("attach")]
-            module.params["_have"] = have
-
         module.params["_have_loaded"] = True
-        return have
+        return have if flat else group_attachment_entries_to_vrfs(have, module=module, include_vrfs=self._public_scope_vrfs())
 
     def _execute_config_actions(self, result: dict[str, Any]) -> dict[str, Any]:
         module = self._module()
@@ -498,7 +427,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
         nd_v2 = NDModuleV2(module)
         responses = []
-        changed = False
+        changed = bool(module.params.get("_changed_vrfs"))
 
         if save_enabled:
             save_payload = {"type": config_actions.get("type", "switch")}
@@ -513,7 +442,6 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                         "success": True,
                     }
                 )
-                changed = True
             except NDModuleError as error:
                 if deploy_enabled and _is_non_fatal_config_save_error(error):
                     append_runtime_warning(
@@ -549,7 +477,6 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                         "success": True,
                     }
                 )
-                changed = True
             except NDModuleError as error:
                 error_dict = error.to_dict()
                 if "msg" in error_dict:
@@ -567,7 +494,6 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         }
 
     def inject_runtime_metadata(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Attach runtime warnings and IP mapping to the output."""
         module = self._module()
         warnings = get_runtime_warnings(module.params)
         if warnings:
