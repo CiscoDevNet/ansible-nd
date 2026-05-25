@@ -1,0 +1,52 @@
+---
+- name: ASSERT - Reset VRF Lite assertion selections
+  ansible.builtin.set_fact:
+    vrf_lite_assert_entries: []
+    vrf_lite_assert_attach_entries: []
+    vrf_lite_assert_lite_entries: []
+
+- name: ASSERT - Select gathered VRF Lite entry
+  ansible.builtin.set_fact:
+    vrf_lite_assert_entries: >-
+      {{
+        (vrf_lite_assert_result.gathered | default([]))
+        | selectattr('vrf_name', 'equalto', vrf_lite_assert_vrf_name)
+        | list
+      }}
+
+- name: ASSERT - Select gathered VRF Lite attachment
+  ansible.builtin.set_fact:
+    vrf_lite_assert_attach_entries: >-
+      {{
+        (vrf_lite_assert_entries[0].attach | default([]))
+        | selectattr('ip_address', 'equalto', vrf_lite_assert_switch)
+        | list
+      }}
+  when: vrf_lite_assert_entries | length == 1
+
+- name: ASSERT - Select gathered VRF Lite interface
+  ansible.builtin.set_fact:
+    vrf_lite_assert_lite_entries: >-
+      {{
+        (vrf_lite_assert_attach_entries[0].vrf_lite | default([]))
+        | selectattr('interface', 'equalto', vrf_lite_assert_interface)
+        | list
+      }}
+  when:
+    - vrf_lite_assert_entries | length == 1
+    - vrf_lite_assert_attach_entries | length == 1
+
+- name: ASSERT - Verify gathered VRF Lite attachment content
+  ansible.builtin.assert:
+    that:
+      - vrf_lite_assert_result.failed == false
+      - vrf_lite_assert_result.gathered is defined
+      - vrf_lite_assert_entries | length == 1
+      - (vrf_lite_assert_entries[0].vlan_id | int) == (vrf_lite_assert_vlan_id | int)
+      - (vrf_lite_assert_entries[0].attach | default([]) | length) == (vrf_lite_assert_attach_count | default(1) | int)
+      - vrf_lite_assert_attach_entries | length == 1
+      - vrf_lite_assert_lite_entries | length == 1
+      - (vrf_lite_assert_lite_entries[0].dot1q | int) == (vrf_lite_assert_dot1q | int)
+      - vrf_lite_assert_lite_entries[0].ipv4_addr == vrf_lite_assert_ipv4_addr
+      - vrf_lite_assert_lite_entries[0].neighbor_ipv4 == vrf_lite_assert_neighbor_ipv4
+      - vrf_lite_assert_lite_entries[0].peer_vrf == vrf_lite_assert_peer_vrf

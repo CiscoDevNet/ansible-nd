@@ -77,11 +77,23 @@
   tags: gather
 
 - name: GATHER - TC1 - ASSERT - Verify gathered data is returned
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: gather
+
+- name: GATHER - TC1 - ASSERT - Verify gathered output shape
   ansible.builtin.assert:
     that:
-      - verify_result.failed == false
       - verify_result.changed == false
-      - verify_result.gathered is defined
       - verify_result.gathered | type_debug == "list"
       - verify_result.gathered.vrf_lite is not defined
   tags: gather
@@ -100,11 +112,23 @@
   tags: gather
 
 - name: GATHER - TC2 - ASSERT - Check gather results
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: gather
+
+- name: GATHER - TC2 - ASSERT - Verify gather is read-only
   ansible.builtin.assert:
     that:
-      - result.failed == false
       - result.changed == false
-      - result.gathered is defined
   tags: gather
 
 # TC3 - Gather with VRF name filter
@@ -128,6 +152,22 @@
       - result.failed == false
       - result.changed == false
       - result.gathered is defined
+      - result.gathered | length == 1
+      - result.gathered[0].vrf_name == test_vrf
+  tags: gather
+
+- name: GATHER - TC3 - ASSERT - Verify VRF-filtered attachment content
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
   tags: gather
 
 # TC4 - Gather with non-existent VRF
@@ -152,6 +192,7 @@
       - result.failed == false
       - result.changed == false
       - result.gathered is defined
+      - result.gathered == []
   tags: gather
 
 # TC5 - Gather with custom verify timeout/retries
@@ -171,11 +212,23 @@
   tags: gather
 
 - name: GATHER - TC5 - ASSERT - Verify verify path execution
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: gather
+
+- name: GATHER - TC5 - ASSERT - Verify gather with verify override is read-only
   ansible.builtin.assert:
     that:
-      - result.failed == false
       - result.changed == false
-      - result.gathered is defined
   tags: gather
 
 # TC6 - gathered + deploy validation (must fail)
@@ -215,11 +268,23 @@
   tags: gather
 
 - name: GATHER - TC7 - ASSERT - Verify gathered+check_mode behavior
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: gather
+
+- name: GATHER - TC7 - ASSERT - Verify check_mode gather is read-only
   ansible.builtin.assert:
     that:
-      - result.failed == false
       - result.changed == false
-      - result.gathered is defined
   tags: gather
 
 # TC8 - Gather with VRF name + switch filter
@@ -245,6 +310,24 @@
       - result.failed == false
       - result.changed == false
       - result.gathered is defined
+      - result.gathered | length == 1
+      - result.gathered[0].vrf_name == test_vrf
+      - result.gathered[0].attach | default([]) | length == 1
+      - result.gathered[0].attach[0].ip_address == test_switch1
+  tags: gather
+
+- name: GATHER - TC8 - ASSERT - Verify VRF and switch filtered attachment content
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
   tags: gather
 
 ##############################################

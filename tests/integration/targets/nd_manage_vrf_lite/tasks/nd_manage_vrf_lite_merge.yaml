@@ -69,8 +69,15 @@
   ansible.builtin.set_fact:
     vrf_lite_conf:
       - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
         attach:
           - ip_address: "{{ test_switch1 }}"
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "{{ test_ipv4_addr }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+                peer_vrf: "{{ test_peer_vrf }}"
   delegate_to: localhost
   tags: merge
 
@@ -142,10 +149,17 @@
   tags: merge
 
 - name: MERGE - TC1 - ASSERT - Verify VRF Lite state in ND
-  ansible.builtin.assert:
-    that:
-      - verify_result.failed == false
-      - verify_result.gathered is defined
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
   tags: merge
 
 - name: MERGE - TC1 - conf - Idempotence
@@ -157,6 +171,7 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == false
       - result.class_diff.created | default([]) | length == 0
       - result.class_diff.deleted | default([]) | length == 0
   tags: merge
@@ -197,10 +212,17 @@
   tags: merge
 
 - name: MERGE - TC2 - ASSERT - Verify modified VRF Lite state
-  ansible.builtin.assert:
-    that:
-      - verify_result.failed == false
-      - verify_result.gathered is defined
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "10.33.0.10/24"
+    vrf_lite_assert_neighbor_ipv4: "10.33.0.9"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
   tags: merge
 
 # TC3 - Delete VRF Lite attachment
@@ -246,6 +268,9 @@
     that:
       - verify_result.failed == false
       - verify_result.gathered is defined
+      - verify_result.gathered | length == 1
+      - verify_result.gathered[0].vrf_name == test_vrf
+      - verify_result.gathered[0].attach | default([]) | length == 0
   tags: merge
 
 # TC4 - Create VRF Lite with minimal configuration
@@ -288,6 +313,10 @@
     that:
       - verify_result.failed == false
       - verify_result.gathered is defined
+      - verify_result.gathered | length == 1
+      - verify_result.gathered[0].vrf_name == test_vrf
+      - verify_result.gathered[0].attach | default([]) | length == 1
+      - verify_result.gathered[0].attach[0].ip_address == test_switch1
   tags: merge
 
 # TC4b - Delete VRF Lite after minimal test
@@ -396,10 +425,17 @@
   tags: merge
 
 - name: MERGE - TC6 - ASSERT - Verify VRF Lite state after no-deploy merge
-  ansible.builtin.assert:
-    that:
-      - verify_result.failed == false
-      - verify_result.gathered is defined
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
   tags: merge
 
 # TC6b - Re-run same config with deploy=true after non-deploy create
@@ -562,6 +598,8 @@
   ansible.builtin.assert:
     that:
       - result.failed == false
+      - result.changed == false
+      - tc9_deployment_needed == false
   tags: merge
 
 # TC10 - check_mode should not apply configuration changes
@@ -603,6 +641,30 @@
       - result.deployment is not defined
   tags: merge
 
+- name: MERGE - TC10 - GATHER - Verify check_mode flow did not create VRF Lite
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: verify_result
+  tags: merge
+
+- name: MERGE - TC10 - ASSERT - Verify gathered after check_mode
+  ansible.builtin.assert:
+    that:
+      - verify_result.failed == false
+      - verify_result.gathered is defined
+      - verify_result.gathered | length == 1
+      - verify_result.gathered[0].vrf_name == test_vrf
+      - verify_result.gathered[0].attach | default([]) | length == 0
+  tags: merge
+
 # TC11 - Validate invalid config_actions (save: false, deploy: true)
 - name: MERGE - TC11 - MERGE - Invalid config_actions (save false, deploy true)
   cisco.nd.nd_manage_vrf_lite:
@@ -615,7 +677,7 @@
       type: switch
     config: "{{ nd_manage_vrf_lite_merge_full_conf }}"
   register: result
-  failed_when: false
+  ignore_errors: true
   tags: merge
 
 - name: MERGE - TC11 - ASSERT - Verify invalid config_actions rejected
@@ -702,10 +764,17 @@
   tags: merge
 
 - name: MERGE - TC13 - ASSERT - Verify extended state
-  ansible.builtin.assert:
-    that:
-      - verify_result.failed == false
-      - verify_result.gathered is defined
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
   tags: merge
 
 ##############################################

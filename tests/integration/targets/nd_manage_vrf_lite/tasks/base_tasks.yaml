@@ -24,6 +24,8 @@
     test_fabric: "{{ fabric_name }}"
     test_switch1: "{{ switch1_ip | default(switch_id | default(switch1_serial)) }}"
     test_switch1_serial: "{{ switch1_serial | default(switch1_ip | default(switch_id)) }}"
+    test_switch2: "{{ switch2_ip | default(switch2_serial | default('')) }}"
+    test_switch2_serial: "{{ switch2_serial | default(switch2_ip | default('')) }}"
     test_vrf: "{{ vrf_name | default('TENANT_A') }}"
     test_vlan_id: "{{ vrf_vlan_id | default(500) }}"
     test_interface: "{{ vrf_lite_interface | default('Ethernet1/20') }}"
@@ -94,3 +96,19 @@
         attach:
           - ip_address: "{{ test_switch1 }}"
   failed_when: false
+
+- name: BASE - Clean up existing secondary VRF Lite attachment for test VRF
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch2 }}"
+  failed_when: false
+  when: test_switch2 | length > 0

@@ -101,10 +101,17 @@
   tags: replace
 
 - name: REPLACE - TC1 - ASSERT - Verify VRF Lite state in ND
-  ansible.builtin.assert:
-    that:
-      - verify_result.failed == false
-      - verify_result.gathered is defined
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
   tags: replace
 
 # TC2 - Replace VRF Lite configuration
@@ -143,10 +150,17 @@
   tags: replace
 
 - name: REPLACE - TC2 - ASSERT - Verify replaced VRF Lite state
-  ansible.builtin.assert:
-    that:
-      - verify_result.failed == false
-      - verify_result.gathered is defined
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "10.33.0.20/24"
+    vrf_lite_assert_neighbor_ipv4: "10.33.0.19"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
   tags: replace
 
 # TC3 - Idempotence test
@@ -237,10 +251,17 @@
   tags: replace
 
 - name: REPLACE - TC4 - ASSERT - Verify deployed replace config
-  ansible.builtin.assert:
-    that:
-      - verify_result.failed == false
-      - verify_result.gathered is defined
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
   tags: replace
 
 # TC5 - Replace with config_actions save+deploy
@@ -359,6 +380,9 @@
     that:
       - verify_result.failed == false
       - verify_result.gathered is defined
+      - verify_result.gathered | length == 1
+      - verify_result.gathered[0].vrf_name == test_vrf
+      - verify_result.gathered[0].attach | default([]) | length == 0
   tags: replace
 
 ##############################################
