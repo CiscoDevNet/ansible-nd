@@ -126,7 +126,8 @@ class NDPolicyModule:
     """Specialized module for switch policy lifecycle management.
 
     Provides policy-specific operations on top of NDModule:
-        - Query and match existing policies (Lucene + post-filtering)
+        - Query and match existing policies (switchId-only Lucene narrowing,
+          templateName/source/markDeleted filtered in code)
         - Idempotent diff calculation across 16 merged / 16 deleted cases
         - Create, update, delete_and_create actions
         - Bulk deploy via pushConfig (create/update) or switchActions/deploy (delete)
@@ -212,6 +213,17 @@ class NDPolicyModule:
         # resolve_switch_identifiers and _get_fabric_switches so a single
         # GET /fabrics/{name}/switches serves the whole module run).
         self._inventory: FabricSwitchInventory | None = None
+
+        # Policy cache populated by _prefetch_all_policies() at the start of
+        # _handle_merged_state / _handle_deleted_state / _handle_gathered_state.
+        # When populated, _build_have() filters from this cache (O(1) in-memory
+        # lookups) instead of making per-entry HTTP GETs.  None means cache is
+        # not yet loaded (any call to _build_have() in that state is a bug).
+        self._policies_cache: list[dict] | None = None
+        self._policies_by_id_cache: dict[str, dict] = {}
+        self._policies_by_switch_cache: dict[str, list[dict]] = {}
+        # Composite (switchId, templateName) index for O(1) Case B/C lookups.
+        self._policies_by_switch_template_cache: dict[tuple[str, str], list[dict]] = {}
 
         self.log.info(f"Initialized NDPolicyModule for fabric: {self.fabric_name}, state: {self.state}")
 
@@ -715,6 +727,11 @@ class NDPolicyModule:
         self.log.info("Handling merged state")
         self.log.debug(f"Config entries: {len(self.config)}")
 
+        # Phase 0: Prefetch all fabric policies in a single GET call.
+        # Subsequent _build_have() calls will use the in-memory cache
+        # instead of making per-entry HTTP GETs.
+        self._prefetch_all_policies(config_entries=self.config)
+
         # Phase 1: Build want and have for each config entry
         diff_results = []
         for config_entry in self.config:
@@ -812,6 +829,9 @@ class NDPolicyModule:
         self.log.info("Handling deleted state")
         self.log.debug(f"Config entries: {len(self.config)}")
 
+        # Phase 0: Prefetch all fabric policies in a single GET call.
+        self._prefetch_all_policies(config_entries=self.config)
+
         # Phase 1: Build want and have for each config entry
         diff_results = []
         for config_entry in self.config:
@@ -870,6 +890,11 @@ class NDPolicyModule:
         self.log.debug("ENTER: _handle_gathered_state()")
         self.log.info("Handling gathered state")
 
+        # Phase 0: Prefetch all (or narrowed) fabric policies in one GET.
+        # Subsequent _build_have() / per-switch iteration uses the
+        # in-memory cache instead of N per-entry/per-switch HTTP GETs.
+        self._prefetch_all_policies(config_entries=self.config if self.config else None)
+
         policies: list[dict] = []
 
         if self.config:
@@ -917,18 +942,18 @@ class NDPolicyModule:
                 self.log.debug("EXIT: _handle_gathered_state()")
                 return
 
+            # Use the prefetched cache instead of one GET per switch.
+            # Cache already excludes markDeleted and source!="" entries.
             for switch_sn in switches:
-                self.log.debug(f"Gathering policies for switch {switch_sn}")
-                lucene = self._build_lucene_filter(switchId=switch_sn)
-                switch_policies = self._query_policies(lucene, include_mark_deleted=False)
+                switch_policies = self._policies_by_switch_cache.get(switch_sn, [])
                 self.log.info(f"Found {len(switch_policies)} policies on switch {switch_sn}")
                 policies.extend(switch_policies)
 
         if not policies:
             self.log.info("Gathered: no policies found")
-            # Keep the most recent GET stash (from _build_have or
-            # _query_policies per-switch) so the row reflects a real
-            # lookup that returned empty.
+            # Keep the most recent GET stash (from _build_have or the
+            # prefetch call) so the row reflects a real lookup that
+            # returned empty.
             self._register_result(
                 action="policy_gathered",
                 state="gathered",
@@ -1265,14 +1290,133 @@ class NDPolicyModule:
     # API Query Helpers
     # =========================================================================
 
+    def _prefetch_all_policies(self, config_entries: list[dict] | None = None) -> None:
+        """Fetch fabric policies in a single GET call and build lookup indexes.
+
+        Drastically reduces API call count for bulk operations:
+            - Before: N config entries -> N GET calls in _build_have
+            - After:  N config entries -> 1 GET call upfront, all lookups in memory
+
+        When ``config_entries`` is provided and every entry resolves to a
+        ``(switchId, templateName)`` pair (i.e. no policy-id-only and no
+        switch-only entries), the GET is narrowed with a Lucene
+        ``switchId:VALUE`` or ``switchId:(S1 OR S2 ...)`` filter to shrink
+        the response body.  In all other cases the fetch is unfiltered (1 GET,
+        full list) to guarantee that subsequent in-memory lookups find
+        every policy the caller may ask for — preserving the exact
+        semantics of the per-entry slow path.
+
+        Populates four caches:
+            - self._policies_cache:                    full list of valid policies
+            - self._policies_by_id_cache:              {policyId: policy}
+            - self._policies_by_switch_cache:          {switchId: [policies]}
+            - self._policies_by_switch_template_cache: {(switchId, templateName): [policies]}
+
+        After fetching, filters in Python code (not via the API) to exclude
+        internal sub-policies (``source != ""``) and ``markDeleted`` policies.
+        These fields are not supported as Lucene filter parameters by ND.
+        """
+        lucene_filter = self._build_prefetch_filter(config_entries)
+        if lucene_filter:
+            self.log.info(f"Prefetching policies with narrowed filter ({lucene_filter[:120]}...)")
+        else:
+            self.log.info("Prefetching all fabric policies (single unfiltered GET)")
+
+        raw = self._query_policies_raw(lucene_filter=lucene_filter)
+
+        self._policies_cache = []
+        excluded = 0
+        for p in raw:
+            if p.get("source", "") != "":
+                excluded += 1
+                continue
+            if p.get("markDeleted", False):
+                excluded += 1
+                continue
+            self._policies_cache.append(p)
+
+        # Build O(1) lookup indexes
+        self._policies_by_id_cache = {}
+        self._policies_by_switch_cache = {}
+        self._policies_by_switch_template_cache = {}
+        for p in self._policies_cache:
+            pid = p.get("policyId")
+            if pid:
+                self._policies_by_id_cache[pid] = p
+            sw = p.get("switchId") or p.get("serialNumber")
+            if sw:
+                self._policies_by_switch_cache.setdefault(sw, []).append(p)
+                tn = p.get("templateName")
+                if tn:
+                    self._policies_by_switch_template_cache.setdefault((sw, tn), []).append(p)
+
+        self.log.info(
+            f"Policy cache populated: {len(self._policies_cache)} active policies "
+            f"({excluded} excluded as internal/markDeleted) across "
+            f"{len(self._policies_by_switch_cache)} switches, "
+            f"{len(self._policies_by_switch_template_cache)} (switch,template) groups"
+        )
+
+    def _build_prefetch_filter(self, config_entries: list[dict] | None) -> str | None:
+        """Build a narrowed Lucene filter for prefetch, or None if not safe.
+
+        Returns one of:
+
+        - ``switchId:VALUE`` when exactly one unique switch is referenced
+          (the form the legacy per-switch ``_query_policies`` loop used,
+          empirically reliable on the supported controller build).
+        - ``switchId:(S1 OR S2 OR ...)`` when 2+ unique switches are referenced.
+        - ``None`` when **any** entry lacks ``switch`` or references a policy id
+          by ``name``.  Caller must then fetch unfiltered to preserve correctness
+          for policy-id and switch-less entries.
+
+        Note: only ``switchId`` is used in the Lucene filter.
+        ``templateName`` filtering via Lucene is unreliable on the supported
+        controller build — conjunctions that include ``templateName`` silently
+        return zero results even when matching policies exist.  Similarly,
+        ``source != ""`` cannot be expressed as a server-side filter (only
+        positive equality on ``source`` works, and negation is rejected).
+        Both are applied as client-side post-filters on the prefetched list.
+
+        # TODO: Re-evaluate ``templateName`` and ``source`` Lucene filtering
+        #       on newer ND controller builds.  If supported, narrowing on
+        #       templateName would reduce the response body further for
+        #       template-specific operations, and server-side source filtering
+        #       would eliminate the post-filter pass.
+        """
+        if not config_entries:
+            return None
+
+        switches: set[str] = set()
+        for entry in config_entries:
+            switch = entry.get("switch")
+            name = entry.get("name")
+            # Any entry that can't be expressed via switchId narrowing
+            # disqualifies the narrowed query -- we must fetch the full set.
+            if not switch or not name or self._is_policy_id(name):
+                return None
+            switches.add(switch)
+
+        if not switches:
+            return None
+
+        # Single-switch: use the plain ``switchId:VALUE`` form.  Empirical
+        # testing against ND showed the single-element group-disjunction
+        # form ``switchId:(VALUE)`` silently returns zero results on the
+        # supported controller build, while the plain form works.
+        if len(switches) == 1:
+            return f"switchId:{self._escape_lucene_value(next(iter(switches)))}"
+
+        switch_group = " OR ".join(self._escape_lucene_value(sw) for sw in sorted(switches))
+        return f"switchId:({switch_group})"
+
     def _query_policies_raw(self, lucene_filter: str | None = None) -> list[dict]:
-        """Query policies from the controller using GET /policies (unfiltered).
+        """Query policies from the controller using GET /policies.
 
         Returns **all** matching policies including ``markDeleted`` and
-        internal (``source != ""``) entries.  Callers that need the raw
-        list (cleanup routines, gathered-state export) should use this
-        directly.  For idempotency checks use ``_query_policies()``
-        which filters out stale records.
+        internal (``source != ""``) entries — the API does not support
+        filtering on these fields.  Callers must filter them in Python
+        code (this is what :meth:`_prefetch_all_policies` does).
 
         Args:
             lucene_filter: Optional Lucene filter string.
@@ -1300,111 +1444,6 @@ class NDPolicyModule:
             return policies
         self.log.debug("Query returned non-dict response, returning empty list")
         return []
-
-    def _query_policies(
-        self,
-        lucene_filter: str | None = None,
-        include_mark_deleted: bool = False,
-    ) -> list[dict]:
-        """Query policies with idempotency-safe filtering.
-
-        Wraps ``_query_policies_raw()`` and applies post-filters:
-
-        - **markDeleted** — when ``include_mark_deleted=False`` (default),
-          policies pending deletion are excluded so they don't interfere
-          with idempotency checks.  When ``True``, they are kept and
-          annotated with ``_markDeleted_stale: True`` so callers can
-          surface the status to the user.
-        - **source != ""** — internal ND sub-policies are always
-          excluded; they are artefacts that cause false duplicate
-          matches.
-
-        Args:
-            lucene_filter: Optional Lucene filter string.
-            include_mark_deleted: When True, keep markDeleted policies
-                and annotate them instead of filtering them out.
-
-        Returns:
-            List of policy dicts from the response.
-        """
-        raw = self._query_policies_raw(lucene_filter)
-        if not raw:
-            return []
-
-        result: list[dict] = []
-        excluded = 0
-        for p in raw:
-            # Always exclude internal ND sub-policies (source != "")
-            if p.get("source", "") != "":
-                excluded += 1
-                continue
-
-            if p.get("markDeleted", False):
-                if include_mark_deleted:
-                    # Annotate so callers can display the status
-                    p["_markDeleted_stale"] = True
-                    result.append(p)
-                else:
-                    excluded += 1
-                continue
-
-            result.append(p)
-
-        self.log.debug(f"After filtering: {len(result)} policies " f"(excluded {excluded}, include_mark_deleted={include_mark_deleted})")
-        return result
-
-    def _query_policy_by_id(self, policy_id: str, include_mark_deleted: bool = False) -> dict | None:
-        """Query a single policy by its ID.
-
-        By default, policies marked for deletion (``markDeleted=True``)
-        are treated as non-existent because they are pending removal
-        and cannot be updated.  When ``include_mark_deleted=True``,
-        they are returned with an annotation so the
-        caller can surface the status.
-
-        Args:
-            policy_id: Policy ID (e.g., "POLICY-121110").
-            include_mark_deleted: When True, return markDeleted policies
-                annotated with ``_markDeleted_stale: True``.
-
-        Returns:
-            Policy dict, or None if not found.
-        """
-        self.log.debug(f"Looking up policy by ID: {policy_id}")
-
-        ep = EpManagePoliciesGet()
-        ep.fabric_name = self.fabric_name
-        ep.policy_id = policy_id
-        if self.cluster_name:
-            ep.endpoint_params.cluster_name = self.cluster_name
-
-        try:
-            self._record_call(ep, None)
-            data = self.nd.request(ep.path, ep.verb)
-            if isinstance(data, dict) and data:
-                # The controller may return a 200 with an error body when the
-                # policy is not found, e.g. {'code': 404, 'message': '...not found'}.
-                # Only treat the response as a valid policy if it contains a policyId.
-                if "policyId" not in data:
-                    self.log.info(f"Policy {policy_id} not found (response has no policyId: " f"{data.get('message', data.get('code', 'unknown'))})")
-                    return None
-                if data.get("markDeleted", False):
-                    if include_mark_deleted:
-                        data["_markDeleted_stale"] = True
-                        self.log.info(f"Policy {policy_id} is marked for deletion (included with annotation)")
-                        return data
-                    self.log.info(f"Policy {policy_id} is marked for deletion, treating as not found")
-                    return None
-                self.log.debug(f"Policy {policy_id} found")
-                return data
-            self.log.info(f"Policy {policy_id} not found (empty response)")
-            return None
-        except NDModuleError as error:
-            # 404 means policy not found
-            if error.status == 404:
-                self.log.info(f"Policy {policy_id} not found (404)")
-                return None
-            raise
 
     # =========================================================================
     # Core: Build want / have
@@ -1656,13 +1695,33 @@ class NDPolicyModule:
         return errors
 
     def _build_have(self, want: dict) -> tuple[list[dict], str | None]:
-        """Query the controller to find existing policies matching the want.
+        """Query existing policies matching the want, in-memory against the cache.
 
-        Handles all lookup strategies:
-            - Case A: Policy ID given → direct lookup
-            - Case B: use_desc_as_key=false, templateName given → switchId + templateName
-            - Case C: use_desc_as_key=true, templateName given → switchId + description
-            - Case D: Switch-only (no templateName or policyId) → all policies on switch
+        Dispatches to :meth:`_build_have_from_cache`:
+            - Case A: Policy ID given -> O(1) policyId index lookup
+            - Case B: use_desc_as_key=false, templateName given -> O(1) (switchId, templateName) index
+            - Case C: use_desc_as_key=true,  templateName given -> O(1) (switchId, templateName) index + exact description post-filter
+            - Case D: Switch-only (no templateName or policyId) -> O(1) switchId index
+
+        :meth:`_prefetch_all_policies` **must** be called by every state
+        handler before this method is invoked.  A missing prefetch is a
+        programming error -- we fail loudly here rather than silently
+        falling back to N per-entry HTTP GETs (which is the perf
+        regression the cache was introduced to prevent).
+
+        Note on intentional behavioural differences vs. the legacy
+        per-id ``GET /policies/{policyId}`` endpoint:
+            - Internal ND sub-policies (``source != ""``) are excluded
+              in Python code after the bulk GET (the API does not support
+              filtering on ``source``).
+            - ``markDeleted`` policies are excluded in Python code after
+              the bulk GET (the API does not support filtering on
+              ``markDeleted``).
+            - Policy-id lookups are bounded by the prefetch's bulk-list
+              page size (``max=10000``).  The same cap applied to the
+              slow path's switch/template queries, so this is not a
+              regression.  Fabrics with >10K policies require
+              pagination in :meth:`_prefetch_all_policies`.
 
         Args:
             want: Want dict produced by ``_build_want``.
@@ -1670,86 +1729,66 @@ class NDPolicyModule:
         Returns:
             Tuple of (have_list, error_msg).
         """
-        self.log.debug("ENTER: _build_have()")
+        if self._policies_cache is None:
+            raise RuntimeError("_build_have() called before _prefetch_all_policies(); " "every state handler must prefetch the policy cache first.")
+        return self._build_have_from_cache(want)
 
-        # Exclude markDeleted policies to avoid false idempotency matches.
-        incl_md = False
+    def _build_have_from_cache(self, want: dict) -> tuple[list[dict], str | None]:
+        """Cache-backed equivalent of _build_have -- pure in-memory filtering.
 
-        # Case A: Policy ID given directly
+        Used when ``self._policies_cache`` has been populated by
+        :meth:`_prefetch_all_policies`.  Performs no HTTP calls.
+
+        Args:
+            want: Want dict produced by ``_build_want``.
+
+        Returns:
+            Tuple of (have_list, error_msg).
+        """
+        # Case A: Policy ID given directly -- O(1) hash lookup
         if "policyId" in want:
-            self.log.debug(f"Case A: Direct policy ID lookup: {want['policyId']}")
-            policy = self._query_policy_by_id(want["policyId"], include_mark_deleted=incl_md)
+            policy = self._policies_by_id_cache.get(want["policyId"])
             if policy:
-                self.log.info(f"Policy {want['policyId']} found")
+                self.log.debug(f"[cache] Case A: Policy {want['policyId']} found")
                 return [policy], None
-            self.log.info(f"Policy {want['policyId']} not found")
+            self.log.debug(f"[cache] Case A: Policy {want['policyId']} not found")
             return [], None
 
-        # Case D: Switch-only — no name or policyId given
+        # All other cases need switch-scoped list
+        switch_id = want.get("switchId")
+        switch_policies = self._policies_by_switch_cache.get(switch_id, [])
+
+        # Case D: Switch-only -- return all policies on switch
         if "templateName" not in want:
-            self.log.debug(f"Case D: Switch-only lookup for {want['switchId']}")
-            lucene = self._build_lucene_filter(switchId=want["switchId"])
-            policies = self._query_policies(lucene, include_mark_deleted=incl_md)
-            self.log.info(f"Found {len(policies)} policies on switch {want['switchId']}")
-            return policies, None
+            self.log.debug(f"[cache] Case D: {len(switch_policies)} policies on switch {switch_id}")
+            return list(switch_policies), None
 
-        # Case B: use_desc_as_key=false, search by switchId + templateName
+        template_name = want["templateName"]
+
+        # Case B: use_desc_as_key=false, filter by templateName.
+        # O(1) composite-index lookup instead of linear scan of switch_policies.
         if not self.use_desc_as_key:
-            self.log.debug(f"Case B: Lookup by switchId={want['switchId']} + " f"templateName={want['templateName']}")
-            lucene = self._build_lucene_filter(
-                switchId=want["switchId"],
-                templateName=want["templateName"],
-            )
-            policies = self._query_policies(lucene, include_mark_deleted=incl_md)
+            matches = list(self._policies_by_switch_template_cache.get((switch_id, template_name), []))
 
-            # If description is provided, use it as an additional post-filter
             want_desc = want.get("description", "")
             if want_desc:
-                pre_filter_count = len(policies)
-                policies = [p for p in policies if (p.get("description", "") or "") == want_desc]
-                self.log.debug(f"Post-filtered by description: {len(policies)} of {pre_filter_count}")
+                pre = len(matches)
+                matches = [p for p in matches if (p.get("description", "") or "") == want_desc]
+                self.log.debug(f"[cache] Case B: post-filter by description: {len(matches)}/{pre}")
 
-            self.log.info(f"Case B matched {len(policies)} policies")
-            return policies, None
+            self.log.debug(f"[cache] Case B: matched {len(matches)} policies")
+            return matches, None
 
-        # Case C: use_desc_as_key=true, search by switchId + description
+        # Case C: use_desc_as_key=true, filter by templateName + exact description.
+        # O(1) composite-index lookup, then exact-match post-filter on description.
         want_desc = want.get("description", "") or ""
-        self.log.debug(f"Case C: Lookup by switchId={want['switchId']} + " f"description='{want_desc}'")
-        # For merged/deleted states, Pydantic enforces that description
-        # is non-empty.  This guard covers gathered state where
-        # Pydantic intentionally skips the check.
         if not want_desc:
-            self.log.warning("Case C: description is required but not provided")
-            return (
-                [],
-                "description is required when use_desc_as_key=true and name is a template name",
-            )
+            return [], "description is required when use_desc_as_key=true and name is a template name"
 
-        # Build Lucene query.  We always include switchId and
-        # templateName (when available) to narrow results.
-        # Description is included only when it contains no Lucene
-        # special characters — ND's Lucene does not reliably handle
-        # escaped special chars (e.g. colons, parentheses) in the
-        # description field.  In all cases, exact-match post-filtering
-        # guarantees correctness.
-        lucene_kwargs: dict[str, str] = {"switchId": want["switchId"]}
-        if "templateName" in want:
-            lucene_kwargs["templateName"] = want["templateName"]
-        # Only add description to Lucene if it's "safe" (no special chars)
-        desc_has_special = any(ch in self._LUCENE_SPECIAL_CHARS for ch in want_desc)
-        if not desc_has_special:
-            lucene_kwargs["description"] = want_desc
-        lucene = self._build_lucene_filter(**lucene_kwargs)
-        policies = self._query_policies(lucene, include_mark_deleted=incl_md)
-
-        # IMPORTANT: Lucene does tokenized matching, not exact match.
-        # Post-filter to ensure exact description match.
-        exact_matches = [p for p in policies if (p.get("description", "") or "") == want_desc]
-        self.log.debug(f"Exact description match: {len(exact_matches)} of {len(policies)}")
-
-        self.log.info(f"Case C matched {len(exact_matches)} policies")
-        self.log.debug("EXIT: _build_have()")
-        return exact_matches, None
+        candidates = self._policies_by_switch_template_cache.get((switch_id, template_name), [])
+        matches = [p for p in candidates if (p.get("description", "") or "") == want_desc]
+        self.log.debug(f"[cache] Case C: matched {len(matches)} policies")
+        return matches, None
 
     # =========================================================================
     # Diff: Merged State (16 cases)
