@@ -8,7 +8,7 @@ from __future__ import absolute_import, annotations, division, print_function
 
 import ast
 import json
-from typing import Any
+from typing import Any, Optional
 
 
 def get_params(source: Any) -> dict[str, Any]:
@@ -68,7 +68,7 @@ def copy_dict_items(items: Any) -> list[dict[str, Any]]:
     return copied
 
 
-def try_int(value: Any) -> int | None:
+def try_int(value: Any) -> Optional[int]:
     """Best-effort integer conversion."""
     try:
         return int(value)
