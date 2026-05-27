@@ -7,5 +7,76 @@
         "Tests that call validate_prerequisites consume one fabric-summary response first.",
         "Switch A: fabricManagementIp=192.168.12.151, switchId=FDO12345ABC.",
         "Switch B: fabricManagementIp=192.168.12.152, switchId=FDO12345ABD."
-    ]
+    ],
+
+    "test_subinterface_unmanaged_interface_00100a": {
+        "TEST_NOTES": ["create happy path: switches list (1 switch)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00100b": {
+        "TEST_NOTES": ["create happy path: POST /interfaces (207 success)"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "Ethernet1/3.20", "status": "success", "message": "Interface added successfully"}
+            ]
+        }
+    },
+
+    "test_subinterface_unmanaged_interface_00101a": {
+        "TEST_NOTES": ["create 207 failed: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00101b": {
+        "TEST_NOTES": ["create 207 failed: POST returns 207 with status=failed (parent not in routed mode)"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Multi-Status",
+        "DATA": {
+            "results": [
+                {"name": "Ethernet1/3.20", "status": "failed", "message": "Parent interface Ethernet1/3 is not in routed mode"}
+            ]
+        }
+    },
+
+    "test_subinterface_unmanaged_interface_00102a": {
+        "TEST_NOTES": ["create _request failure: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00102b": {
+        "TEST_NOTES": ["create _request failure: POST returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    }
 }

@@ -92,3 +92,127 @@ def test_subinterface_unmanaged_interface_00010(payload, expected_raise) -> None
     else:
         with does_not_raise():
             SubinterfaceUnmanagedInterfaceOrchestrator._raise_on_multi_status_failures(payload)
+
+
+# =============================================================================
+# Test: create
+# =============================================================================
+
+
+def test_subinterface_unmanaged_interface_00100(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `create` resolves the switch IP, wraps the payload in `{"interfaces": [...]}`, injects `switchId`, and queues a deploy.
+
+    ## Test
+
+    - First call to `_resolve_switch_id` triggers switches-list fetch
+    - POST is issued against `/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces`
+    - Request body is `{"interfaces": [{...payload..., "switchId": "FDO12345ABC"}]}`
+    - `_pending_deploys` contains a single `(interface_name, switch_id)` pair
+    - Result carries `results[0].status == "success"`
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.create()
+    - NDBaseInterfaceOrchestrator._resolve_switch_id()
+    - NDBaseInterfaceOrchestrator._queue_deploy()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
+
+    with does_not_raise():
+        result = orchestrator.create(model)
+
+    assert result["results"][0]["status"] == "success"
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces"
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    body = rest_send.committed_payload
+    assert isinstance(body, dict)
+    assert "interfaces" in body
+    assert len(body["interfaces"]) == 1
+    payload_item = body["interfaces"][0]
+    assert payload_item["interfaceName"] == "Ethernet1/3.20"
+    assert payload_item["interfaceType"] == "subInterface"
+    assert payload_item["switchId"] == "FDO12345ABC"
+    assert "switchIp" not in payload_item
+    assert ("Ethernet1/3.20", "FDO12345ABC") in orchestrator._pending_deploys
+
+
+def test_subinterface_unmanaged_interface_00101(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `create` raises when the 207 response carries `status: failed`.
+
+    ## Test
+
+    - POST returns 207 with `results[0].status = "failed"`
+    - `_raise_on_multi_status_failures` raises; `create` wraps it in a `RuntimeError` matching `Create failed.*ND rejected`
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.create()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
+
+    with pytest.raises(RuntimeError, match=r"Create failed.*ND rejected"):
+        orchestrator.create(model)
+
+    assert orchestrator._pending_deploys == []
+
+
+def test_subinterface_unmanaged_interface_00102(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `create` wraps a `_request` failure (non-2xx) in `RuntimeError` mentioning the identifier.
+
+    ## Test
+
+    - switches-list returns 200
+    - POST returns 500
+    - `RuntimeError` matches `Create failed for .*Ethernet1/3.20`
+    - No deploy is queued
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.create()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
+
+    match = r"Create failed for .*Ethernet1/3\.20"
+    with pytest.raises(RuntimeError, match=match):
+        orchestrator.create(model)
+
+    assert orchestrator._pending_deploys == []

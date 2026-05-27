@@ -84,3 +84,30 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
         if failed:
             summary = "; ".join(f"{r.get('name')}: {r.get('message')}" for r in failed)
             raise RuntimeError(f"ND rejected {len(failed)} interface(s): {summary}")
+
+    def create(self, model_instance: SubinterfaceUnmanagedInterfaceModel, **kwargs) -> ResponseType:
+        """
+        # Summary
+
+        Create an unmanaged L3 subinterface. Resolves `switch_ip` from the model instance, injects `switchId`,
+        wraps the payload in an `interfaces` array, and queues a deploy for later bulk execution.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the create API request fails.
+        - If the 207 response contains any per-item `status` of `failed` or `error`.
+        """
+        try:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            api_endpoint = self._configure_endpoint(self.create_endpoint(), switch_sn=switch_id)
+            payload = model_instance.to_payload()
+            payload["switchId"] = switch_id
+            request_body = {"interfaces": [payload]}
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+            self._raise_on_multi_status_failures(result)
+            self._queue_deploy(model_instance.interface_name, switch_id)
+            return result
+        except Exception as e:
+            raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
