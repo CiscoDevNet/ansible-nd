@@ -111,3 +111,28 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
             return result
         except Exception as e:
             raise RuntimeError(f"Create failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def update(self, model_instance: SubinterfaceUnmanagedInterfaceModel, **kwargs) -> ResponseType:
+        """
+        # Summary
+
+        Update an unmanaged L3 subinterface. Resolves `switch_ip` from the model instance, injects `switchId` into the
+        payload. Queues a deploy for later bulk execution via `deploy_pending`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the update API request fails.
+        """
+        try:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
+            api_endpoint.set_identifiers(model_instance.interface_name)
+            payload = model_instance.to_payload()
+            payload["switchId"] = switch_id
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+            self._queue_deploy(model_instance.interface_name, switch_id)
+            return result
+        except Exception as e:
+            raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e

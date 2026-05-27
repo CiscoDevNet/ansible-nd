@@ -216,3 +216,84 @@ def test_subinterface_unmanaged_interface_00102(monkeypatch) -> None:
         orchestrator.create(model)
 
     assert orchestrator._pending_deploys == []
+
+
+# =============================================================================
+# Test: update
+# =============================================================================
+
+
+def test_subinterface_unmanaged_interface_00200(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `update` issues a PUT against the per-interface URL, injects `switchId` into the payload, and queues a deploy.
+
+    ## Test
+
+    - switches-list fetched on first switch_id resolution
+    - PUT is issued against `/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/Ethernet1%2F3.20`
+    - `switchId` is present in the payload
+    - `_pending_deploys` contains the `(Ethernet1/3.20, FDO12345ABC)` pair
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.update()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
+
+    with does_not_raise():
+        orchestrator.update(model)
+
+    assert rest_send.verb == HttpVerbEnum.PUT.value
+    body = rest_send.committed_payload
+    assert isinstance(body, dict)
+    assert body["interfaceName"] == "Ethernet1/3.20"
+    assert body["switchId"] == "FDO12345ABC"
+    assert "switchIp" not in body
+    assert ("Ethernet1/3.20", "FDO12345ABC") in orchestrator._pending_deploys
+
+
+def test_subinterface_unmanaged_interface_00201(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `update` wraps a `_request` failure in `RuntimeError` mentioning the identifier.
+
+    ## Test
+
+    - PUT returns 500
+    - `RuntimeError` matches `Update failed for .*Ethernet1/3.20`
+    - No deploy is queued
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.update()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
+
+    match = r"Update failed for .*Ethernet1/3\.20"
+    with pytest.raises(RuntimeError, match=match):
+        orchestrator.update(model)
+
+    assert orchestrator._pending_deploys == []

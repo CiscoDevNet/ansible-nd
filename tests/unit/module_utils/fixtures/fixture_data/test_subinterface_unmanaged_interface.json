@@ -78,5 +78,47 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
         "MESSAGE": "Internal Server Error",
         "DATA": {"error": "boom"}
+    },
+
+    "test_subinterface_unmanaged_interface_00200a": {
+        "TEST_NOTES": ["update happy path: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00200b": {
+        "TEST_NOTES": ["update happy path: PUT /interfaces/Ethernet1%2F3.20"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/Ethernet1%2F3.20",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_subinterface_unmanaged_interface_00201a": {
+        "TEST_NOTES": ["update _request failure: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00201b": {
+        "TEST_NOTES": ["update _request failure: PUT returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/Ethernet1%2F3.20",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
     }
 }
