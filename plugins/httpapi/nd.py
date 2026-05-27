@@ -193,7 +193,13 @@ class HttpApi(HttpApiBase):
                     path = AUTH_BASE_PATH_NEW + LOGIN_ENDPOINT
                     try:
                         token, self.status = self._attempt_login(path, payload)
-                    except Exception:
+                    except Exception as e:
+                        self.connection.queue_message(
+                            "debug",
+                            "login() - new auth endpoint {0} failed ({1}), falling back to legacy endpoint".format(
+                                AUTH_BASE_PATH_NEW + LOGIN_ENDPOINT, e
+                            )
+                        )
                         token, self.status = None, -1
 
                     if token is not None:
