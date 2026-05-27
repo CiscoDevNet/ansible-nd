@@ -153,3 +153,13 @@ class SviPolicyTypeEnum(str, Enum):
     """
 
     SVI = "svi"
+
+
+class SubinterfaceManagedPolicyTypeEnum(str, Enum):
+    """
+    # Summary
+
+    Policy type for managed L3 subinterfaces.
+    """
+
+    SUBINTERFACE = "subinterface"

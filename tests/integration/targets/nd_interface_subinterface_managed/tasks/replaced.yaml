@@ -1,0 +1,45 @@
+---
+# Replaced state tests for nd_interface_subinterface_managed
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# At this point Eth.2 (updated), Eth.3, Eth.4, and PC.5 exist from merged.yaml.
+
+- name: "REPLACED: Replace Eth.3 with a stripped-down config"
+  cisco.nd.nd_interface_subinterface_managed: &replace_eth_3
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_name: "{{ ethernet_parent }}.3"
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              description: "Replaced Eth.3"
+              vlan_id: 3
+              vrf_interface: default
+              ip: 10.99.3.1
+              prefix: 24
+    state: replaced
+  register: nm_replaced_eth_3
+
+- name: "REPLACED: Verify Eth.3 was replaced"
+  vars:
+    eth_3_name: "{{ ethernet_parent }}.3"
+    eth_3_after: "{{ nm_replaced_eth_3.after | selectattr('interface_name', 'equalto', eth_3_name) | first }}"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_eth_3 is changed
+      - eth_3_after.config_data.network_os.policy.description == "Replaced Eth.3"
+      - eth_3_after.config_data.network_os.policy.ip == "10.99.3.1"
+
+- name: "REPLACED IDEMPOTENT: Re-apply replace for Eth.3"
+  cisco.nd.nd_interface_subinterface_managed: *replace_eth_3
+  register: nm_replaced_eth_3_idem
+
+- name: "REPLACED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_replaced_eth_3_idem is not changed
