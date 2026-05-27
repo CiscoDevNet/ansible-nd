@@ -469,3 +469,49 @@ def test_subinterface_unmanaged_interface_00401(monkeypatch) -> None:
     match = r"Bulk create failed"
     with pytest.raises(RuntimeError, match=match):
         orchestrator.create_bulk(models)
+
+
+# =============================================================================
+# Test: delete_bulk
+# =============================================================================
+
+
+def test_subinterface_unmanaged_interface_00500(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `delete_bulk` queues remove + deploy entries for each instance without issuing any API call beyond the
+    switches-list fetch.
+
+    ## Test
+
+    - Two interfaces on two switches
+    - Only switches-list response is consumed
+    - `_pending_removes` and `_pending_deploys` each contain both pairs
+    - `delete_bulk` returns None
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.delete_bulk()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "deleted"})
+    models = [
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20"),
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.152", interface_name="Ethernet1/3.20"),
+    ]
+
+    with does_not_raise():
+        result = orchestrator.delete_bulk(models)
+
+    assert result is None
+    expected = [("Ethernet1/3.20", "FDO12345ABC"), ("Ethernet1/3.20", "FDO12345ABD")]
+    assert sorted(orchestrator._pending_removes) == sorted(expected)
+    assert sorted(orchestrator._pending_deploys) == sorted(expected)

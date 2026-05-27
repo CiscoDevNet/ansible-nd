@@ -189,3 +189,19 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
             return results
         except Exception as e:
             raise RuntimeError(f"Bulk create failed: {e}") from e
+
+    def delete_bulk(self, model_instances: list[SubinterfaceUnmanagedInterfaceModel], **kwargs) -> None:
+        """
+        # Summary
+
+        Queue multiple unmanaged L3 subinterfaces for deferred bulk removal and deployment. No API calls are made
+        until `remove_pending` and `deploy_pending` are called after `manage_state` completes.
+
+        ## Raises
+
+        None
+        """
+        for model_instance in model_instances:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            self._queue_remove(model_instance.interface_name, switch_id)
+            self._queue_deploy(model_instance.interface_name, switch_id)
