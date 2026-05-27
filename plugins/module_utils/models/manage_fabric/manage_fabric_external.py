@@ -76,46 +76,32 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     type: Literal[FabricTypeEnum.EXTERNAL_CONNECTIVITY] = Field(description="Fabric management type", default=FabricTypeEnum.EXTERNAL_CONNECTIVITY)
 
     # Core Configuration
-    bgp_asn: str = Field(
-        alias="bgpAsn",
-        description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]",
-    )
+    bgp_asn: str = Field(alias="bgpAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]")
 
-    # Name under management section is optional for backward compatibility
-    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default="")
+    # Name under management section is optional — propagated from FabricExternalConnectivityModel.fabric_name during validation
+    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default=None)
 
     # AAA
-    aaa: bool = Field(
-        description="Include AAA configs from Advanced tab during device bootup",
-        default=False,
-    )
+    aaa: bool = Field(description="Include AAA configs from Advanced tab during device bootup", default=False)
 
     # SSH
-    advanced_ssh_option: bool = Field(
-        alias="advancedSshOption",
-        description="Enable only, when IP Authorization is enabled in the AAA Server",
-        default=False,
-    )
+    advanced_ssh_option: bool = Field(alias="advancedSshOption", description="Enable only, when IP Authorization is enabled in the AAA Server", default=False)
 
     # Loopback
     allow_same_loopback_ip_on_switches: bool = Field(
         alias="allowSameLoopbackIpOnSwitches",
-        description=("Allow the same loopback IP address to be configured on multiple switches (e.g. RP loopback IP)"),
+        description="Allow the same loopback IP address to be configured on multiple switches (e.g. RP loopback IP)",
         default=False,
     )
 
     # Smart Switch
     allow_smart_switch_onboarding: bool = Field(
-        alias="allowSmartSwitchOnboarding",
-        description=("Enable onboarding of smart switches to Hypershield for firewall service"),
-        default=False,
+        alias="allowSmartSwitchOnboarding", description="Enable onboarding of smart switches to Hypershield for firewall service", default=False
     )
 
     # Bootstrap Subnet Collection
     bootstrap_subnet_collection: list[BootstrapSubnetModel] = Field(
-        alias="bootstrapSubnetCollection",
-        description="List of IPv4 or IPv6 subnets to be used for bootstrap",
-        default_factory=list,
+        alias="bootstrapSubnetCollection", description="List of IPv4 or IPv6 subnets to be used for bootstrap", default_factory=list
     )
 
     # CDP
@@ -124,166 +110,78 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # CoPP Policy
     copp_policy: CoppPolicyEnum = Field(
         alias="coppPolicy",
-        description=("Fabric wide CoPP policy. Customized CoPP policy should be provided when 'manual' is selected."),
+        description="Fabric wide CoPP policy. Customized CoPP policy should be provided when 'manual' is selected.",
         default=CoppPolicyEnum.MANUAL,
     )
 
     # BGP Configuration
-    create_bgp_config: bool = Field(
-        alias="createBgpConfig",
-        description="Generate BGP configuration for core and edge routers",
-        default=True,
-    )
+    create_bgp_config: bool = Field(alias="createBgpConfig", description="Generate BGP configuration for core and edge routers", default=True)
 
     # Bootstrap Settings
-    day0_bootstrap: bool = Field(
-        alias="day0Bootstrap",
-        description="Support day 0 touchless switch bringup",
-        default=False,
-    )
-    day0_plug_and_play: bool = Field(
-        alias="day0PlugAndPlay",
-        description="Enable Plug n Play for Catalyst 9000 switches",
-        default=False,
-    )
+    day0_bootstrap: bool = Field(alias="day0Bootstrap", description="Support day 0 touchless switch bringup", default=False)
+    day0_plug_and_play: bool = Field(alias="day0PlugAndPlay", description="Enable Plug n Play for Catalyst 9000 switches", default=False)
 
     # DHCP
-    dhcp_end_address: str = Field(
-        alias="dhcpEndAddress",
-        description="DHCP Scope End Address For Switch POAP",
-        default="",
-    )
+    dhcp_end_address: str = Field(alias="dhcpEndAddress", description="DHCP Scope End Address For Switch POAP", default="")
     dhcp_protocol_version: DhcpProtocolVersionEnum = Field(
-        alias="dhcpProtocolVersion",
-        description="IP protocol version for Local DHCP Server",
-        default=DhcpProtocolVersionEnum.DHCPV4,
+        alias="dhcpProtocolVersion", description="IP protocol version for Local DHCP Server", default=DhcpProtocolVersionEnum.DHCPV4
     )
-    dhcp_start_address: str = Field(
-        alias="dhcpStartAddress",
-        description="DHCP Scope Start Address For Switch POAP",
-        default="",
-    )
+    dhcp_start_address: str = Field(alias="dhcpStartAddress", description="DHCP Scope Start Address For Switch POAP", default="")
 
     # DNS
-    dns_collection: list[str] = Field(
-        alias="dnsCollection",
-        description="List of IPv4 and IPv6 DNS addresses",
-        default_factory=list,
-    )
+    dns_collection: list[str] = Field(alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses", default_factory=list)
     dns_vrf_collection: list[str] = Field(
         alias="dnsVrfCollection",
-        description=("DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server"),
-        default_factory=list,
+        description="DNS Server VRFs. One VRF for all DNS servers or a list of VRFs, one per DNS server",
+        default_factory=lambda: ["string"],
     )
 
     # Domain
-    domain_name: str = Field(
-        alias="domainName",
-        description="Domain name for DHCP server PnP block",
-        default="",
-    )
+    domain_name: str = Field(alias="domainName", description="Domain name for DHCP server PnP block", default="")
 
     # DPU Pinning
     enable_dpu_pinning: bool = Field(
-        alias="enableDpuPinning",
-        description=("Enable pinning of VRFs and networks to specific DPUs on smart switches"),
-        default=False,
+        alias="enableDpuPinning", description="Enable pinning of VRFs and networks to specific DPUs on smart switches", default=False
     )
 
     # Extra Config
-    extra_config_aaa: str = Field(
-        alias="extraConfigAaa",
-        description="Additional CLIs for AAA Configuration",
-        default="",
-    )
-    extra_config_fabric: str = Field(
-        alias="extraConfigFabric",
-        description="Additional CLIs for all switches",
-        default="",
-    )
+    extra_config_aaa: str = Field(alias="extraConfigAaa", description="Additional CLIs for AAA Configuration", default="")
+    extra_config_fabric: str = Field(alias="extraConfigFabric", description="Additional CLIs for all switches", default="")
     extra_config_nxos_bootstrap: str = Field(
-        alias="extraConfigNxosBootstrap",
-        description=("Additional CLIs required during device bootup/login e.g. AAA/Radius (NX-OS)"),
-        default="",
+        alias="extraConfigNxosBootstrap", description="Additional CLIs required during device bootup/login e.g. AAA/Radius (NX-OS)", default=""
     )
     extra_config_xe_bootstrap: str = Field(
-        alias="extraConfigXeBootstrap",
-        description=("Additional CLIs required during device bootup/login e.g. AAA/Radius (IOS-XE)"),
-        default="",
+        alias="extraConfigXeBootstrap", description="Additional CLIs required during device bootup/login e.g. AAA/Radius (IOS-XE)", default=""
     )
 
     # Inband Management
-    inband_day0_bootstrap: bool = Field(
-        alias="inbandDay0Bootstrap",
-        description="Support day 0 touchless switch bringup via inband management",
-        default=False,
-    )
-    inband_management: bool = Field(
-        alias="inbandManagement",
-        description=("Import switches with reachability over the switch front-panel ports"),
-        default=False,
-    )
+    inband_day0_bootstrap: bool = Field(alias="inbandDay0Bootstrap", description="Support day 0 touchless switch bringup via inband management", default=False)
+    inband_management: bool = Field(alias="inbandManagement", description="Import switches with reachability over the switch front-panel ports", default=False)
 
     # Interface Statistics
     interface_statistics_load_interval: int = Field(
-        alias="interfaceStatisticsLoadInterval",
-        description="Interface Statistics Load Interval Time in seconds",
-        default=10,
+        alias="interfaceStatisticsLoadInterval", description="Interface Statistics Load Interval Time in seconds", default=10
     )
 
     # Local DHCP Server
-    local_dhcp_server: bool = Field(
-        alias="localDhcpServer",
-        description="Automatic IP Assignment For POAP from Local DHCP Server",
-        default=False,
-    )
+    local_dhcp_server: bool = Field(alias="localDhcpServer", description="Automatic IP Assignment For POAP from Local DHCP Server", default=False)
 
     # Management
-    management_gateway: str = Field(
-        alias="managementGateway",
-        description="Default Gateway For Management VRF On The Switch",
-        default="",
-    )
-    management_ipv4_prefix: int = Field(
-        alias="managementIpv4Prefix",
-        description="Switch Mgmt IP Subnet Prefix if ipv4",
-        default=24,
-    )
-    management_ipv6_prefix: int = Field(
-        alias="managementIpv6Prefix",
-        description="Switch Management IP Subnet Prefix if ipv6",
-        default=64,
-    )
+    management_gateway: str = Field(alias="managementGateway", description="Default Gateway For Management VRF On The Switch", default="")
+    management_ipv4_prefix: int = Field(alias="managementIpv4Prefix", description="Switch Mgmt IP Subnet Prefix if ipv4", default=24)
+    management_ipv6_prefix: int = Field(alias="managementIpv6Prefix", description="Switch Management IP Subnet Prefix if ipv6", default=64)
 
     # Monitored Mode
-    monitored_mode: bool = Field(
-        alias="monitoredMode",
-        description=("If enabled, fabric is only monitored. No configuration will be deployed"),
-        default=False,
-    )
+    monitored_mode: bool = Field(alias="monitoredMode", description="If enabled, fabric is only monitored. No configuration will be deployed", default=False)
 
     # MPLS Handoff
-    mpls_handoff: bool = Field(
-        alias="mplsHandoff",
-        description="Enable MPLS Handoff",
-        default=False,
-    )
-    mpls_loopback_identifier: int | None = Field(
-        alias="mplsLoopbackIdentifier",
-        description="Underlay MPLS Loopback Identifier",
-        default=None,
-    )
-    mpls_loopback_ip_range: str = Field(
-        alias="mplsLoopbackIpRange",
-        description="MPLS Loopback IP Address Range",
-        default="10.102.0.0/25",
-    )
+    mpls_handoff: bool = Field(alias="mplsHandoff", description="Enable MPLS Handoff", default=False)
+    mpls_loopback_identifier: int = Field(alias="mplsLoopbackIdentifier", description="Underlay MPLS Loopback Identifier", default=101)
+    mpls_loopback_ip_range: str = Field(alias="mplsLoopbackIpRange", description="MPLS Loopback IP Address Range", default="10.102.0.0/25")
 
     # Netflow Settings
     netflow_settings: NetflowSettingsModel = Field(
-        alias="netflowSettings",
-        description="Settings associated with netflow",
-        default_factory=NetflowSettingsModel,
+        alias="netflowSettings", description="Settings associated with netflow", default_factory=NetflowSettingsModel
     )
 
     # NX-API Settings
@@ -295,68 +193,42 @@ class ExternalConnectivityManagementModel(NDNestedModel):
     # Performance Monitoring
     performance_monitoring: bool = Field(
         alias="performanceMonitoring",
-        description=("If enabled, switch metrics are collected through periodic SNMP polling. Alternative to real-time telemetry"),
+        description="If enabled, switch metrics are collected through periodic SNMP polling. Alternative to real-time telemetry",
         default=False,
     )
 
     # Power Redundancy
     power_redundancy_mode: PowerRedundancyModeEnum = Field(
-        alias="powerRedundancyMode",
-        description="Default Power Supply Mode for NX-OS Switches",
-        default=PowerRedundancyModeEnum.REDUNDANT,
+        alias="powerRedundancyMode", description="Default Power Supply Mode for NX-OS Switches", default=PowerRedundancyModeEnum.REDUNDANT
     )
 
     # PTP
     ptp: bool = Field(description="Enable Precision Time Protocol (PTP)", default=False)
-    ptp_domain_id: int = Field(
-        alias="ptpDomainId",
-        description=("Multiple Independent PTP Clocking Subdomains on a Single Network"),
-        default=0,
-    )
-    ptp_loopback_id: int = Field(
-        alias="ptpLoopbackId",
-        description="Precision Time Protocol Source Loopback Id",
-        default=0,
-    )
+    ptp_domain_id: int = Field(alias="ptpDomainId", description="Multiple Independent PTP Clocking Subdomains on a Single Network", default=0)
+    ptp_loopback_id: int = Field(alias="ptpLoopbackId", description="Precision Time Protocol Source Loopback Id", default=0)
 
     # Backup / Restore
     real_time_backup: bool | None = Field(
-        alias="realTimeBackup",
-        description=("Hourly Fabric Backup only if there is any config deployment since last backup"),
-        default=None,
+        alias="realTimeBackup", description="Hourly Fabric Backup only if there is any config deployment since last backup", default=None
     )
 
     # Interface Statistics Collection
     real_time_interface_statistics_collection: bool = Field(
-        alias="realTimeInterfaceStatisticsCollection",
-        description=("Enable Real Time Interface Statistics Collection. Valid for NX-OS only"),
-        default=False,
+        alias="realTimeInterfaceStatisticsCollection", description="Enable Real Time Interface Statistics Collection. Valid for NX-OS only", default=False
     )
 
     # Scheduled Backup
-    scheduled_backup: bool | None = Field(
-        alias="scheduledBackup",
-        description="Enable backup at the specified time daily",
-        default=None,
-    )
+    scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=None)
     scheduled_backup_time: str = Field(
-        alias="scheduledBackupTime",
-        description=("Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)"),
-        default="",
+        alias="scheduledBackupTime", description="Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)", default=""
     )
 
     # SNMP
-    snmp_trap: bool = Field(
-        alias="snmpTrap",
-        description="Configure Nexus Dashboard as a receiver for SNMP traps",
-        default=True,
-    )
+    snmp_trap: bool = Field(alias="snmpTrap", description="Configure Nexus Dashboard as a receiver for SNMP traps", default=True)
 
     # Sub-Interface
     sub_interface_dot1q_range: str = Field(
-        alias="subInterfaceDot1qRange",
-        description=("Per aggregation dot1q range for VRF-Lite connectivity (minimum: 2, maximum: 4093)"),
-        default="2-511",
+        alias="subInterfaceDot1qRange", description="Per aggregation dot1q range for VRF-Lite connectivity (minimum: 2, maximum: 4093)", default="2-511"
     )
 
     # Hypershield / Connectivity

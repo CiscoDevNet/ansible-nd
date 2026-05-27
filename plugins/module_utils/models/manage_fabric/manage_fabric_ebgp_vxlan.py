@@ -96,7 +96,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
     type: Literal[FabricTypeEnum.VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.VXLAN_EBGP)
 
     # Core eBGP Configuration
-    bgp_asn: str | None = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].", default=None)
+    bgp_asn: str | None = Field(alias="bgpAsn", description="BGP Autonomous System Number for Spines 1-4294967295 | 1-65535[.0-65535].")
     site_id: str | None = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN for Spines", default="")
     bgp_as_mode: BgpAsModeEnum = Field(
         alias="bgpAsMode",
@@ -139,8 +139,8 @@ class VxlanEbgpManagementModel(NDNestedModel):
         alias="superSpineBgpAs", description="BGP Autonomous System Number for Super Spines 1-4294967295 | 1-65535[.0-65535]", default=None
     )
 
-    # Propagated from FabricEbgpModel
-    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default="")
+    # Propagated from FabricEbgpModel.fabric_name during validation
+    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default=None)
 
     # Network Addressing
     bgp_loopback_id: int = Field(alias="bgpLoopbackId", description="Underlay Routing Loopback Id", ge=0, le=1023, default=0)
@@ -401,7 +401,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
 
     # Backup / Restore
     real_time_backup: bool | None = Field(
-        alias="realTimeBackup", description=("Backup hourly only if there is any config deployment since last backup"), default=None
+        alias="realTimeBackup", description="Backup hourly only if there is any config deployment since last backup", default=None
     )
     scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=None)
     scheduled_backup_time: str = Field(
@@ -459,7 +459,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         alias="ntpServerVrfCollection",
         description=("NTP Server VRFs. One VRF for all NTP servers or a list of VRFs, one per NTP server"),
     )
-    dns_collection: list[str] = Field(default_factory=lambda: ["5.192.28.174"], alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses")
+    dns_collection: list[str] = Field(default_factory=list, alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses")
     dns_vrf_collection: list[str] = Field(
         default_factory=lambda: ["string"],
         alias="dnsVrfCollection",

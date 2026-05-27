@@ -102,8 +102,8 @@ class VxlanIbgpManagementModel(NDNestedModel):
     bgp_asn: str = Field(alias="bgpAsn", description="Autonomous system number 1-4294967295 | 1-65535[.0-65535]")
     site_id: str | None = Field(alias="siteId", description="For EVPN Multi-Site Support. Defaults to Fabric ASN", default="")
 
-    # Name under management section is optional for backward compatibility, but if provided must be non-empty string
-    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default="")
+    # Name under management section is optional — propagated from FabricIbgpModel.fabric_name during validation
+    name: str | None = Field(description="Fabric name", min_length=1, max_length=64, default=None)
 
     # Fabric Designer Settings - unsupported at this time
     # border_count: int | None = Field(alias="borderCount", description="Number of border switches", ge=0, le=32, default=0)
@@ -322,8 +322,10 @@ class VxlanIbgpManagementModel(NDNestedModel):
     )
 
     # Backup / Restore
-    real_time_backup: bool = Field(alias="realTimeBackup", description="Backup hourly only if there is any config deployment since last backup", default=False)
-    scheduled_backup: bool = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=False)
+    real_time_backup: bool | None = Field(
+        alias="realTimeBackup", description="Backup hourly only if there is any config deployment since last backup", default=None
+    )
+    scheduled_backup: bool | None = Field(alias="scheduledBackup", description="Enable backup at the specified time daily", default=None)
     scheduled_backup_time: str = Field(
         alias="scheduledBackupTime", description="Time (UTC) in 24 hour format to take a daily backup if enabled (00:00 to 23:59)", default=""
     )
@@ -353,13 +355,13 @@ class VxlanIbgpManagementModel(NDNestedModel):
     mvpn_vrf_route_import_id: bool = Field(
         alias="mvpnVrfRouteImportId", description="Enable MVPN VRI ID Generation For Tenant Routed Multicast With IPv4 Underlay", default=True
     )
-    mvpn_vrf_route_import_id_range: str = Field(
+    mvpn_vrf_route_import_id_range: str | None = Field(
         alias="mvpnVrfRouteImportIdRange",
         description=(
             "MVPN VRI ID (minimum: 1, maximum: 65535) for vPC, applicable when TRM enabled with IPv6 underlay, or "
             "mvpnVrfRouteImportId enabled with IPv4 underlay"
         ),
-        default="",
+        default=None,
     )
     vrf_route_import_id_reallocation: bool = Field(
         alias="vrfRouteImportIdReallocation", description="One time VRI ID re-allocation based on 'MVPN VRI ID Range'", default=False
@@ -704,13 +706,13 @@ class VxlanIbgpManagementModel(NDNestedModel):
     dlb_mixed_mode_default: DlbMixedModeDefaultEnum = Field(
         alias="dlbMixedModeDefault", description="Default load balancing mode for policy driven mixed mode DLB", default=DlbMixedModeDefaultEnum.ECMP
     )
-    flowlet_aging: int = Field(
+    flowlet_aging: int | None = Field(
         alias="flowletAging",
         description=(
             "Flowlet aging timer in microseconds. Valid range depends on platform: Cloud Scale (CS)=1-2000000 (default "
             "500), Silicon One (S1)=1-1024 (default 256)"
         ),
-        default=1,
+        default=None,
     )
     flowlet_dscp: str = Field(
         alias="flowletDscp",
@@ -731,10 +733,10 @@ class VxlanIbgpManagementModel(NDNestedModel):
     ai_load_sharing: bool = Field(
         alias="aiLoadSharing", description="Enable IP load sharing using source and destination address for AI workloads", default=False
     )
-    priority_flow_control_watch_interval: int = Field(
+    priority_flow_control_watch_interval: int | None = Field(
         alias="priorityFlowControlWatchInterval",
-        description="Acceptable values from 101 to 1000 (milliseconds).  Leave blank for system default (100ms).",
-        default=101,
+        description="Acceptable values from 101 to 1000 (milliseconds). Leave blank for system default (100ms).",
+        default=None,
     )
 
     # PTP
@@ -822,7 +824,7 @@ class VxlanIbgpManagementModel(NDNestedModel):
     # DNS / NTP / Syslog Collections
     ntp_server_collection: list[str] = Field(default_factory=lambda: ["string"], alias="ntpServerCollection")
     ntp_server_vrf_collection: list[str] = Field(default_factory=lambda: ["string"], alias="ntpServerVrfCollection")
-    dns_collection: list[str] = Field(default_factory=lambda: ["5.192.28.174"], alias="dnsCollection")
+    dns_collection: list[str] = Field(default_factory=list, alias="dnsCollection", description="List of IPv4 and IPv6 DNS addresses")
     dns_vrf_collection: list[str] = Field(default_factory=lambda: ["string"], alias="dnsVrfCollection")
     syslog_server_collection: list[str] = Field(default_factory=lambda: ["string"], alias="syslogServerCollection")
     syslog_server_vrf_collection: list[str] = Field(default_factory=lambda: ["string"], alias="syslogServerVrfCollection")
