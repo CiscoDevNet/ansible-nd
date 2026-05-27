@@ -272,7 +272,6 @@ options:
             - MVPN VRI ID range (minimum 1, maximum 65535) for vPC.
             - Applicable when TRM is enabled with IPv6 underlay, or mvpn_vrf_route_import_id is enabled with IPv4 underlay.
             type: str
-            default: ""
           vrf_route_import_id_reallocation:
             description:
             - One time VRI ID re-allocation based on MVPN VRI ID Range.
@@ -888,7 +887,6 @@ options:
             - "Flowlet aging timer in microseconds. Valid range depends on platform: Cloud Scale (CS)=1-2000000,
               Silicon One (S1)=1-1024."
             type: int
-            default: 1
           flowlet_dscp:
             description:
             - DSCP values for flowlet load balancing. Numeric (0-63) with ranges/comma, or named values.
@@ -908,7 +906,6 @@ options:
             description:
             - PFC watch interval in milliseconds (101-1000). Leave blank for system default (100ms).
             type: int
-            default: 101
           ptp:
             description:
             - Enable Precision Time Protocol (PTP).
@@ -1464,12 +1461,10 @@ options:
             description:
             - Enable real-time backup.
             type: bool
-            default: false
           scheduled_backup:
             description:
             - Enable scheduled backup.
             type: bool
-            default: false
           scheduled_backup_time:
             description:
             - The scheduled backup time.
