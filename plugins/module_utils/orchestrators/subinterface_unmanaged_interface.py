@@ -154,3 +154,38 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
         switch_id = self._resolve_switch_id(model_instance.switch_ip)
         self._queue_remove(model_instance.interface_name, switch_id)
         self._queue_deploy(model_instance.interface_name, switch_id)
+
+    def create_bulk(self, model_instances: list[SubinterfaceUnmanagedInterfaceModel], **kwargs) -> ResponseType:
+        """
+        # Summary
+
+        Create multiple unmanaged L3 subinterfaces in bulk. Groups subinterfaces by switch and sends one POST per
+        switch with all subinterfaces in the `interfaces` array, reducing API calls from N to one-per-switch. Queues
+        deploys for all created subinterfaces for later bulk execution via `deploy_pending`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If any create API request fails.
+        """
+        try:
+            groups: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+            for model_instance in model_instances:
+                switch_id = self._resolve_switch_id(model_instance.switch_ip)
+                payload = model_instance.to_payload()
+                payload["switchId"] = switch_id
+                groups[switch_id].append((model_instance.interface_name, payload))
+
+            results = []
+            for switch_id, items in groups.items():
+                api_endpoint = self._configure_endpoint(self.create_bulk_endpoint(), switch_sn=switch_id)  # pyright: ignore[reportOptionalCall]
+                request_body = {"interfaces": [payload for interface_name, payload in items]}
+                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=request_body)
+                self._raise_on_multi_status_failures(result)
+                results.append(result)
+                for interface_name, payload in items:
+                    self._queue_deploy(interface_name, switch_id)
+            return results
+        except Exception as e:
+            raise RuntimeError(f"Bulk create failed: {e}") from e

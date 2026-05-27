@@ -376,3 +376,96 @@ def test_subinterface_unmanaged_interface_00301(monkeypatch) -> None:
 
     assert orchestrator._pending_removes == []
     assert orchestrator._pending_deploys == []
+
+
+# =============================================================================
+# Test: create_bulk
+# =============================================================================
+
+
+def test_subinterface_unmanaged_interface_00400(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` groups interfaces by switch and issues one POST per switch with the per-switch subset
+    wrapped in `{"interfaces": [...]}`.
+
+    ## Test
+
+    - Three interfaces split across two switches: Ethernet1/3.20 + Ethernet1/3.21 on switch A, Ethernet1/3.20 on switch B
+    - Two POSTs are issued (one per switch)
+    - All three pairs are queued in `_pending_deploys`
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.create_bulk()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}c")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    models = [
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20"),
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.21"),
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.152", interface_name="Ethernet1/3.20"),
+    ]
+
+    with does_not_raise():
+        orchestrator.create_bulk(models)
+
+    assert rest_send.path in (
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABD/interfaces",
+    )
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert sorted(orchestrator._pending_deploys) == sorted(
+        [
+            ("Ethernet1/3.20", "FDO12345ABC"),
+            ("Ethernet1/3.21", "FDO12345ABC"),
+            ("Ethernet1/3.20", "FDO12345ABD"),
+        ]
+    )
+
+
+def test_subinterface_unmanaged_interface_00401(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `create_bulk` wraps a per-switch `_request` failure in `RuntimeError` matching `Bulk create failed`.
+
+    ## Test
+
+    - switches-list succeeds
+    - First per-switch POST succeeds, second returns 500
+    - `RuntimeError` matches `Bulk create failed`
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.create_bulk()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}c")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    models = [
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20"),
+        SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.152", interface_name="Ethernet1/3.20"),
+    ]
+
+    match = r"Bulk create failed"
+    with pytest.raises(RuntimeError, match=match):
+        orchestrator.create_bulk(models)
