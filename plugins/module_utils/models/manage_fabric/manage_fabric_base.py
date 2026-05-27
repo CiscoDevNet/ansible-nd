@@ -67,10 +67,8 @@ class FabricBaseModel(NDBaseModel):
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        if not hasattr(cls, '_fabric_type'):
-            raise TypeError(
-                f"{cls.__name__} must define a '_fabric_type' ClassVar with a FabricTypeEnum value"
-            )
+        if not hasattr(cls, "_fabric_type"):
+            raise TypeError(f"{cls.__name__} must define a '_fabric_type' ClassVar with a FabricTypeEnum value")
 
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 

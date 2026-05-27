@@ -128,11 +128,7 @@ class VxlanEbgpManagementModel(NDNestedModel):
         ),
         default=True,
     )
-    evpn: Literal[True] = Field(
-        description="Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric",
-        default=True,
-        frozen=True
-    )
+    evpn: Literal[True] = Field(description="Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric", default=True, frozen=True)
     route_map_tag: int = Field(alias="routeMapTag", description="Tag for Route Map FABRIC-RMAP-REDIST-SUBNET. (Min:0, Max:4294967295)", default=12345)
     disable_route_map_tag: bool = Field(alias="disableRouteMapTag", description="No match tag for Route Map FABRIC-RMAP-REDIST-SUBNET", default=False)
     leaf_bgp_as: str | None = Field(alias="leafBgpAs", description="BGP Autonomous System Number for Leafs 1-4294967295 | 1-65535[.0-65535]", default=None)
