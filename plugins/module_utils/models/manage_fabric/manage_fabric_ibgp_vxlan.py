@@ -1055,6 +1055,7 @@ class FabricIbgpModel(FabricBaseModel):
 
     def _post_validate_consistency(self) -> None:
         """Propagate BGP ASN to site_id if site_id is empty."""
+        super()._post_validate_consistency()
         if self.management is not None and self.management.site_id == "":
             bgp_asn = self.management.bgp_asn
             if "." in bgp_asn:

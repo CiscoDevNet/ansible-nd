@@ -128,7 +128,11 @@ class VxlanEbgpManagementModel(NDNestedModel):
         ),
         default=True,
     )
-    evpn: bool = Field(description=("Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric"), default=True)
+    evpn: Literal[True] = Field(
+        description="Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric",
+        default=True,
+        frozen=True
+    )
     route_map_tag: int = Field(alias="routeMapTag", description="Tag for Route Map FABRIC-RMAP-REDIST-SUBNET. (Min:0, Max:4294967295)", default=12345)
     disable_route_map_tag: bool = Field(alias="disableRouteMapTag", description="No match tag for Route Map FABRIC-RMAP-REDIST-SUBNET", default=False)
     leaf_bgp_as: str | None = Field(alias="leafBgpAs", description="BGP Autonomous System Number for Leafs 1-4294967295 | 1-65535[.0-65535]", default=None)
@@ -811,6 +815,7 @@ class FabricEbgpModel(FabricBaseModel):
 
     def _post_validate_consistency(self) -> None:
         """Propagate BGP ASN to site_id if site_id is empty."""
+        super()._post_validate_consistency()
         if self.management is not None and self.management.site_id == "" and self.management.bgp_asn is not None:
             bgp_asn = self.management.bgp_asn
             if "." in bgp_asn:

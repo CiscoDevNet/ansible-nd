@@ -65,6 +65,13 @@ class FabricBaseModel(NDBaseModel):
     - `TypeError` - If field types don't match expected types
     """
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if not hasattr(cls, '_fabric_type'):
+            raise TypeError(
+                f"{cls.__name__} must define a '_fabric_type' ClassVar with a FabricTypeEnum value"
+            )
+
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
 
     # ── ClassVars (shared across all fabric models) ──
@@ -80,7 +87,7 @@ class FabricBaseModel(NDBaseModel):
     location: LocationModel | None = Field(description="Geographic location of the fabric", default=None)
 
     # ── License, Telemetry, and Operations ──
-    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License Tier for ffabric.", default=LicenseTierEnum.ESSENTIALS)
+    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License Tier for fabric.", default=LicenseTierEnum.ESSENTIALS)
     alert_suspend: AlertSuspendEnum = Field(
         alias="alertSuspend", description="Alert Suspend state configured on the fabric.", default=AlertSuspendEnum.DISABLED
     )
@@ -143,7 +150,12 @@ class FabricBaseModel(NDBaseModel):
         return self
 
     def _post_validate_consistency(self) -> None:
-        """Hook for subclass-specific post-validation logic. Default is a no-op."""
+        """Subclass hook for post-validation logic.
+
+        Subclasses that override this method MUST call
+        ``super()._post_validate_consistency()`` to ensure any future
+        shared validation in the base class is not silently skipped.
+        """
         pass
 
     @classmethod

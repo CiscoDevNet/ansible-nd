@@ -116,18 +116,32 @@ IPv4CIDR = Annotated[Optional[str], BeforeValidator(validate_ipv4_cidr)]
 IPv6CIDR = Annotated[Optional[str], BeforeValidator(validate_ipv6_cidr)]
 """IPv6 interface address in CIDR notation (`str | None`). Layer with `Field(...)` for alias/description as usual."""
 
-_FABRIC_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+# Fabric name rules (verified against ND 4.2.x GUI):
+#   - Allowed chars: a-z, A-Z, 0-9, _, -
+#   - Must start AND end with an alphanumeric (no leading/trailing _ or -)
+#   - Numbers alone are not allowed (must contain at least one letter)
+#   - Length 1-64 (enforced by the regex itself)
+_FABRIC_NAME_RE = re.compile(
+    r"^(?=.*[A-Za-z])"  # at least one letter (rejects all-digit)
+    r"[A-Za-z0-9]"  # start: alphanumeric
+    r"(?:[A-Za-z0-9_-]{0,62}"  # middle: up to 62 inner chars
+    r"[A-Za-z0-9])?$"  # end: alphanumeric (skipped if length is 1)
+)
 
 
 def _validate_fabric_name(value: str) -> str:
-    """Validate that a fabric name contains only letters, digits, underscores, and hyphens."""
+    """Validate that a fabric name matches ND's naming constraints."""
     if not _FABRIC_NAME_RE.match(value):
-        raise ValueError(f"Fabric name can only contain letters, numbers, underscores, and hyphens, got: {value}")
+        raise ValueError(
+            f"Invalid fabric name {value!r}. Allowed chars: a-z, A-Z, 0-9, _, -. "
+            "Must start and end with an alphanumeric character, must contain at "
+            "least one letter, and must be 1-64 characters."
+        )
     return value
 
 
 NdFabricName = Annotated[
     str,
     Field(alias="name", min_length=1, max_length=64, description="Fabric name"),
-    BeforeValidator(_validate_fabric_name),
+    AfterValidator(_validate_fabric_name),
 ]
