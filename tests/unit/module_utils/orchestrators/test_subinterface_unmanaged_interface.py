@@ -51,3 +51,44 @@ def _build_rest_send(gen_responses: ResponseGenerator) -> RestSend:
     rest_send.unit_test = True
     rest_send.timeout = 1
     return rest_send
+
+
+# =============================================================================
+# Test: _raise_on_multi_status_failures
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "payload, expected_raise",
+    [
+        ({"results": [{"name": "Ethernet1/3.20", "status": "success", "message": "ok"}]}, False),
+        ({"results": [{"name": "Ethernet1/3.20", "status": "failed", "message": "parent not routed"}]}, True),
+        ({"results": [{"name": "Ethernet1/3.20", "status": "error", "message": "validation"}]}, True),
+        ({"results": []}, False),
+        ({}, False),
+        (None, False),
+        ("not a dict", False),
+    ],
+    ids=["success", "failed-raises", "error-raises", "empty-results", "missing-results", "none-input", "non-dict-input"],
+)
+def test_subinterface_unmanaged_interface_00010(payload, expected_raise) -> None:
+    """
+    # Summary
+
+    Verify `_raise_on_multi_status_failures` behavior across the matrix.
+
+    ## Test
+
+    - Various 207-body shapes are passed
+    - `RuntimeError` is raised iff any item carries `status` in `("failed", "error")`
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator._raise_on_multi_status_failures()
+    """
+    if expected_raise:
+        with pytest.raises(RuntimeError, match=r"ND rejected"):
+            SubinterfaceUnmanagedInterfaceOrchestrator._raise_on_multi_status_failures(payload)
+    else:
+        with does_not_raise():
+            SubinterfaceUnmanagedInterfaceOrchestrator._raise_on_multi_status_failures(payload)
