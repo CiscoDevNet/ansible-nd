@@ -9,6 +9,9 @@ from __future__ import absolute_import, annotations, division, print_function
 import ipaddress
 from typing import Any, NoReturn
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
+    get_params as _get_params,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exceptions import (
     VrfLiteResourceError,
 )
@@ -21,18 +24,6 @@ CONFIG_ACTION_TYPE_CHOICES = ("switch", "global")
 
 def _raise_vrf_lite_error(msg: str, **details: Any) -> NoReturn:
     raise VrfLiteResourceError(msg=msg, **details)
-
-
-def _get_params(source: Any) -> dict[str, Any]:
-    """Return a mutable params mapping from either module.params or a raw params dict."""
-    if isinstance(source, dict):
-        return source
-
-    params = getattr(source, "params", None)
-    if isinstance(params, dict):
-        return params
-
-    return {}
 
 
 def _is_ip_literal(value: Any) -> bool:
@@ -73,6 +64,15 @@ def _resolve_serial(module: Any, switch_identifier: Any) -> str:
         )
 
     return text
+
+
+def vrf_name_from_config_item(item: Any) -> str:
+    """Return a normalized VRF name from public or controller-style keys."""
+    if not isinstance(item, dict):
+        return ""
+
+    vrf_name = item.get("vrf_name") or item.get("vrfName")
+    return str(vrf_name).strip() if vrf_name else ""
 
 
 def append_runtime_warning(source: Any, message: str) -> None:
@@ -146,10 +146,6 @@ def request_with_verify_settings(module: Any, nd_v2: Any, path: str, verb: Any) 
                 raise
         finally:
             rest_send.restore_settings()
-
-    if last_error is not None:
-        raise last_error
-    return None
 
 
 def get_config_actions(source: Any) -> dict[str, Any]:

@@ -9,6 +9,10 @@ from __future__ import absolute_import, annotations, division, print_function
 import json
 from typing import Any
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
+    copy_dict_items,
+    try_int,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     _raise_vrf_lite_error,
@@ -211,7 +215,9 @@ def _empty_vrf_lite_extension_values(existing_extension_values: Any) -> str:
 
 
 def _build_instance_values_for_payload(import_evpn_rt: Any, export_evpn_rt: Any, existing_instance_values: Any = None) -> str:
-    existing = parse_instance_values(existing_instance_values)
+    # Make a defensive copy: parse_instance_values may return the input dict directly
+    # when existing_instance_values is already a dict, and we must not mutate the caller's object.
+    existing = dict(parse_instance_values(existing_instance_values))
     if not existing:
         return build_instance_values(import_evpn_rt, export_evpn_rt)
 
@@ -224,18 +230,7 @@ def _build_instance_values_for_payload(import_evpn_rt: Any, export_evpn_rt: Any,
 
 
 def _entry_extensions(entry: Any) -> list[dict[str, Any]]:
-    extensions = getattr(entry, "extensions", None) or []
-    return [
-        item.model_dump(by_alias=False, exclude_none=True) if hasattr(item, "model_dump") else dict(item)
-        for item in extensions
-    ]
-
-
-def _try_int(value: Any) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    return copy_dict_items(getattr(entry, "extensions", None) or [])
 
 
 def _entry_vlan_id(module: Any, entry: Any, raw_attach: dict[str, Any] | None = None) -> int:
@@ -245,12 +240,12 @@ def _entry_vlan_id(module: Any, entry: Any, raw_attach: dict[str, Any] | None = 
     vlan_map = module.params.get("_vrf_lite_vrf_vlan_map") or {}
     mapped_vlan = vlan_map.get(entry.vrf_name)
     if mapped_vlan not in (None, ""):
-        vlan = _try_int(mapped_vlan)
+        vlan = try_int(mapped_vlan)
         if vlan is not None:
             return vlan
 
     if isinstance(raw_attach, dict) and raw_attach.get("vlan") not in (None, ""):
-        vlan = _try_int(raw_attach.get("vlan"))
+        vlan = try_int(raw_attach.get("vlan"))
         if vlan is not None:
             return vlan
 

@@ -6,28 +6,12 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
-import ast
 import json
 from typing import Any
 
-
-def _loads_maybe_json(value: Any) -> Any:
-    if isinstance(value, (dict, list)):
-        return value
-    if value is None:
-        return None
-
-    text = str(value).strip()
-    if not text:
-        return None
-
-    try:
-        return json.loads(text)
-    except Exception:
-        try:
-            return ast.literal_eval(text)
-        except Exception:
-            return None
+from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
+    loads_maybe_json,
+)
 
 
 def normalize_vrf_lite_list(vrf_lite_items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -59,8 +43,10 @@ def build_vrf_lite_extension_values(
     """
     Build extensionValues string expected by top-down VRF attachment APIs.
     """
-    existing_outer = _loads_maybe_json(existing_extension_values)
-    if not isinstance(existing_outer, dict):
+    existing_outer = loads_maybe_json(existing_extension_values)
+    if isinstance(existing_outer, dict):
+        existing_outer = dict(existing_outer)
+    else:
         existing_outer = {}
 
     normalized = normalize_vrf_lite_list(vrf_lite_items)
@@ -104,12 +90,12 @@ def parse_vrf_lite_extension_values(extension_values: Any) -> list[dict[str, Any
     """
     Parse controller extensionValues into playbook-style vrf_lite list.
     """
-    outer = _loads_maybe_json(extension_values)
+    outer = loads_maybe_json(extension_values)
     if not isinstance(outer, dict):
         return []
 
     inner = outer.get("VRF_LITE_CONN")
-    inner = _loads_maybe_json(inner)
+    inner = loads_maybe_json(inner)
     if not isinstance(inner, dict):
         return []
 
@@ -157,7 +143,7 @@ def build_instance_values(import_evpn_rt: str | None, export_evpn_rt: str | None
 
 
 def parse_instance_values(instance_values: Any) -> dict[str, Any]:
-    parsed = _loads_maybe_json(instance_values)
+    parsed = loads_maybe_json(instance_values)
     if isinstance(parsed, dict):
         return parsed
     return {}

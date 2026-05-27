@@ -270,6 +270,22 @@ def test_manage_vrf_lite_00300_extension_values_clear_only_vrf_lite_section():
     assert build_vrf_lite_extension_values(vrf_lite_items=[], existing_extension_values=None) == ""
 
 
+def test_manage_vrf_lite_00325_extension_values_does_not_mutate_existing_dict():
+    existing_outer = {
+        "VRF_LITE_CONN": json.dumps({"VRF_LITE_CONN": [{"IF_NAME": "Ethernet1/1"}]}, separators=(",", ":")),
+        "MULTISITE_CONN": json.dumps({"MULTISITE_CONN": [{"site": "A"}]}, separators=(",", ":")),
+    }
+    original = dict(existing_outer)
+
+    rendered = build_vrf_lite_extension_values(
+        vrf_lite_items=[],
+        existing_extension_values=existing_outer,
+    )
+
+    assert existing_outer == original
+    assert json.loads(json.loads(rendered)["VRF_LITE_CONN"]) == {"VRF_LITE_CONN": []}
+
+
 def test_manage_vrf_lite_00400_config_actions_ignore_legacy_top_level_deploy():
     module_with_legacy_field_only = _DummyModule({"deploy": False})
     actions = get_config_actions(module_with_legacy_field_only)
@@ -947,7 +963,7 @@ def test_manage_vrf_lite_00700_guardrails_collect_warnings_without_module_warn(m
     warnings = get_runtime_warnings(module.params)
     assert any("Unable to determine switch role" in warning for warning in warnings)
     assert any("Unable to query VRF Lite support" in warning for warning in warnings)
-    # Ensure validator no longer depends on module.warn side-effects.
+    # Ensure validator no longer depends on direct Ansible warning side-effects.
     assert module.warnings == []
 
 

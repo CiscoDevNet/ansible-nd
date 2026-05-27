@@ -9,6 +9,9 @@ from __future__ import absolute_import, annotations, division, print_function
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
+    vrf_name_from_config_item,
+)
 
 
 def _target_vrfs_for_deploy(module: Any) -> list[str]:
@@ -16,7 +19,7 @@ def _target_vrfs_for_deploy(module: Any) -> list[str]:
     for item in module.params.get("config") or []:
         if not isinstance(item, dict):
             continue
-        vrf_name = item.get("vrf_name") or item.get("vrfName")
+        vrf_name = vrf_name_from_config_item(item)
         if not vrf_name:
             continue
 
@@ -24,20 +27,20 @@ def _target_vrfs_for_deploy(module: Any) -> list[str]:
         if deploy is False:
             continue
         if deploy is True:
-            target.add(str(vrf_name).strip())
+            target.add(vrf_name)
             continue
 
         attachments = item.get("attach") or []
         if not isinstance(attachments, list) or not attachments:
-            target.add(str(vrf_name).strip())
+            target.add(vrf_name)
             continue
 
         if any(isinstance(attachment, dict) and attachment.get("deploy") is not False for attachment in attachments):
-            target.add(str(vrf_name).strip())
+            target.add(vrf_name)
             continue
 
         if not any(isinstance(attachment, dict) for attachment in attachments):
-            target.add(str(vrf_name).strip())
+            target.add(vrf_name)
             continue
 
     return sorted(target)

@@ -42,12 +42,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exception
     VrfLiteResourceError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.config_transform import (
+    config_vrf_names,
     explode_playbook_to_entries,
     group_attachment_entries_to_vrfs,
     replacement_scope_vrfs,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
-    _build_filter_set,
     query_vrf_lite_state,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_endpoints import (
@@ -268,6 +268,10 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         return self._post_grouped_rows(rows_by_vrf)
 
     def _post_detach_entries(self, entries: list[Any]) -> dict[str, Any]:
+        # _validate_attach_entries is intentionally skipped here: detach entries only
+        # reference attachments already confirmed present in current state by the state
+        # machine before calling delete_bulk.  VRF-existence and role-guardrail checks
+        # are not needed for a clear/detach operation.
         if not entries:
             return {}
         module = self._module()
@@ -349,7 +353,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         else:
             config = module.params.get("_vrf_lite_nested_config") or module.params.get("config") or []
 
-        filter_vrfs = _build_filter_set(config)
+        filter_vrfs = set(config_vrf_names(config))
         try:
             have = query_vrf_lite_state(
                 module=module,
@@ -405,8 +409,10 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             }
 
         requested_deploy_vrfs = set(_target_vrfs_for_deploy(module))
-        changed_deploy_vrfs = set(module.params.get("_changed_vrfs") or []) & requested_deploy_vrfs
-        target_vrfs = sorted(changed_deploy_vrfs | requested_deploy_vrfs)
+        # Deploy only VRFs that both changed and have deploy enabled.  The intersection
+        # ensures we never push a VRF that the user asked to skip (deploy: false) and
+        # also prevents deploying stale VRFs that the run did not actually touch.
+        target_vrfs = sorted(set(module.params.get("_changed_vrfs") or []) & requested_deploy_vrfs)
 
         planned_actions = []
         if save_enabled:
