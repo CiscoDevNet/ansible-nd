@@ -297,3 +297,82 @@ def test_subinterface_unmanaged_interface_00201(monkeypatch) -> None:
         orchestrator.update(model)
 
     assert orchestrator._pending_deploys == []
+
+
+# =============================================================================
+# Test: delete
+# =============================================================================
+
+
+def test_subinterface_unmanaged_interface_00300(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `delete` queues a remove + deploy without making any API call beyond the switches-list fetch.
+
+    ## Test
+
+    - Only the switches-list response is consumed (one HTTP call to resolve switch_id)
+    - `_pending_removes` contains `(Ethernet1/3.20, FDO12345ABC)`
+    - `_pending_deploys` contains `(Ethernet1/3.20, FDO12345ABC)`
+    - `delete` returns None
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.delete()
+    - NDBaseInterfaceOrchestrator._queue_remove()
+    - NDBaseInterfaceOrchestrator._queue_deploy()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "deleted"})
+    model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
+
+    with does_not_raise():
+        result = orchestrator.delete(model)
+
+    assert result is None
+    assert ("Ethernet1/3.20", "FDO12345ABC") in orchestrator._pending_removes
+    assert ("Ethernet1/3.20", "FDO12345ABC") in orchestrator._pending_deploys
+
+
+def test_subinterface_unmanaged_interface_00301(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `delete` propagates the raw `RuntimeError` from `_resolve_switch_id` when the IP is unknown.
+
+    ## Test
+
+    - switches-list returns a different IP
+    - `RuntimeError` matches `No switch found with fabricManagementIp '192\\.168\\.12\\.151'`
+    - No queues are populated
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.delete()
+    - NDBaseInterfaceOrchestrator._resolve_switch_id()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "deleted"})
+    model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
+
+    match = r"No switch found with fabricManagementIp '192\.168\.12\.151'"
+    with pytest.raises(RuntimeError, match=match):
+        orchestrator.delete(model)
+
+    assert orchestrator._pending_removes == []
+    assert orchestrator._pending_deploys == []

@@ -136,3 +136,21 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
             return result
         except Exception as e:
             raise RuntimeError(f"Update failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def delete(self, model_instance: SubinterfaceUnmanagedInterfaceModel, **kwargs) -> None:
+        """
+        # Summary
+
+        Queue an unmanaged L3 subinterface for deferred bulk removal via `remove_pending` and bulk deploy via
+        `deploy_pending`. The remove deletes the subinterface from ND's config; the subsequent deploy pushes that
+        removal to the switch.
+
+        No API calls are made until `remove_pending` and `deploy_pending` are called after all mutations are complete.
+
+        ## Raises
+
+        None
+        """
+        switch_id = self._resolve_switch_id(model_instance.switch_ip)
+        self._queue_remove(model_instance.interface_name, switch_id)
+        self._queue_deploy(model_instance.interface_name, switch_id)
