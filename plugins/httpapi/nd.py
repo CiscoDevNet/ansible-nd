@@ -196,9 +196,7 @@ class HttpApi(HttpApiBase):
                     except Exception as e:
                         self.connection.queue_message(
                             "debug",
-                            "login() - new auth endpoint {0} failed ({1}), falling back to legacy endpoint".format(
-                                AUTH_BASE_PATH_NEW + LOGIN_ENDPOINT, e
-                            )
+                            "login() - new auth endpoint {0} failed ({1}), falling back to legacy endpoint".format(AUTH_BASE_PATH_NEW + LOGIN_ENDPOINT, e),
                         )
                         token, self.status = None, -1
 
