@@ -205,3 +205,68 @@ class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[Sub
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             self._queue_remove(model_instance.interface_name, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
+
+    def query_one(self, model_instance: SubinterfaceUnmanagedInterfaceModel, **kwargs) -> ResponseType:
+        """
+        # Summary
+
+        Query a single unmanaged L3 subinterface by name on a specific switch.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the query API request fails.
+        """
+        try:
+            switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            api_endpoint = self._configure_endpoint(self.query_one_endpoint(), switch_sn=switch_id)
+            api_endpoint.set_identifiers(model_instance.interface_name)
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+        except Exception as e:
+            raise RuntimeError(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
+
+    def query_all(self, model_instance: NDBaseModel | None = None, **kwargs) -> ResponseType:
+        """
+        # Summary
+
+        Validate the fabric context and query all interfaces across ALL switches in the fabric, filtering for
+        subinterfaces with `interfaceType: "subInterface"` and `policyType` in the unmanaged set
+        (`monitorSubinterface`). The managed variant (`subinterface`) is managed by a separate orchestrator and is
+        excluded here.
+
+        Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning
+        any data.
+
+        Each returned interface dict is enriched with a `switchIp` field so that
+        `SubinterfaceUnmanagedInterfaceModel` can be constructed with the composite identifier
+        `(switch_ip, interface_name)`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the fabric does not exist on the target ND node.
+        - If the fabric is in deployment-freeze mode.
+        - If the query API request fails.
+        """
+        unmanaged_policy_types = {e.value for e in SubinterfaceUnmanagedPolicyTypeEnum}
+        try:
+            self.validate_prerequisites()
+            all_subifs = []
+            for switch_ip, switch_id in self.fabric_context.switch_map.items():
+                api_endpoint = self._configure_endpoint(self.query_all_endpoint(), switch_sn=switch_id)
+                result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+                if not result:
+                    continue
+                interfaces = result.get("interfaces", []) or []
+                subifs = [iface for iface in interfaces if iface.get("interfaceType") == "subInterface"]
+                unmanaged = [
+                    iface for iface in subifs if iface.get("configData", {}).get("networkOS", {}).get("policy", {}).get("policyType") in unmanaged_policy_types
+                ]
+                for iface in unmanaged:
+                    iface["switchIp"] = switch_ip
+                all_subifs.extend(unmanaged)
+            return all_subifs
+        except Exception as e:
+            raise RuntimeError(f"Query all failed: {e}") from e

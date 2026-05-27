@@ -233,5 +233,207 @@
                 {"fabricManagementIp": "192.168.12.152", "switchId": "FDO12345ABD"}
             ]
         }
+    },
+
+    "test_subinterface_unmanaged_interface_00600a": {
+        "TEST_NOTES": ["query_one happy: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00600b": {
+        "TEST_NOTES": ["query_one happy: GET /interfaces/Ethernet1%2F3.20"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/Ethernet1%2F3.20",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaceName": "Ethernet1/3.20",
+            "interfaceType": "subInterface",
+            "configData": {
+                "mode": "unmanaged",
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {
+                        "policyType": "monitorSubinterface"
+                    }
+                }
+            }
+        }
+    },
+
+    "test_subinterface_unmanaged_interface_00601a": {
+        "TEST_NOTES": ["query_one failure: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00601b": {
+        "TEST_NOTES": ["query_one failure: GET returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/Ethernet1%2F3.20",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_subinterface_unmanaged_interface_00700a": {
+        "TEST_NOTES": ["query_all happy: fabric summary (local + default)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a",
+            "local": true,
+            "fabricStatus": "default"
+        }
+    },
+    "test_subinterface_unmanaged_interface_00700b": {
+        "TEST_NOTES": ["query_all happy: switches list (2 switches)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"},
+                {"fabricManagementIp": "192.168.12.152", "switchId": "FDO12345ABD"}
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00700c": {
+        "TEST_NOTES": [
+            "query_all happy: switch A interfaces — mixed managed (policyType=subinterface) + unmanaged (policyType=monitorSubinterface)",
+            "Only the monitorSubinterface entry should pass the filter."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/3.20",
+                    "interfaceType": "subInterface",
+                    "configData": {
+                        "mode": "unmanaged",
+                        "networkOS": {"policy": {"policyType": "monitorSubinterface"}}
+                    }
+                },
+                {
+                    "interfaceName": "Ethernet1/3.2",
+                    "interfaceType": "subInterface",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {"policy": {"policyType": "subinterface"}}
+                    }
+                },
+                {
+                    "interfaceName": "ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {"networkOS": {"policy": {"policyType": "int_access_host"}}}
+                }
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00700d": {
+        "TEST_NOTES": ["query_all happy: switch B interfaces — only managed subinterface (must be excluded)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABD/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/3.2",
+                    "interfaceType": "subInterface",
+                    "configData": {
+                        "mode": "managed",
+                        "networkOS": {"policy": {"policyType": "subinterface"}}
+                    }
+                }
+            ]
+        }
+    },
+
+    "test_subinterface_unmanaged_interface_00701a": {
+        "TEST_NOTES": ["query_all empty fabric: fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "local": true, "fabricStatus": "default"}
+    },
+    "test_subinterface_unmanaged_interface_00701b": {
+        "TEST_NOTES": ["query_all empty fabric: switches list returns no switches"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": []}
+    },
+
+    "test_subinterface_unmanaged_interface_00702a": {
+        "TEST_NOTES": ["query_all frozen fabric: fabric summary returns fabricStatus=frozen"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "local": true,
+            "fabricStatus": "frozen"
+        }
+    },
+
+    "test_subinterface_unmanaged_interface_00703a": {
+        "TEST_NOTES": ["query_all no subifs: fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "local": true, "fabricStatus": "default"}
+    },
+    "test_subinterface_unmanaged_interface_00703b": {
+        "TEST_NOTES": ["query_all no subifs: switches list (1 switch)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+    "test_subinterface_unmanaged_interface_00703c": {
+        "TEST_NOTES": ["query_all no subifs: only ethernet interfaces (must all be filtered out)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {"networkOS": {"policy": {"policyType": "int_access_host"}}}
+                }
+            ]
+        }
     }
 }

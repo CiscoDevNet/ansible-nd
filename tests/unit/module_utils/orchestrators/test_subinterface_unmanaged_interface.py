@@ -14,7 +14,6 @@ from __future__ import annotations
 import inspect
 
 import pytest
-
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.subinterface_unmanaged_interface import SubinterfaceUnmanagedInterfaceModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.subinterface_unmanaged_interface import (
@@ -515,3 +514,227 @@ def test_subinterface_unmanaged_interface_00500(monkeypatch) -> None:
     expected = [("Ethernet1/3.20", "FDO12345ABC"), ("Ethernet1/3.20", "FDO12345ABD")]
     assert sorted(orchestrator._pending_removes) == sorted(expected)
     assert sorted(orchestrator._pending_deploys) == sorted(expected)
+
+
+# =============================================================================
+# Test: query_one
+# =============================================================================
+
+
+def test_subinterface_unmanaged_interface_00600(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `query_one` issues a GET against the per-interface URL and returns the DATA dict.
+
+    ## Test
+
+    - switches-list fetched on first switch_id resolution
+    - GET hits `/api/v1/manage/fabrics/fabric_1/switches/FDO12345ABC/interfaces/Ethernet1%2F3.20`
+    - Returned DATA matches the fixture (policyType: monitorSubinterface)
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.query_one()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
+
+    with does_not_raise():
+        result = orchestrator.query_one(model)
+
+    assert rest_send.verb == HttpVerbEnum.GET.value
+    assert result["interfaceName"] == "Ethernet1/3.20"
+    assert result["interfaceType"] == "subInterface"
+    assert result["configData"]["networkOS"]["policy"]["policyType"] == "monitorSubinterface"
+
+
+def test_subinterface_unmanaged_interface_00601(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `query_one` wraps a `_request` failure in `RuntimeError` mentioning the identifier.
+
+    ## Test
+
+    - switches-list succeeds, GET returns 500
+    - `RuntimeError` matches `Query failed for .*Ethernet1/3.20`
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.query_one()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+    model = SubinterfaceUnmanagedInterfaceModel(switch_ip="192.168.12.151", interface_name="Ethernet1/3.20")
+
+    match = r"Query failed for .*Ethernet1/3\.20"
+    with pytest.raises(RuntimeError, match=match):
+        orchestrator.query_one(model)
+
+
+# =============================================================================
+# Test: query_all
+# =============================================================================
+
+
+def test_subinterface_unmanaged_interface_00700(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `query_all` validates prerequisites, iterates all switches, filters for `monitorSubinterface` policyType,
+    and enriches each result with `switchIp`.
+
+    ## Test
+
+    - Fabric summary fetched once (validate_prerequisites)
+    - Switches-list fetched once (switch_map)
+    - Switch A returns a mix: one managed subinterface (policyType=subinterface) + one unmanaged (policyType=monitorSubinterface)
+    - Switch B returns only a managed subinterface
+    - Result contains only the unmanaged entry from switch A, enriched with `switchIp`
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator.validate_prerequisites()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}c")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}d")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+
+    with does_not_raise():
+        result = orchestrator.query_all()
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["interfaceName"] == "Ethernet1/3.20"
+    assert result[0]["configData"]["networkOS"]["policy"]["policyType"] == "monitorSubinterface"
+    assert result[0]["switchIp"] == "192.168.12.151"
+    # Verify the managed entry was excluded
+    assert all(item["configData"]["networkOS"]["policy"]["policyType"] == "monitorSubinterface" for item in result)
+
+
+def test_subinterface_unmanaged_interface_00701(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `query_all` returns an empty list when the fabric has no switches.
+
+    ## Test
+
+    - Fabric summary returns valid (local, default)
+    - Switches list returns no switches
+    - `query_all` returns []
+    - No per-switch interface fetches occur
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.query_all()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+
+    with does_not_raise():
+        result = orchestrator.query_all()
+
+    assert result == []
+
+
+def test_subinterface_unmanaged_interface_00702(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `query_all` surfaces a `RuntimeError` (wrapped as `Query all failed: ...`) when the fabric is in
+    deployment-freeze mode.
+
+    ## Test
+
+    - Fabric summary returns `fabricStatus: frozen`
+    - `query_all` raises `RuntimeError` with `Query all failed.*deployment freeze`
+    - No per-switch fetches occur
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.query_all()
+    - NDBaseInterfaceOrchestrator.validate_prerequisites()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+
+    match = r"Query all failed.*deployment freeze"
+    with pytest.raises(RuntimeError, match=match):
+        orchestrator.query_all()
+
+
+def test_subinterface_unmanaged_interface_00703(monkeypatch) -> None:
+    """
+    # Summary
+
+    Verify `query_all` returns an empty list when no switch has any subInterface entries.
+
+    ## Test
+
+    - One switch with only ethernet interfaces
+    - `query_all` returns []
+
+    ## Classes and Methods
+
+    - SubinterfaceUnmanagedInterfaceOrchestrator.query_all()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_subinterface_unmanaged_interface(f"{method_name}a")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}b")
+        yield responses_subinterface_unmanaged_interface(f"{method_name}c")
+
+    gen = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen)
+
+    orchestrator = SubinterfaceUnmanagedInterfaceOrchestrator(rest_send=rest_send, fabric_name="fabric_1", params={"state": "merged"})
+
+    with does_not_raise():
+        result = orchestrator.query_all()
+
+    assert result == []
