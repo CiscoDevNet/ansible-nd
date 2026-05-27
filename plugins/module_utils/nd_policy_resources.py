@@ -9,8 +9,9 @@ Provides all business logic for switch policy management on ND:
     - Idempotency diff calculation for merged, deleted states
     - Deploy orchestration (pushConfig for create/update, switchActions/deploy for delete)
     - Conditional delete flow:
-      deploy=true  → markDelete → switchActions/deploy → remove
-      deploy=false → markDelete → remove
+      deploy=true  → markDelete → switchActions/deploy
+      deploy=false → markDelete only (policy left in markDeleted state on controller;
+                     running config remains on the switch until the next deploy)
 
 The module file ``nd_policy.py`` contains only DOCUMENTATION, argument_spec,
 and a thin ``main()`` that instantiates this class and calls ``manage_state()``.
@@ -97,6 +98,19 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Resul
 
 
 # =============================================================================
+# Module-level pre-compiled regex patterns
+# =============================================================================
+#
+# Used by _validate_template_inputs() for soft type-checks of user-supplied
+# template inputs.  Compiled once at import time to avoid repeated parsing
+# cost in tight loops (P3).
+
+_IPV4_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+_IPV4_SUBNET_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$")
+_MAC_RE = re.compile(r"^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$" r"|^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
+
+
+# =============================================================================
 # Module-level helpers (stateless, used by NDPolicyModule)
 # =============================================================================
 
@@ -132,8 +146,9 @@ class NDPolicyModule:
         - Create, update, delete_and_create actions
         - Bulk deploy via pushConfig (create/update) or switchActions/deploy (delete)
         - Conditional delete flow:
-          deploy=true  → markDelete → switchActions/deploy → remove
-          deploy=false → markDelete → remove
+          deploy=true  → markDelete → switchActions/deploy
+          deploy=false → markDelete only (policy left in markDeleted state on controller;
+                         running config remains on the switch until the next deploy)
 
     Schema models (from ``models.nd_manage_policies``):
         - ``PolicyCreate``      - single policy create request body
@@ -195,6 +210,15 @@ class NDPolicyModule:
         self._proposed: list[dict] = []
         self._gathered: list[dict] = []
 
+        # Accumulator for ND "warning"-status messages surfaced from 207
+        # Multi-Status responses (markDelete, pushConfig, bulk create).
+        # ND uses status="warning" for non-fatal partial outcomes (e.g.,
+        # "already in markDeleted state", "deployment skipped — already in
+        # sync"). These do NOT count toward task failure but are surfaced
+        # to the user via module.warn() and the top-level ``warnings_nd``
+        # key in exit_json so the operator can audit ND-side state.
+        self._warnings: list[str] = []
+
         # Sticky stash for the path/verb/payload of the most recent (or
         # would-be) HTTP request.  _record_call() is invoked by the _api_*
         # helpers (and check-mode would-be sites) immediately before the
@@ -252,6 +276,27 @@ class NDPolicyModule:
         if output_level in ("debug", "info"):
             final["proposed"] = self._proposed
 
+        # Surface ND-side warnings (status="warning" entries from 207
+        # responses) to the operator. Each message is emitted as an
+        # Ansible-visible warning (yellow ``[WARNING]:`` line in the CLI)
+        # and also attached to the result under ``warnings_nd`` so that
+        # downstream tasks using ``register:`` can react programmatically.
+        if self._warnings:
+            # De-duplicate while preserving order so identical warnings
+            # from a bulk response are not shown N times.
+            seen: set = set()
+            unique_warnings: list = []
+            for w in self._warnings:
+                if w not in seen:
+                    seen.add(w)
+                    unique_warnings.append(w)
+            for w in unique_warnings:
+                try:
+                    self.module.warn(w)
+                except Exception:  # pragma: no cover — defensive only
+                    pass
+            final["warnings_nd"] = unique_warnings
+
         if True in self.results.failed:
             self.module.fail_json(
                 msg="Policy operation failed. See task results for details.",
@@ -297,13 +342,44 @@ class NDPolicyModule:
 
         # Detect gathered output format: every named entry already has its own
         # embedded switch list. Flatten directly — no global/switch separation needed.
+        #
+        # Three shapes are recognised:
+        #   Shape 1 (legacy two-level): policy entries (no `switch`) plus a
+        #     single switch entry (no `name`, has `switch: [...]`).
+        #   Shape 2 (self-contained / gathered round-trip): every named entry
+        #     carries its own embedded `switch: [...]` list.
+        #   Shape 3 (mixed): a forbidden combination of Shape 1 and Shape 2
+        #     in the same config list. In the legacy path, the self-contained
+        #     entries would be silently misinterpreted as the global switch
+        #     entry, dropping their policy fields on the floor — so we reject
+        #     this combination explicitly.
         has_self_contained = False
-        all_self_contained = True
+        legacy_named_entries: list = []  # named entries WITHOUT embedded switch
         for entry in config:
-            if entry.get("name") and isinstance(entry.get("switch"), list):
+            name = entry.get("name")
+            sw = entry.get("switch")
+            if name and isinstance(sw, list):
                 has_self_contained = True
-            elif entry.get("name"):
-                all_self_contained = False
+            elif name:
+                legacy_named_entries.append(name)
+
+        all_self_contained = not legacy_named_entries
+
+        if has_self_contained and not all_self_contained:
+            raise NDModuleError(
+                msg=(
+                    "Invalid config shape: cannot mix self-contained policy "
+                    "entries (with embedded `switch:` list, e.g., gathered "
+                    "output) with legacy global policy entries (no `switch:` "
+                    "key) in the same `config` list. "
+                    f"Offending legacy entries: {legacy_named_entries}. "
+                    "Either (a) feed the gathered output back unchanged for "
+                    "round-trip use, or (b) remove the embedded `switch:` "
+                    "lists from the self-contained entries and add a single "
+                    "top-level `- switch: [...]` entry listing all target "
+                    "switches (legacy two-level shape)."
+                )
+            )
 
         if has_self_contained and all_self_contained:
             result = []
@@ -621,8 +697,10 @@ class NDPolicyModule:
         Validates, normalizes, and prepares the config, then dispatches
         to the appropriate handler:
             - **merged**  - create / update / skip policies
-            - **deleted** - deploy=true: markDelete → switchActions/deploy → remove
-                          - deploy=false: markDelete → remove
+            - **deleted** - deploy=true: markDelete → switchActions/deploy
+                          - deploy=false: markDelete only (policy left in markDeleted
+                            state on controller; running config remains on the switch
+                            until the next deploy)
 
         The entire task is treated as an atomic unit — any validation
         failure aborts the run before any changes are made.
@@ -669,7 +747,12 @@ class NDPolicyModule:
             Per-entry checks (name required, description non-empty,
             priority range, max-length, etc.) are handled by
             ``PlaybookPolicyConfig`` Pydantic validation in
-            ``validate_and_prepare_config()``.  This method only
+            ``validate_and_prepare_config()``.  In particular, the
+            ``use_desc_as_key=true`` + empty-description rule is
+            enforced by ``PlaybookPolicyConfig.validate_state_requirements``
+            (see ``models/manage_policies/config_models.py``), which
+            raises a ``ValueError`` for any template-name entry without
+            a description in merged/deleted states.  This method only
             validates cross-entry constraints that Pydantic cannot
             enforce because it sees one entry at a time.
 
@@ -696,6 +779,11 @@ class NDPolicyModule:
                 continue
 
             # Cross-entry uniqueness: description + switch must be unique.
+            # Empty descriptions for template-name entries are already
+            # rejected upstream by PlaybookPolicyConfig Pydantic validation
+            # (config_models.validate_state_requirements), so reaching this
+            # point with an empty description means name is a policy ID
+            # (skipped above) or the entry is switch-only.
             if description:
                 key = f"{description}|{switch}"
                 desc_switch_counts[key] = desc_switch_counts.get(key, 0) + 1
@@ -1044,58 +1132,6 @@ class NDPolicyModule:
         self.log.debug(f"EXIT: _get_fabric_switches() -> {switches}")
         return switches
 
-    def _policy_to_config(self, policy: dict) -> dict:
-        """Convert a controller policy dict to a playbook-compatible config entry.
-
-        The output format matches what ``state=merged`` expects, so the
-        user can copy-paste the gathered output directly into a playbook.
-
-        Internal template input keys (e.g., ``FABRIC_NAME``, ``POLICY_ID``,
-        ``SERIAL_NUMBER``) are stripped via ``_clean_template_inputs()``.
-
-        Args:
-            policy: Raw policy dict from the ND API.
-
-        Returns:
-            Dict with keys: name, policy_id, switch, description, priority,
-            template_inputs, create_additional_policy.
-        """
-        template_name = policy.get("templateName", "")
-        policy_id = policy.get("policyId", "")
-        description = policy.get("description", "")
-        priority = policy.get("priority", 500)
-        switch_id = policy.get("switchId") or policy.get("serialNumber", "")
-
-        # Parse templateInputs — stored as a JSON-encoded string or dict
-        raw_inputs = policy.get("templateInputs") or policy.get("nvPairs") or {}
-        if isinstance(raw_inputs, str):
-            import json
-
-            try:
-                raw_inputs = json.loads(raw_inputs)
-            except (json.JSONDecodeError, ValueError):
-                self.log.warning(f"Failed to parse templateInputs for {policy_id}: {raw_inputs!r}")
-                raw_inputs = {}
-
-        # Clean internal keys from template inputs
-        cleaned_inputs = self._clean_template_inputs(template_name, raw_inputs)
-
-        config_entry = {
-            "name": template_name,
-            "policy_id": policy_id,
-            "switch": [{"serial_number": switch_id}],
-            "description": description,
-            "priority": priority,
-            "template_inputs": cleaned_inputs,
-            # Conservative-safe default for `state=gathered` -> `state=merged`
-            # round-trip: re-running the gathered config will not create duplicate
-            # policies even though the module-wide default is `true`
-            "create_additional_policy": False,
-        }
-
-        self.log.debug(f"Converted policy {policy_id} to config: {config_entry}")
-        return config_entry
-
     def _clean_template_inputs(self, template_name: str, raw_inputs: dict[str, Any]) -> dict[str, Any]:
         """Remove system-injected keys from template inputs.
 
@@ -1159,11 +1195,6 @@ class NDPolicyModule:
             True if the name starts with ``POLICY-``, False otherwise.
         """
         return name.upper().startswith("POLICY-")
-
-    # Characters that have special meaning in Lucene query syntax.
-    # Values containing any of these must be quoted/escaped to prevent
-    # query parsing errors or unintended wildcard/boolean behaviour.
-    _LUCENE_SPECIAL_CHARS = set(r'+-!(){}[]^"~*?:\/ &|')
 
     @classmethod
     def _escape_lucene_value(cls, value: str) -> str:
@@ -1659,21 +1690,18 @@ class NDPolicyModule:
 
             elif ptype in ("ipv4address", "ipaddress"):
                 # Basic IPv4 check
-                ipv4_pattern = r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"
-                if not re.match(ipv4_pattern, val_str):
+                if not _IPV4_RE.match(val_str):
                     errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects IPv4 address (e.g., 192.168.1.1), got '{val_str}'")
 
             elif ptype == "ipv4addresswithsubnet":
-                ipv4_subnet_pattern = r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$"
-                if not re.match(ipv4_subnet_pattern, val_str):
+                if not _IPV4_SUBNET_RE.match(val_str):
                     errors.append(
                         f"templateInput '{user_key}' for template '{template_name}' "
                         f"expects IPv4 address with subnet (e.g., 192.168.1.1/24), got '{val_str}'"
                     )
 
             elif ptype == "macaddress":
-                mac_pattern = r"^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$|^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"
-                if not re.match(mac_pattern, val_str):
+                if not _MAC_RE.match(val_str):
                     errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects MAC address, got '{val_str}'")
 
             elif ptype == "enum":
@@ -1870,9 +1898,23 @@ class NDPolicyModule:
         # =================================================================
         if "policyId" in want:
             if match_count == 0:
-                # Case 7: Policy ID not found → SKIP
-                result["action"] = "skip"
-                result["error_msg"] = f"Policy {want['policyId']} not found. " "Cannot create a policy with a specific ID."
+                # Case 7: Policy ID not found → FAIL
+                #
+                # When the user supplies an explicit policy ID, they are
+                # asserting that this exact policy exists and should be
+                # updated. If it doesn't exist, the user's intent cannot
+                # be satisfied (we cannot create a policy with a caller-
+                # specified ID — ND assigns IDs). Reporting "skip/success"
+                # here would silently mask typos and out-of-band deletions,
+                # so we hard-fail instead.
+                result["action"] = "fail"
+                result["error_msg"] = (
+                    f"Policy {want['policyId']} not found on switch "
+                    f"{want.get('switchId')}. Cannot update a non-existent "
+                    "policy by ID — policy IDs are assigned by ND and "
+                    "cannot be created by the caller. Verify the policy ID, "
+                    "or use a template name to create a new policy."
+                )
                 return result
 
             have = have_list[0]
@@ -2164,34 +2206,14 @@ class NDPolicyModule:
                 self.log.info(f"Phase 3a: markDelete for {len(remove_ids)} old policies")
                 mark_delete_data = self._api_mark_delete(remove_ids)
 
-                mark_succeeded = []
-                mark_failed_python = []
-                mark_failed_other = []
-
-                if isinstance(mark_delete_data, dict):
-                    policies_response = mark_delete_data.get("policies", [])
-                    failed_ids_set: set = set()
-                    for p in policies_response:
-                        pid = p.get("policyId", "")
-                        status = str(p.get("status", "")).lower()
-                        if status != "success":
-                            failed_ids_set.add(pid)
-                            msg = p.get("message", "")
-                            if "content type PYTHON" in msg:
-                                mark_failed_python.append(pid)
-                                self.log.info(f"markDelete failed for {pid} " "(PYTHON content type) — will use " "direct DELETE")
-                            else:
-                                mark_failed_other.append(pid)
-                                self.log.error(f"markDelete failed for {pid} " f"(status={p.get('status')!r}): {msg}")
-
-                    mark_succeeded = [pid for pid in remove_ids if pid not in failed_ids_set]
-
-                    if not policies_response and remove_ids:
-                        self.log.warning("markDelete returned empty 'policies' list — " "treating all as succeeded (ambiguous response)")
-                        mark_succeeded = list(remove_ids)
-                else:
-                    self.log.warning("markDelete returned non-dict response — " "treating all as succeeded")
-                    mark_succeeded = list(remove_ids)
+                # Classify the 207 response into the three buckets.
+                # ``warning`` entries are surfaced via self._warnings by
+                # the helper and DO NOT appear in any failure bucket.
+                mark_succeeded, mark_failed_python, mark_failed_other = self._parse_mark_delete_response(
+                    mark_delete_data,
+                    remove_ids,
+                    context_label="markDelete (delete_and_create)",
+                )
 
                 self.log.info(
                     f"Phase 3a results: {len(mark_succeeded)} markDeleted, "
@@ -2214,14 +2236,12 @@ class NDPolicyModule:
                 # Step 3c: Direct DELETE for PYTHON-type policies
                 if mark_failed_python:
                     self.log.info(f"Phase 3d: Direct DELETE for " f"{len(mark_failed_python)} PYTHON-type policies")
-                    direct_deleted = []
-                    for pid in mark_failed_python:
-                        try:
-                            self._api_delete_policy(pid)
-                            direct_deleted.append(pid)
-                        except Exception:  # noqa: BLE001
-                            self.log.error(f"Direct DELETE also failed for {pid}")
-                            remove_failed_ids.add(pid)
+                    direct_deleted, direct_failed = self._direct_delete_policies(mark_failed_python)
+                    # Direct-DELETE exceptions are terminal removal failures
+                    # for this entry — the caller will skip the create to
+                    # avoid producing a duplicate alongside the un-removed
+                    # old policy.
+                    remove_failed_ids.update(direct_failed)
 
                     # Deploy to affected switches to push config removal
                     if direct_deleted and self.deploy:
@@ -2570,11 +2590,13 @@ class NDPolicyModule:
         Collects all policy IDs to delete across all config entries, then
         performs bulk API calls.  PYTHON content-type templates (e.g.
         ``switch_freeform``) use direct DELETE; everything else uses the
-        normal markDelete → switch deploy → remove flow.
+        normal markDelete (+ optional switch deploy) flow.
 
-            - deploy=true:  markDelete → switchActions/deploy → remove (3-step)
-            - deploy=false: markDelete → remove                       (2-step)
-            - PYTHON-type:  direct DELETE → switchActions/deploy       (2-step)
+            - deploy=true:  markDelete → switchActions/deploy           (2-step)
+            - deploy=false: markDelete only                              (1-step;
+                            policy left in markDeleted state on controller,
+                            running config remains on switch until next deploy)
+            - PYTHON-type:  direct DELETE (+ switchActions/deploy when deploy=true)
 
         Args:
             diff_results: list of diff result dicts from ``_get_diff_deleted_single``.
@@ -2735,43 +2757,16 @@ class NDPolicyModule:
         self.log.info(f"{'Step 1/3' if self.deploy else 'Step 1/1'}: " f"markDelete for {len(unique_policy_ids)} policies")
         mark_delete_data = self._api_mark_delete(unique_policy_ids)
 
-        # Inspect 207 response for per-policy results
-        mark_succeeded = []
-        mark_failed = []
-        mark_failed_python = []  # Failed specifically due to PYTHON content type
-
-        if isinstance(mark_delete_data, dict):
-            policies_response = mark_delete_data.get("policies", [])
-            # Build a set of policy IDs that explicitly failed.
-            # Any status that is NOT "success" (case-insensitive) is
-            # treated as failure (defensive against future values
-            # and potential case variations like "SUCCESS").
-            failed_ids = set()
-            for p in policies_response:
-                pid = p.get("policyId", "")
-                status = str(p.get("status", "")).lower()
-                if status != "success":
-                    failed_ids.add(pid)
-                    msg = p.get("message", "")
-                    if "content type PYTHON" in msg:
-                        mark_failed_python.append(pid)
-                        self.log.info(f"markDelete failed for {pid} (PYTHON content type) " "— will retry via direct DELETE")
-                    else:
-                        mark_failed.append(pid)
-                        self.log.error(f"markDelete failed for {pid} " f"(status={p.get('status')!r}): {msg}")
-
-            # Policies not in the failed set are considered successful
-            mark_succeeded = [pid for pid in unique_policy_ids if pid not in failed_ids]
-
-            # Warn if ND returned empty policies list (ambiguous)
-            if not policies_response and unique_policy_ids:
-                self.log.warning(
-                    "markDelete returned empty 'policies' list for " f"{len(unique_policy_ids)} policy IDs — " "treating all as succeeded (ambiguous response)"
-                )
-                mark_succeeded = list(unique_policy_ids)
-        else:
-            self.log.warning("markDelete returned non-dict response — " "treating all as succeeded")
-            mark_succeeded = list(unique_policy_ids)
+        # Classify the 207 response into the three buckets.
+        # NOTE: the local var ``mark_failed`` corresponds to the helper's
+        # ``mark_failed_other`` return (i.e. failures NOT due to PYTHON
+        # content type).  The shorter name is preserved because it is
+        # referenced by the result-registration block below.
+        mark_succeeded, mark_failed_python, mark_failed = self._parse_mark_delete_response(
+            mark_delete_data,
+            unique_policy_ids,
+            context_label="markDelete",
+        )
 
         self.log.info(
             f"markDelete results: {len(mark_succeeded)} succeeded, "
@@ -2864,15 +2859,7 @@ class NDPolicyModule:
         # to push the config removal to the devices.
         if mark_failed_python:
             self.log.info(f"Falling back to direct DELETE for {len(mark_failed_python)} " f"PYTHON-type policies: {mark_failed_python}")
-            deleted_direct = []
-            failed_direct = []
-            for pid in mark_failed_python:
-                try:
-                    self._api_delete_policy(pid)
-                    deleted_direct.append(pid)
-                except Exception:  # noqa: BLE001
-                    self.log.error(f"Direct DELETE also failed for {pid}")
-                    failed_direct.append(pid)
+            deleted_direct, failed_direct = self._direct_delete_policies(mark_failed_python)
 
             if deleted_direct:
                 tpl_names = list({policy_template_map.get(pid, "unknown") for pid in deleted_direct})
@@ -3022,12 +3009,24 @@ class NDPolicyModule:
         self._record_call(ep, push_payload)
         data = self.nd.request(ep.path, ep.verb, push_payload)
 
-        # Inspect 207 body for per-policy failures
-        succeeded_policies, failed_policies = self._inspect_207_policies(data)
+        # Inspect 207 body for per-policy success/warning/failure.
+        # Warnings (e.g., "already in sync", "deployment skipped") are
+        # NOT treated as failures — they are surfaced separately via
+        # self._warnings so the operator sees them without the task
+        # being marked failed.
+        succeeded_policies, warning_policies, failed_policies = self._inspect_207_policies(data)
 
         # Warn if ND returned no per-policy detail at all
-        if not succeeded_policies and not failed_policies and policy_ids:
+        if not succeeded_policies and not warning_policies and not failed_policies and policy_ids:
             self.log.warning(f"pushConfig returned no per-policy results for " f"{len(policy_ids)} policy IDs — treating as success " "(ambiguous response)")
+
+        # Collect warnings for surfacing in exit_json.
+        for p in warning_policies:
+            pid = p.get("policyId", "?")
+            msg = p.get("message", "")
+            wmsg = f"pushConfig: ND warning for {pid}: {msg}"
+            self.log.warning(wmsg)
+            self._warnings.append(wmsg)
 
         deploy_success = len(failed_policies) == 0
 
@@ -3046,6 +3045,7 @@ class NDPolicyModule:
             "policy_ids": policy_ids,
             "deploy_success": deploy_success,
             "failed_policies": [p.get("policyId") for p in failed_policies],
+            "warning_policies": [p.get("policyId") for p in warning_policies],
         }
         self._apply_stashed_call()
         self.results.register_api_call()
@@ -3059,36 +3059,46 @@ class NDPolicyModule:
     def _inspect_207_policies(
         data: Any,
         key: str = "policies",
-    ) -> tuple[list[dict], list[dict]]:
-        """Inspect a 207 Multi-Status response for per-item success/failure.
+    ) -> tuple[list[dict], list[dict], list[dict]]:
+        """Inspect a 207 Multi-Status response for per-item success/warning/failure.
 
         ND returns HTTP 207 for most bulk policy actions (create,
         markDelete, pushConfig, remove).  The response body contains
         a list of per-item results under a top-level key (``policies``),
-        each with a required ``status`` field (``"success"`` or
-        ``"failed"``) and an optional ``message`` field.
+        each with a required ``status`` field (``"success"``,
+        ``"warning"``, or ``"failed"``) and an optional ``message``
+        field.
 
         The per-item schema is ``policyBaseGeneralResponse``::
 
             {
-                "status": "success" | "failed",   # REQUIRED
-                "message": "...",                   # optional
-                "policyId": "POLICY-...",           # optional
-                "entityName": "SWITCH",             # optional
-                "entityType": "switch",             # optional
-                "templateName": "...",              # optional
-                "switchId": "FDO..."                # optional
+                "status": "success" | "warning" | "failed",  # REQUIRED
+                "message": "...",                              # optional
+                "policyId": "POLICY-...",                      # optional
+                "entityName": "SWITCH",                        # optional
+                "entityType": "switch",                        # optional
+                "templateName": "...",                         # optional
+                "switchId": "FDO..."                           # optional
             }
 
-        An item is considered **failed** when ``status`` is anything
-        other than ``"success"`` (defensive against future values
-        like ``"error"``, ``"warning"``, or ``"partial"``).
+        Classification rules:
+            - ``status == "success"``  → succeeded bucket.
+            - ``status == "warning"``  → warnings bucket. Non-fatal
+              partial outcomes (e.g., "policy already in markDeleted
+              state", "deployment skipped — already in sync"). The
+              caller must NOT count these toward task failure, but
+              SHOULD surface them to the operator (see
+              :attr:`NDPolicyModule._warnings`).
+            - Anything else (``"failed"``, ``"error"``, unknown values,
+              missing status) → failed bucket. Defensive: an unknown
+              future value is treated as failure rather than silently
+              passing.
 
-        Comparison is **case-insensitive**: ``"success"``,
-        ``"SUCCESS"``, and ``"Success"`` are all treated as success.
+        Comparison is **case-insensitive**: ``"WARNING"`` is treated
+        identically to ``"warning"``.
 
         If the response body is empty (``{}``) or does not contain
-        the expected key, both returned lists will be empty.  The
+        the expected key, all three returned lists will be empty.  The
         caller should treat this as an ambiguous result (ND did
         not report per-item status) and decide accordingly.
 
@@ -3098,24 +3108,26 @@ class NDPolicyModule:
                  ``"policies"`` for policy action endpoints.
 
         Returns:
-            Tuple of (succeeded, failed) lists of per-item dicts.
+            Tuple of (succeeded, warnings, failed) lists of per-item dicts.
         """
         if not isinstance(data, dict):
-            return [], []
+            return [], [], []
         items = data.get(key, [])
         if not isinstance(items, list):
-            return [], []
-        succeeded = []
-        failed = []
+            return [], [], []
+        succeeded: list = []
+        warnings: list = []
+        failed: list = []
         for item in items:
             status = str(item.get("status", "")).lower()
             if status == "success":
                 succeeded.append(item)
+            elif status == "warning":
+                warnings.append(item)
             else:
-                # Any non-"success" status is treated as failure.
-                # Known values: "failed", "warning".
+                # "failed", "error", unknown values, or missing status.
                 failed.append(item)
-        return succeeded, failed
+        return succeeded, warnings, failed
 
     # =========================================================================
     # API Helpers (low-level CRUD)
@@ -3188,8 +3200,23 @@ class NDPolicyModule:
             if idx < len(created_policies):
                 entry = created_policies[idx]
                 entry_status = str(entry.get("status", "")).lower()
-                if entry_status != "success":
-                    nd_msg = entry.get("message", "Policy creation failed")
+                nd_msg = entry.get("message", "")
+                pid = entry.get("policyId")
+                if entry_status == "warning":
+                    # Non-fatal: ND created/recognised the policy but flagged
+                    # something noteworthy (e.g., "already exists, reused").
+                    # Treat as success but surface the message via _warnings.
+                    wmsg = (
+                        f"Bulk create: ND warning for "
+                        f"template={want.get('templateName')}, "
+                        f"switch={want.get('switchId')}, "
+                        f"policy_id={pid}: {nd_msg}"
+                    )
+                    self.log.warning(wmsg)
+                    self._warnings.append(wmsg)
+                    results.append({"policy_id": pid, "nd_error": None})
+                elif entry_status != "success":
+                    nd_msg = nd_msg or "Policy creation failed"
                     self.log.error(
                         f"Bulk create: policy {idx} failed "
                         f"(status={entry.get('status')!r}) — "
@@ -3198,7 +3225,6 @@ class NDPolicyModule:
                     )
                     results.append({"policy_id": None, "nd_error": nd_msg})
                 else:
-                    pid = entry.get("policyId")
                     self.log.info(f"Bulk create: policy {idx} created — {pid}")
                     results.append({"policy_id": pid, "nd_error": None})
             else:
@@ -3346,6 +3372,133 @@ class NDPolicyModule:
         self._record_call(ep, deploy_payload)
         data = self.nd.request(ep.path, ep.verb, deploy_payload)
         return data if isinstance(data, dict) else {}
+
+    # =========================================================================
+    # Shared delete helpers (used by _execute_merged Phase 3 and _execute_deleted Phase B)
+    # =========================================================================
+
+    def _parse_mark_delete_response(
+        self,
+        mark_delete_data: Any,
+        requested_ids: list[str],
+        *,
+        context_label: str,
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Classify a markDelete 207 response into success / python-fallback / other-fail.
+
+        Centralises the per-entry classification logic that was previously
+        duplicated between ``_execute_merged`` Phase 3 (``delete_and_create``
+        removals) and ``_execute_deleted`` Phase B.
+
+        Behaviour preserved from the duplicated implementations:
+
+        - **Non-dict response** → log warning, treat ALL ``requested_ids``
+          as succeeded (returns ``(list(requested_ids), [], [])``).  This
+          matches ND's known behaviour of occasionally returning a non-dict
+          body on success.
+        - **Empty ``policies`` list in the dict** → log warning, treat ALL
+          ``requested_ids`` as succeeded.  Same rationale.
+        - **status == ``"warning"``** → emit a warning message via
+          ``self.log.warning`` and ``self._warnings``, but DO NOT add the
+          policy to any failure bucket.  Warning entries are soft-successes
+          (the policy is in the desired ND state).
+        - **status == ``"success"``** → succeeded bucket (implicitly: not in
+          ``failed_ids`` set).
+        - **Other non-success status** with message containing
+          ``"content type PYTHON"`` → ``mark_failed_python`` bucket
+          (caller should retry these via direct DELETE).
+        - **Other non-success status** otherwise → ``mark_failed_other``
+          bucket (terminal failure).
+
+        ``mark_succeeded`` is derived as ``[pid for pid in requested_ids
+        if pid not in failed_ids]`` so request order is preserved.
+
+        Args:
+            mark_delete_data: Raw response DATA from ``_api_mark_delete``
+                (may be ``None``, a non-dict, an empty dict, or a dict
+                with a ``policies`` list).
+            requested_ids: The exact list of policy IDs that was sent.
+                Used to derive ``mark_succeeded`` and for the
+                ambiguous-response fallback.
+            context_label: Short label included in the warning-message
+                prefix so each caller's warnings are distinguishable
+                (e.g. ``"markDelete"`` vs.
+                ``"markDelete (delete_and_create)"``).
+
+        Returns:
+            Tuple of ``(mark_succeeded, mark_failed_python,
+            mark_failed_other)``.
+        """
+        mark_failed_python: list[str] = []
+        mark_failed_other: list[str] = []
+
+        if not isinstance(mark_delete_data, dict):
+            self.log.warning("markDelete returned non-dict response — " "treating all as succeeded")
+            return list(requested_ids), mark_failed_python, mark_failed_other
+
+        policies_response = mark_delete_data.get("policies", [])
+
+        if not policies_response and requested_ids:
+            self.log.warning(
+                "markDelete returned empty 'policies' list for " f"{len(requested_ids)} policy IDs — " "treating all as succeeded (ambiguous response)"
+            )
+            return list(requested_ids), mark_failed_python, mark_failed_other
+
+        failed_ids: set = set()
+        for p in policies_response:
+            pid = p.get("policyId", "")
+            status = str(p.get("status", "")).lower()
+            msg = p.get("message", "")
+            if status == "warning":
+                # Non-fatal: treat as success (pid stays out of
+                # failed_ids set) and surface for operator audit.
+                wmsg = f"{context_label}: ND warning for {pid}: {msg}"
+                self.log.warning(wmsg)
+                self._warnings.append(wmsg)
+            elif status != "success":
+                failed_ids.add(pid)
+                if "content type PYTHON" in msg:
+                    mark_failed_python.append(pid)
+                    self.log.info(f"markDelete failed for {pid} (PYTHON content type) " "— will retry via direct DELETE")
+                else:
+                    mark_failed_other.append(pid)
+                    self.log.error(f"markDelete failed for {pid} " f"(status={p.get('status')!r}): {msg}")
+
+        mark_succeeded = [pid for pid in requested_ids if pid not in failed_ids]
+        return mark_succeeded, mark_failed_python, mark_failed_other
+
+    def _direct_delete_policies(
+        self,
+        python_pids: list[str],
+    ) -> tuple[list[str], list[str]]:
+        """Direct-DELETE the given policy IDs one by one (PYTHON-type fallback).
+
+        Centralises the per-policy ``_api_delete_policy`` loop that was
+        previously duplicated between ``_execute_merged`` Phase 3 and
+        ``_execute_deleted`` Phase B.  Each call is wrapped in a broad
+        ``except`` so a single bad ID does not abort the rest of the
+        batch — exceptions are logged and the offending ID is reported
+        back to the caller, which decides how to react (skip create vs.
+        register a failure row).
+
+        Args:
+            python_pids: Policy IDs that failed ``markDelete`` with
+                ``"content type PYTHON"`` and must be removed via the
+                direct ``DELETE /policies/{policyId}`` endpoint.
+
+        Returns:
+            Tuple of ``(deleted_direct, failed_direct)``.
+        """
+        deleted_direct: list[str] = []
+        failed_direct: list[str] = []
+        for pid in python_pids:
+            try:
+                self._api_delete_policy(pid)
+                deleted_direct.append(pid)
+            except Exception:  # noqa: BLE001
+                self.log.error(f"Direct DELETE also failed for {pid}")
+                failed_direct.append(pid)
+        return deleted_direct, failed_direct
 
     # =========================================================================
     # Results Helper

@@ -19,10 +19,15 @@ description:
   If any validation check fails (e.g., missing or duplicate descriptions), the module
   aborts B(before) making any changes to the controller.
 - When O(use_desc_as_key=true), every O(config[].description) B(must) be non-empty and
-  unique per switch within the playbook. The module also fails if duplicate descriptions
-  are found on the ND controller itself (created outside of this playbook). This ensures
-  unambiguous policy matching. To manage policies with non-unique descriptions, use
-  O(use_desc_as_key=false) and reference policies by policy ID.
+  unique per switch within the playbook. Playbook-level duplicates are rejected by an
+  upfront cross-entry validation before any controller mutation is attempted.
+- Controller-side duplicates (i.e., multiple existing policies that share the same
+  C(description) on the same switch, created outside of this playbook) are detected
+  while processing each config entry and cause the module to B(abort) on the first
+  ambiguous match. The abort happens after the policy cache is fetched but B(before)
+  any C(create)/C(update)/C(delete) request is sent, so no partial changes are made.
+  To manage policies with non-unique descriptions, use O(use_desc_as_key=false) and
+  reference policies by policy ID.
 - Policies and switches are specified separately in the O(config) list. Global policies
   (entries without a C(switch) key) apply to every switch listed in the C(switch) entry.
   Per-switch policy overrides can be specified using the C(policies) suboption inside each
@@ -35,6 +40,24 @@ description:
   a specific policy, provide its policy ID (C(POLICY-xxxxx)) as the O(config[].name).
   When O(use_desc_as_key=true), the description uniquely identifies the policy, so
   in-place updates are supported.
+- B(Delete behavior) — the C(deleted) state uses one of two API flows depending on the
+  policy's underlying template content type.
+  C(1) B(Standard flow) (most templates, e.g., C(feature_enable),
+  C(switch_freeform_vrf)) — the module issues C(markDelete) to flag the policy for removal
+  on the controller. When O(deploy=true), it then issues C(switchActions/deploy) so the
+  switch removes the corresponding running config. When O(deploy=false), only C(markDelete)
+  is performed and the policy remains in the markDeleted state on the controller until a
+  subsequent deploy cleans it up.
+  C(2) B(Direct-DELETE fallback) (PYTHON content-type templates, e.g., C(switch_freeform),
+  C(Ext_VRF_Lite_SVI)) — the controller rejects C(markDelete) for these templates with the
+  error C("content type PYTHON"). The module B(automatically detects this specific error)
+  and retries by issuing a direct C(DELETE /policies/{policyId}) call. When O(deploy=true),
+  a C(switchActions/deploy) is then issued so the switch removes the running config. When
+  O(deploy=false), the policy record is removed from the controller but the running config
+  remains on the switch until the next deploy.
+  B(Note) — the direct-DELETE retry is triggered B(only) by the C("content type PYTHON")
+  error. Other C(markDelete) failures (e.g., transient errors, validation errors) are
+  surfaced as task failures and are B(not) auto-retried.
 author:
 - L Nikhil Sri Krishna (@nisaikri)
 options:
@@ -176,11 +199,13 @@ options:
     description:
     - When set to V(true), policies are deployed to devices after create/update/delete operations.
     - For C(merged) state, this triggers a pushConfig action for the affected policy IDs.
-    - For C(deleted) state, this triggers C(markDelete) → C(switchActions/deploy) to push
-      removal config to switches and then hard-delete the policy records from the controller.
-    - For C(deleted) with O(deploy=false), C(markDelete) is performed.
-      Policy records are removed from the controller but the running config remains on the
-      switch until the next deploy.
+    - For C(deleted) state with O(deploy=true), the module performs C(markDelete) followed
+      by C(switchActions/deploy) to push removal config to the affected switches. The policy
+      record remains on the controller in markDeleted state until the next switch-level deploy
+      cleans it up.
+    - For C(deleted) state with O(deploy=false), only C(markDelete) is performed. The policy
+      is flagged for deletion on the controller but the running config remains on the switch
+      until a subsequent deploy is issued.
     - B(Exception) — C(switch_freeform) and other PYTHON content-type policies do not
       support the C(markDelete) API. The module automatically detects this and falls back
       to a direct C(DELETE) API call to remove the policy record from the controller.
@@ -203,10 +228,11 @@ options:
     - Use C(merged) to create or update policies.
     - Use C(deleted) to delete policies.
     - For C(deleted) with O(deploy=true), the module performs
-      C(markDelete) → C(switchActions/deploy).
-    - For C(deleted) with O(deploy=false), C(markDelete)is performed.
-      Policy records are removed from the controller but the running config remains
-      on the switch until the next deploy.
+      C(markDelete) followed by C(switchActions/deploy) to push the removal
+      config to the affected switches.
+    - For C(deleted) with O(deploy=false), only C(markDelete) is performed.
+      The policy is flagged for deletion on the controller but the running
+      config remains on the switch until a subsequent deploy is issued.
     - B(Exception) — C(switch_freeform) and other PYTHON content-type policies cannot
       be markDeleted. The module attempts C(markDelete), detects the failure, and
       automatically falls back to a direct C(DELETE) API call. When O(deploy=true),
@@ -235,10 +261,13 @@ notes:
   so in-place updates B(are) supported. If the template name changes, the old policy is
   deleted and a new one is created.
 - C(switch_freeform) and other PYTHON content-type policies do not support the
-  C(markDelete) API. The module automatically detects this and falls back to a
-  direct C(DELETE) API call. When O(deploy=true), C(switchActions/deploy) is
+  C(markDelete) API. When C(markDelete) returns the error C("content type PYTHON"),
+  the module automatically falls back to a direct C(DELETE /policies/{policyId}) call
+  for those specific policies. When O(deploy=true), C(switchActions/deploy) is
   performed to push config removal to the switch. When O(deploy=false), only the
-  policy record is removed from the controller.
+  policy record is removed from the controller. This fallback is B(only) triggered
+  by the C("content type PYTHON") error — other C(markDelete) failures are reported
+  as task failures and are not auto-retried.
 """
 
 EXAMPLES = r"""
