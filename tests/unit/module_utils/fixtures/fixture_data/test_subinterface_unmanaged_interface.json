@@ -1,0 +1,11 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_subinterface_unmanaged_interface.py.",
+        "Keys follow the test_<module>_<NNNNN><a|b|c|...> convention from CLAUDE.md.",
+        "Suffix order matches the order RestSend.commit() will consume responses within each test.",
+        "Tests that resolve a switch IP consume one switches-list response first (FabricContext lazy fetch).",
+        "Tests that call validate_prerequisites consume one fabric-summary response first.",
+        "Switch A: fabricManagementIp=192.168.12.151, switchId=FDO12345ABC.",
+        "Switch B: fabricManagementIp=192.168.12.152, switchId=FDO12345ABD."
+    ]
+}

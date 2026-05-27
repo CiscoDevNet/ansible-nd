@@ -1,0 +1,86 @@
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""
+Unmanaged L3 subinterface orchestrator for Nexus Dashboard.
+
+Implements CRUD for the unmanaged variant of L3 subinterfaces
+(`interfaceType: "subInterface"`, `mode: "unmanaged"`, `policyType: "monitorSubinterface"`).
+
+Mirrors `SubinterfaceManagedInterfaceOrchestrator` in structure; differences:
+- `model_class` is `SubinterfaceUnmanagedInterfaceModel`
+- `query_all` filters for `policyType in {monitorSubinterface}`
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import ClassVar
+
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
+    EpManageInterfacesGet,
+    EpManageInterfacesListGet,
+    EpManageInterfacesPost,
+    EpManageInterfacesPut,
+    EpManageInterfacesRemove,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import SubinterfaceUnmanagedPolicyTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.subinterface_unmanaged_interface import SubinterfaceUnmanagedInterfaceModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
+
+
+class SubinterfaceUnmanagedInterfaceOrchestrator(NDBaseInterfaceOrchestrator[SubinterfaceUnmanagedInterfaceModel]):
+    """
+    # Summary
+
+    Orchestrator for unmanaged L3 subinterface CRUD on Nexus Dashboard. See
+    `SubinterfaceManagedInterfaceOrchestrator` for the architectural notes; this is its sibling for the
+    `monitorSubinterface` policy.
+
+    ## Raises
+
+    ### RuntimeError
+
+    - On any failed API request or 207 multi-status with a non-success per-item entry.
+    """
+
+    model_class: ClassVar[type[NDBaseModel]] = SubinterfaceUnmanagedInterfaceModel
+    supports_bulk_create: ClassVar[bool] = True
+    supports_bulk_delete: ClassVar[bool] = True
+
+    create_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPost
+    update_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesPut
+    delete_endpoint: type[NDEndpointBaseModel] = NDEndpointBaseModel  # unused; delete() uses bulk remove
+    query_one_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesGet
+    query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
+    create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
+    delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesRemove
+
+    # TODO ND returns HTTP 207 Multi-Status on subinterface POST with per-item `status: "failed"` when the parent
+    # interface is not in routed mode (or other policy validation fails). Our RestSend response_handler treats 207
+    # as success and returns the body without raising. Remove this workaround once CiscoDevNet/ansible-nd#295 lands
+    # the 207-aware response handling at the RestSend layer.
+    @staticmethod
+    def _raise_on_multi_status_failures(response: ResponseType) -> None:
+        """
+        # Summary
+
+        Inspect a 207 Multi-Status body and raise if any item carries `status: "failed"` or `status: "error"`.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If `response["results"]` contains any item with `status` in `("failed", "error")`.
+        """
+        if not isinstance(response, dict):
+            return
+        results = response.get("results") or []
+        failed = [r for r in results if isinstance(r, dict) and r.get("status") in ("failed", "error")]
+        if failed:
+            summary = "; ".join(f"{r.get('name')}: {r.get('message')}" for r in failed)
+            raise RuntimeError(f"ND rejected {len(failed)} interface(s): {summary}")
