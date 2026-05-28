@@ -577,5 +577,125 @@
                 }
             ]
         }
+    },
+    "test_delete_pc_member_blocked_00570a": {
+        "TEST_NOTES": ["00570: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_delete_pc_member_blocked_00570b": {
+        "TEST_NOTES": ["00570: interfaceList -- Ethernet1/1 is a port-channel member; delete must refuse to normalize"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "portChannelId": 10
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_pc_member_blocked_00580a": {
+        "TEST_NOTES": ["00580: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_pc_member_blocked_00580b": {
+        "TEST_NOTES": ["00580: interfaceList -- Ethernet1/1 is a port-channel member; delete_bulk must refuse"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "portChannelId": 10
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_not_pc_member_00590a": {
+        "TEST_NOTES": ["00590: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_delete_not_pc_member_00590b": {
+        "TEST_NOTES": ["00590: interfaceList -- Ethernet1/1 with no portChannelId; delete proceeds to queue normalize"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 100
+                            }
+                        }
+                    }
+                }
+            ]
+        }
     }
 }

@@ -613,3 +613,108 @@ def test_ethernet_access_orchestrator_00560() -> None:
         instance.update(model)
 
     assert instance._pending_deploys == []
+
+
+def test_ethernet_access_orchestrator_00570() -> None:
+    """
+    # Summary
+
+    Verify `delete` refuses to normalize a port-channel member: normalizing would strip the channel-group
+    membership and silently detach the interface from its port-channel.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 as a member of port-channel 10
+    - `delete` raises `RuntimeError` naming the port-channel; no normalize or deploy is queued
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.delete()
+    - EthernetBaseOrchestrator._check_port_channel_delete_restriction()
+    """
+
+    def responses():
+        yield responses_access("test_delete_pc_member_blocked_00570a")
+        yield responses_access("test_delete_pc_member_blocked_00570b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({})
+
+    with pytest.raises(RuntimeError, match=r"Delete failed for.*member of port-channel 10.*Refusing to normalize"):
+        instance.delete(model)
+
+    assert instance._pending_normalizes == []
+    assert instance._pending_deploys == []
+
+
+def test_ethernet_access_orchestrator_00580() -> None:
+    """
+    # Summary
+
+    Verify `delete_bulk` refuses when any interface in the batch is a port-channel member, failing fast on
+    the first offender so the caller does not silently detach interfaces from their port-channels.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 as a member of port-channel 10
+    - `delete_bulk` raises `RuntimeError`; no normalize or deploy is queued
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.delete_bulk()
+    - EthernetBaseOrchestrator._check_port_channel_delete_restriction()
+    """
+
+    def responses():
+        yield responses_access("test_delete_bulk_pc_member_blocked_00580a")
+        yield responses_access("test_delete_bulk_pc_member_blocked_00580b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({})
+
+    with pytest.raises(RuntimeError, match=r"member of port-channel 10.*Refusing to normalize"):
+        instance.delete_bulk([model])
+
+    assert instance._pending_normalizes == []
+    assert instance._pending_deploys == []
+
+
+def test_ethernet_access_orchestrator_00590() -> None:
+    """
+    # Summary
+
+    Verify `delete` proceeds normally when the target interface is not a port-channel member, queuing both
+    a normalize and a deploy for later bulk execution.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 with no `portChannelId`
+    - `delete` does not raise; `_pending_normalizes` and `_pending_deploys` each contain the pair
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.delete()
+    - EthernetBaseOrchestrator._check_port_channel_delete_restriction()
+    """
+
+    def responses():
+        yield responses_access("test_delete_not_pc_member_00590a")
+        yield responses_access("test_delete_not_pc_member_00590b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({})
+
+    with does_not_raise():
+        instance.delete(model)
+
+    assert instance._pending_normalizes == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]

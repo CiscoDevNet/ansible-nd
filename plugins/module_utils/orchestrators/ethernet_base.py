@@ -223,6 +223,32 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 f"Only these fields can be modified: {sorted(self.PORT_CHANNEL_MODIFIABLE_FIELDS)}."
             )
 
+    def _check_port_channel_delete_restriction(self, model_instance: ModelType, existing_data: dict | None) -> None:
+        """
+        # Summary
+
+        Refuse to normalize an interface that is currently a port-channel member. Normalizing resets the
+        interface to the `int_trunk_host` template, which silently strips the channel-group membership
+        and detaches the interface from its port-channel — a destructive change that an unsuspecting user
+        asking to delete an access-interface configuration almost certainly did not intend.
+
+        ## Raises
+
+        ### RuntimeError
+
+        - If the existing wire state shows the interface is a port-channel member.
+        """
+        if existing_data is None:
+            return
+        existing_policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
+        port_channel_id = existing_policy.get("portChannelId")
+        if port_channel_id:
+            raise RuntimeError(
+                f"Interface {model_instance.interface_name} is a member of port-channel {port_channel_id}. "
+                f"Refusing to normalize a port-channel member (this would strip its channel-group membership). "
+                f"Remove the interface from the port-channel first, then re-run the delete."
+            )
+
     def remove_pending(self) -> ResponseType | None:
         """
         # Summary
@@ -346,14 +372,23 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         A deploy is also queued to push the normalized config to the switch.
 
+        Refuses to act on a port-channel member: normalizing would strip the channel-group membership and silently
+        detach the interface from its port-channel, which is almost never the intent behind a delete request.
+
+        An `existing_data` keyword argument, when supplied, overrides the fetched wire state (used by tests).
+
         ## Raises
 
         ### RuntimeError
 
         - If switch IP resolution fails.
+        - If the interface-list query used to resolve port-channel membership fails.
+        - If the interface is a port-channel member.
         """
         try:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_port_channel_delete_restriction(model_instance, existing_data)
             self._queue_normalize(model_instance.interface_name, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return {}
@@ -410,12 +445,23 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for normalization via `remove_pending` (which resets it to the `int_trunk_host` template) and deployment via
         `deploy_pending`. No API calls are made until those methods are called after `manage_state` completes.
 
+        Refuses to act on any port-channel member in the batch: normalizing would strip its channel-group membership
+        and silently detach the interface from its port-channel. The check fails fast on the first offender; if the
+        caller wants to mix mutable and protected interfaces (e.g. state:overridden across a fabric containing PC
+        members), the caller must filter PC members out of the batch before calling.
+
         ## Raises
 
-        None
+        ### RuntimeError
+
+        - If switch IP resolution fails for any interface.
+        - If the interface-list query used to resolve port-channel membership fails.
+        - If any interface in the batch is a port-channel member.
         """
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
+            existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
+            self._check_port_channel_delete_restriction(model_instance, existing_data)
             self._queue_normalize(model_instance.interface_name, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
 
