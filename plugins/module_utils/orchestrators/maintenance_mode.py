@@ -47,6 +47,12 @@ _MIGRATION_REMEDIATION = (
     "or maintenance."
 )
 
+# Explicit denylist of 207 per-item status values that count as a failure. Anything else --
+# `success`, missing, empty, or future progress/info tokens like `pending` or `warning` -- is
+# tolerated. ND's switchAction APIs occasionally include informational rows; treating "not
+# success" as failure would surface those as spurious errors.
+_FAILURE_STATUSES = frozenset({"failed", "failure", "error"})
+
 
 class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeModel]):
     """
@@ -362,7 +368,7 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
             if not isinstance(item, dict):
                 continue
             status = (item.get("status") or "").lower()
-            if status == "success":
+            if status not in _FAILURE_STATUSES:
                 continue
             switch_id = item.get("switchId") or "?"
             ip = ip_by_id.get(switch_id, switch_id)

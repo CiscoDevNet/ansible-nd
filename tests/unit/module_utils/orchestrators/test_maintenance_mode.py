@@ -638,19 +638,42 @@ def test_maintenance_mode_00320() -> None:
     [
         ({"items": [{"status": "success", "switchId": "X"}]}, False),
         ({"items": []}, False),
-        ({"items": [{"status": "SUCCESS", "switchId": "X"}]}, False),  # case-insensitive
+        ({"items": [{"status": "SUCCESS", "switchId": "X"}]}, False),  # case-insensitive success
         ({"unrelated": "no items key"}, False),
         ("not a dict", False),
         (None, False),
+        # Denylist semantics: only explicit failure tokens raise; everything else is tolerated.
+        ({"items": [{"switchId": "X"}]}, False),  # missing status
+        ({"items": [{"status": "", "switchId": "X"}]}, False),  # empty status
+        ({"items": [{"status": "pending", "switchId": "X"}]}, False),  # progress
+        ({"items": [{"status": "warning", "switchId": "X", "message": "noop"}]}, False),  # informational
+        ({"items": [{"status": "failed", "switchId": "X", "message": "boom"}]}, True),
+        ({"items": [{"status": "FAILURE", "switchId": "X", "message": "boom"}]}, True),  # case-insensitive
+        ({"items": [{"status": "error", "switchId": "X", "message": "boom"}]}, True),
     ],
-    ids=["all-success", "empty-items", "case-insensitive", "missing-items-key", "non-dict", "none"],
+    ids=[
+        "all-success",
+        "empty-items",
+        "case-insensitive",
+        "missing-items-key",
+        "non-dict",
+        "none",
+        "missing-status",
+        "empty-status",
+        "pending-progress",
+        "warning-info",
+        "failed-raises",
+        "failure-case-insensitive",
+        "error-raises",
+    ],
 )
 def test_maintenance_mode_00400(body, should_raise: bool) -> None:
     """
     # Summary
 
-    Verify `_raise_on_207_failures` is permissive about malformed/successful bodies and only raises on
-    real per-switch failures.
+    Verify `_raise_on_207_failures` raises ONLY on explicit failure tokens
+    (`failed` / `failure` / `error`, case-insensitive) and tolerates anything else --
+    success, missing/empty status, progress/info tokens like `pending` / `warning`.
 
     ## Classes and Methods
 
