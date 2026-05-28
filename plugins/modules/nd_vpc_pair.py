@@ -11,7 +11,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_vpc_pair
-version_added: "1.4.0"
+version_added: "2.0.0"
 short_description: Manage vPC pairs on Cisco Nexus Dashboard
 description:
 - Manage virtual Port-Channel (vPC) pairs on Cisco Nexus Dashboard.
