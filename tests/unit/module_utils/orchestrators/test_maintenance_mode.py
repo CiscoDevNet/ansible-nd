@@ -155,21 +155,18 @@ def test_maintenance_mode_00100() -> None:
     ## Test
 
     - 2 switches in config
-    - Fabric summary, switches list, then per-switch GETs are consumed in order
+    - Fabric summary and one bulk /switches GET are consumed in order
     - Snapshot contains both IPs with their current `intendedSystemMode`
 
     ## Classes and Methods
 
     - MaintenanceModeOrchestrator.query_all
-    - MaintenanceModeOrchestrator._fetch_switch_modes
     """
     method_name = inspect.stack()[0][3]
 
     def responses():
         yield responses_maintenance_mode(f"{method_name}a")  # fabric summary
-        yield responses_maintenance_mode(f"{method_name}b")  # switches list
-        yield responses_maintenance_mode(f"{method_name}c")  # switch A
-        yield responses_maintenance_mode(f"{method_name}d")  # switch B
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET
 
     gen_responses = ResponseGenerator(responses())
     config = [
@@ -217,8 +214,7 @@ def test_maintenance_mode_00110() -> None:
 
     def responses():
         yield responses_maintenance_mode(f"{method_name}a")  # summary
-        yield responses_maintenance_mode(f"{method_name}b")  # switches list
-        yield responses_maintenance_mode(f"{method_name}c")  # switch in migration
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET (switch in migration)
 
     gen_responses = ResponseGenerator(responses())
     config = [{"mode": "maintenance", "switches": [{"switch_ip": "192.168.12.131"}]}]
@@ -239,18 +235,17 @@ def test_maintenance_mode_00120() -> None:
     ## Test
 
     - 1 switch in config with IP not in the switches list
-    - `RuntimeError` raised (wrapped from `_resolve_switch_id`)
+    - `RuntimeError` raised with FabricContext-style message
 
     ## Classes and Methods
 
     - MaintenanceModeOrchestrator.query_all
-    - NDBaseInterfaceOrchestrator._resolve_switch_id
     """
     method_name = inspect.stack()[0][3]
 
     def responses():
         yield responses_maintenance_mode(f"{method_name}a")  # summary
-        yield responses_maintenance_mode(f"{method_name}b")  # switches list with different IP
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET with different IP
 
     gen_responses = ResponseGenerator(responses())
     config = [{"mode": "maintenance", "switches": [{"switch_ip": "192.168.12.131"}]}]
@@ -312,9 +307,8 @@ def test_maintenance_mode_00200() -> None:
 
     def responses():
         yield responses_maintenance_mode(f"{method_name}a")  # summary
-        yield responses_maintenance_mode(f"{method_name}b")  # switches list
-        yield responses_maintenance_mode(f"{method_name}c")  # switch A (normal)
-        yield responses_maintenance_mode(f"{method_name}d")  # POST 207 success
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET (switch A normal)
+        yield responses_maintenance_mode(f"{method_name}c")  # POST 207 success
 
     gen_responses = ResponseGenerator(responses())
     config = [
@@ -363,8 +357,7 @@ def test_maintenance_mode_00210() -> None:
 
     def responses():
         yield responses_maintenance_mode(f"{method_name}a")  # summary
-        yield responses_maintenance_mode(f"{method_name}b")  # switches list
-        yield responses_maintenance_mode(f"{method_name}c")  # switch A already maintenance
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET (switch A already maintenance)
 
     gen_responses = ResponseGenerator(responses())
     config = [{"mode": "maintenance", "switches": [{"switch_ip": "192.168.12.131"}]}]
@@ -377,7 +370,7 @@ def test_maintenance_mode_00210() -> None:
         result = instance.update(model)
 
     assert result == {}
-    # If a POST had been issued we'd see verb=POST; instead the last call was the GET on switch A.
+    # If a POST had been issued we'd see verb=POST; instead the last call was the bulk switches GET.
     assert rest_send.verb == HttpVerbEnum.GET.value
 
 
@@ -401,9 +394,8 @@ def test_maintenance_mode_00220() -> None:
 
     def responses():
         yield responses_maintenance_mode(f"{method_name}a")  # summary
-        yield responses_maintenance_mode(f"{method_name}b")  # switches list
-        yield responses_maintenance_mode(f"{method_name}c")  # switch A (normal)
-        yield responses_maintenance_mode(f"{method_name}d")  # POST 207 with failure
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET (switch A normal)
+        yield responses_maintenance_mode(f"{method_name}c")  # POST 207 with failure
 
     gen_responses = ResponseGenerator(responses())
     config = [{"mode": "maintenance", "switches": [{"switch_ip": "192.168.12.131"}]}]
@@ -455,7 +447,7 @@ def test_maintenance_mode_00240() -> None:
 
     ## Test
 
-    - Call `query_all` first (consumes summary, switches list, switch A GET).
+    - Call `query_all` first (consumes summary and the bulk /switches GET).
     - Call `update`. Fixture generator yields only the POST next; if `update` re-queried, the
       generator would underflow and raise.
 
@@ -464,14 +456,13 @@ def test_maintenance_mode_00240() -> None:
     - MaintenanceModeOrchestrator.query_all
     - MaintenanceModeOrchestrator.update
     """
-    # Reuse 00200's response sequence: summary, switches list, switch A normal, POST.
+    # Reuse 00200's response sequence: summary, bulk /switches GET, POST.
     method_name = "test_maintenance_mode_00200"
 
     def responses():
         yield responses_maintenance_mode(f"{method_name}a")  # summary
-        yield responses_maintenance_mode(f"{method_name}b")  # switches list
-        yield responses_maintenance_mode(f"{method_name}c")  # switch A (normal)
-        yield responses_maintenance_mode(f"{method_name}d")  # POST 207 success
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET (switch A normal)
+        yield responses_maintenance_mode(f"{method_name}c")  # POST 207 success
 
     gen_responses = ResponseGenerator(responses())
     config = [
@@ -517,7 +508,6 @@ def test_maintenance_mode_00300() -> None:
         yield responses_maintenance_mode(f"{method_name}a")
         yield responses_maintenance_mode(f"{method_name}b")
         yield responses_maintenance_mode(f"{method_name}c")
-        yield responses_maintenance_mode(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
     config = [
@@ -578,8 +568,6 @@ def test_maintenance_mode_00320() -> None:
     def responses():
         yield responses_maintenance_mode(f"{method_name}a")
         yield responses_maintenance_mode(f"{method_name}b")
-        yield responses_maintenance_mode(f"{method_name}c")
-        yield responses_maintenance_mode(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
     config = [

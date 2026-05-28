@@ -13,12 +13,14 @@ CRUD-shaped driver:
 
 - The Ansible-facing `config` is a dict, wrapped into a 1-item list by `nd_maintenance_mode.main()`
   so the state machine sees a singleton collection.
-- `query_all()` fans out per-switch GETs to read the current `intendedSystemMode` and returns a
-  single snapshot dict that becomes `output.before`. It also hard-fails the entire operation if any
-  requested switch is currently in `migration` mode (a stuck/failed deployment state that the user
-  must clear in the ND UI before the module can operate).
-- `update()` is the real action method: resolves IPs to serials, filters to only the switches whose
-  current intent differs from the desired mode, sets query params from the model, and POSTs.
+- `query_all()` issues **one** bulk GET of the fabric's switches and reads each row's
+  `additionalData.intendedSystemMode`/`discoveredSystemMode`. It builds a snapshot dict that
+  becomes `output.before` and caches both the per-IP mode map and the per-IP switchId map on the
+  orchestrator instance. It hard-fails if any requested switch is currently in `migration` mode
+  (a stuck/failed deployment state that the user must clear in the ND UI before the module can
+  operate).
+- `update()` reads the cached maps to filter to switches whose intent differs from the desired
+  mode, sets query params from the model, and POSTs. It does not re-query.
 - `create()` aliases `update()`. `delete()` is not supported (state `deleted` is not advertised).
 
 Uses `FabricContext` for fabric existence / freeze / locality pre-checks and switch IP-to-serial
@@ -33,7 +35,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDE
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
     EpManageFabricsSwitchActionsChangeSystemModePost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesGet
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import EpManageSwitchesListGet
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.maintenance_mode.maintenance_mode import MaintenanceModeModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interface import NDBaseInterfaceOrchestrator
@@ -52,21 +54,25 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
 
     Orchestrator for the `changeSystemMode` switch action.
 
-    Builds a snapshot of per-switch `intendedSystemMode` in `query_all()` (which `NDStateMachine`
-    calls during init), then `update()` POSTs the desired mode for only the switches whose current
-    intent differs from the request. The 207 response body is inspected per-item; any `status:
-    failed` entry triggers a `RuntimeError` with an aggregate message naming the failing switches
-    by IP.
+    Builds a snapshot of per-switch `intendedSystemMode` in `query_all()` via a single bulk GET
+    of the fabric's switches (which `NDStateMachine` calls during init), then `update()` POSTs the
+    desired mode for only the switches whose current intent differs from the request, reusing the
+    IP→switchId map captured by `query_all()`. The 207 response body is inspected per-item; any
+    `status: failed` entry triggers a `RuntimeError` with an aggregate message naming the failing
+    switches by IP.
 
-    Inherits from `NDBaseInterfaceOrchestrator` for `FabricContext` plumbing, switch IP resolution,
-    and pre-flight validation. The deploy/remove queuing methods on that base are unused here.
+    Inherits from `NDBaseInterfaceOrchestrator` for `FabricContext` plumbing and pre-flight
+    validation. The deploy/remove queuing methods on that base are unused here. The IP→switchId
+    resolution provided by `FabricContext.get_switch_id` is intentionally bypassed: this
+    orchestrator parses the same bulk switches GET it issues for mode reads, so calling
+    `FabricContext` would trigger a second list GET.
 
     ## Raises
 
     ### RuntimeError
 
     - Via `validate_prerequisites` if the fabric does not exist, is not local, or is in deployment-freeze mode.
-    - Via `_resolve_switch_id` if a user-supplied `switch_ip` is not found in the fabric.
+    - Via `query_all` if a user-supplied `switch_ip` is not found in the fabric.
     - Via `query_all` if any switch is currently in `migration` mode.
     - Via `update` if the POST changeSystemMode request fails or the 207 body contains per-switch failures.
 
@@ -82,13 +88,17 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
     create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsSwitchActionsChangeSystemModePost
     update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsSwitchActionsChangeSystemModePost
     delete_endpoint: type[NDEndpointBaseModel] = NDEndpointBaseModel  # unused; delete() raises NotImplementedError
-    query_one_endpoint: type[NDEndpointBaseModel] = EpManageSwitchesGet  # unused; query_one() delegates to query_all()
-    query_all_endpoint: type[NDEndpointBaseModel] = EpManageSwitchesGet  # used per-switch in query_all() fan-out
+    query_one_endpoint: type[NDEndpointBaseModel] = EpManageSwitchesListGet  # unused; query_one() delegates to query_all()
+    query_all_endpoint: type[NDEndpointBaseModel] = EpManageSwitchesListGet  # bulk fabric switches GET
 
     # Snapshot of switch_ip -> intendedSystemMode captured by query_all() and reused by update().
     # NDStateMachine invokes query_all() during init and the same orchestrator instance is reused for
     # update(), so caching here avoids a second per-switch GET fan-out per module run.
     _snapshot_modes: dict[str, str] | None = None
+    # Companion cache of switch_ip -> switchId for the user-supplied switches, parsed from the same
+    # bulk list-GET, so update() does not need to fall back to FabricContext (which would issue a
+    # second list GET).
+    _snapshot_switch_ids: dict[str, str] | None = None
 
     # ------------------------------------------------------------------ #
     # CRUD method overrides (action-shaped semantics)
@@ -98,9 +108,15 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
         """
         # Summary
 
-        Build a snapshot of the user's requested switches by fanning out per-switch GETs and reading
-        `additionalData.intendedSystemMode`. If any switch is currently in `migration` mode, hard-fail
-        with a remediation message before returning. This runs unconditionally during `NDStateMachine`
+        Build a snapshot of the user's requested switches with **one** bulk GET of the fabric's
+        switches (`/api/v1/manage/fabrics/{fabric_name}/switches`). Each row's `additionalData`
+        carries `intendedSystemMode` and `discoveredSystemMode`, so a single round-trip replaces
+        the per-switch GET fan-out and avoids touching `FabricContext.get_switch_id` (which would
+        issue its own list GET).
+
+        If any user-supplied `switch_ip` is not present in the fabric, hard-fail with a
+        FabricContext-style message. If any user switch is in `migration` mode, hard-fail with
+        the remediation message before returning. This runs unconditionally during `NDStateMachine`
         init, so the migration check fires even in `check_mode`.
 
         Returns a 1-element list (the singleton snapshot) so `NDConfigCollection.from_api_response`
@@ -110,10 +126,10 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
 
         ### RuntimeError
 
-        - If any switch is currently in `migration` mode.
         - If the fabric pre-flight check fails.
-        - If a `switch_ip` is not found in the fabric.
-        - If a per-switch GET fails.
+        - If any user `switch_ip` is not found in the fabric.
+        - If any user switch is currently in `migration` mode.
+        - If the bulk switches GET fails.
         """
         try:
             self.validate_prerequisites()
@@ -121,29 +137,33 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
             if not user_switches:
                 # Empty config (e.g. during argspec failure cases) — return an empty snapshot.
                 self._snapshot_modes = {}
+                self._snapshot_switch_ids = {}
                 return [{"switches": [], "switch_modes": {}}]
 
-            switch_modes: dict[str, str] = {}
-            migration_ips: list[str] = []
+            wanted_ips = [entry["switch_ip"] for entry in user_switches if entry.get("switch_ip")]
+            wanted_ip_set = set(wanted_ips)
 
-            for entry in user_switches:
-                switch_ip = entry.get("switch_ip")
-                if not switch_ip:
-                    continue
-                intended, discovered = self._fetch_switch_modes(switch_ip)
-                if discovered == "migration":
-                    migration_ips.append(switch_ip)
-                if intended is not None:
-                    switch_modes[switch_ip] = intended
+            list_endpoint = EpManageSwitchesListGet()
+            list_endpoint.fabric_name = self.fabric_name
+            response = self._request(path=list_endpoint.path, verb=list_endpoint.verb)
+            rows = response.get("switches") if isinstance(response, dict) else None
+
+            switch_ids, switch_modes, migration_ips = self._parse_switch_rows(rows or [], wanted_ip_set)
+
+            missing = [ip for ip in wanted_ips if ip not in switch_ids]
+            if missing:
+                # Match the FabricContext error shape so existing tests/messages stay consistent.
+                raise RuntimeError(f"No switch found with fabricManagementIp '{missing[0]}' in fabric '{self.fabric_name}'.")
 
             if migration_ips:
                 raise RuntimeError(_MIGRATION_REMEDIATION.format(ips=migration_ips))
 
-            # Cache for update() so we don't re-issue the per-switch GET fan-out.
+            # Cache for update() so we don't re-issue the bulk GET (or fall back to FabricContext).
             self._snapshot_modes = switch_modes
+            self._snapshot_switch_ids = switch_ids
 
             snapshot = {
-                "switches": [{"switch_ip": entry.get("switch_ip")} for entry in user_switches if entry.get("switch_ip")],
+                "switches": [{"switch_ip": ip} for ip in wanted_ips],
                 "switch_modes": switch_modes,
             }
             return [snapshot]
@@ -207,6 +227,7 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
                 # Defensive: caller skipped query_all (e.g. direct orchestrator use outside NDStateMachine).
                 self.query_all()
             snapshot_modes = self._snapshot_modes or {}
+            snapshot_switch_ids = self._snapshot_switch_ids or {}
 
             target_ips: list[str] = []
             target_switch_ids: list[str] = []
@@ -214,7 +235,9 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
                 if snapshot_modes.get(switch.switch_ip) == model_instance.mode:
                     continue
                 target_ips.append(switch.switch_ip)
-                target_switch_ids.append(self._resolve_switch_id(switch.switch_ip))
+                # Read from the cached map (built by query_all); never fall back to FabricContext,
+                # which would issue a second list GET on its first switch_map access.
+                target_switch_ids.append(snapshot_switch_ids[switch.switch_ip])
 
             if not target_switch_ids:
                 # Every requested switch already has matching intent — nothing to do.
@@ -255,32 +278,40 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
     # Helpers
     # ------------------------------------------------------------------ #
 
-    def _fetch_switch_modes(self, switch_ip: str) -> tuple[str | None, str | None]:
+    @staticmethod
+    def _parse_switch_rows(rows: list[Any], wanted_ip_set: set[str]) -> tuple[dict[str, str], dict[str, str], list[str]]:
         """
         # Summary
 
-        GET a single switch and return its `(intendedSystemMode, discoveredSystemMode)` pair from
-        `additionalData`. Returns `(None, None)` if the response is malformed.
+        Walk one bulk `/switches` response, keep only rows whose `fabricManagementIp` is in
+        `wanted_ip_set`, and return `(switch_ids, switch_modes, migration_ips)`:
+
+        - `switch_ids`: IP → switchId for every wanted row that carries both.
+        - `switch_modes`: IP → `additionalData.intendedSystemMode` (when present and non-null).
+        - `migration_ips`: wanted IPs whose `additionalData.discoveredSystemMode` is `"migration"`.
 
         ## Raises
 
-        ### RuntimeError
-
-        - Via `_resolve_switch_id` if the IP is not in the fabric.
-        - Via `_request` if the GET fails.
+        None
         """
-        switch_id = self._resolve_switch_id(switch_ip)
-        api_endpoint = EpManageSwitchesGet()
-        api_endpoint.fabric_name = self.fabric_name
-        api_endpoint.switch_id = switch_id
-        response = self._request(path=api_endpoint.path, verb=api_endpoint.verb)
-        if not isinstance(response, dict):
-            return None, None
-        # Read `intendedSystemMode` for idempotency rather than the aggregator `systemMode`, because
-        # `systemMode` returns "inconsistent" when intent != discovered (e.g. after a no-deploy POST).
-        # Comparing against the aggregator would re-POST on every playbook run that left intent != discovered.
-        additional = response.get("additionalData") or {}
-        return additional.get("intendedSystemMode"), additional.get("discoveredSystemMode")
+        switch_ids: dict[str, str] = {}
+        switch_modes: dict[str, str] = {}
+        migration_ips: list[str] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            ip = row.get("fabricManagementIp")
+            switch_id = row.get("switchId")
+            if not ip or not switch_id or ip not in wanted_ip_set:
+                continue
+            switch_ids[ip] = switch_id
+            additional = row.get("additionalData") or {}
+            intended = additional.get("intendedSystemMode")
+            if additional.get("discoveredSystemMode") == "migration":
+                migration_ips.append(ip)
+            if intended is not None:
+                switch_modes[ip] = intended
+        return switch_ids, switch_modes, migration_ips
 
     def _user_switches(self) -> list[dict[str, Any]]:
         """
