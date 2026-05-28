@@ -718,3 +718,79 @@ def test_ethernet_access_orchestrator_00590() -> None:
 
     assert instance._pending_normalizes == [("Ethernet1/1", "FDO11111AAA")]
     assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+
+
+def test_ethernet_access_orchestrator_00600() -> None:
+    """
+    # Summary
+
+    Verify `delete_bulk` silently skips port-channel members when `state == "overridden"` so fabric-wide
+    convergence does not detach interfaces from their port-channels. Non-member interfaces in the same batch
+    are still queued for normalize / deploy.
+
+    ## Test
+
+    - state is "overridden"
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA and 192.168.1.2 -> FDO22222BBB
+    - Ethernet1/1 on FDO11111AAA is a PC 10 member -> skipped
+    - Ethernet1/2 on FDO22222BBB is not a PC member -> queued
+    - `delete_bulk` does not raise; only the non-member ends up in `_pending_normalizes` / `_pending_deploys`
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.delete_bulk()
+    - EthernetBaseOrchestrator._existing_port_channel_id()
+    """
+
+    def responses():
+        yield responses_access("test_delete_bulk_overridden_skips_pc_00600a")
+        yield responses_access("test_delete_bulk_overridden_skips_pc_00600b")
+        yield responses_access("test_delete_bulk_overridden_skips_pc_00600c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, params={"state": "overridden"})
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    pc_member = _build_access_model({}, interface_name="Ethernet1/1", switch_ip="192.168.1.1")
+    non_member = _build_access_model({}, interface_name="Ethernet1/2", switch_ip="192.168.1.2")
+
+    with does_not_raise():
+        instance.delete_bulk([pc_member, non_member])
+
+    assert instance._pending_normalizes == [("Ethernet1/2", "FDO22222BBB")]
+    assert instance._pending_deploys == [("Ethernet1/2", "FDO22222BBB")]
+
+
+def test_ethernet_access_orchestrator_00610() -> None:
+    """
+    # Summary
+
+    Verify `delete_bulk` still raises on a port-channel member when `state == "deleted"` (the user named the
+    interface explicitly), so the user is told loudly rather than having their PC silently broken.
+
+    ## Test
+
+    - state is "deleted"
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - Ethernet1/1 is a PC 10 member, user named it
+    - `delete_bulk` raises `RuntimeError`; nothing is queued
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.delete_bulk()
+    - EthernetBaseOrchestrator._check_port_channel_delete_restriction()
+    """
+
+    def responses():
+        yield responses_access("test_delete_bulk_deleted_raises_pc_00610a")
+        yield responses_access("test_delete_bulk_deleted_raises_pc_00610b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, params={"state": "deleted"})
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({})
+
+    with pytest.raises(RuntimeError, match=r"member of port-channel 10.*Refusing to normalize"):
+        instance.delete_bulk([model])
+
+    assert instance._pending_normalizes == []
+    assert instance._pending_deploys == []

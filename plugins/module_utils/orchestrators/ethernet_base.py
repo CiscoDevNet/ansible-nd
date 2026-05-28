@@ -24,8 +24,11 @@ resolution) from `NDBaseInterfaceOrchestrator` and adds ethernet-specific functi
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from typing import ClassVar
+
+logger = logging.getLogger(__name__)
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -223,6 +226,23 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                 f"Only these fields can be modified: {sorted(self.PORT_CHANNEL_MODIFIABLE_FIELDS)}."
             )
 
+    @staticmethod
+    def _existing_port_channel_id(existing_data: dict | None) -> int | None:
+        """
+        # Summary
+
+        Return the `portChannelId` value from the existing wire-state policy, or `None` when the interface
+        is not a port-channel member (or no wire state is available).
+
+        ## Raises
+
+        None
+        """
+        if existing_data is None:
+            return None
+        existing_policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
+        return existing_policy.get("portChannelId")
+
     def _check_port_channel_delete_restriction(self, model_instance: ModelType, existing_data: dict | None) -> None:
         """
         # Summary
@@ -238,10 +258,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - If the existing wire state shows the interface is a port-channel member.
         """
-        if existing_data is None:
-            return
-        existing_policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
-        port_channel_id = existing_policy.get("portChannelId")
+        port_channel_id = self._existing_port_channel_id(existing_data)
         if port_channel_id:
             raise RuntimeError(
                 f"Interface {model_instance.interface_name} is a member of port-channel {port_channel_id}. "
@@ -445,10 +462,13 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         for normalization via `remove_pending` (which resets it to the `int_trunk_host` template) and deployment via
         `deploy_pending`. No API calls are made until those methods are called after `manage_state` completes.
 
-        Refuses to act on any port-channel member in the batch: normalizing would strip its channel-group membership
-        and silently detach the interface from its port-channel. The check fails fast on the first offender; if the
-        caller wants to mix mutable and protected interfaces (e.g. state:overridden across a fabric containing PC
-        members), the caller must filter PC members out of the batch before calling.
+        Port-channel members are handled per-state:
+
+        - `state: overridden` — silently skipped (logged at INFO). Fabric-wide convergence should not require the
+          user to explicitly list every PC member in the access config just to keep them attached to their bundle.
+        - any other state (i.e. user-named `state: deleted` items) — fails fast with `RuntimeError`. The user
+          asked for this interface by name, so we refuse loudly rather than silently strip the channel-group
+          membership.
 
         ## Raises
 
@@ -456,12 +476,23 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - If switch IP resolution fails for any interface.
         - If the interface-list query used to resolve port-channel membership fails.
-        - If any interface in the batch is a port-channel member.
+        - If any interface in the batch is a port-channel member AND `state` is not `overridden`.
         """
+        state = self.rest_send.params.get("state") if self.rest_send and self.rest_send.params else None
         for model_instance in model_instances:
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
-            self._check_port_channel_delete_restriction(model_instance, existing_data)
+            port_channel_id = self._existing_port_channel_id(existing_data)
+            if port_channel_id:
+                if state == "overridden":
+                    logger.info(
+                        "Skipping port-channel member %s on switch %s (member of port-channel %s) during state:overridden",
+                        model_instance.interface_name,
+                        model_instance.switch_ip,
+                        port_channel_id,
+                    )
+                    continue
+                self._check_port_channel_delete_restriction(model_instance, existing_data)
             self._queue_normalize(model_instance.interface_name, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
 
@@ -520,7 +551,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         and limited to switches named in the user config for all other states.
 
         Port-channel member interfaces are included in the results (they exist on the switch and need to be visible
-        for port-channel restriction checks), but `state: overridden` handling in the state machine should skip them.
+        for port-channel restriction checks in `create` / `update`). `delete_bulk` skips PC members when invoked
+        under `state: overridden` so fabric-wide convergence does not detach interfaces from their port-channels.
 
         Runs `validate_prerequisites` on first call to ensure the fabric exists and is modifiable before returning any data.
 
