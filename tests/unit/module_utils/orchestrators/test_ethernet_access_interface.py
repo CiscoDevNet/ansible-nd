@@ -538,3 +538,78 @@ def test_ethernet_access_orchestrator_00540() -> None:
         instance.create_bulk([model])
 
     assert instance._pending_deploys == []
+
+
+def test_ethernet_access_orchestrator_00550() -> None:
+    """
+    # Summary
+
+    Verify `update` succeeds on a port-channel member when the post-merge model carries non-whitelisted
+    wire-side values (e.g. `access_vlan`, `mtu`) that the user did NOT change. Regression test for the
+    state:merged path where the state machine merges the existing model into the proposed one before
+    calling `update`.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 as a member of port-channel 10 with `accessVlan=10`, `mtu=jumbo`
+    - The model passed to `update` carries `description='new'` (the user-set field) AND the existing
+      `access_vlan=10` / `mtu=jumbo` carried over by the state machine's merge step
+    - Only `description` differs from the wire; `access_vlan` / `mtu` match -> no flag -> `update` succeeds
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.update()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_access("test_update_pc_member_merged_whitelisted_00550a")
+        yield responses_access("test_update_pc_member_merged_whitelisted_00550b")
+        yield responses_access("test_update_pc_member_merged_whitelisted_00550c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({"description": "new", "access_vlan": 10, "mtu": "jumbo"})
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+
+
+def test_ethernet_access_orchestrator_00560() -> None:
+    """
+    # Summary
+
+    Verify `update` still raises on a port-channel member when the post-merge model genuinely changes a
+    non-whitelisted field (different value from the wire). Confirms the merge-aware check did not
+    over-loosen the guard.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 as a port-channel member with `accessVlan=10`
+    - The model carries `access_vlan=100` (different from wire) -> flagged as a real change
+    - `update` raises `RuntimeError` naming `access_vlan`; no deploy is queued
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.update()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_access("test_update_pc_member_merged_unwhitelisted_00560a")
+        yield responses_access("test_update_pc_member_merged_unwhitelisted_00560b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({"access_vlan": 100})
+
+    with pytest.raises(RuntimeError, match=r"Update failed for.*member of port-channel 10.*access_vlan"):
+        instance.update(model)
+
+    assert instance._pending_deploys == []

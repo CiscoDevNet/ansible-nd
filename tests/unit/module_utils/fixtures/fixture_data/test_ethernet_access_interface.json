@@ -480,5 +480,102 @@
                 }
             ]
         }
+    },
+    "test_update_pc_member_merged_whitelisted_00550a": {
+        "TEST_NOTES": ["00550: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_merged_whitelisted_00550b": {
+        "TEST_NOTES": [
+            "00550: interfaceList -- Ethernet1/1 is a port-channel member that already has accessVlan=10 and mtu=jumbo set on the wire.",
+            "Simulates the state:merged case: the existing-side values are present in the post-merge model handed to update()."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "portChannelId": 10,
+                                "accessVlan": 10,
+                                "mtu": "jumbo"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_merged_whitelisted_00550c": {
+        "TEST_NOTES": ["00550: PUT response -- update succeeded"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F1",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_update_pc_member_merged_unwhitelisted_00560a": {
+        "TEST_NOTES": ["00560: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_merged_unwhitelisted_00560b": {
+        "TEST_NOTES": [
+            "00560: interfaceList -- Ethernet1/1 is a port-channel member with accessVlan=10 already on the wire.",
+            "Simulates the state:merged case where the user genuinely changes accessVlan (10 -> 100) on a PC member."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "portChannelId": 10,
+                                "accessVlan": 10
+                            }
+                        }
+                    }
+                }
+            ]
+        }
     }
 }

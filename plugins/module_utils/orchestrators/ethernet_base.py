@@ -178,6 +178,11 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         Check if the interface is a port-channel member and validate that only whitelisted fields are being modified.
         If the interface is a port-channel member and non-whitelisted fields are being changed, raise `RuntimeError`.
 
+        A field is treated as a "change" only when the proposed value differs from the corresponding value in the
+        existing wire-state policy. This matters for `state: merged`, where the state machine passes the post-merge
+        model (which carries every existing wire field) — flagging every non-None field would block legitimate
+        whitelisted-only changes.
+
         ## Raises
 
         ### RuntimeError
@@ -187,7 +192,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         if existing_data is None:
             return
 
-        port_channel_id = existing_data.get("configData", {}).get("networkOS", {}).get("policy", {}).get("portChannelId")
+        existing_policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
+        port_channel_id = existing_policy.get("portChannelId")
         if not port_channel_id:
             return
 
@@ -199,9 +205,14 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return
 
         changed_fields = set()
-        for field_name in type(policy).model_fields:
-            value = getattr(policy, field_name)
-            if value is not None and field_name != "policy_type":
+        for field_name, field_info in type(policy).model_fields.items():
+            if field_name == "policy_type":
+                continue
+            proposed_value = getattr(policy, field_name)
+            if proposed_value is None:
+                continue
+            wire_alias = field_info.alias or field_name
+            if proposed_value != existing_policy.get(wire_alias):
                 changed_fields.add(field_name)
 
         non_whitelisted = changed_fields - self.PORT_CHANNEL_MODIFIABLE_FIELDS
