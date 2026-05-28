@@ -487,6 +487,47 @@ def test_maintenance_mode_00240() -> None:
     assert rest_send.committed_payload == {"mode": "maintenance", "switchIds": ["9UOJ3E8A6O9"]}
 
 
+def test_maintenance_mode_00250() -> None:
+    """
+    # Summary
+
+    Verify `update` does NOT emit `deploy=false` / `blocking=false` on the URL when the user did
+    not opt into them. The model defaults both fields to `False`; the endpoint's `to_query_string`
+    excludes None but not False, so an unconditional push would put `?deploy=false&blocking=false`
+    on every request.
+
+    ## Test
+
+    - Config with mode only (no deploy, no blocking, no ticket_id)
+    - POST URL must not contain any query string at all
+
+    ## Classes and Methods
+
+    - MaintenanceModeOrchestrator.update
+    """
+    # Reuse 00200's response sequence: summary, bulk switches GET, POST.
+    method_name = "test_maintenance_mode_00200"
+
+    def responses():
+        yield responses_maintenance_mode(f"{method_name}a")  # summary
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk switches GET (switch A normal)
+        yield responses_maintenance_mode(f"{method_name}c")  # POST 207 success
+
+    gen_responses = ResponseGenerator(responses())
+    config = [{"mode": "maintenance", "switches": [{"switch_ip": "192.168.12.131"}]}]
+    rest_send = _build_rest_send(gen_responses, config=config)
+    instance = MaintenanceModeOrchestrator(rest_send=rest_send)
+    model = MaintenanceModeModel.from_config(config[0])
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert "deploy" not in rest_send.path
+    assert "blocking" not in rest_send.path
+    assert "?" not in rest_send.path
+
+
 # =============================================================================
 # Test: create / delete / query_one delegation
 # =============================================================================

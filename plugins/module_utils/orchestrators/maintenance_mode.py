@@ -245,8 +245,13 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
 
             api_endpoint = EpManageFabricsSwitchActionsChangeSystemModePost()
             api_endpoint.fabric_name = self.fabric_name
-            api_endpoint.endpoint_params.deploy = model_instance.deploy
-            api_endpoint.endpoint_params.blocking = model_instance.blocking
+            # Only push truthy deploy/blocking onto the endpoint params: the model defaults are
+            # False, and the endpoint serializes via `exclude_none=True` (not `exclude_defaults`),
+            # so assigning False would emit `?deploy=false&blocking=false` on every request.
+            if model_instance.deploy:
+                api_endpoint.endpoint_params.deploy = True
+            if model_instance.blocking:
+                api_endpoint.endpoint_params.blocking = True
             api_endpoint.endpoint_params.ticket_id = model_instance.ticket_id
 
             payload = {"mode": model_instance.mode, "switchIds": target_switch_ids}
