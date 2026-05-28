@@ -10,7 +10,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_fabric_update_group
-version_added: "1.4.0"
+version_added: "2.0.0"
 short_description: Manage fabric update groups (Fabric Software Management) on Cisco Nexus Dashboard
 description:
 - Manage fabric update groups under O(fabric_name) on Cisco Nexus Dashboard (ND).
