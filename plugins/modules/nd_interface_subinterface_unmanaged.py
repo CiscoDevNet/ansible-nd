@@ -9,7 +9,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_interface_subinterface_unmanaged
-version_added: "1.6.0"
+version_added: "2.0.0"
 short_description: Manage L3 (unmanaged / monitor-mode) subinterfaces on Cisco Nexus Dashboard
 description:
 - Manage L3 subinterfaces (unmanaged variant) on Cisco Nexus Dashboard.
