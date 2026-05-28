@@ -14,6 +14,8 @@ the user-facing argument spec.
 The managed variant lives in `subinterface_managed_interface.py`.
 """
 
+from __future__ import annotations
+
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
