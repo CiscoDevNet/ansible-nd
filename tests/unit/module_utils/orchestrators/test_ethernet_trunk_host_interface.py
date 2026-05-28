@@ -49,8 +49,12 @@ def responses_trunk_host(key: str):
     return load_fixture("test_ethernet_trunk_host_interface")[key]
 
 
-def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> RestSend:
-    """Build a RestSend wired to the file-based Sender and the real ResponseHandler."""
+def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1", params: dict | None = None) -> RestSend:
+    """Build a RestSend wired to the file-based Sender and the real ResponseHandler.
+
+    `params` is merged into the RestSend params so tests can supply `state` and `config`,
+    which `query_all` reads via `_switches_to_query` to scope the switches it queries.
+    """
     sender = Sender()
     sender.ansible_module = MockAnsibleModule()
     sender.gen = gen_responses
@@ -60,7 +64,10 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     response_handler.verb = HttpVerbEnum.GET
     response_handler.commit()
 
-    rest_send = RestSend({"check_mode": False, "fabric_name": fabric_name})
+    rest_send_params = {"check_mode": False, "fabric_name": fabric_name}
+    if params:
+        rest_send_params.update(params)
+    rest_send = RestSend(rest_send_params)
     rest_send.sender = sender
     rest_send.response_handler = response_handler
     rest_send.unit_test = True
@@ -68,9 +75,9 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     return rest_send
 
 
-def _build_orchestrator(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> EthernetTrunkHostInterfaceOrchestrator:
+def _build_orchestrator(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1", params: dict | None = None) -> EthernetTrunkHostInterfaceOrchestrator:
     """Construct an orchestrator with the file-based RestSend injected."""
-    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name)
+    rest_send = _build_rest_send(gen_responses, fabric_name=fabric_name, params=params)
     return EthernetTrunkHostInterfaceOrchestrator(rest_send=rest_send)
 
 
@@ -299,11 +306,12 @@ def test_ethernet_trunk_host_orchestrator_00400() -> None:
     """
     # Summary
 
-    Verify `query_all` validates the fabric, iterates all switches, filters to trunkHost interfaces,
-    excludes unconfigured defaults, and injects `switchIp` onto each kept interface.
+    Verify `query_all` validates the fabric, iterates the switches named in the config, filters to
+    trunkHost interfaces, excludes unconfigured defaults, and injects `switchIp` onto each kept interface.
 
     ## Test
 
+    - state is `merged`; config references both switches in the fabric
     - Fabric summary (validate_prerequisites) returns 200
     - Switches list returns two switches
     - Switch 1 returns: configured trunkHost, unconfigured-default trunkHost, accessHost
@@ -327,7 +335,10 @@ def test_ethernet_trunk_host_orchestrator_00400() -> None:
     gen_responses = ResponseGenerator(responses())
 
     with does_not_raise():
-        orchestrator = _build_orchestrator(gen_responses)
+        orchestrator = _build_orchestrator(
+            gen_responses,
+            params={"state": "merged", "config": [{"switch_ip": "192.168.1.1"}, {"switch_ip": "192.168.1.2"}]},
+        )
         result = orchestrator.query_all()
 
     assert isinstance(result, list)
@@ -348,16 +359,20 @@ def test_ethernet_trunk_host_orchestrator_00400() -> None:
     assert method_name.endswith("00400")
 
 
-def test_ethernet_trunk_host_orchestrator_00410() -> None:
+def test_ethernet_trunk_host_orchestrator_00410(monkeypatch) -> None:
     """
     # Summary
 
-    Verify `query_all` returns an empty list when every trunkHost interface matches the
-    unconfigured `int_trunk_host` default signature.
+    Verify `query_all` returns an empty list specifically because the
+    `_is_unconfigured_default` filter dropped every trunkHost interface returned by the
+    switch — not because no switches were scanned.
 
     ## Test
 
-    - Switch returns only default-configured trunkHost interfaces
+    - state is `merged`; config references the one switch returned by the fabric, so
+      `_switches_to_query` selects it and the per-switch interfaces GET is actually issued
+    - Switch returns two default-configured trunkHost interfaces
+    - `_is_unconfigured_default` is called once per interface (proves the filter ran)
     - Result is an empty list
 
     ## Classes and Methods
@@ -373,11 +388,24 @@ def test_ethernet_trunk_host_orchestrator_00410() -> None:
 
     gen_responses = ResponseGenerator(responses())
 
+    filtered: list[dict] = []
+    original_filter = EthernetTrunkHostInterfaceOrchestrator._is_unconfigured_default
+
+    def spy(iface: dict) -> bool:
+        filtered.append(iface)
+        return original_filter(iface)
+
+    monkeypatch.setattr(EthernetTrunkHostInterfaceOrchestrator, "_is_unconfigured_default", staticmethod(spy))
+
     with does_not_raise():
-        orchestrator = _build_orchestrator(gen_responses)
+        orchestrator = _build_orchestrator(
+            gen_responses,
+            params={"state": "merged", "config": [{"switch_ip": "192.168.1.1"}]},
+        )
         result = orchestrator.query_all()
 
     assert result == []
+    assert [iface["interfaceName"] for iface in filtered] == ["Ethernet1/1", "Ethernet1/2"]
 
 
 def test_ethernet_trunk_host_orchestrator_00430(monkeypatch) -> None:
