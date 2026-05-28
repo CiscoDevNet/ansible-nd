@@ -16,6 +16,7 @@ in the ND Manage API.
 from __future__ import annotations
 
 from typing import Literal, Optional
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -141,7 +142,7 @@ class EpManageFabricsSwitchActionsChangeSystemModePost(FabricNameMixin, NDEndpoi
         """
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        base_path = BasePath.path("fabrics", self.fabric_name, "switchActions", "changeSystemMode")
+        base_path = BasePath.path("fabrics", quote(self.fabric_name, safe=""), "switchActions", "changeSystemMode")
         query_string = self.endpoint_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"

@@ -139,3 +139,21 @@ def test_change_system_mode_endpoint_00060() -> None:
     ep.fabric_name = "SITE1"
     ep.endpoint_params.ticket_id = "CHG-INT_42"
     assert "ticketId=CHG-INT_42" in ep.path
+
+
+def test_change_system_mode_endpoint_00070() -> None:
+    """
+    # Summary
+
+    Verify `fabric_name` is URL-encoded in the path so reserved characters do not break the route.
+
+    ## Classes and Methods
+
+    - EpManageFabricsSwitchActionsChangeSystemModePost.path
+    """
+    ep = EpManageFabricsSwitchActionsChangeSystemModePost()
+    ep.fabric_name = "SITE A/B"
+    # Space encodes to %20, slash to %2F.
+    assert "/fabrics/SITE%20A%2FB/switchActions/changeSystemMode" in ep.path
+    assert " " not in ep.path
+    assert "SITE A/B" not in ep.path

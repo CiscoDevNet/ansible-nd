@@ -215,7 +215,7 @@ class EpManageSwitchesGet(FabricNameMixin, NDEndpointBaseModel):
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         if self.switch_id is None:
             raise ValueError(f"{type(self).__name__}.path: switch_id must be set before accessing path.")
-        return BasePath.path("fabrics", self.fabric_name, "switches", self.switch_id)
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "switches", quote(self.switch_id, safe=""))
 
     @property
     def verb(self) -> HttpVerbEnum:
