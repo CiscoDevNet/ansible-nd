@@ -94,6 +94,11 @@ notes:
   re-POSTs on every playbook run.
 - A request that includes any unknown C(switch_ip) is rejected wholesale by ND (no partial application). The module
   validates all C(switch_ip) values against the fabric inventory client-side before issuing the POST.
+- When O(config.deploy=true) and O(config.blocking=true), ND holds the HTTP response open for the duration of the deploy
+  (often several minutes per switch). Ansible's C(persistent_command_timeout) defaults to 30 seconds and will reap the
+  C(ansible-connection) socket mid-request, surfacing as a confusing C(ConnectionError ... socket path ... does not exist).
+  Raise C(ansible_command_timeout) in your inventory C([nd:vars]) section (e.g. V(3600)) AND set a generous module-level
+  C(timeout) via C(module_defaults). The Examples section below shows the recommended play-level pattern.
 """
 
 EXAMPLES = r"""
@@ -110,7 +115,7 @@ EXAMPLES = r"""
         - switch_ip: 192.168.12.151
         - switch_ip: 192.168.12.155
 
-- name: Take a switch out of maintenance mode (intent only — caller deploys later)
+- name: Take a switch out of maintenance mode (intent only -- caller deploys later)
   cisco.nd.nd_maintenance_mode:
     fabric_name: SITE1
     state: merged
@@ -119,6 +124,27 @@ EXAMPLES = r"""
       deploy: false
       switches:
         - switch_ip: 192.168.12.151
+
+# Recommended pattern for blocking deploys: bump the per-task timeout via module_defaults at the
+# play level, and set `ansible_command_timeout=3600` in your inventory's [nd:vars] section so the
+# persistent connection survives the wait.
+- name: Maintenance mode with extended timeout for a blocking deploy
+  hosts: nd
+  module_defaults:
+    cisco.nd.nd_maintenance_mode:
+      timeout: 1800
+  tasks:
+    - name: Place switches into maintenance mode and block until ND finishes deploying
+      cisco.nd.nd_maintenance_mode:
+        fabric_name: SITE1
+        state: merged
+        config:
+          mode: maintenance
+          deploy: true
+          blocking: true
+          switches:
+            - switch_ip: 192.168.12.151
+            - switch_ip: 192.168.12.155
 """
 
 RETURN = r"""
