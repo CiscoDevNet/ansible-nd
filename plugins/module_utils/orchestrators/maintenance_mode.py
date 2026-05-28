@@ -85,6 +85,11 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
     query_one_endpoint: type[NDEndpointBaseModel] = EpManageSwitchesGet  # unused; query_one() delegates to query_all()
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageSwitchesGet  # used per-switch in query_all() fan-out
 
+    # Snapshot of switch_ip -> intendedSystemMode captured by query_all() and reused by update().
+    # NDStateMachine invokes query_all() during init and the same orchestrator instance is reused for
+    # update(), so caching here avoids a second per-switch GET fan-out per module run.
+    _snapshot_modes: dict[str, str] | None = None
+
     # ------------------------------------------------------------------ #
     # CRUD method overrides (action-shaped semantics)
     # ------------------------------------------------------------------ #
@@ -115,6 +120,7 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
             user_switches = self._user_switches()
             if not user_switches:
                 # Empty config (e.g. during argspec failure cases) — return an empty snapshot.
+                self._snapshot_modes = {}
                 return [{"switches": [], "switch_modes": {}}]
 
             switch_modes: dict[str, str] = {}
@@ -132,6 +138,9 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
 
             if migration_ips:
                 raise RuntimeError(_MIGRATION_REMEDIATION.format(ips=migration_ips))
+
+            # Cache for update() so we don't re-issue the per-switch GET fan-out.
+            self._snapshot_modes = switch_modes
 
             snapshot = {
                 "switches": [{"switch_ip": entry.get("switch_ip")} for entry in user_switches if entry.get("switch_ip")],
@@ -175,10 +184,13 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
 
         Apply the requested system mode to the switches that currently differ.
 
-        Resolves `switch_ip` to `switchId` for every entry, reads the snapshot from `query_all` to
-        determine which switches actually need to change, sets the endpoint query params from the
-        model, and POSTs. The 207 response body is parsed; any `status: failed` items raise a
-        `RuntimeError` with switch IPs included.
+        Reads the snapshot cached by `query_all()` (populated during `NDStateMachine` init) to decide
+        which switches need to change, resolves `switch_ip` to `switchId` for those, sets the endpoint
+        query params from the model, and POSTs. The 207 response body is parsed; any `status: failed`
+        items raise a `RuntimeError` with switch IPs included.
+
+        If the cache is empty (defensive path for callers that invoke `update()` without going through
+        `query_all()` first), `query_all()` is called once to populate it.
 
         ## Raises
 
@@ -188,15 +200,13 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
         - If the 207 response body contains one or more per-switch failures.
         """
         try:
-            self.validate_prerequisites()
             if model_instance.mode is None or not model_instance.switches:
                 return {}
 
-            # Re-read the live snapshot so we only POST switches whose intent actually needs to change.
-            snapshot_response = self.query_all()
-            snapshot_modes: dict[str, str] = {}
-            if snapshot_response and isinstance(snapshot_response, list):
-                snapshot_modes = (snapshot_response[0] or {}).get("switch_modes", {}) or {}
+            if self._snapshot_modes is None:
+                # Defensive: caller skipped query_all (e.g. direct orchestrator use outside NDStateMachine).
+                self.query_all()
+            snapshot_modes = self._snapshot_modes or {}
 
             target_ips: list[str] = []
             target_switch_ids: list[str] = []

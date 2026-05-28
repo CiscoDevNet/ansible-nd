@@ -445,6 +445,57 @@ def test_maintenance_mode_00230() -> None:
     assert result == {}
 
 
+def test_maintenance_mode_00240() -> None:
+    """
+    # Summary
+
+    Verify that `update` reuses the snapshot cached by `query_all` and does NOT re-issue per-switch
+    GETs when called after `query_all`. Together they should consume exactly one snapshot pass
+    (summary + switches list + per-switch GET) and one POST.
+
+    ## Test
+
+    - Call `query_all` first (consumes summary, switches list, switch A GET).
+    - Call `update`. Fixture generator yields only the POST next; if `update` re-queried, the
+      generator would underflow and raise.
+
+    ## Classes and Methods
+
+    - MaintenanceModeOrchestrator.query_all
+    - MaintenanceModeOrchestrator.update
+    """
+    # Reuse 00200's response sequence: summary, switches list, switch A normal, POST.
+    method_name = "test_maintenance_mode_00200"
+
+    def responses():
+        yield responses_maintenance_mode(f"{method_name}a")  # summary
+        yield responses_maintenance_mode(f"{method_name}b")  # switches list
+        yield responses_maintenance_mode(f"{method_name}c")  # switch A (normal)
+        yield responses_maintenance_mode(f"{method_name}d")  # POST 207 success
+
+    gen_responses = ResponseGenerator(responses())
+    config = [
+        {
+            "mode": "maintenance",
+            "deploy": True,
+            "blocking": True,
+            "ticket_id": "CHG-1",
+            "switches": [{"switch_ip": "192.168.12.131"}],
+        }
+    ]
+    rest_send = _build_rest_send(gen_responses, config=config)
+    instance = MaintenanceModeOrchestrator(rest_send=rest_send)
+    model = MaintenanceModeModel.from_config(config[0])
+
+    with does_not_raise():
+        instance.query_all()
+        instance.update(model)
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert "switchActions/changeSystemMode" in rest_send.path
+    assert rest_send.committed_payload == {"mode": "maintenance", "switchIds": ["9UOJ3E8A6O9"]}
+
+
 # =============================================================================
 # Test: create / delete / query_one delegation
 # =============================================================================
