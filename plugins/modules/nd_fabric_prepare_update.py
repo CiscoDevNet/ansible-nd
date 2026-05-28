@@ -10,7 +10,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_fabric_prepare_update
-version_added: "1.6.0"
+version_added: "2.0.0"
 short_description: Prepare (stage and validate) fabric update groups on Cisco Nexus Dashboard
 description:
 - Prepare one or more fabric update groups under O(fabric_name) for a software upgrade on Cisco Nexus Dashboard (ND).
