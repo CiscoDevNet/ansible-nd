@@ -25,6 +25,7 @@ wrapping or flattening.
 
 from __future__ import annotations
 
+import re
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -201,21 +202,36 @@ class EthernetAccessInterfaceModel(NDBaseModel):
     interface_type: Literal["ethernet"] = Field(default="ethernet", alias="interfaceType", frozen=True)
     config_data: EthernetAccessConfigDataModel | None = Field(default=None, alias="configData")
 
+    _INTERFACE_NAME_PREFIX_RE: ClassVar = re.compile(r"^([A-Za-z]+)(.*)$")
+
     @field_validator("interface_name", mode="before")
     @classmethod
     def normalize_interface_name(cls, value):
         """
         # Summary
 
-        Normalize interface name to match ND API convention (e.g., ethernet1/1 -> Ethernet1/1).
+        Normalize the leading alphabetic prefix of an interface name to ND's canonical Title case so that
+        any user-supplied casing round-trips against the wire form. Examples:
+
+        - `ethernet1/1` -> `Ethernet1/1`
+        - `ETHERNET1/1` -> `Ethernet1/1`
+        - `etHernet1/1` -> `Ethernet1/1`
+        - `Ethernet1/1` -> `Ethernet1/1` (idempotent)
+
+        Only the leading alphabetic run is rewritten; digits and separators (`/`, `-`) are preserved verbatim,
+        so subinterface and breakout forms (`Ethernet1/1.10`, `Ethernet1/1/1`) pass through unchanged.
 
         ## Raises
 
         None
         """
-        if isinstance(value, str) and value:
-            return value[0].upper() + value[1:]
-        return value
+        if not isinstance(value, str) or not value:
+            return value
+        match = cls._INTERFACE_NAME_PREFIX_RE.match(value)
+        if not match:
+            return value
+        prefix, rest = match.groups()
+        return prefix[0].upper() + prefix[1:].lower() + rest
 
     # --- Argument Spec ---
 
