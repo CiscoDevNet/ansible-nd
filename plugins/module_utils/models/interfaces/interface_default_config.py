@@ -30,6 +30,23 @@ class InterfaceDefaultPolicyModel(NDNestedModel):
     Default policy values from the ND `int_trunk_host` config template. These values represent the fabric default
     configuration for a physical ethernet interface.
 
+    Field selection is constrained by what ND will actually reset on `interfaceActions/normalize`. A field that is
+    not present in the body is left at its prior on-the-wire value (silent drop), so every trunk-host policy field
+    that a user might have set via `state: merged` must also appear here with a sentinel that ND interprets as
+    "no configuration". Lab-verified on ND 4.2.1 (S1_LE1 Ethernet1/41) for the following classes of fields:
+
+    - String name pointers (`qos_policy`, `queuing_policy`, `netflow_monitor`, `netflow_sampler`): `""` clears.
+    - Storm-control numeric levels and PPS counters: `0` / `0.0` clears (and is the natural off-state when
+      `storm_control` is false).
+
+    Three fields could NOT be reset via normalize because ND's create/update validator rejects 0 / null on them:
+    `bandwidth`, `debounce_linkup_timer`, `inherit_bandwidth`. Users who set these via `state: merged` must
+    explicitly clear them via `state: merged` again or `state: replaced` — `state: deleted` will leave them at
+    the prior non-default value.
+
+    `vlan_mapping_entries` is deferred until lab-verified on a hardware testbed (N9Kv rejects the parent
+    `vlan_mapping` config with HTTP 400, so the wire shape cannot be probed here).
+
     ## Raises
 
     None
@@ -53,14 +70,24 @@ class InterfaceDefaultPolicyModel(NDNestedModel):
     mtu: str = Field(default="jumbo")
     negotiate_auto: bool = Field(default=True, alias="negotiateAuto")
     netflow: bool = Field(default=False)
+    netflow_monitor: str = Field(default="", alias="netflowMonitor")
+    netflow_sampler: str = Field(default="", alias="netflowSampler")
     orphan_port: bool = Field(default=False, alias="orphanPort")
     pfc: bool = Field(default=False)
     policy_type: str = Field(default="trunkHost", alias="policyType")
     port_type_edge_trunk: bool = Field(default=True, alias="portTypeEdgeTrunk")
     qos: bool = Field(default=False)
+    qos_policy: str = Field(default="", alias="qosPolicy")
+    queuing_policy: str = Field(default="", alias="queuingPolicy")
     speed: str = Field(default="auto")
     storm_control: bool = Field(default=False, alias="stormControl")
     storm_control_action: str = Field(default="default", alias="stormControlAction")
+    storm_control_broadcast_level: float = Field(default=0.0, alias="stormControlBroadcastLevel")
+    storm_control_broadcast_level_pps: int = Field(default=0, alias="stormControlBroadcastLevelPps")
+    storm_control_multicast_level: float = Field(default=0.0, alias="stormControlMulticastLevel")
+    storm_control_multicast_level_pps: int = Field(default=0, alias="stormControlMulticastLevelPps")
+    storm_control_unicast_level: float = Field(default=0.0, alias="stormControlUnicastLevel")
+    storm_control_unicast_level_pps: int = Field(default=0, alias="stormControlUnicastLevelPps")
     vlan_mapping: bool = Field(default=False, alias="vlanMapping")
 
 
