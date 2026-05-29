@@ -30,7 +30,9 @@ from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    SerializationInfo,
     field_validator,
+    model_serializer,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -140,6 +142,35 @@ class EthernetAccessPolicyModel(NDNestedModel):
         le=200000000,
         description="Unicast storm control level in packets per second",
     )
+
+    @model_serializer(mode="wrap")
+    def _strip_policy_type_in_config(self, handler, info: SerializationInfo):
+        """
+        # Summary
+
+        Omit `policy_type` from `to_config()` output while leaving payload and diff modes untouched.
+
+        The field is hardcoded by the model (frozen at `AccessHostPolicyTypeEnum.ACCESS_HOST`), is excluded
+        from the Ansible argspec, and is therefore not something the user supplies or needs surfaced back.
+        The wire form `"accessHost"` would otherwise appear under the `policy_type` key in
+        `before`/`after`/`gathered` output and confuse playbooks that compare against the Ansible
+        snake_case convention. Payload and diff serialization still emit the wire value so the POST/PUT
+        body and the round-trip diff comparison line up with what ND returns.
+
+        Implemented as a wrap-mode model serializer because `exclude_none=True` on `to_config()` evaluates
+        the field value before serialization runs — returning None from a field_serializer is too late to
+        drop the key.
+
+        ## Raises
+
+        None
+        """
+        result = handler(self)
+        mode = (info.context or {}).get("mode", "payload")
+        if mode == "config" and isinstance(result, dict):
+            result.pop("policy_type", None)
+            result.pop("policyType", None)
+        return result
 
 
 class EthernetAccessNetworkOSModel(NDNestedModel):

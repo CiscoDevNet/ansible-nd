@@ -86,7 +86,6 @@ SAMPLE_ANSIBLE_CONFIG = {
                 "admin_state": True,
                 "access_vlan": 20,
                 "description": "host port",
-                "policy_type": "accessHost",
                 "speed": "1Gb",
                 "duplex_mode": "auto",
                 "mtu": "default",
@@ -837,19 +836,68 @@ def test_ethernet_access_interface_00710():
     """
     # Summary
 
-    Verify `policy_type` round-trips as the API value in config output.
+    Verify `policy_type` is omitted from `to_config()` output (the field is hardcoded by the model and is
+    not in the argspec, so surfacing the wire form `"accessHost"` back to playbooks would only confuse
+    assertions that compare against the snake_case Ansible convention).
 
     ## Test
 
-    - Stored "accessHost" -> output "accessHost" (no Ansible↔API translation; field is hardcoded by the model)
+    - From a full API response, to_config() does NOT include `policy_type` in the policy dict
+    - All other policy fields ARE present (sanity check that we only omitted policy_type)
 
     ## Classes and Methods
 
     - EthernetAccessInterfaceModel.to_config()
+    - EthernetAccessPolicyModel.serialize_policy_type()
     """
     instance = EthernetAccessInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
     result = instance.to_config()
-    assert result["config_data"]["network_os"]["policy"]["policy_type"] == "accessHost"
+    policy = result["config_data"]["network_os"]["policy"]
+    assert "policy_type" not in policy
+    assert policy["admin_state"] is True
+    assert policy["access_vlan"] == 20
+
+
+def test_ethernet_access_interface_00711_payload_still_emits_policy_type():
+    """
+    # Summary
+
+    Verify `to_payload()` still emits `policyType: "accessHost"` so the POST/PUT body and diff comparisons
+    against the wire form continue to work after the `to_config` omission.
+
+    ## Test
+
+    - From any model, to_payload() includes `configData.networkOS.policy.policyType == "accessHost"`
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceModel.to_payload()
+    - EthernetAccessPolicyModel.serialize_policy_type()
+    """
+    instance = EthernetAccessInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
+    payload = instance.to_payload()
+    assert payload["configData"]["networkOS"]["policy"]["policyType"] == "accessHost"
+
+
+def test_ethernet_access_interface_00712_diff_dict_still_emits_policy_type():
+    """
+    # Summary
+
+    Verify `to_diff_dict()` (used by state-machine diff comparison) still emits `policyType` so wire diffs
+    don't spuriously report the field as changed.
+
+    ## Test
+
+    - to_diff_dict() includes `configData.networkOS.policy.policyType == "accessHost"`
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceModel.to_diff_dict()
+    - EthernetAccessPolicyModel.serialize_policy_type()
+    """
+    instance = EthernetAccessInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
+    diff = instance.to_diff_dict()
+    assert diff["configData"]["networkOS"]["policy"]["policyType"] == "accessHost"
 
 
 def test_ethernet_access_interface_00720():
