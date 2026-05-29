@@ -587,7 +587,9 @@ def test_maintenance_mode_00310() -> None:
     gen_responses = ResponseGenerator(responses())
     rest_send = _build_rest_send(gen_responses)
     instance = MaintenanceModeOrchestrator(rest_send=rest_send)
-    model = MaintenanceModeModel(mode="normal")
+    # switches is required when mode is set (see MaintenanceModeModel validator); the value here is
+    # arbitrary — this test only exercises the unconditional NotImplementedError from delete().
+    model = MaintenanceModeModel(mode="normal", switches=[{"switch_ip": "192.168.12.131"}])
 
     match = r"state 'deleted' is not supported"
     with pytest.raises(NotImplementedError, match=match):
