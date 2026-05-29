@@ -56,6 +56,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.types import Ascii
 _ALLOWED_VLANS_SHAPE = re.compile(r"^(none|all|(\d+(-\d+)?)(,\d+(-\d+)?)*)$")
 # Single VLAN id or range token (e.g. "100" or "100-200"). Range bounds are validated separately.
 _VLAN_ID_OR_RANGE_SHAPE = re.compile(r"^\d+(-\d+)?$")
+# Module-level so it stays a real re.Pattern; Pydantic v2 wraps any leading-underscore
+# class attribute in ModelPrivateAttr regardless of ClassVar annotation.
+_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
 
 
 def _validate_vlan_id_or_range(token: str, field_name: str) -> None:
@@ -380,8 +383,6 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
     interface_type: Literal["ethernet"] = Field(default="ethernet", alias="interfaceType", frozen=True)
     config_data: EthernetTrunkHostConfigDataModel | None = Field(default=None, alias="configData")
 
-    _INTERFACE_NAME_PREFIX_RE: ClassVar = re.compile(r"^([A-Za-z]+)(.*)$")
-
     @field_validator("interface_name", mode="before")
     @classmethod
     def normalize_interface_name(cls, value):
@@ -405,7 +406,7 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
         """
         if not isinstance(value, str) or not value:
             return value
-        match = cls._INTERFACE_NAME_PREFIX_RE.match(value)
+        match = _INTERFACE_NAME_PREFIX_RE.match(value)
         if not match:
             return value
         prefix, rest = match.groups()
