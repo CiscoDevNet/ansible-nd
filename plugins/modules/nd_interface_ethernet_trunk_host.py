@@ -427,20 +427,117 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base_interf
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_trunk_host_interface import EthernetTrunkHostInterfaceOrchestrator
 
 
+# TODO: When all interface modules using `interface_names: list` are merged, lift
+# `validate_interface_names`, `validate_within_item_duplicates`,
+# `validate_across_item_duplicates`, and `expand_config` into a shared helper module
+# (e.g. `plugins/module_utils/interfaces/config_expansion.py`) and import from there.
+def validate_interface_names(config_list):
+    """
+    # Summary
+
+    Raise `ValueError` if any element of any `interface_names` list is `None` or an empty string.
+    Ansible's `elements="str"` argspec does not reject these (a Jinja loop can easily produce a list
+    with null/empty entries), and downstream `name.lower()` would otherwise raise `AttributeError` /
+    silently insert a blank interface — neither of which is the friendly fail_json the user expects.
+
+    ## Raises
+
+    ### ValueError
+
+    - If any element of `interface_names` is `None` or an empty string.
+    """
+    for item_index, group in enumerate(config_list):
+        switch_ip = group.get("switch_ip")
+        interface_names = group.get("interface_names") or []
+        for entry_index, name in enumerate(interface_names):
+            if name is None or (isinstance(name, str) and not name):
+                raise ValueError(
+                    f"interface_names[{entry_index}] for switch '{switch_ip}' (config item {item_index}) is "
+                    f"{'null' if name is None else 'empty'}. Every entry must be a non-empty interface name."
+                )
+
+
+def validate_within_item_duplicates(config_list):
+    """
+    # Summary
+
+    Raise `ValueError` if any single config item lists the same interface name more than once
+    in its `interface_names` list. Comparison is case-insensitive.
+
+    ## Raises
+
+    ### ValueError
+
+    - If an interface name appears more than once within a single config item's `interface_names` list
+    """
+    for item_index, group in enumerate(config_list):
+        switch_ip = group.get("switch_ip")
+        interface_names = group.get("interface_names") or []
+        seen = {}
+        for name in interface_names:
+            key = name.lower()
+            if key in seen:
+                raise ValueError(
+                    f"Duplicate interface '{name}' in interface_names for switch '{switch_ip}' "
+                    f"(config item {item_index}). Each interface may appear only once per config item."
+                )
+            seen[key] = True
+
+
+# TODO: See note above `validate_within_item_duplicates`.
+def validate_across_item_duplicates(config_list):
+    """
+    # Summary
+
+    Raise `ValueError` if the same `(switch_ip, interface_name)` pair appears in more than one
+    config item. Comparison of interface names is case-insensitive. The error message identifies
+    both offending config item indices so the user can locate them in the playbook.
+
+    ## Raises
+
+    ### ValueError
+
+    - If the same `(switch_ip, interface_name)` pair appears in more than one config item
+    """
+    seen = {}
+    for item_index, group in enumerate(config_list):
+        switch_ip = group.get("switch_ip")
+        interface_names = group.get("interface_names") or []
+        for name in interface_names:
+            key = (switch_ip, name.lower())
+            if key in seen:
+                raise ValueError(
+                    f"Interface '{name}' on switch '{switch_ip}' is specified in multiple config items "
+                    f"({seen[key]} and {item_index}). Each switch/interface pair may appear only once."
+                )
+            seen[key] = item_index
+
+
 def expand_config(config_list):
     """
     # Summary
 
-    Expand grouped config items (with `interface_names` list) into flat config items (with singular `interface_name`).
-    Each group produces one flat item per interface name, all sharing the same `config_data` and `switch_ip`.
+    Validate then expand grouped config items (with `interface_names` list) into flat config items
+    (with singular `interface_name`). Each group produces one flat item per interface name, all
+    sharing the same `config_data` and `switch_ip`.
 
     ## Raises
 
-    None
+    ### ValueError
+
+    - If any `interface_names` entry is `None` or an empty string
+    - If an interface name appears more than once within a single config item's `interface_names` list
+    - If the same `(switch_ip, interface_name)` pair appears in more than one config item
     """
+    validate_interface_names(config_list)
+    validate_within_item_duplicates(config_list)
+    validate_across_item_duplicates(config_list)
+
     expanded = []
     for group in config_list:
-        interface_names = group.get("interface_names", [])
+        # `or []` (not a `.get` default) so an explicit `interface_names: ~` in YAML,
+        # which yields None, is treated as empty -- consistent with the validators above.
+        interface_names = group.get("interface_names") or []
         for name in interface_names:
             item = copy.deepcopy(group)
             item.pop("interface_names", None)
@@ -476,7 +573,10 @@ def main():
     module_log = logging.getLogger("nd.nd_interface_ethernet_trunk_host")
 
     # Expand grouped config (interface_names list) into flat config items (interface_name singular)
-    module.params["config"] = expand_config(module.params["config"])
+    try:
+        module.params["config"] = expand_config(module.params["config"])
+    except ValueError as e:
+        module.fail_json(msg=f"Configuration error: {e}")
     module_log.debug(
         "expand_config done items=%d switches=%d",
         len(module.params["config"]),
@@ -518,6 +618,14 @@ def main():
         module_log.exception("NDStateMachineError during module execution")
         output = nd_state_machine.output.format() if nd_state_machine else {}
         error_msg = f"Module execution failed: {str(e)}"
+        if module.params.get("output_level") == "debug":
+            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
+        module.fail_json(msg=error_msg, **output)
+
+    except Exception as e:  # pylint: disable=broad-except
+        module_log.exception("Unhandled exception during module execution")
+        output = nd_state_machine.output.format() if nd_state_machine else {}
+        error_msg = f"Module failed: {str(e)}"
         if module.params.get("output_level") == "debug":
             error_msg += f"\nTraceback:\n{traceback.format_exc()}"
         module.fail_json(msg=error_msg, **output)

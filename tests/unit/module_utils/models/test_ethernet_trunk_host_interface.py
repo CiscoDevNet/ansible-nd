@@ -97,7 +97,6 @@ SAMPLE_ANSIBLE_CONFIG = {
                 "allowed_vlans": "1-100",
                 "native_vlan": 10,
                 "description": "uplink to spine",
-                "policy_type": "trunkHost",
                 "speed": "10Gb",
                 "duplex_mode": "auto",
                 "mtu": "jumbo",
@@ -958,19 +957,22 @@ def test_ethernet_trunk_host_interface_00470():
     """
     # Summary
 
-    Verify `network_os` is a required field.
+    Verify `network_os` defaults to an empty `EthernetTrunkHostNetworkOSModel` so an empty `config_data`
+    builds without requiring the caller to plumb the nested container.
 
     ## Test
 
     - Construct without network_os
-    - ValidationError raised
+    - network_os is an EthernetTrunkHostNetworkOSModel instance with policy unset
 
     ## Classes and Methods
 
     - EthernetTrunkHostConfigDataModel.__init__()
     """
-    with pytest.raises(ValidationError, match=r"network_os|networkOS"):
-        EthernetTrunkHostConfigDataModel()
+    with does_not_raise():
+        instance = EthernetTrunkHostConfigDataModel()
+    assert isinstance(instance.network_os, EthernetTrunkHostNetworkOSModel)
+    assert instance.network_os.policy is None
 
 
 # =============================================================================
@@ -1250,19 +1252,47 @@ def test_ethernet_trunk_host_interface_00710():
     """
     # Summary
 
-    Verify `policy_type` round-trips as the API value in config output.
+    Verify `policy_type` is omitted from `to_config()` output (the field is hardcoded by the model and is
+    not in the argspec, so surfacing the wire form `"trunkHost"` back to playbooks would only confuse
+    assertions that compare against the snake_case Ansible convention).
 
     ## Test
 
-    - Stored "trunkHost" -> output "trunkHost" (no Ansible↔API translation; field is hardcoded by the model)
+    - From a full API response, to_config() does NOT include `policy_type` in the policy dict
+    - All other policy fields ARE present (sanity check that we only omitted policy_type)
 
     ## Classes and Methods
 
     - EthernetTrunkHostInterfaceModel.to_config()
+    - EthernetTrunkHostPolicyModel._strip_policy_type_in_config()
     """
     instance = EthernetTrunkHostInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
     result = instance.to_config()
-    assert result["config_data"]["network_os"]["policy"]["policy_type"] == "trunkHost"
+    policy = result["config_data"]["network_os"]["policy"]
+    assert "policy_type" not in policy
+    assert policy["admin_state"] is True
+    assert policy["allowed_vlans"] == "1-100"
+
+
+def test_ethernet_trunk_host_interface_00711_payload_still_emits_policy_type():
+    """
+    # Summary
+
+    Verify `to_payload()` still emits `policyType: "trunkHost"` so the POST/PUT body and diff comparisons
+    against the wire form continue to work after the `to_config` omission.
+
+    ## Test
+
+    - From any model, to_payload() includes `configData.networkOS.policy.policyType == "trunkHost"`
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostInterfaceModel.to_payload()
+    - EthernetTrunkHostPolicyModel._strip_policy_type_in_config()
+    """
+    instance = EthernetTrunkHostInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
+    payload = instance.to_payload()
+    assert payload["configData"]["networkOS"]["policy"]["policyType"] == "trunkHost"
 
 
 def test_ethernet_trunk_host_interface_00720():

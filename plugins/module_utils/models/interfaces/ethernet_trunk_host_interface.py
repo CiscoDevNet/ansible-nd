@@ -33,7 +33,9 @@ from typing import Annotated, ClassVar, Literal, Optional  # Optional needed for
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BeforeValidator,
     Field,
+    SerializationInfo,
     field_validator,
+    model_serializer,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -229,7 +231,9 @@ class EthernetTrunkHostPolicyModel(NDNestedModel):
     netflow_sampler: str | None = Field(default=None, alias="netflowSampler", description="Netflow sampler name")
     orphan_port: bool | None = Field(default=None, alias="orphanPort", description="Enable vPC orphan port")
     pfc: bool | None = Field(default=None, alias="pfc", description="Enable priority flow control")
-    policy_type: TrunkHostPolicyTypeEnum = Field(default=TrunkHostPolicyTypeEnum.TRUNK_HOST, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)")
+    policy_type: TrunkHostPolicyTypeEnum = Field(
+        default=TrunkHostPolicyTypeEnum.TRUNK_HOST, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)"
+    )
     port_type_edge_trunk: bool | None = Field(default=None, alias="portTypeEdgeTrunk", description="Enable spanning-tree edge port behavior")
     qos: bool | None = Field(default=None, alias="qos", description="Enable QoS configuration for this interface")
     qos_policy: str | None = Field(default=None, alias="qosPolicy", description="Custom QoS policy name")
@@ -286,6 +290,35 @@ class EthernetTrunkHostPolicyModel(NDNestedModel):
         default=None, alias="vlanMappingEntries", description="List of VLAN mapping entries; required when `vlan_mapping` is true"
     )
 
+    @model_serializer(mode="wrap")
+    def _strip_policy_type_in_config(self, handler, info: SerializationInfo):
+        """
+        # Summary
+
+        Omit `policy_type` from `to_config()` output while leaving payload and diff modes untouched.
+
+        The field is hardcoded by the model (frozen at `TrunkHostPolicyTypeEnum.TRUNK_HOST`), is excluded
+        from the Ansible argspec, and is therefore not something the user supplies or needs surfaced back.
+        The wire form `"trunkHost"` would otherwise appear under the `policy_type` key in
+        `before`/`after`/`gathered` output and confuse playbooks that compare against the Ansible
+        snake_case convention. Payload and diff serialization still emit the wire value so the POST/PUT
+        body and the round-trip diff comparison line up with what ND returns.
+
+        Implemented as a wrap-mode model serializer because `exclude_none=True` on `to_config()` evaluates
+        the field value before serialization runs — returning None from a field_serializer is too late to
+        drop the key.
+
+        ## Raises
+
+        None
+        """
+        result = handler(self)
+        mode = (info.context or {}).get("mode", "payload")
+        if mode == "config" and isinstance(result, dict):
+            result.pop("policy_type", None)
+            result.pop("policyType", None)
+        return result
+
 
 class EthernetTrunkHostNetworkOSModel(NDNestedModel):
     """
@@ -314,7 +347,7 @@ class EthernetTrunkHostConfigDataModel(NDNestedModel):
     """
 
     mode: Literal["trunk"] = Field(default="trunk", alias="mode", frozen=True)
-    network_os: EthernetTrunkHostNetworkOSModel = Field(alias="networkOS")
+    network_os: EthernetTrunkHostNetworkOSModel = Field(default_factory=EthernetTrunkHostNetworkOSModel, alias="networkOS")
 
 
 class EthernetTrunkHostInterfaceModel(NDBaseModel):
@@ -347,21 +380,36 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
     interface_type: Literal["ethernet"] = Field(default="ethernet", alias="interfaceType", frozen=True)
     config_data: EthernetTrunkHostConfigDataModel | None = Field(default=None, alias="configData")
 
+    _INTERFACE_NAME_PREFIX_RE: ClassVar = re.compile(r"^([A-Za-z]+)(.*)$")
+
     @field_validator("interface_name", mode="before")
     @classmethod
     def normalize_interface_name(cls, value):
         """
         # Summary
 
-        Normalize interface name to match ND API convention (e.g., ethernet1/1 -> Ethernet1/1).
+        Normalize the leading alphabetic prefix of an interface name to ND's canonical Title case so that
+        any user-supplied casing round-trips against the wire form. Examples:
+
+        - `ethernet1/1` -> `Ethernet1/1`
+        - `ETHERNET1/1` -> `Ethernet1/1`
+        - `etHernet1/1` -> `Ethernet1/1`
+        - `Ethernet1/1` -> `Ethernet1/1` (idempotent)
+
+        Only the leading alphabetic run is rewritten; digits and separators (`/`, `-`) are preserved verbatim,
+        so subinterface and breakout forms (`Ethernet1/1.10`, `Ethernet1/1/1`) pass through unchanged.
 
         ## Raises
 
         None
         """
-        if isinstance(value, str) and value:
-            return value[0].upper() + value[1:]
-        return value
+        if not isinstance(value, str) or not value:
+            return value
+        match = cls._INTERFACE_NAME_PREFIX_RE.match(value)
+        if not match:
+            return value
+        prefix, rest = match.groups()
+        return prefix[0].upper() + prefix[1:].lower() + rest
 
     # --- Argument Spec ---
 
