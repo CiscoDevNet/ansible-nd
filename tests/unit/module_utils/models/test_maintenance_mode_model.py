@@ -47,7 +47,8 @@ def test_maintenance_mode_model_00010() -> None:
     assert MaintenanceModeModel.identifier_strategy == "singleton"
     assert MaintenanceModeModel.identifiers == []
 
-    instance = MaintenanceModeModel(mode="maintenance")
+    # mode left unset so the `mode set + switches=[]` validator does not fire here.
+    instance = MaintenanceModeModel()
     assert instance.get_identifier_value() is None
 
 
@@ -281,6 +282,44 @@ def test_maintenance_mode_model_00090() -> None:
     assert switches["elements"] == "dict"
     assert switches["required"] is True
     assert switches["options"]["switch_ip"] == {"type": "str", "required": True}
+
+
+# =============================================================================
+# Test: empty-switches rejection
+# =============================================================================
+
+
+def test_maintenance_mode_model_00100() -> None:
+    """
+    # Summary
+
+    Verify the model rejects an empty `switches` list when `mode` is set. The Ansible argspec only
+    enforces key presence; without this validator a `switches: []` config would silently no-op
+    against an action endpoint that requires a non-empty `switchIds` array.
+
+    ## Classes and Methods
+
+    - MaintenanceModeModel._require_switches_when_mode_set
+    """
+    with pytest.raises(ValueError, match=r"config\.switches must contain at least one switch when 'mode' is set"):
+        MaintenanceModeModel.from_config({"mode": "maintenance", "switches": []})
+
+
+def test_maintenance_mode_model_00110() -> None:
+    """
+    # Summary
+
+    Verify the empty-switches validator is gated on `mode` so query_all snapshots (which leave `mode`
+    unset and may legitimately carry an empty switches list, e.g. when config is missing) still build.
+
+    ## Classes and Methods
+
+    - MaintenanceModeModel._require_switches_when_mode_set
+    """
+    with does_not_raise():
+        snapshot = MaintenanceModeModel.from_response({"switches": [], "switch_modes": {}})
+    assert snapshot.mode is None
+    assert snapshot.switches == []
 
 
 def test_maintenance_mode_switch_model_00010() -> None:

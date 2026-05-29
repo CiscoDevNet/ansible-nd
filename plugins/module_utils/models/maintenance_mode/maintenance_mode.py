@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Set
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 
@@ -88,6 +88,33 @@ class MaintenanceModeModel(NDBaseModel):
 
     # Snapshot-only: map of switch_ip -> current intendedSystemMode. Populated by query_all().
     switch_modes: Optional[Dict[str, str]] = Field(default=None, exclude=True)
+
+    # --- Validators ---
+
+    @model_validator(mode="after")
+    def _require_switches_when_mode_set(self) -> "MaintenanceModeModel":
+        """
+        # Summary
+
+        Reject `switches: []` when a target `mode` is requested. The Ansible argspec marks `switches`
+        as `required=True`, but `required=True` only enforces key presence — not non-empty content.
+        Without this check, a user submitting `switches: []` would silently produce a no-op against
+        the `changeSystemMode` action endpoint (which itself requires `switchIds` with `minItems=1`)
+        and the module would report `changed=False` instead of telling the user the request was
+        malformed.
+
+        Snapshots built by `query_all` (and other `mode=None` callers) are exempt; the gate is
+        keyed on `mode` so only proposed-config instances are checked.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `mode` is set and `switches` is empty.
+        """
+        if self.mode is not None and not self.switches:
+            raise ValueError("config.switches must contain at least one switch when 'mode' is set.")
+        return self
 
     # --- Custom Diff (per-switch mode comparison) ---
 
