@@ -152,9 +152,14 @@ class MaintenanceModeOrchestrator(NDBaseInterfaceOrchestrator[MaintenanceModeMod
             list_endpoint = EpManageSwitchesListGet()
             list_endpoint.fabric_name = self.fabric_name
             response = self._request(path=list_endpoint.path, verb=list_endpoint.verb)
-            rows = response.get("switches") if isinstance(response, dict) else None
+            rows = response.get("switches") if isinstance(response, dict) else []
+            # `_parse_switch_rows` is typed `list[Any]`; guard the container shape at the boundary so
+            # a malformed `switches` value (string, dict, scalar) does not iterate character-by-
+            # character or TypeError inside the helper.
+            if not isinstance(rows, list):
+                rows = []
 
-            switch_ids, switch_modes, migration_ips = self._parse_switch_rows(rows or [], wanted_ip_set)
+            switch_ids, switch_modes, migration_ips = self._parse_switch_rows(rows, wanted_ip_set)
 
             missing = [ip for ip in wanted_ips if ip not in switch_ids]
             if missing:

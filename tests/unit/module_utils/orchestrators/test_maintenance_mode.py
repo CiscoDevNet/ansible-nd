@@ -282,6 +282,35 @@ def test_maintenance_mode_00130() -> None:
     assert result == [{"switches": [], "switch_modes": {}}]
 
 
+def test_maintenance_mode_00140() -> None:
+    """
+    # Summary
+
+    Verify the orchestrator's list-type guard on the bulk `/switches` response. If ND returns
+    `switches` as a non-list (here: an int), `_parse_switch_rows` must not be invoked over a
+    non-iterable. The guard collapses the bad value to `[]`, so the user gets the standard
+    "No switch found" error rather than a `TypeError` blowing up the module.
+
+    ## Classes and Methods
+
+    - MaintenanceModeOrchestrator.query_all
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_maintenance_mode(f"{method_name}a")  # fabric summary
+        yield responses_maintenance_mode(f"{method_name}b")  # bulk /switches with malformed shape
+
+    gen_responses = ResponseGenerator(responses())
+    config = [{"mode": "maintenance", "switches": [{"switch_ip": "192.168.12.131"}]}]
+    rest_send = _build_rest_send(gen_responses, config=config)
+    instance = MaintenanceModeOrchestrator(rest_send=rest_send)
+
+    match = r"No switch found with fabricManagementIp '192\.168\.12\.131'"
+    with pytest.raises(RuntimeError, match=match):
+        instance.query_all()
+
+
 # =============================================================================
 # Test: update
 # =============================================================================

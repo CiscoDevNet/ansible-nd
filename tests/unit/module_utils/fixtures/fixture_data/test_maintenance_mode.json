@@ -105,6 +105,27 @@
         }
     },
 
+    "test_maintenance_mode_00140a": {
+        "TEST_NOTES": ["query_all malformed /switches: fabric summary"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "SITE1", "local": true, "fabricStatus": "default"}
+    },
+    "test_maintenance_mode_00140b": {
+        "TEST_NOTES": [
+            "query_all malformed: `switches` is a non-iterable scalar (int) — without the orchestrator's list-type",
+            "guard, `_parse_switch_rows` would TypeError on `for row in 0`. With the guard, the value collapses to",
+            "[] and the user gets the standard 'No switch found' message instead."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/switches",
+        "MESSAGE": "OK",
+        "DATA": {"switches": 0}
+    },
+
     "test_maintenance_mode_00200a": {
         "TEST_NOTES": ["update changes one switch: fabric summary (validate_prerequisites)"],
         "RETURN_CODE": 200,
