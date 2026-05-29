@@ -390,9 +390,35 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_ac
 
 
 # TODO: When all interface modules using `interface_names: list` are merged, lift
-# `validate_within_item_duplicates`, `validate_across_item_duplicates`, and
-# `expand_config` into a shared helper module (e.g.
-# `plugins/module_utils/interfaces/config_expansion.py`) and import from there.
+# `validate_interface_names`, `validate_within_item_duplicates`,
+# `validate_across_item_duplicates`, and `expand_config` into a shared helper module
+# (e.g. `plugins/module_utils/interfaces/config_expansion.py`) and import from there.
+def validate_interface_names(config_list):
+    """
+    # Summary
+
+    Raise `ValueError` if any element of any `interface_names` list is `None` or an empty string.
+    Ansible's `elements="str"` argspec does not reject these (a Jinja loop can easily produce a list
+    with null/empty entries), and downstream `name.lower()` would otherwise raise `AttributeError` /
+    silently insert a blank interface — neither of which is the friendly fail_json the user expects.
+
+    ## Raises
+
+    ### ValueError
+
+    - If any element of `interface_names` is `None` or an empty string.
+    """
+    for item_index, group in enumerate(config_list):
+        switch_ip = group.get("switch_ip")
+        interface_names = group.get("interface_names") or []
+        for entry_index, name in enumerate(interface_names):
+            if name is None or (isinstance(name, str) and not name):
+                raise ValueError(
+                    f"interface_names[{entry_index}] for switch '{switch_ip}' (config item {item_index}) is "
+                    f"{'null' if name is None else 'empty'}. Every entry must be a non-empty interface name."
+                )
+
+
 def validate_within_item_duplicates(config_list):
     """
     # Summary
@@ -461,9 +487,11 @@ def expand_config(config_list):
 
     ### ValueError
 
+    - If any `interface_names` entry is `None` or an empty string
     - If an interface name appears more than once within a single config item's `interface_names` list
     - If the same `(switch_ip, interface_name)` pair appears in more than one config item
     """
+    validate_interface_names(config_list)
     validate_within_item_duplicates(config_list)
     validate_across_item_duplicates(config_list)
 

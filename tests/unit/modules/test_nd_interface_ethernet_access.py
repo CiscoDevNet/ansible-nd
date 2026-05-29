@@ -19,6 +19,7 @@ import pytest
 from ansible_collections.cisco.nd.plugins.modules.nd_interface_ethernet_access import (
     expand_config,
     validate_across_item_duplicates,
+    validate_interface_names,
     validate_within_item_duplicates,
 )
 
@@ -321,3 +322,94 @@ def test_expand_config_00200_empty_input_returns_empty_list():
     - expand_config()
     """
     assert expand_config([]) == []
+
+
+# --- validate_interface_names ---
+
+
+def test_validate_interface_names_00000_all_strings():
+    """
+    # Summary
+
+    Verify `validate_interface_names` accepts a list of well-formed non-empty strings without raising.
+
+    ## Test
+
+    - Every entry is a non-empty string -> no error
+
+    ## Classes and Methods
+
+    - validate_interface_names()
+    """
+    config = [{"switch_ip": "1.1.1.1", "interface_names": ["Ethernet1/1", "Ethernet1/2"]}]
+    validate_interface_names(config)
+
+
+@pytest.mark.parametrize(
+    "interface_names,offender,expected_match",
+    [
+        ([None], "null", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is null"),
+        (["Ethernet1/1", None], "null", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is null"),
+        ([""], "empty", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is empty"),
+        (["Ethernet1/1", ""], "empty", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is empty"),
+    ],
+    ids=["null_only", "null_after_valid", "empty_only", "empty_after_valid"],
+)
+def test_validate_interface_names_00100_rejects_null_or_empty(interface_names, offender, expected_match):
+    """
+    # Summary
+
+    Verify `validate_interface_names` raises `ValueError` for any `None` or empty-string entry, naming the
+    offending index and switch so the user can locate it in their playbook.
+
+    ## Test
+
+    - A null or empty-string entry raises ValueError before the duplicate-check or expansion paths run
+
+    ## Classes and Methods
+
+    - validate_interface_names()
+    """
+    config = [{"switch_ip": "1.1.1.1", "interface_names": interface_names}]
+    with pytest.raises(ValueError, match=expected_match):
+        validate_interface_names(config)
+
+
+def test_validate_interface_names_00101_null_list_is_treated_as_empty():
+    """
+    # Summary
+
+    Verify a whole-list `interface_names: ~` (yielding `None`) is treated as empty and does not raise,
+    consistent with the duplicate validators and `expand_config`.
+
+    ## Test
+
+    - `interface_names: None` -> no error (caller's empty-list semantics)
+
+    ## Classes and Methods
+
+    - validate_interface_names()
+    """
+    config = [{"switch_ip": "1.1.1.1", "interface_names": None}]
+    validate_interface_names(config)
+
+
+def test_expand_config_00102_null_entry_raises_value_error_via_expand():
+    """
+    # Summary
+
+    Verify `expand_config` surfaces the null-entry case as `ValueError` (not `AttributeError`) so the
+    surrounding `except ValueError` in `main()` produces a friendly fail_json instead of a traceback.
+
+    ## Test
+
+    - `interface_names: [Ethernet1/1, null]` raises ValueError naming the null entry
+
+    ## Classes and Methods
+
+    - expand_config()
+    - validate_interface_names()
+    """
+    config = [{"switch_ip": "1.1.1.1", "interface_names": ["Ethernet1/1", None]}]
+    with pytest.raises(ValueError, match=r"interface_names\[1\].*is null"):
+        expand_config(config)
