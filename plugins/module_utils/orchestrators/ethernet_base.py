@@ -192,16 +192,16 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         - If the interface is a port-channel member and non-whitelisted fields are being modified.
         """
-        if existing_data is None:
-            return
-
-        existing_policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
-        port_channel_id = existing_policy.get("portChannelId")
-        if not port_channel_id:
+        port_channel_id = self._existing_port_channel_id(existing_data)
+        if port_channel_id is None:
             return
 
         if model_instance.config_data is None:
             return
+
+        # existing_data is guaranteed non-None here (the helper returns None for a None input).
+        assert existing_data is not None
+        existing_policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
 
         policy = model_instance.config_data.network_os.policy if model_instance.config_data.network_os else None
         if policy is None:
@@ -231,8 +231,13 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Return the `portChannelId` value from the existing wire-state policy, or `None` when the interface
-        is not a port-channel member (or no wire state is available).
+        Return the `portChannelId` value from the interface's `operData`, or `None` when the interface is
+        not a port-channel member.
+
+        ND 4.2.1 (lab-verified): every ethernet interface carries `operData.portChannelId`. `-1` means the
+        interface is not a member of any port-channel; any other integer is the parent port-channel's ID.
+        The field is NOT present in `configData.networkOS.policy` — looking there always returns `None`
+        and was the cause of the membership check silently never firing.
 
         ## Raises
 
@@ -240,8 +245,10 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         if existing_data is None:
             return None
-        existing_policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
-        return existing_policy.get("portChannelId")
+        pc_id = existing_data.get("operData", {}).get("portChannelId")
+        if pc_id is None or pc_id == -1:
+            return None
+        return pc_id
 
     def _check_port_channel_delete_restriction(self, model_instance: ModelType, existing_data: dict | None) -> None:
         """
