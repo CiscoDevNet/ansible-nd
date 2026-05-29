@@ -520,19 +520,52 @@ def test_ethernet_access_interface_00470():
     """
     # Summary
 
-    Verify `network_os` is a required field.
+    Verify `network_os` defaults to an empty `EthernetAccessNetworkOSModel` when omitted, so an empty
+    `config_data: {}` from the user builds cleanly instead of raising a Pydantic ValidationError that
+    would surface as an opaque "Module failed" via the broad-except in `main()`.
 
     ## Test
 
     - Construct without network_os
-    - ValidationError raised
+    - Build succeeds with a default `network_os` carrying the frozen `network_os_type='nx-os'` and `policy=None`
 
     ## Classes and Methods
 
     - EthernetAccessConfigDataModel.__init__()
     """
-    with pytest.raises(ValidationError, match=r"network_os|networkOS"):
-        EthernetAccessConfigDataModel()
+    with does_not_raise():
+        instance = EthernetAccessConfigDataModel()
+    assert isinstance(instance.network_os, EthernetAccessNetworkOSModel)
+    assert instance.network_os.network_os_type == "nx-os"
+    assert instance.network_os.policy is None
+
+
+def test_ethernet_access_interface_00471_empty_config_data_payload():
+    """
+    # Summary
+
+    Verify that an interface model built with an empty `config_data: {}` serializes to a payload whose
+    `configData.networkOS` carries the `networkOSType` default and no `policy` key.
+
+    ## Test
+
+    - Build the interface model with config_data=EthernetAccessConfigDataModel() (defaults only)
+    - to_payload() emits configData.networkOS.networkOSType = 'nx-os'
+    - to_payload() does NOT emit configData.networkOS.policy (no user-set fields)
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceModel.to_payload()
+    """
+    instance = EthernetAccessInterfaceModel(
+        switch_ip="192.168.1.1",
+        interface_name="Ethernet1/1",
+        config_data=EthernetAccessConfigDataModel(),
+    )
+    payload = instance.to_payload()
+    network_os = payload["configData"]["networkOS"]
+    assert network_os["networkOSType"] == "nx-os"
+    assert "policy" not in network_os
 
 
 # =============================================================================

@@ -169,7 +169,7 @@ class EthernetAccessConfigDataModel(NDNestedModel):
     """
 
     mode: Literal["access"] = Field(default="access", alias="mode", frozen=True)
-    network_os: EthernetAccessNetworkOSModel = Field(alias="networkOS")
+    network_os: EthernetAccessNetworkOSModel = Field(default_factory=EthernetAccessNetworkOSModel, alias="networkOS")
 
 
 class EthernetAccessInterfaceModel(NDBaseModel):
