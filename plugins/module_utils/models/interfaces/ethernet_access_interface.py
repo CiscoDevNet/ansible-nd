@@ -49,6 +49,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 
+# Module-level so it stays a real re.Pattern; Pydantic v2 wraps any leading-underscore
+# class attribute in ModelPrivateAttr regardless of ClassVar annotation.
+_INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
+
 
 class EthernetAccessPolicyModel(NDNestedModel):
     """
@@ -233,8 +237,6 @@ class EthernetAccessInterfaceModel(NDBaseModel):
     interface_type: Literal["ethernet"] = Field(default="ethernet", alias="interfaceType", frozen=True)
     config_data: EthernetAccessConfigDataModel | None = Field(default=None, alias="configData")
 
-    _INTERFACE_NAME_PREFIX_RE: ClassVar = re.compile(r"^([A-Za-z]+)(.*)$")
-
     @field_validator("interface_name", mode="before")
     @classmethod
     def normalize_interface_name(cls, value):
@@ -258,7 +260,7 @@ class EthernetAccessInterfaceModel(NDBaseModel):
         """
         if not isinstance(value, str) or not value:
             return value
-        match = cls._INTERFACE_NAME_PREFIX_RE.match(value)
+        match = _INTERFACE_NAME_PREFIX_RE.match(value)
         if not match:
             return value
         prefix, rest = match.groups()
