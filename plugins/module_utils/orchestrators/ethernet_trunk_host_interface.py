@@ -19,6 +19,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums i
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.ethernet_trunk_host_interface import (
     EthernetTrunkHostInterfaceModel,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.interface_default_config import InterfaceDefaultConfig
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_base import EthernetBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
@@ -66,9 +67,15 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         # Summary
 
         Return `True` if the given interface API response represents an unconfigured `int_trunk_host`
-        default — `allowedVlans` is absent or `"none"`, `description` is absent or empty, and `nativeVlan`
-        is absent or `1`. Such an interface is indistinguishable from a freshly normalized one and should
+        default — `allowedVlans` is absent or `"none"`, `description` is absent or empty, `nativeVlan`
+        is absent or `1`, and none of the Class C fields (`InterfaceDefaultConfig.UNRESETTABLE_FIELDS`)
+        are set. Such an interface is indistinguishable from a freshly normalized one and should
         be treated as out-of-scope for `state: overridden` idempotency.
+
+        Class C fields are checked because they survive `interfaceActions/normalize` (ND's validator
+        rejects 0/null for them); leaving them out of this filter would hide a configured-but-stuck
+        interface from `state: deleted` and prevent the orchestrator from dispatching it to the
+        per-interface PUT-as-replace reset path.
 
         ## Raises
 
@@ -83,6 +90,8 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
             return False
         native_vlan = policy.get("nativeVlan")
         if native_vlan not in (None, 1):
+            return False
+        if any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS):
             return False
         return True
 

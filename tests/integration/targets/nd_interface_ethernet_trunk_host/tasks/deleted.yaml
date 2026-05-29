@@ -134,6 +134,51 @@
     that:
       - nm_deleted_nonexistent is not changed
 
+# --- DELETED: CLASS C FIELD RESET ---
+# `bandwidth` is one of three trunk-host policy fields ND's validator rejects
+# 0/null on, so the normalize-template path leaves them at their prior value.
+# `state: deleted` falls back to a per-interface PUT-as-replace when an
+# unresettable field is observed on the wire, which clears it to null. Verify
+# the seeded value disappears after deleted.
+
+- name: "DELETED CLASS C: Seed Ethernet1/48 with bandwidth=1500000"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/48
+        config_data:
+          network_os:
+            policy:
+              bandwidth: 1500000
+    state: merged
+  register: nm_seed_class_c
+
+- name: "DELETED CLASS C: Reset Ethernet1/48 via state: deleted"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/48
+    state: deleted
+  register: nm_class_c_deleted
+
+- name: "DELETED CLASS C: Verify bandwidth was cleared"
+  vars:
+    eth48_after: "{{ nm_class_c_deleted.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/48') | list }}"
+  ansible.builtin.assert:
+    that:
+      - nm_seed_class_c is changed
+      - nm_class_c_deleted is changed
+      # After delete, Ethernet1/48 either falls out of the managed-default
+      # filter (length == 0) or its bandwidth is no longer 1500000.
+      - eth48_after | length == 0 or
+        (eth48_after[0].config_data.network_os.policy.bandwidth | default(none)) != 1500000
+
 # --- FINAL CLEANUP ---
 
 - name: "CLEANUP: Remove all test interfaces"

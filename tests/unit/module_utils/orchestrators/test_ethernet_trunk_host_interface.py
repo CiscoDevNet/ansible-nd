@@ -264,6 +264,30 @@ def test_ethernet_trunk_host_orchestrator_00110() -> None:
             },
             True,
         ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"bandwidth": 1500000}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"debounceLinkupTimer": 5000}},
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "configData": {
+                    "networkOS": {"policy": {"inheritBandwidth": 2000000}},
+                },
+            },
+            False,
+        ),
     ],
     ids=[
         "empty",
@@ -275,6 +299,9 @@ def test_ethernet_trunk_host_orchestrator_00110() -> None:
         "native_vlan_set",
         "fully_configured",
         "policy_none",
+        "class_c_bandwidth",
+        "class_c_debounce_linkup",
+        "class_c_inherit_bandwidth",
     ],
 )
 def test_ethernet_trunk_host_orchestrator_00200(iface, expected) -> None:
