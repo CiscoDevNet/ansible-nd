@@ -237,7 +237,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             return
 
         # existing_data is guaranteed non-None here (the helper returns None for a None input).
-        assert existing_data is not None
+        if existing_data is None:
+            raise AssertionError("existing_data is None despite _existing_port_channel_id returning a value")
         existing_policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
 
         policy = model_instance.config_data.network_os.policy if model_instance.config_data.network_os else None
