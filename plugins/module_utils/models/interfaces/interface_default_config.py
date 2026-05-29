@@ -143,6 +143,12 @@ class InterfaceDefaultConfig(NDNestedModel):
 
     PAYLOAD_FIELDS: ClassVar[list[str]] = []
 
+    # Trunk-host policy fields the `interfaceActions/normalize` endpoint cannot reset. ND's create/update validator
+    # rejects 0 and null for each of these (HTTP 400), and omitting them leaves the prior wire value in place. Orchestrators
+    # use this set to detect when `state: deleted` must fall back to the per-interface PUT-as-replace path via
+    # `to_reset_payload()`. Lab-verified on ND 4.2.1 (S1_LE1 Ethernet1/41, 2026-05-29).
+    UNRESETTABLE_FIELDS: ClassVar[set[str]] = {"bandwidth", "debounceLinkupTimer", "inheritBandwidth"}
+
     @classmethod
     def to_normalize_payload(cls, switch_interfaces: list[tuple[str, str]]) -> dict:
         """
@@ -158,3 +164,33 @@ class InterfaceDefaultConfig(NDNestedModel):
         payload = instance.to_payload()
         payload["switchInterfaces"] = [{"interfaceName": name, "switchId": switch_id} for name, switch_id in switch_interfaces]
         return payload
+
+    @classmethod
+    def to_reset_payload(cls, interface_name: str, switch_id: str) -> dict:
+        """
+        # Summary
+
+        Build the per-interface PUT request body that fully resets an ethernet interface, including the Class C fields
+        (`bandwidth`, `debounceLinkupTimer`, `inheritBandwidth`) that the normalize endpoint cannot clear.
+
+        PUT to `/api/v1/manage/fabrics/{fabric}/switches/{sn}/interfaces/{name}` is a true replace: omitted fields fall
+        back to ND's schema defaults for the declared `policyType`, so a body containing only `adminState: true` and
+        `policyType: "trunkHost"` is sufficient to land the interface in the same logical state as the normalize template
+        — minus the persisted Class C fields, which clear to null. Lab-verified on ND 4.2.1.
+
+        ## Raises
+
+        None
+        """
+        return {
+            "configData": {
+                "mode": "trunk",
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {"adminState": True, "policyType": "trunkHost"},
+                },
+            },
+            "interfaceName": interface_name,
+            "interfaceType": "ethernet",
+            "switchId": switch_id,
+        }

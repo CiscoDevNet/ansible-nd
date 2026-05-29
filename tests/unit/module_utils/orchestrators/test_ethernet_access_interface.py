@@ -794,3 +794,84 @@ def test_ethernet_access_orchestrator_00610() -> None:
 
     assert instance._pending_normalizes == []
     assert instance._pending_deploys == []
+
+
+def test_ethernet_access_orchestrator_00595() -> None:
+    """
+    # Summary
+
+    Verify `delete` routes to the reset queue (per-interface PUT path) when the existing wire policy carries one of the
+    Class C fields that `interfaceActions/normalize` cannot clear. The normalize endpoint silently keeps `bandwidth`,
+    `debounceLinkupTimer`, and `inheritBandwidth` because ND's validator rejects 0/null for them, so the orchestrator
+    falls back to `EpManageInterfacesPut` with the minimal `InterfaceDefaultConfig.to_reset_payload` body.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 with bandwidth=1500000 (Class C)
+    - `delete` does not raise; `_pending_resets` carries the pair, `_pending_normalizes` stays empty
+    - `_pending_deploys` is populated regardless of which delete-side queue was chosen
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.delete()
+    - EthernetBaseOrchestrator._has_unresettable_fields()
+    - EthernetBaseOrchestrator._queue_reset()
+    """
+
+    def responses():
+        yield responses_access("test_delete_unresettable_class_c_00595a")
+        yield responses_access("test_delete_unresettable_class_c_00595b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({})
+
+    with does_not_raise():
+        instance.delete(model)
+
+    assert instance._pending_resets == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_normalizes == []
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+
+
+def test_ethernet_access_orchestrator_00620() -> None:
+    """
+    # Summary
+
+    Verify `delete_bulk` classifies each interface in a mixed batch into either the normalize queue or the reset queue
+    based on whether its wire policy carries any Class C field. The deploy queue captures every interface regardless of
+    which delete-side path was selected, so the existing single bulk deploy POST still ships them all together.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA and 192.168.1.2 -> FDO22222BBB
+    - Ethernet1/1 on FDO11111AAA carries inheritBandwidth=2000000 (Class C) -> reset queue
+    - Ethernet1/2 on FDO22222BBB has no Class C field -> normalize queue
+    - `delete_bulk` does not raise; each queue carries its expected pair; deploy queue carries both
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.delete_bulk()
+    - EthernetBaseOrchestrator._has_unresettable_fields()
+    - EthernetBaseOrchestrator._queue_reset()
+    """
+
+    def responses():
+        yield responses_access("test_delete_bulk_mixed_class_c_00620a")
+        yield responses_access("test_delete_bulk_mixed_class_c_00620b")
+        yield responses_access("test_delete_bulk_mixed_class_c_00620c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses, params={"state": "deleted"})
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    class_c_model = _build_access_model({}, interface_name="Ethernet1/1", switch_ip="192.168.1.1")
+    plain_model = _build_access_model({}, interface_name="Ethernet1/2", switch_ip="192.168.1.2")
+
+    with does_not_raise():
+        instance.delete_bulk([class_c_model, plain_model])
+
+    assert instance._pending_resets == [("Ethernet1/1", "FDO11111AAA")]
+    assert instance._pending_normalizes == [("Ethernet1/2", "FDO22222BBB")]
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA"), ("Ethernet1/2", "FDO22222BBB")]

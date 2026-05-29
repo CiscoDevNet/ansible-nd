@@ -104,6 +104,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         super().model_post_init(__context)
         self._pending_normalizes: list[tuple[str, str]] = []
+        self._pending_resets: list[tuple[str, str]] = []
         self._switch_interfaces_cache: dict[str, dict[str, dict]] = {}
 
     def _managed_policy_types(self) -> set[str]:
@@ -135,6 +136,42 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         pair = (interface_name, switch_id)
         if pair not in self._pending_normalizes:
             self._pending_normalizes.append(pair)
+
+    def _queue_reset(self, interface_name: str, switch_id: str) -> None:
+        """
+        # Summary
+
+        Queue an `(interface_name, switch_id)` pair for deferred per-interface PUT-as-replace reset. Used when the existing
+        wire state carries one of `InterfaceDefaultConfig.UNRESETTABLE_FIELDS` (`bandwidth`, `debounceLinkupTimer`,
+        `inheritBandwidth`) — the normalize endpoint cannot clear those, so the orchestrator falls back to a per-interface
+        PUT with a minimal body that lets ND apply schema defaults. Call `remove_pending` after all mutations are complete
+        to flush the queue.
+
+        ## Raises
+
+        None
+        """
+        pair = (interface_name, switch_id)
+        if pair not in self._pending_resets:
+            self._pending_resets.append(pair)
+
+    @staticmethod
+    def _has_unresettable_fields(existing_data: dict | None) -> bool:
+        """
+        # Summary
+
+        Return `True` if the interface's existing wire policy carries any field in `InterfaceDefaultConfig.UNRESETTABLE_FIELDS`
+        with a non-null value. These fields persist across `interfaceActions/normalize` because ND's validator rejects 0/null
+        on them; the orchestrator routes such interfaces to the PUT-as-replace path on `state: deleted` so they actually clear.
+
+        ## Raises
+
+        None
+        """
+        if existing_data is None:
+            return False
+        policy = existing_data.get("configData", {}).get("networkOS", {}).get("policy") or {}
+        return any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS)
 
     def _switch_interfaces(self, switch_id: str) -> dict[str, dict]:
         """
@@ -277,30 +314,42 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         """
         # Summary
 
-        Normalize all queued interface configurations in a single bulk API call via `interfaceActions/normalize`,
-        resetting them to the fabric default `int_trunk_host` template. This changes the interfaces to
-        `policyType: "trunkHost"`, which removes them from the type-specific filters in `query_all()`.
+        Flush deferred delete-side work. Interfaces queued via `_queue_normalize` are reset in a single bulk
+        `interfaceActions/normalize` POST using the `int_trunk_host` template; interfaces queued via `_queue_reset`
+        (those whose wire state carries an unresettable Class C field) are reset one-at-a-time via PUT-as-replace.
+        After both paths run, the interfaces share `policyType: "trunkHost"` and are invisible to subsequent
+        `query_all()` calls on the type-specific filters.
 
         Physical ethernet interfaces cannot be deleted via `interfaceActions/remove` (silently does nothing for
         physical interfaces) or `DELETE` (returns 500). The normalize endpoint works when given the full
-        `int_trunk_host` template defaults with `mode: "trunk"` and `policyType: "trunkHost"`.
+        `int_trunk_host` template defaults with `mode: "trunk"` and `policyType: "trunkHost"`. The PUT path is
+        required for `bandwidth` / `debounceLinkupTimer` / `inheritBandwidth` because ND's validator rejects 0/null
+        on those three fields, so the normalize template cannot drive them back to default.
 
-        Clears the pending queue after normalization.
+        Clears both pending queues after their respective flushes.
 
         ## Raises
 
         ### RuntimeError
 
         - If the normalize API request fails.
+        - If any per-interface PUT request fails.
         """
-        if not self._pending_normalizes:
+        if not self._pending_normalizes and not self._pending_resets:
             return None
+        results: list = []
         try:
-            result = self._normalize_interfaces()
-            self._pending_normalizes = []
-            return result
+            if self._pending_normalizes:
+                normalize_result = self._normalize_interfaces()
+                self._pending_normalizes = []
+                results.append(normalize_result)
+            if self._pending_resets:
+                reset_results = self._reset_interfaces()
+                self._pending_resets = []
+                results.extend(reset_results)
         except Exception as e:
-            raise RuntimeError(f"Bulk normalize failed for interfaces {self._pending_normalizes}: {e}") from e
+            raise RuntimeError(f"Bulk delete-side flush failed (normalizes={self._pending_normalizes}, resets={self._pending_resets}): {e}") from e
+        return results
 
     def _normalize_interfaces(self) -> ResponseType:
         """
@@ -319,6 +368,28 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         api_endpoint.fabric_name = self.fabric_name
         payload = InterfaceDefaultConfig.to_normalize_payload(self._pending_normalizes)
         return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
+
+    def _reset_interfaces(self) -> list[ResponseType]:
+        """
+        # Summary
+
+        Reset queued interfaces one-at-a-time via PUT-as-replace using the minimal `InterfaceDefaultConfig.to_reset_payload`
+        body. There is no bulk PUT equivalent — this path runs only for interfaces whose wire state carries an unresettable
+        Class C field (`bandwidth`, `debounceLinkupTimer`, `inheritBandwidth`), so the request count stays low in practice.
+
+        ## Raises
+
+        ### Exception
+
+        - If any PUT request fails (propagated to caller).
+        """
+        results: list[ResponseType] = []
+        for interface_name, switch_id in self._pending_resets:
+            api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
+            api_endpoint.set_identifiers(interface_name)
+            payload = InterfaceDefaultConfig.to_reset_payload(interface_name, switch_id)
+            results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
+        return results
 
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:
         """
@@ -413,7 +484,10 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
             self._check_port_channel_delete_restriction(model_instance, existing_data)
-            self._queue_normalize(model_instance.interface_name, switch_id)
+            if self._has_unresettable_fields(existing_data):
+                self._queue_reset(model_instance.interface_name, switch_id)
+            else:
+                self._queue_normalize(model_instance.interface_name, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
             return {}
         except Exception as e:
@@ -500,7 +574,10 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     )
                     continue
                 self._check_port_channel_delete_restriction(model_instance, existing_data)
-            self._queue_normalize(model_instance.interface_name, switch_id)
+            if self._has_unresettable_fields(existing_data):
+                self._queue_reset(model_instance.interface_name, switch_id)
+            else:
+                self._queue_normalize(model_instance.interface_name, switch_id)
             self._queue_deploy(model_instance.interface_name, switch_id)
 
     def query_one(self, model_instance: ModelType, **kwargs) -> ResponseType:

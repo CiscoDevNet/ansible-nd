@@ -927,5 +927,135 @@
                 }
             ]
         }
+    },
+    "test_delete_unresettable_class_c_00595a": {
+        "TEST_NOTES": [
+            "00595: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_delete_unresettable_class_c_00595b": {
+        "TEST_NOTES": [
+            "00595: interfaceList -- Ethernet1/1 carries bandwidth=1500000 (a Class C field that normalize cannot clear).",
+            "Dispatcher must route this delete to the reset queue (per-interface PUT) instead of the normalize queue."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 100,
+                                "bandwidth": 1500000
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_mixed_class_c_00620a": {
+        "TEST_NOTES": [
+            "00620: switch_map fetch -- resolves both 192.168.1.1 and 192.168.1.2"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                },
+                {
+                    "fabricManagementIp": "192.168.1.2",
+                    "switchId": "FDO22222BBB"
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_mixed_class_c_00620b": {
+        "TEST_NOTES": [
+            "00620: interfaceList for FDO11111AAA -- Ethernet1/1 carries inheritBandwidth=2000000 (Class C) -> reset queue."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "inheritBandwidth": 2000000
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
+    },
+    "test_delete_bulk_mixed_class_c_00620c": {
+        "TEST_NOTES": [
+            "00620: interfaceList for FDO22222BBB -- Ethernet1/2 has no Class C field -> normalize queue."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/2",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "accessVlan": 200
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": -1
+                    }
+                }
+            ]
+        }
     }
 }
