@@ -154,14 +154,20 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         `RuntimeError` names every unknown IP so a typo on one entry does not mask resolution or capability problems on
         the remaining entries (issue #301).
 
+        In `--check` mode the capability GET is still issued, but a failure of the capability check itself — whether an
+        endpoint outage or one or more incapable switches — is downgraded to a warning rather than re-raised, so dry-runs
+        stay green when the unpublished endpoint is unavailable (issue #302). Unresolvable `switch_ip` values are always
+        raised, including in check mode, because they reflect user input errors rather than environmental flakiness.
+
         ## Raises
 
         ### RuntimeError
 
-        - If one or more switches are not capable of hosting the requested `(interface_type, interface_mode)` pair.
+        - If one or more switches are not capable of hosting the requested `(interface_type, interface_mode)` pair
+          (outside `--check` mode).
         - If the orchestrator sets `interface_type` but leaves `interface_mode` empty.
         - If one or more `switch_ip` values do not match any switch in the fabric (aggregated into a single message).
-        - If the underlying capability GET request fails.
+        - If the underlying capability GET request fails (outside `--check` mode).
         """
         if not self.interface_type:
             return
@@ -181,7 +187,25 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             raise RuntimeError(f"Cannot resolve switch_ip to switchId in fabric '{self.fabric_name}' for: {', '.join(sorted(set(unresolved)))}.")
         if not switch_ids:
             return
-        self.capability_preflight.validate(self.interface_type, self.interface_mode, switch_ids)
+        try:
+            self.capability_preflight.validate(self.interface_type, self.interface_mode, switch_ids)
+        except RuntimeError as e:
+            if not self.rest_send.check_mode:
+                raise
+            self._warn(f"Capability preflight skipped in check mode: {e}")
+
+    def _warn(self, message: str) -> None:
+        """
+        # Summary
+
+        Emit a warning through the underlying `AnsibleModule` so it surfaces in `ansible-playbook` output. Used to soften
+        non-fatal preflight failures (see `validate_switches_capable`) without converting them into module errors.
+
+        ## Raises
+
+        None
+        """
+        self.rest_send.sender.ansible_module.warn(message)  # type: ignore[attr-defined]
 
     def validate_prerequisites(self) -> None:
         """

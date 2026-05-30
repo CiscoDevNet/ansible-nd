@@ -883,3 +883,118 @@ def test_base_interface_00820() -> None:
     match = r"Cannot resolve switch_ip to switchId in fabric 'fabric_1' for: 10\.1\.1\.100, 10\.1\.1\.99"
     with pytest.raises(RuntimeError, match=match):
         instance.validate_switches_capable(model_instances)
+
+
+def test_base_interface_00830() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` downgrades a capability endpoint failure to a warning in `--check` mode
+    (issue #302), so dry-runs stay green when the unpublished `capableSwitches` endpoint is unavailable.
+
+    ## Test
+
+    - `rest_send.check_mode` is True
+    - Switches inventory resolves the one target IP to `FDO12345ABC`
+    - `capableSwitches` GET returns 404 -> `InterfaceCapabilityPreflight._query_get` raises `RuntimeError`
+    - `validate_switches_capable` does NOT raise
+    - A warning containing `Capability preflight skipped in check mode` is recorded on the mock module
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    - NDBaseInterfaceOrchestrator._warn()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.check_mode = True
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    warnings = rest_send.sender.ansible_module.warnings
+    assert len(warnings) == 1
+    assert "Capability preflight skipped in check mode" in warnings[0]
+
+
+def test_base_interface_00840() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` downgrades a capability MISMATCH (offending switch) to a warning in `--check`
+    mode (issue #302), so dry-runs still surface the information without failing the run.
+
+    ## Test
+
+    - `rest_send.check_mode` is True
+    - Switches inventory resolves the target IP to `FDO12345ABC`
+    - `capableSwitches` returns 200 with an empty `switches` list -> `validate` raises with offender details
+    - `validate_switches_capable` does NOT raise
+    - A warning is recorded mentioning the offending `switchId`
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    - NDBaseInterfaceOrchestrator._warn()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    rest_send.check_mode = True
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    warnings = rest_send.sender.ansible_module.warnings
+    assert len(warnings) == 1
+    assert "Capability preflight skipped in check mode" in warnings[0]
+    assert "FDO12345ABC" in warnings[0]
+
+
+def test_base_interface_00850() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` still raises a capability mismatch OUTSIDE `--check` mode (issue #302 regression
+    guard): the softening behavior must be gated on `check_mode`.
+
+    ## Test
+
+    - `rest_send.check_mode` is False
+    - Switches inventory resolves the target IP
+    - `capableSwitches` returns 200 with an empty `switches` list
+    - `validate_switches_capable` raises `RuntimeError` naming the offending `switchId`
+    - No warning is recorded
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+        yield responses_base_interface(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    match = r"not capable of hosting interface_type='loopback' mode='managed'"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+    assert rest_send.sender.ansible_module.warnings == []
