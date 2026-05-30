@@ -150,13 +150,17 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         When `interface_type` is `""` (default on the base class) this method is a no-op — subclasses opt in by setting
         both the `interface_type` and `interface_mode` ClassVars.
 
+        All `switch_ip` values are resolved before the capability check runs; if any are unresolvable, a single aggregate
+        `RuntimeError` names every unknown IP so a typo on one entry does not mask resolution or capability problems on
+        the remaining entries (issue #301).
+
         ## Raises
 
         ### RuntimeError
 
         - If one or more switches are not capable of hosting the requested `(interface_type, interface_mode)` pair.
         - If the orchestrator sets `interface_type` but leaves `interface_mode` empty.
-        - If no switch matches a given `switch_ip` in the fabric.
+        - If one or more `switch_ip` values do not match any switch in the fabric (aggregated into a single message).
         - If the underlying capability GET request fails.
         """
         if not self.interface_type:
@@ -165,7 +169,16 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             raise RuntimeError(
                 f"{type(self).__name__} sets interface_type but not interface_mode; both ClassVars are required to enable capability preflight."
             )
-        switch_ids = {self._resolve_switch_id(model_instance.switch_ip) for model_instance in model_instances}
+        switch_ids: set[str] = set()
+        unresolved: list[str] = []
+        for model_instance in model_instances:
+            switch_ip = model_instance.switch_ip
+            try:
+                switch_ids.add(self._resolve_switch_id(switch_ip))
+            except RuntimeError:
+                unresolved.append(switch_ip)
+        if unresolved:
+            raise RuntimeError(f"Cannot resolve switch_ip to switchId in fabric '{self.fabric_name}' for: {', '.join(sorted(set(unresolved)))}.")
         if not switch_ids:
             return
         self.capability_preflight.validate(self.interface_type, self.interface_mode, switch_ids)

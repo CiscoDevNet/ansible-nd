@@ -238,18 +238,18 @@ def test_loopback_interface_00120() -> None:
     """
     # Summary
 
-    Verify `create` wraps an unknown-switch-IP `RuntimeError` from `_resolve_switch_id`.
+    Verify `create` wraps an unknown-switch-IP `RuntimeError` raised by the capability preflight's switch resolution.
 
     ## Test
 
     - switches-list returns a different IP than the model's `switch_ip`
-    - `_resolve_switch_id` raises `RuntimeError` with `No switch found with fabricManagementIp '192.168.12.151'`
+    - `validate_switches_capable` aggregates the unresolvable IP into a single `RuntimeError`
     - `create` re-raises as `RuntimeError` matching `Create failed for .*loopback10`
 
     ## Classes and Methods
 
     - LoopbackInterfaceOrchestrator.create()
-    - NDBaseInterfaceOrchestrator._resolve_switch_id()
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
     """
     method_name = inspect.stack()[0][3]
 
@@ -261,7 +261,7 @@ def test_loopback_interface_00120() -> None:
     instance = LoopbackInterfaceOrchestrator(rest_send=rest_send)
     model = _build_loopback_model(switch_ip="192.168.12.151")
 
-    match = r"Create failed for .*loopback10.*No switch found with fabricManagementIp '192\.168\.12\.151'"
+    match = r"Create failed for .*loopback10.*Cannot resolve switch_ip to switchId in fabric 'fabric_1' for: 192\.168\.12\.151"
     with pytest.raises(RuntimeError, match=match):
         instance.create(model)
 

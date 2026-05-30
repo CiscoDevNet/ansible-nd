@@ -71,6 +71,16 @@ class _StubOptedInOrchestrator(_StubInterfaceOrchestrator):
     interface_type = "loopback"
 
 
+class _StubCapableOrchestrator(_StubInterfaceOrchestrator):
+    """Stub that fully opts in to capability preflight via both `interface_type` and `interface_mode`.
+
+    Used to drive `validate_switches_capable` through the resolution + capability-endpoint code path.
+    """
+
+    interface_type = "loopback"
+    interface_mode = "managed"
+
+
 def responses_base_interface(key: str):
     """Load fixture data for test_base_interface tests."""
     return load_fixture("test_base_interface")[key]
@@ -836,3 +846,40 @@ def test_base_interface_00810() -> None:
     match = r"_StubOptedInOrchestrator sets interface_type but not interface_mode"
     with pytest.raises(RuntimeError, match=match):
         instance.validate_switches_capable([SimpleNamespace(switch_ip="192.168.12.151")])
+
+
+def test_base_interface_00820() -> None:
+    """
+    # Summary
+
+    Verify `validate_switches_capable` aggregates multiple unresolvable `switch_ip` values into a single `RuntimeError`
+    (issue #301), so one typo cannot mask resolution or capability problems on the remaining entries.
+
+    ## Test
+
+    - Switches inventory contains only `192.168.12.151`
+    - Three model_instances are passed: the valid IP and two distinct unknown IPs
+    - `validate_switches_capable` raises `RuntimeError` naming BOTH unknown IPs in a single message
+    - The capability endpoint is NOT contacted (no second fixture consumed)
+
+    ## Classes and Methods
+
+    - NDBaseInterfaceOrchestrator.validate_switches_capable()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_base_interface(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = _StubCapableOrchestrator(rest_send=rest_send)
+
+    model_instances = [
+        SimpleNamespace(switch_ip="192.168.12.151"),
+        SimpleNamespace(switch_ip="10.1.1.99"),
+        SimpleNamespace(switch_ip="10.1.1.100"),
+    ]
+    match = r"Cannot resolve switch_ip to switchId in fabric 'fabric_1' for: 10\.1\.1\.100, 10\.1\.1\.99"
+    with pytest.raises(RuntimeError, match=match):
+        instance.validate_switches_capable(model_instances)

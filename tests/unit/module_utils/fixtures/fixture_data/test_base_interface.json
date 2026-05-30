@@ -93,5 +93,21 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/remove",
         "MESSAGE": "Internal Server Error",
         "DATA": {"error": "boom"}
+    },
+
+    "test_base_interface_00820a": {
+        "TEST_NOTES": [
+            "Issue #301: switches list returns only 192.168.12.151; the two other model_instances (10.1.1.99, 10.1.1.100)",
+            "are unresolvable and must be aggregated into a single RuntimeError without consuming a capableSwitches response."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
     }
 }
