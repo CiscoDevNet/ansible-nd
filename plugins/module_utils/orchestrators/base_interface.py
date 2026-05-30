@@ -16,7 +16,7 @@ with interface-type-specific payload construction and query filtering.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Sequence
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_interfaces import (
@@ -139,7 +139,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
             )
         return self._capability_preflight
 
-    def validate_switches_capable(self, model_instances: Iterable[ModelType]) -> None:
+    def validate_switches_capable(self, model_instances: Sequence[ModelType]) -> None:
         """
         # Summary
 
