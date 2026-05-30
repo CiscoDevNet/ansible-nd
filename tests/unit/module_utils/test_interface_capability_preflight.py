@@ -224,7 +224,8 @@ def test_interface_capability_preflight_00110() -> None:
 
     - Single response yielded by the generator
     - First call to `get_capable_switches("loopback", "managed")` consumes the response
-    - Second call returns the same data from cache without consuming another response
+    - Second call returns equal data from cache without consuming another response
+    - Each call returns a fresh list object (defensive copy; see test_00310)
 
     ## Classes and Methods
 
@@ -245,7 +246,7 @@ def test_interface_capability_preflight_00110() -> None:
         cached = instance.get_capable_switches("loopback", "managed")
 
     assert first == cached
-    assert cached is first
+    assert cached is not first
 
 
 def test_interface_capability_preflight_00120() -> None:
@@ -439,3 +440,91 @@ def test_interface_capability_preflight_00230() -> None:
     match = r"Unsupported mode 'trunk' for interface_type 'loopback'"
     with pytest.raises(ValueError, match=match):
         instance.validate("loopback", "trunk", {"FDO12345ABC"})
+
+
+# =============================================================================
+# Test: HTTP 404 from the capableSwitches endpoint
+# =============================================================================
+
+
+def test_interface_capability_preflight_00300() -> None:
+    """
+    # Summary
+
+    Verify a 404 response from the capableSwitches endpoint raises `RuntimeError` rather than caching
+    an empty capable set (which would mislabel every requested switch as "not capable").
+
+    ## Test
+
+    - GET capableSwitches returns 404
+    - `get_capable_switches` raises RuntimeError mentioning the path and issue #273
+
+    ## Classes and Methods
+
+    - InterfaceCapabilityPreflight._query_get
+    - InterfaceCapabilityPreflight.get_capable_switches
+    """
+    method_name = inspect.stack()[0][3]
+    key = f"{method_name}a"
+
+    def responses():
+        yield responses_preflight(key)
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    instance = InterfaceCapabilityPreflight(rest_send=rest_send, fabric_name="fabric_1")
+    match = r"GET /api/v1/manage/fabrics/fabric_1/capableSwitches.*failed.*issue #273"
+    with pytest.raises(RuntimeError, match=match):
+        instance.get_capable_switches("loopback", "managed")
+
+
+# =============================================================================
+# Test: returned collections are defensive copies
+# =============================================================================
+
+
+def test_interface_capability_preflight_00310() -> None:
+    """
+    # Summary
+
+    Verify `get_capable_switches` and `get_capable_switch_ids` return fresh collections per call so a caller
+    that mutates the result cannot corrupt cached state for subsequent callers.
+
+    ## Test
+
+    - First `get_capable_switches` returns two-switch list; mutate the returned list (`.append(...)`)
+    - Second `get_capable_switches` returns the original (un-mutated) two-switch list from cache
+    - Same for `get_capable_switch_ids` (mutate the returned set)
+
+    ## Classes and Methods
+
+    - InterfaceCapabilityPreflight.get_capable_switches
+    - InterfaceCapabilityPreflight.get_capable_switch_ids
+    """
+    method_name = inspect.stack()[0][3]
+    key = f"{method_name}a"
+
+    def responses():
+        yield responses_preflight(key)
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = InterfaceCapabilityPreflight(rest_send=rest_send, fabric_name="fabric_1")
+        first_list = instance.get_capable_switches("loopback", "managed")
+        first_list.append({"switchId": "BOGUS", "switchName": "BOGUS", "model": "BOGUS"})
+        first_list.clear()
+        second_list = instance.get_capable_switches("loopback", "managed")
+
+        first_ids = instance.get_capable_switch_ids("loopback", "managed")
+        first_ids.add("BOGUS")
+        first_ids.clear()
+        second_ids = instance.get_capable_switch_ids("loopback", "managed")
+
+    assert second_list == [
+        {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"},
+        {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"},
+    ]
+    assert second_ids == {"FDO12345ABC", "FDO12345ABD"}

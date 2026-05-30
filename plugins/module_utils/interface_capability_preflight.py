@@ -60,7 +60,7 @@ class InterfaceCapabilityPreflight:
     ### RuntimeError
 
     - Via `validate` when one or more switch IDs are not in the capable set for `(interface_type, mode)`.
-    - Via `get_capable_switches` if the underlying GET request fails (other than 404).
+    - Via `get_capable_switches` if the underlying GET request fails.
 
     ### ValueError
 
@@ -152,21 +152,30 @@ class InterfaceCapabilityPreflight:
         """
         # Summary
 
-        Issue a GET request via `RestSend` and return the `DATA` dict. Returns `{}` on HTTP 404.
+        Issue a GET request via `RestSend` and return the `DATA` dict.
 
         ## Raises
 
         ### RuntimeError
 
-        - If the request fails with any non-success status other than 404.
+        - If the request fails with any non-success status, including 404. A 404 here is treated
+          as a hard failure rather than an empty result, because the unpublished `capableSwitches`
+          endpoint may move or be removed in a future ND release (see issue #273); silently caching
+          an empty capable set would mislabel every requested switch as "not capable".
         """
         self._rest_send.path = path
         self._rest_send.verb = HttpVerbEnum.GET
         self._rest_send.commit()
-        if self._rest_send.return_code == 404:
-            return {}
-        if not self._rest_send.success:
-            raise RuntimeError(f"GET {path} failed {self._rest_send.error_summary}")
+        # ResponseHandler treats 404 GETs as success=True, so check return_code explicitly.
+        # A 404 here means the endpoint is gone or the fabric_name is wrong; either way we
+        # must raise rather than caching an empty capable set that would mislabel every
+        # requested switch as "not capable".
+        if not self._rest_send.success or self._rest_send.return_code == 404:
+            raise RuntimeError(
+                f"GET {path} failed {self._rest_send.error_summary}. "
+                "The capableSwitches endpoint is unpublished and may be unavailable on this "
+                "ND release; see GitHub issue #273."
+            )
         return self._rest_send.response_current.get("DATA", {})
 
     def _build_endpoint(self, interface_type: str, mode: str) -> EpManageFabricsCapableSwitchesGet:
@@ -191,7 +200,8 @@ class InterfaceCapabilityPreflight:
         # Summary
 
         Return the list of switch records capable of hosting `(interface_type, mode)` in this fabric. Each record contains
-        at least `switchId`, `switchName`, and `model`. Lazily fetched and cached per `(interface_type, mode)`.
+        at least `switchId`, `switchName`, and `model`. Lazily fetched and cached per `(interface_type, mode)`. Returns a
+        fresh list per call; callers may mutate the returned list without affecting cached state.
 
         ## Raises
 
@@ -201,22 +211,21 @@ class InterfaceCapabilityPreflight:
 
         ### RuntimeError
 
-        - If the underlying GET request fails (other than 404).
+        - If the underlying GET request fails.
         """
         self._check_taxonomy(interface_type, mode)
         key = (interface_type, mode)
-        if key in self._cache:
-            return self._cache[key]
-        result = self._query_get(self._build_endpoint(interface_type, mode).path)
-        switches = result.get("switches") or []
-        self._cache[key] = switches
-        return switches
+        if key not in self._cache:
+            result = self._query_get(self._build_endpoint(interface_type, mode).path)
+            self._cache[key] = result.get("switches") or []
+        return list(self._cache[key])
 
     def get_capable_switch_ids(self, interface_type: str, mode: str) -> set[str]:
         """
         # Summary
 
         Return the set of `switchId` values capable of hosting `(interface_type, mode)`. Derived from `get_capable_switches`.
+        Returns a fresh set per call; callers may mutate the returned set without affecting cached state.
 
         ## Raises
 
@@ -226,14 +235,12 @@ class InterfaceCapabilityPreflight:
 
         ### RuntimeError
 
-        - If the underlying GET request fails (other than 404).
+        - If the underlying GET request fails.
         """
         key = (interface_type, mode)
-        if key in self._id_cache:
-            return self._id_cache[key]
-        switch_ids = {sw["switchId"] for sw in self.get_capable_switches(interface_type, mode) if sw.get("switchId")}
-        self._id_cache[key] = switch_ids
-        return switch_ids
+        if key not in self._id_cache:
+            self._id_cache[key] = {sw["switchId"] for sw in self.get_capable_switches(interface_type, mode) if sw.get("switchId")}
+        return set(self._id_cache[key])
 
     def validate(self, interface_type: str, mode: str, switch_ids: set[str]) -> None:
         """

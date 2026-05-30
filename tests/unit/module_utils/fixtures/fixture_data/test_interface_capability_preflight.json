@@ -132,5 +132,26 @@
                 {"fabricManagementIp": "10.0.0.99", "switchId": "FDO99999XYZ"}
             ]
         }
+    },
+    "test_interface_capability_preflight_00300a": {
+        "TEST_NOTES": ["capableSwitches GET returns 404; preflight must raise rather than caching an empty capable set"],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+    "test_interface_capability_preflight_00310a": {
+        "TEST_NOTES": ["capableSwitches for (loopback, managed): two capable switches; used to verify returned collections are defensive copies"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"},
+                {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"}
+            ]
+        }
     }
 }
