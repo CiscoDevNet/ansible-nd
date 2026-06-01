@@ -198,14 +198,15 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         """
         # Summary
 
-        Emit a warning through the underlying `AnsibleModule` so it surfaces in `ansible-playbook` output. Used to soften
-        non-fatal preflight failures (see `validate_switches_capable`) without converting them into module errors.
+        Emit a warning through `RestSend.warn`, which routes to the underlying `AnsibleModule.warn` so it surfaces in
+        `ansible-playbook` output. Used to soften non-fatal preflight failures (see `validate_switches_capable`) without
+        converting them into module errors.
 
         ## Raises
 
         None
         """
-        self.rest_send.sender.ansible_module.warn(message)  # type: ignore[attr-defined]
+        self.rest_send.warn(message)
 
     def validate_prerequisites(self) -> None:
         """
