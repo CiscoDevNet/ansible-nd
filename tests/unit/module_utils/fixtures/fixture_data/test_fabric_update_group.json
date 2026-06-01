@@ -623,5 +623,65 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/propose",
         "MESSAGE": "Internal Server Error",
         "DATA": {"error": "boom"}
+    },
+
+    "test_fabric_update_group_00240a": {
+        "TEST_NOTES": [
+            "state replaced: GET current group. reportSelection=advanced is an optional field currently on",
+            "the group that the user omits; a replaced PUT must reset it. Membership FDO1,FDO2 is unchanged."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroupName": "leaf_group",
+            "execution": "parallel",
+            "contingency": "pause",
+            "analysis": "noAnalysis",
+            "isMaintenance": false,
+            "isDisruptiveUpdate": false,
+            "reportSelection": "advanced",
+            "updateGroupSwitches": ["FDO1", "FDO2"]
+        }
+    },
+
+    "test_fabric_update_group_00240b": {
+        "TEST_NOTES": ["state replaced: settings PUT returns 204"],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "No Content",
+        "DATA": {}
+    },
+
+    "test_fabric_update_group_00250a": {
+        "TEST_NOTES": [
+            "state merged: GET current group with reportSelection=advanced. The user omits reportSelection;",
+            "a merged PUT must preserve it (contrast with the replaced behavior in 00240)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroupName": "leaf_group",
+            "execution": "parallel",
+            "contingency": "pause",
+            "analysis": "noAnalysis",
+            "isMaintenance": false,
+            "isDisruptiveUpdate": false,
+            "reportSelection": "advanced",
+            "updateGroupSwitches": ["FDO1", "FDO2"]
+        }
+    },
+
+    "test_fabric_update_group_00250b": {
+        "TEST_NOTES": ["state merged: settings PUT returns 204"],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "No Content",
+        "DATA": {}
     }
 }

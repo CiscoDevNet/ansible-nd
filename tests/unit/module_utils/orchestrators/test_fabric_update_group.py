@@ -63,8 +63,56 @@ def _build_rest_send(gen_responses: ResponseGenerator, fabric_name: str = "fabri
     return rest_send
 
 
+# Switches are supplied as fabric management IP addresses only. The orchestrator resolves them to
+# switchIds via FabricContext; in unit tests a fake context resolves these IPs in-memory so no
+# switches-list response is consumed (the create/update fixtures carry only the group operations).
+_TEST_IP_TO_ID = {
+    "192.168.0.1": "FDO1",
+    "192.168.0.2": "FDO2",
+    "192.168.0.3": "FDO3",
+    "192.168.0.9": "FDO9",
+}
+
+
+class _FakeFabricContext:
+    """In-memory `FabricContext` stand-in: resolves IPs to switchIds and back, no API calls."""
+
+    def __init__(self, ip_to_id: dict[str, str] | None = None, id_to_ip: dict[str, str] | None = None) -> None:
+        self._ip_to_id = ip_to_id or {}
+        self._id_to_ip = id_to_ip if id_to_ip is not None else {sid: ip for ip, sid in self._ip_to_id.items()}
+
+    def get_switch_id(self, switch_ip: str) -> str:
+        """Resolve a fabricManagementIp to its switchId, raising if unknown (mirrors FabricContext)."""
+        try:
+            return self._ip_to_id[switch_ip]
+        except KeyError as error:
+            raise RuntimeError(f"No switch found with fabricManagementIp '{switch_ip}'.") from error
+
+    @property
+    def switch_map_by_id(self) -> dict[str, str]:
+        """Return the switchId -> fabricManagementIp mapping."""
+        return self._id_to_ip
+
+
+class _RaisingFabricContext:
+    """`FabricContext` stand-in whose `switch_map_by_id` raises (inventory unavailable)."""
+
+    @property
+    def switch_map_by_id(self) -> dict[str, str]:
+        """Raise to simulate a failed switch-inventory fetch."""
+        raise RuntimeError("switch inventory unavailable")
+
+
+def _resolving_instance(gen_responses: ResponseGenerator, fabric_name: str = "fabric_1") -> tuple[RestSend, FabricUpdateGroupOrchestrator]:
+    """Build a `RestSend` + orchestrator with an in-memory `FabricContext` that resolves the test IPs."""
+    rest_send = _build_rest_send(gen_responses, fabric_name)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    instance._fabric_context = _FakeFabricContext(ip_to_id=_TEST_IP_TO_ID)
+    return rest_send, instance
+
+
 def _build_model(update_group_name: str = "leaf_group", force_created: bool = False) -> FabricUpdateGroupModel:
-    """Build a `FabricUpdateGroupModel` with full settings and two switchId-form switches."""
+    """Build a `FabricUpdateGroupModel` with full settings and two IP-form switches."""
     return FabricUpdateGroupModel(
         update_group_name=update_group_name,
         execution="serial",
@@ -72,7 +120,7 @@ def _build_model(update_group_name: str = "leaf_group", force_created: bool = Fa
         analysis="snapshot",
         is_maintenance=True,
         is_disruptive_update=True,
-        update_group_switches=["FDO1", "FDO2"],
+        update_group_switches=["192.168.0.1", "192.168.0.2"],
         force_created=force_created,
     )
 
@@ -163,8 +211,7 @@ def test_fabric_update_group_00100() -> None:
         yield responses_fabric_update_group(f"{method_name}c")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    rest_send, instance = _resolving_instance(gen_responses)
     model = _build_model()
 
     with does_not_raise():
@@ -201,8 +248,7 @@ def test_fabric_update_group_00110() -> None:
         yield responses_fabric_update_group(f"{method_name}a")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    rest_send, instance = _resolving_instance(gen_responses)
     model = _build_model()
 
     with pytest.raises(RuntimeError, match=r"Create failed for .*leaf_group.*failed.*Switch not found"):
@@ -225,8 +271,7 @@ def test_fabric_update_group_00120() -> None:
         yield responses_fabric_update_group(f"{method_name}a")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    rest_send, instance = _resolving_instance(gen_responses)
     model = _build_model()
 
     with pytest.raises(RuntimeError, match=r"Create failed for .*leaf_group"):
@@ -256,8 +301,7 @@ def test_fabric_update_group_00130() -> None:
         yield responses_fabric_update_group(f"{method_name}a")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    rest_send, instance = _resolving_instance(gen_responses)
     model = _build_model(force_created=False)
 
     with pytest.raises(RuntimeError, match=r"Create failed for .*leaf_group.*warning"):
@@ -291,8 +335,7 @@ def test_fabric_update_group_00135() -> None:
         yield responses_fabric_update_group(f"{method_name}a")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    rest_send, instance = _resolving_instance(gen_responses)
     model = _build_model(force_created=True)
 
     with pytest.raises(RuntimeError, match=r"Create failed for .*leaf_group.*warning"):
@@ -321,9 +364,8 @@ def test_fabric_update_group_00140() -> None:
         yield responses_fabric_update_group(f"{method_name}a")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
-    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["FDO1", "FDO2"], force_created=True)
+    rest_send, instance = _resolving_instance(gen_responses)
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["192.168.0.1", "192.168.0.2"], force_created=True)
 
     with does_not_raise():
         instance.create(model)
@@ -356,9 +398,8 @@ def test_fabric_update_group_00150() -> None:
         yield responses_fabric_update_group(f"{method_name}a")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
-    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["FDO1", "FDO2"])
+    rest_send, instance = _resolving_instance(gen_responses)
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["192.168.0.1", "192.168.0.2"])
 
     with does_not_raise():
         instance.create(model)
@@ -398,8 +439,7 @@ def test_fabric_update_group_00200() -> None:
         yield responses_fabric_update_group(f"{method_name}d")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    rest_send, instance = _resolving_instance(gen_responses)
     model = _build_model()
 
     with does_not_raise():
@@ -429,8 +469,7 @@ def test_fabric_update_group_00210() -> None:
         yield responses_fabric_update_group(f"{method_name}a")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    rest_send, instance = _resolving_instance(gen_responses)
     model = _build_model()
 
     with pytest.raises(RuntimeError, match=r"Update failed for .*leaf_group"):
@@ -460,9 +499,8 @@ def test_fabric_update_group_00220() -> None:
         yield responses_fabric_update_group(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
-    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["FDO1", "FDO2", "FDO3"])
+    rest_send, instance = _resolving_instance(gen_responses)
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["192.168.0.1", "192.168.0.2", "192.168.0.3"])
 
     with does_not_raise():
         instance.update(model)
@@ -495,9 +533,8 @@ def test_fabric_update_group_00230() -> None:
         yield responses_fabric_update_group(f"{method_name}b")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
-    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["FDO1"])
+    rest_send, instance = _resolving_instance(gen_responses)
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=["192.168.0.1"])
 
     with does_not_raise():
         instance.update(model)
@@ -505,6 +542,85 @@ def test_fabric_update_group_00230() -> None:
     assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/detachGroup"
     body = rest_send.committed_payload
     assert body == {"detachUpdateGroups": [{"updateGroupName": "leaf_group", "switchIds": ["FDO2"]}]}
+
+
+def test_fabric_update_group_00240() -> None:
+    """
+    # Summary
+
+    Verify `update` with `state: replaced` builds a full-replace PUT body that resets an optional
+    field the user omitted.
+
+    ## Test
+
+    - Current group carries `reportSelection: advanced`; the user's model omits it
+    - `state` is `replaced`, so the PUT body seeds only the required fields from the current group and
+      overlays the user's set fields - `reportSelection` is therefore absent and ND resets it
+    - The user's `analysis: snapshot` still overrides the current `noAnalysis`
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.update()
+    - FabricUpdateGroupOrchestrator._apply_settings()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send, instance = _resolving_instance(gen_responses)
+    rest_send.params["state"] = "replaced"
+    model = _build_model()
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group"
+    assert rest_send.verb == HttpVerbEnum.PUT.value
+    body = rest_send.committed_payload
+    assert "reportSelection" not in body
+    assert body["analysis"] == "snapshot"
+    assert body["execution"] == "serial"
+    assert body["updateGroupSwitches"] == ["FDO1", "FDO2"]
+
+
+def test_fabric_update_group_00250() -> None:
+    """
+    # Summary
+
+    Verify `update` with `state: merged` preserves an optional field the user omitted (contrast with
+    the replaced behavior in 00240).
+
+    ## Test
+
+    - Current group carries `reportSelection: advanced`; the user's model omits it
+    - `state` is `merged`, so the PUT body overlays the user's set fields onto the full current group
+      and `reportSelection: advanced` is retained
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.update()
+    - FabricUpdateGroupOrchestrator._apply_settings()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send, instance = _resolving_instance(gen_responses)
+    model = _build_model()
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert rest_send.verb == HttpVerbEnum.PUT.value
+    body = rest_send.committed_payload
+    assert body["reportSelection"] == "advanced"
+    assert body["analysis"] == "snapshot"
 
 
 # =============================================================================
@@ -779,8 +895,7 @@ def test_fabric_update_group_00600() -> None:
         yield responses_fabric_update_group(f"{method_name}e")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    rest_send, instance = _resolving_instance(gen_responses)
     models = [_build_model("g1"), _build_model("g2")]
 
     with does_not_raise():
@@ -807,8 +922,7 @@ def test_fabric_update_group_00610() -> None:
         yield responses_fabric_update_group(f"{method_name}a")
 
     gen_responses = ResponseGenerator(responses())
-    rest_send = _build_rest_send(gen_responses)
-    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    rest_send, instance = _resolving_instance(gen_responses)
     models = [_build_model("g1"), _build_model("g2")]
 
     with pytest.raises(RuntimeError, match=r"Bulk create failed.*g2.*failed.*Switch missing"):
@@ -824,12 +938,12 @@ def test_fabric_update_group_00700() -> None:
     """
     # Summary
 
-    Verify `create` resolves switch IPs to switchIds in the `attachGroup` body.
+    Verify `create` resolves switch IPs to switchIds in the `attachGroup` body via `FabricContext`.
 
     ## Test
 
     - Switches-list returns the IP -> switchId map
-    - The attachGroup body carries switchIds; the serial-form entry passes through unchanged
+    - The attachGroup body carries the resolved switchIds
 
     ## Classes and Methods
 
@@ -848,14 +962,32 @@ def test_fabric_update_group_00700() -> None:
     instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
     model = FabricUpdateGroupModel(
         update_group_name="leaf_group",
-        update_group_switches=["192.168.12.151", "192.168.12.152", "FDO_PASSTHROUGH"],
+        update_group_switches=["192.168.12.151", "192.168.12.152"],
     )
 
     with does_not_raise():
         instance.create(model)
 
     body = rest_send.committed_payload
-    assert body["attachUpdateGroups"][0]["switchIds"] == ["FDO12345ABC", "FDO12345ABD", "FDO_PASSTHROUGH"]
+    assert body["attachUpdateGroups"][0]["switchIds"] == ["FDO12345ABC", "FDO12345ABD"]
+
+
+def test_fabric_update_group_00715() -> None:
+    """
+    # Summary
+
+    Verify `_resolve_switch_id` rejects a non-IP switch identifier (switches are accepted as fabric
+    management IP addresses only), failing fast before any wire request.
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator._resolve_switch_id()
+    """
+    rest_send = RestSend({"check_mode": False, "fabric_name": "fabric_1"})
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+
+    with pytest.raises(RuntimeError, match=r"is not a fabric management IP address.*IP addresses only"):
+        instance._resolve_switch_id("FDO12345ABC")
 
 
 def test_fabric_update_group_00710() -> None:
@@ -1022,6 +1154,56 @@ def test_fabric_update_group_00760() -> None:
 
     names = {g["updateGroupName"] for g in result}
     assert names == {"g1", "g2"}
+
+
+# =============================================================================
+# Test: switchId -> IP denormalization helper
+# =============================================================================
+
+
+def _bare_instance(context) -> FabricUpdateGroupOrchestrator:
+    """Build an orchestrator with `fabric_context` pre-seeded to a fake (no API calls)."""
+    rest_send = RestSend({"check_mode": False, "fabric_name": "fabric_1"})
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    instance._fabric_context = context
+    return instance
+
+
+def test_fabric_update_group_00770() -> None:
+    """
+    # Summary
+
+    Verify `_switch_ids_to_ips` maps wire switchIds to IPs and passes through switchIds absent from
+    the fabric (stale serials).
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator._switch_ids_to_ips()
+    """
+    instance = _bare_instance(_FakeFabricContext(id_to_ip={"FDO1": "192.168.1.1", "FDO2": "192.168.1.2"}))
+
+    result = instance._switch_ids_to_ips(["FDO1", "FDO2", "FDO_STALE"])
+
+    assert result == ["192.168.1.1", "192.168.1.2", "FDO_STALE"]
+
+
+def test_fabric_update_group_00790() -> None:
+    """
+    # Summary
+
+    Verify `_switch_ids_to_ips` is best-effort: when the switch map cannot be loaded, the switchIds are
+    returned unchanged rather than raising.
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator._switch_ids_to_ips()
+    """
+    instance = _bare_instance(_RaisingFabricContext())
+
+    with does_not_raise():
+        result = instance._switch_ids_to_ips(["FDO1", "FDO2"])
+
+    assert result == ["FDO1", "FDO2"]
 
 
 # =============================================================================

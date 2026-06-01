@@ -22,10 +22,10 @@ switch is removed.
 Fabric name is supplied by the module's top-level `fabric_name` option and propagated to every
 endpoint instance prior to path generation; per-config identifier is `update_group_name`.
 
-`update_group_switches` and `installation_order_devices` accept either switch IP addresses or
-switch serial numbers (switchIds). IPs are resolved to switchIds via `FabricContext` before being
-sent on the wire; switchIds in GET responses are converted back to IPs so playbook authors see
-consistent IP-based output even though the wire stores serials.
+`update_group_switches` and `installation_order_devices` accept switch fabric management IP addresses
+only. IPs are resolved to switchIds via `FabricContext` before being sent on the wire; switchIds in GET
+responses are converted back to IPs so playbook authors see consistent IP-based output even though the
+wire stores switchIds.
 
 `attachGroup` and `detachGroup` return HTTP 207 with per-item `status`. Any status other than
 `success` fails the task. ND returns `attachGroup` `status: warning` when it declines to apply a
@@ -60,6 +60,20 @@ _SWITCH_LIST_PAYLOAD_KEYS = ("updateGroupSwitches", "installationOrderDevices")
 
 # Wire payload keys that identify a group / its membership rather than its settings
 _NON_SETTINGS_PAYLOAD_KEYS = ("updateGroupName", "updateGroupSwitches")
+
+# Wire payload keys that PUT /updateGroups/{name} requires. For state replaced/overridden these are
+# seeded from the current group when the user omits them (a required field has no "reset" meaning),
+# while every OTHER (optional) field the user omits is left out of the PUT body so ND - whose PUT is a
+# full replace - resets it to its default.
+_REQUIRED_PUT_WIRE_KEYS = (
+    "updateGroupName",
+    "execution",
+    "contingency",
+    "analysis",
+    "isMaintenance",
+    "isDisruptiveUpdate",
+    "updateGroupSwitches",
+)
 
 
 class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
@@ -113,6 +127,20 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         return self.rest_send.params.get("fabric_name")
 
     @property
+    def _state(self) -> str:
+        """
+        # Summary
+
+        Return the module `state` (`merged`, `replaced`, `overridden`, `deleted`) from module params,
+        defaulting to `merged` when unset.
+
+        ## Raises
+
+        None
+        """
+        return self.rest_send.params.get("state") or "merged"
+
+    @property
     def fabric_context(self) -> FabricContext:
         """
         # Summary
@@ -146,8 +174,9 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         """
         # Summary
 
-        Heuristic: a string with a dot is an IP address; anything else is treated as a switch serial
-        number (switchIds in the field, e.g. `FDO12345ABC`, never contain dots).
+        Heuristic: a switch identifier is a fabric management IP address if it is a string containing a
+        dot. switchIds (serial numbers, e.g. `FDO12345ABC`) never contain dots. Switches are supplied as
+        IP addresses only, so a value that fails this check is rejected by `_resolve_switch_id`.
 
         ## Raises
 
@@ -159,18 +188,24 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         """
         # Summary
 
-        Resolve a user-supplied switch identifier to a switchId. IP addresses are looked up via
-        `FabricContext`; switchId strings are returned unchanged.
+        Resolve a user-supplied switch fabric management IP address to its switchId via `FabricContext`.
+        Switches are accepted as IP addresses only; a non-IP value (e.g. a switch serial number) is
+        rejected rather than passed through, so an unsupported input fails fast with a clear message
+        instead of being silently sent on the wire.
 
         ## Raises
 
         ### RuntimeError
 
-        - If the value looks like an IP but no switch with that `fabricManagementIp` exists in the fabric.
+        - If `value` is not an IP address (switches must be specified as fabric management IP addresses).
+        - If no switch with that `fabricManagementIp` exists in the fabric (propagated from `FabricContext`).
         """
-        if self._looks_like_ip(value):
-            return self.fabric_context.get_switch_id(value)
-        return value
+        if not self._looks_like_ip(value):
+            raise RuntimeError(
+                f"Switch identifier '{value}' is not a fabric management IP address; "
+                "update_group_switches and installation_order_devices accept IP addresses only."
+            )
+        return self.fabric_context.get_switch_id(value)
 
     def _resolve_switches_in_payload(self, payload: dict) -> dict:
         """
@@ -191,6 +226,24 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
                 payload[key] = [self._resolve_switch_id(v) for v in values]
         return payload
 
+    def _switch_ids_to_ips(self, values: list) -> list:
+        """
+        # Summary
+
+        Map wire `switchId`s to their `fabricManagementIp`s via `FabricContext` (best-effort). switchIds
+        absent from the fabric (e.g. stale serials) are passed through unchanged. Used to denormalize GET
+        responses so the user sees IP-based output that matches the IP-based input they supplied.
+
+        ## Raises
+
+        None
+        """
+        try:
+            switch_map_by_id = self.fabric_context.switch_map_by_id
+        except Exception:  # pylint: disable=broad-except
+            return list(values)
+        return [switch_map_by_id.get(v, v) for v in values]
+
     def _denormalize_switches_in_response(self, item: Any) -> Any:
         """
         # Summary
@@ -199,7 +252,7 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         `installationOrderDevices` with their matching IPs so the user sees consistent IP-based output.
 
         Denormalization is best-effort: if the switch map cannot be loaded (e.g. the inventory call
-        fails), the response is returned unmodified rather than raising - switchIds shown to the user
+        fails), the lists are returned unmodified rather than raising - switchIds shown to the user
         are still correct, just not user-friendlier IPs. Per-switchId lookups that miss the map (stale
         serials) are also passed through unchanged.
 
@@ -211,14 +264,10 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
             return item
         if not any(isinstance(item.get(key), list) for key in _SWITCH_LIST_PAYLOAD_KEYS):
             return item
-        try:
-            switch_map_by_id = self.fabric_context.switch_map_by_id
-        except Exception:  # pylint: disable=broad-except
-            return item
         for key in _SWITCH_LIST_PAYLOAD_KEYS:
             values = item.get(key)
             if isinstance(values, list):
-                item[key] = [switch_map_by_id.get(v, v) for v in values]
+                item[key] = self._switch_ids_to_ips(values)
         return item
 
     @staticmethod
@@ -375,10 +424,19 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         Apply group settings via `PUT /updateGroups/{name}`. The action API carries membership only,
         so settings are PUT separately. PUT is a full replace requiring all of `updateGroupName`,
         `execution`, `contingency`, `analysis`, `isMaintenance`, `isDisruptiveUpdate`, and
-        `updateGroupSwitches`; the body is built by overlaying the user's explicitly-set fields onto a
-        GET of the current group, so every required field is present and `updateGroupSwitches` echoes
-        the group's actual membership (PUT moves no switches). Skipped entirely when the model carries
-        no settings.
+        `updateGroupSwitches`, and `updateGroupSwitches` echoes the group's actual membership (PUT
+        moves no switches).
+
+        The PUT body is built differently per state:
+
+        - `merged`: overlay the user's explicitly-set fields onto a GET of the current group, so every
+          required field is present and fields the user omitted keep their current values. Skipped
+          entirely when the model carries no settings.
+        - `replaced` / `overridden`: seed only the PUT-required fields from the current group, then
+          overlay the user's explicitly-set fields. Optional fields the user omitted are absent from
+          the body, so ND (full replace) resets them to their defaults. Issued whenever this method is
+          reached (the state machine has already determined the group changed), because the PUT is the
+          mechanism that performs the reset.
 
         ## Raises
 
@@ -386,11 +444,16 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
 
         - If a switch IP cannot be resolved, or the GET / PUT request fails.
         """
-        if not self._model_has_settings(model_instance):
+        is_replace = self._state in ("replaced", "overridden")
+        if not is_replace and not self._model_has_settings(model_instance):
             return
         if current_raw is None:
             current_raw = self._get_group_raw(model_instance.update_group_name)
-        merged = FabricUpdateGroupModel.from_response(current_raw)
+        if is_replace:
+            base_raw = {key: current_raw[key] for key in _REQUIRED_PUT_WIRE_KEYS if key in current_raw}
+        else:
+            base_raw = current_raw
+        merged = FabricUpdateGroupModel.from_response(base_raw)
         merged.merge(model_instance)
         api_endpoint = self._configure_endpoint(self.update_endpoint())
         api_endpoint.set_identifiers(model_instance.update_group_name)

@@ -69,7 +69,7 @@ options:
       update_group_switches:
         description:
         - The list of switches that belong to this update group.
-        - Each entry may be a switch fabric management IP address or a switch serial number (switchId).
+        - Each entry is a switch fabric management IP address.
         - Switch IP addresses are resolved to switchIds via the fabric inventory before the request is sent.
         - An update group must contain at least one switch; ND does not permit a zero-switch group.
         type: list
@@ -84,7 +84,7 @@ options:
       installation_order_devices:
         description:
         - The order in which switches are upgraded when O(config.execution=serial).
-        - Each entry may be a switch fabric management IP address or a switch serial number (switchId).
+        - Each entry is a switch fabric management IP address.
         - Switch IP addresses are resolved to switchIds via the fabric inventory before the request is sent.
         type: list
         elements: str
@@ -182,7 +182,7 @@ EXAMPLES = r"""
         is_maintenance: true
         is_disruptive_update: true
         update_group_switches:
-          # Either IP addresses or switch serial numbers may be used.
+          # Switches are specified as fabric management IP addresses.
           - 192.168.7.11
           - 192.168.7.12
         install_image_data:
