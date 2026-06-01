@@ -825,24 +825,23 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
     def exit_module(self):
         """Build the final module result and call ``exit_json`` to return it to Ansible.
 
-        Uses ``Results.build_final_result()`` to collect per-API-call metadata,
-        then overlays ``NDOutput.format(**kwargs)`` for the standard output fields
-        (before, after, diff, proposed, etc.).
+        Uses ``NDOutput.format_with_verbosity()`` so generic module output stays
+        stable and API-call metadata is exposed only under ``api_*`` keys when
+        Ansible verbosity requests it.
         """
-        self.results.build_final_result()
-        final = self.results.final_result
+        verbosity = self.nd.module._verbosity if hasattr(self.nd.module, "_verbosity") else 0
 
         if self.state == "gathered":
             self.log.info(
                 "exit_module: gathered state, returning %s resource(s)",
                 len(self.changed_dict[0]["gathered"]),
             )
-            final.update(
-                self.output.format(
-                    changed=False,
-                    after=self.translate_gathered_results(self.existing),
-                    gathered=self.changed_dict[0]["gathered"],
-                )
+            final = self.output.format_with_verbosity(
+                verbosity,
+                self.results,
+                changed=False,
+                after=self.translate_gathered_results(self.existing),
+                gathered=self.changed_dict[0]["gathered"],
             )
             self.nd.module.exit_json(**final)
             return
@@ -876,12 +875,11 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             "before": self.translate_gathered_results(self.previous),
             "after": self.translate_gathered_results(self.existing),
             "diff": self.changed_dict,
-            "response": self.api_responses,
         }
 
         output_level = self.nd.params.get("output_level", "normal")
         if output_level in ("info", "debug"):
             final_results_data["proposed"] = self._proposed_list
 
-        final.update(self.output.format(**final_results_data))
+        final = self.output.format_with_verbosity(verbosity, self.results, **final_results_data)
         self.nd.module.exit_json(**final)

@@ -56,7 +56,7 @@
 - name: Assert
   ansible.builtin.assert:
     that:
-      - result.response | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
 
 - block:
 
@@ -128,13 +128,16 @@
           - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == 8'
           - '(result["diff"][0]["deleted"] | length) == 0'
-          - '(result["response"] | length) == 8'
+          - 'result["api_response"] is not defined or (result["api_response"] | length) == 1'
+          - 'result["api_result"] is not defined or result["api_result"][0]["success"] == true'
+          - 'result["api_diff"] is not defined or (result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
+          - 'result["api_payload"] is not defined or (result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
 
     - name: ASSERT - Check condition
       ansible.builtin.assert:
         that:
           - 'item["RETURN_CODE"] == 200'
-      loop: '{{ result.response }}'
+      loop: '{{ result.api_response | default([]) }}'
 
     ##############################################
     ##               GATHERED                      ##
@@ -335,12 +338,15 @@
           - '(result["diff"][0]["merged"] | length) == 0'
           - '(result["diff"][0]["deleted"] | length) == 7'
           - '(result["diff"][0]["gathered"] | length) == 0'
-          - '(result["response"] | length) == 7'
+          - 'result["api_response"] is not defined or (result["api_response"] | length) == 1'
+          - 'result["api_result"] is not defined or result["api_result"][0]["success"] == true'
+          - 'result["api_diff"] is not defined or (result["api_diff"][0]["deleted"] | length) == (result["diff"][0]["deleted"] | length)'
+          - 'result["api_payload"] is not defined or (result["api_payload"][0]["resourceIds"] | length) == (result["diff"][0]["deleted"] | length)'
       when: it_context is not defined
 
     - name: ASSERT - Check condition
       ansible.builtin.assert:
         that:
           - 'item["RETURN_CODE"] == 200'
-      loop: '{{ result.response }}'
+      loop: '{{ result.api_response | default([]) }}'
       when: it_context is not defined

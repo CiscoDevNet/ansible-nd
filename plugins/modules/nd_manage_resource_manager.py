@@ -292,11 +292,41 @@ diff:
   type: list
   elements: dict
   sample: [{"merged": [], "deleted": [], "gathered": [], "debugs": []}]
-response:
+api_paths:
+  description: API request paths included when Ansible verbosity is C(-vvv) or higher.
+  returned: when verbosity is C(-vvv) or higher
+  type: list
+  elements: str
+api_verbs:
+  description: API request methods included when Ansible verbosity is C(-vvv) or higher.
+  returned: when verbosity is C(-vvv) or higher
+  type: list
+  elements: str
+api_response:
   description: API responses received during module execution.
-  returned: always
+  returned: when verbosity is C(-vvv) or higher
   type: list
   elements: dict
+api_result:
+  description: Parsed API operation results.
+  returned: when verbosity is C(-vvv) or higher
+  type: list
+  elements: dict
+api_diff:
+  description: Per-API-call diff data.
+  returned: when verbosity is C(-vvv) or higher
+  type: list
+  elements: dict
+api_metadata:
+  description: Per-API-call metadata.
+  returned: when verbosity is C(-vvv) or higher
+  type: list
+  elements: dict
+api_payload:
+  description: API request payloads.
+  returned: when verbosity is C(-vvv) or higher
+  type: list
+  elements: raw
 before:
   description: State before module execution (always empty list for this module).
   returned: when state is not gathered
@@ -327,8 +357,20 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_ma
     ResourceManagerConfigModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources import NDResourceManagerModule
+
+
+def _module_verbosity(module):
+    """Return Ansible CLI verbosity for consistent output filtering."""
+    return module._verbosity if hasattr(module, "_verbosity") else 0
+
+
+def _format_module_result(module, output_level, results=None, **kwargs):
+    """Build generic module output and gate API details behind verbosity."""
+    output = NDOutput(output_level=output_level or "normal")
+    return output.format_with_verbosity(_module_verbosity(module), results, **kwargs)
 
 
 def _record_failed_result(results, message, return_code=-1, data=None):
@@ -469,25 +511,31 @@ def main():
 
         _record_nd_module_error_result(results, nd, error, log)
 
+        failure_output = {
+            "failed": True,
+        }
+
         # Add error details if debug output is requested
         if output_level == "debug":
             log.debug(
-                "main: output_level='debug' — attaching error_details to final_result (error_type=NDModuleError, msg='%s')",
+                "main: output_level='debug' — attaching error_details to failure output (error_type=NDModuleError, msg='%s')",
                 error.msg,
             )
-            results.final_result["error_details"] = error.to_dict()
+            failure_output["error_details"] = error.to_dict()
         else:
             log.debug(
                 "main: output_level='%s' — skipping error_details attachment",
                 output_level,
             )
 
+        final = _format_module_result(module, output_level, results, **failure_output)
+
         log.error(
             "main: module failing with NDModuleError — msg='%s', final_result_keys=%s",
             error.msg,
-            list(results.final_result.keys()),
+            list(final.keys()),
         )
-        module.fail_json(msg=error.msg, **results.final_result)
+        module.fail_json(msg=error.msg, **final)
 
     except ValueError as error:
         # Validation errors raised by NDResourceManagerModule (e.g. invalid config,
@@ -499,7 +547,8 @@ def main():
             state,
         )
         _record_failed_result(results, str(error))
-        module.fail_json(msg=str(error), **results.final_result)
+        final = _format_module_result(module, output_level, results, failed=True)
+        module.fail_json(msg=str(error), **final)
 
     except Exception as error:
         # Unexpected errors
@@ -517,11 +566,15 @@ def main():
             type(error).__name__,
         )
 
+        failure_output = {
+            "failed": True,
+        }
+
         if output_level == "debug":
             tb_str = traceback.format_exc()
-            results.final_result["traceback"] = tb_str
+            failure_output["traceback"] = tb_str
             log.debug(
-                "main: output_level='debug' — attaching traceback (%s lines) to final_result",
+                "main: output_level='debug' — attaching traceback (%s lines) to failure output",
                 len(tb_str.splitlines()),
             )
         else:
@@ -530,12 +583,14 @@ def main():
                 output_level,
             )
 
+        final = _format_module_result(module, output_level, results, **failure_output)
+
         log.error(
             "main: module failing with unexpected error — error_type='%s', msg='%s'",
             type(error).__name__,
             str(error),
         )
-        module.fail_json(msg=str(error), **results.final_result)
+        module.fail_json(msg=str(error), **final)
 
 
 if __name__ == "__main__":

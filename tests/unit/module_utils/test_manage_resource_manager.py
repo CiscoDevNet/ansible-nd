@@ -16,7 +16,7 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_resources import (
     EpManageFabricResourcesGet,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum, OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources import (
     NDResourceManagerModule,
     ResourceManagerDiffEngine,
@@ -27,6 +27,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_ma
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_resource_manager.resource_manager_response_model import (
     ResourceManagerResponse,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 
 LOG = logging.getLogger("nd.tests.resource_manager")
 
@@ -68,6 +70,60 @@ def _resource_manager():
     module.fabric = "fabric-1"
     module.log = LOG
     return module
+
+
+class _DummyAnsibleModule:
+    """Small AnsibleModule stand-in that captures exit_json payloads."""
+
+    def __init__(self, verbosity=0):
+        self.check_mode = False
+        self._verbosity = verbosity
+        self.exit_payload = None
+
+    def exit_json(self, **kwargs):
+        self.exit_payload = kwargs
+
+
+class _DummyND:
+    """Small NDModule stand-in for NDResourceManagerModule.exit_module tests."""
+
+    def __init__(self, ansible_module, output_level="normal"):
+        self.module = ansible_module
+        self.params = {
+            "output_level": output_level,
+        }
+
+
+def _register_resource_manager_task(results):
+    """Register one API-shaped result for output normalization tests."""
+    results.action = "manage_resource_manager"
+    results.operation_type = OperationType.CREATE
+    results.path_current = "/api/v1/manage/fabrics/fabric-1/resources"
+    results.verb_current = HttpVerbEnum.POST
+    results.payload_current = {"entityName": "loopback0"}
+    results.verbosity_level_current = 2
+    results.response_current = {"RETURN_CODE": 200, "MESSAGE": "OK"}
+    results.result_current = {"success": True, "changed": True}
+    results.diff_current = {"before": {}, "after": {"entity_name": "loopback0"}}
+    results.register_api_call()
+
+
+def _resource_manager_for_exit(verbosity=0):
+    """Create a lightweight resource manager with enough state for exit_module."""
+    ansible_module = _DummyAnsibleModule(verbosity=verbosity)
+    module = _resource_manager()
+    module.nd = _DummyND(ansible_module)
+    module.results = Results()
+    module.results.state = "merged"
+    module.results.check_mode = False
+    _register_resource_manager_task(module.results)
+    module.state = "merged"
+    module.changed_dict = [{"merged": [], "deleted": [], "gathered": [], "debugs": []}]
+    module.existing = []
+    module.previous = []
+    module._proposed_list = []
+    module.output = NDOutput("normal")
+    return module, ansible_module
 
 
 def test_resource_manager_config_rejects_unknown_id_pool_name():
@@ -219,3 +275,40 @@ def test_manage_fabric_resources_get_endpoint_path_and_class_name():
     assert endpoint.class_name == "EpManageFabricResourcesGet"
     assert endpoint.verb == HttpVerbEnum.GET
     assert endpoint.path == "/api/v1/manage/fabrics/fabric-1/resources?poolName=LOOPBACK_ID"
+
+
+def test_resource_manager_exit_module_normal_output_omits_raw_results_keys():
+    """Normal output does not expose raw Results aggregation keys."""
+    module, ansible_module = _resource_manager_for_exit(verbosity=0)
+
+    module.exit_module()
+
+    for key in ("metadata", "path", "payload", "response", "result", "verb", "verbosity_level"):
+        assert key not in ansible_module.exit_payload
+    assert "api_paths" not in ansible_module.exit_payload
+    assert ansible_module.exit_payload["changed"] is False
+
+
+def test_resource_manager_exit_module_verbosity_2_omits_api_keys():
+    """-vv output exposes path/verb summary but not full controller detail."""
+    module, ansible_module = _resource_manager_for_exit(verbosity=2)
+
+    module.exit_module()
+
+    assert ansible_module.exit_payload["api_paths"] == ["/api/v1/manage/fabrics/fabric-1/resources"]
+    assert ansible_module.exit_payload["api_verbs"] == ["POST"]
+    for key in ("api_payload", "api_response", "api_result", "api_diff", "api_metadata"):
+        assert key not in ansible_module.exit_payload
+
+
+def test_resource_manager_exit_module_verbose_output_uses_api_keys_only():
+    """-vvv output exposes API details only through normalized api_* keys."""
+    module, ansible_module = _resource_manager_for_exit(verbosity=3)
+
+    module.exit_module()
+
+    for key in ("metadata", "path", "payload", "response", "result", "verb", "verbosity_level"):
+        assert key not in ansible_module.exit_payload
+    assert ansible_module.exit_payload["api_paths"] == ["/api/v1/manage/fabrics/fabric-1/resources"]
+    assert ansible_module.exit_payload["api_verbs"] == ["POST"]
+    assert ansible_module.exit_payload["api_payload"] == [{"entityName": "loopback0"}]
