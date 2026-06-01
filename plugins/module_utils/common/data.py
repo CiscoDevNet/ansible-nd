@@ -8,7 +8,10 @@ from __future__ import absolute_import, annotations, division, print_function
 
 import ast
 import json
-from typing import Any, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
+
+Parser = Callable[[str], Any]
+DEFAULT_VALUE_PARSERS: tuple[Parser, ...] = (json.loads, ast.literal_eval)
 
 
 def get_params(source: Any) -> dict[str, Any]:
@@ -23,28 +26,42 @@ def get_params(source: Any) -> dict[str, Any]:
     return {}
 
 
-def loads_maybe_json(value: Any) -> Any:
-    """Parse JSON or Python-literal strings while leaving parsed values unchanged."""
+def parse_value(value: Any, parsers: Sequence[Parser] = DEFAULT_VALUE_PARSERS, default: Any = None) -> Any:
+    """Parse a serialized value with the first parser that accepts it.
+
+    Dicts and lists are returned unchanged because callers often pass values
+    that were already decoded by the controller client. Empty, invalid, or
+    unprintable values return ``default``.
+    """
     if isinstance(value, (dict, list)):
         return value
     if value is None:
-        return None
-
-    text = str(value).strip()
-    if not text:
-        return None
+        return default
 
     try:
-        return json.loads(text)
+        text = str(value).strip()
     except Exception:
+        return default
+
+    if not text:
+        return default
+
+    for parser in parsers:
         try:
-            return ast.literal_eval(text)
+            return parser(text)
         except Exception:
-            return None
+            continue
+
+    return default
 
 
-def coerce_dict_list(data: Any, list_keys: tuple[str, ...] = ("DATA", "data", "items")) -> list[dict[str, Any]]:
-    """Return a list containing only dict items from common controller response shapes."""
+def coerce_dict_list(data: Any, list_keys: Sequence[str] = ("DATA", "data", "items")) -> list[dict[str, Any]]:
+    """Return dict items from common shallow controller response shapes.
+
+    This intentionally checks only the top-level value or one configured
+    top-level wrapper key. Deeper response shapes should be handled by the
+    caller because those paths are resource-specific.
+    """
     if isinstance(data, list):
         return [item for item in data if isinstance(item, dict)]
 
@@ -57,11 +74,11 @@ def coerce_dict_list(data: Any, list_keys: tuple[str, ...] = ("DATA", "data", "i
     return []
 
 
-def copy_dict_items(items: Any) -> list[dict[str, Any]]:
+def copy_dict_items(items: Optional[Iterable[Any]]) -> list[dict[str, Any]]:
     """Copy a list of dict-like or pydantic-like objects into plain dicts."""
     copied = []
     for item in items or []:
-        if isinstance(item, dict):
+        if isinstance(item, Mapping):
             copied.append(dict(item))
         elif hasattr(item, "model_dump"):
             copied.append(item.model_dump(by_alias=False, exclude_none=True))
