@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Type
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
     EpManageFabricsSwitchesGet,
