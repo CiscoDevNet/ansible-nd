@@ -63,7 +63,13 @@ class UpdateReportCheckModel(NDNestedModel):
     None
     """
 
-    report_check_name: str = Field(alias="reportCheckName")
+    # `report_check_name` is optional on the MODEL so a GET that returns an item lacking it cannot abort
+    # the whole module run (NDStateMachine validates every existing group via from_response). ND's own
+    # embedded `updateGroup.updateReportChecks` item schema does NOT mark reportCheckName required
+    # (verified live, ND 4.2.1), so we must not be stricter than ND on read. User INPUT is still
+    # required: the argument spec sets `report_check_name` required=True, which validates before the
+    # model is built, so a user must always supply a name.
+    report_check_name: str | None = Field(default=None, alias="reportCheckName")
 
 
 # Enum literal aliases for readability

@@ -175,20 +175,77 @@ def test_fabric_update_group_00040() -> None:
     """
     # Summary
 
-    Verify `UpdateReportCheckModel` requires `report_check_name`.
+    Verify `UpdateReportCheckModel` tolerates a wire item lacking `reportCheckName` (it parses with
+    `report_check_name = None`) rather than raising. ND's embedded `updateReportChecks` item schema does
+    not mark `reportCheckName` required, so the model must not be stricter than ND on read - a missing
+    name on a single existing group must not abort the whole module run. User input is still enforced
+    as required by the argument spec, which validates before the model is built.
 
     ## Test
 
-    - Construct with empty dict raises ValidationError
+    - Construct from an empty wire dict
+    - No exception is raised; `report_check_name` is None
 
     ## Classes and Methods
 
     - UpdateReportCheckModel.model_validate()
     """
-    from pydantic import ValidationError
+    with does_not_raise():
+        instance = UpdateReportCheckModel.model_validate({}, by_alias=True)
 
-    with pytest.raises(ValidationError):
-        UpdateReportCheckModel.model_validate({}, by_alias=True)
+    assert instance.report_check_name is None
+
+
+def test_fabric_update_group_00045() -> None:
+    """
+    # Summary
+
+    Verify the argument spec still REQUIRES `report_check_name` for user input, even though the model
+    field is optional for read-tolerance. The strictness lives in the argspec (validated before the
+    model is built); the optional model field only governs wire deserialization.
+
+    ## Test
+
+    - `get_argument_spec()` marks `config.update_report_checks.report_check_name` required
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupModel.get_argument_spec()
+    """
+    spec = FabricUpdateGroupModel.get_argument_spec()
+    report_check = spec["config"]["options"]["update_report_checks"]["options"]["report_check_name"]
+
+    assert report_check["required"] is True
+
+
+def test_fabric_update_group_00046() -> None:
+    """
+    # Summary
+
+    Verify `FabricUpdateGroupModel.from_response` tolerates an `updateReportChecks` item that lacks
+    `reportCheckName` - this is the exact wire shape that, if rejected, would abort the whole module run
+    when `NDStateMachine` validates every existing group. It must parse to `report_check_name = None`.
+
+    ## Test
+
+    - A wire group whose `updateReportChecks` item has no `reportCheckName` builds without raising
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupModel.from_response()
+    - UpdateReportCheckModel
+    """
+    wire = {
+        "updateGroupName": "leaf_group",
+        "updateGroupSwitches": ["FDO1"],
+        "updateReportChecks": [{}],
+    }
+
+    with does_not_raise():
+        instance = FabricUpdateGroupModel.from_response(wire)
+
+    assert instance.update_report_checks is not None
+    assert instance.update_report_checks[0].report_check_name is None
 
 
 # =============================================================================
