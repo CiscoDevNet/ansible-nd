@@ -1,9 +1,9 @@
 ---
 # Variables for nd_fabric_update_group integration tests.
 #
-# `update_group_switches` and `installation_order_devices` accept either switch IP addresses
-# or switch serial numbers (switchIds). IPs are resolved to switchIds via the fabric
-# inventory before being sent on the wire.
+# `update_group_switches` and `installation_order_devices` accept a switch fabric management IP
+# address (IPv4 or IPv6) only; switch serial numbers (switchIds) are not accepted. IPs are resolved
+# to switchIds via the fabric inventory before being sent on the wire.
 #
 # A switch may belong to only one update group at a time. Each group below uses a disjoint
 # switch set so that creating one group never moves a switch out of another (which on ND 4.2.1

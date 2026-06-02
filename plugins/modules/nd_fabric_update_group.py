@@ -331,7 +331,7 @@ def main():
         if state != "merged":
             module.fail_json(
                 msg=f"auto_assign is only valid with state 'merged', got '{state}'. "
-                "The auto-assign action already regroups every switch in the fabric, so state 'overridden' is not supported with it."
+                "The auto-assign action already regroups every switch in the fabric, so it cannot be combined with any other state."
             )
 
         output = NDOutput(output_level=module.params.get("output_level", "normal"))
