@@ -6,7 +6,7 @@ from __future__ import annotations
 DOCUMENTATION = r"""
 ---
 module: nd_policy
-version_added: "1.0.0"
+version_added: "2.0.0"
 short_description: Manages policies on Nexus Dashboard.
 description:
 - Supports creating, updating, deleting, gathering, and deploying policies based on templates.
@@ -142,9 +142,9 @@ options:
           serial_number:
             description:
             - Serial number of the target switch (e.g., C(FDO25031SY4)).
-            - The alias C(ip) is kept for backward compatibility and may be a
-              switch management IP or hostname. The module resolves that value
-              to the switch serial number before calling policy APIs.
+            - The alias C(ip) may be a switch management IPv4 address; the
+              module resolves that value to the switch serial number via the
+              fabric inventory before calling policy APIs.
             type: str
             required: true
             aliases: [ ip ]

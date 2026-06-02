@@ -115,25 +115,26 @@ _MAC_RE = re.compile(r"^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$" r"|^([0-9a-fA-F]{2
 # =============================================================================
 
 
-def _needs_resolution(value) -> bool:
-    """Return True if the switch identifier needs IP/hostname → serial resolution.
+def _looks_like_ipv4(value) -> bool:
+    """Return True if *value* is a dotted-quad IPv4 address.
 
-    Serial numbers are alphanumeric strings (e.g. ``FDO25031SY4``) and contain
-    no dots.  IPv4 addresses and hostnames/FQDNs always contain dots, so a
-    simple dot-presence check is a sufficient (and inexpensive) gate to avoid
-    an unnecessary fabric inventory API call when every identifier is already
-    a serial number.  Actual IP-vs-hostname resolution is delegated to
-    :class:`FabricSwitchInventory` lookups (``by_ip()`` / hostname map).
+    Used as the gate for fabric-inventory resolution: switch identifiers that
+    look like an IPv4 address are translated to ``switchId`` (serial number)
+    via :class:`FabricSwitchInventory`; everything else is assumed to already
+    be a serial number and passed through untouched.
 
     Args:
         value: Switch identifier string to inspect.
 
     Returns:
-        True if the value contains a ``.`` (IP/hostname), False otherwise.
+        True if *value* is a dotted-quad IPv4 address, False otherwise.
     """
     if not value:
         return False
-    return "." in str(value).strip()
+    parts = str(value).strip().split(".")
+    if len(parts) != 4:
+        return False
+    return all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
 
 
 class NDPolicyModule:
@@ -482,18 +483,18 @@ class NDPolicyModule:
         return result
 
     def resolve_switch_identifiers(self, config):
-        """Resolve switch IP/hostname inputs to serial numbers.
+        """Resolve switch management IP inputs to serial numbers.
 
         The user's arg-spec field is ``serial_number`` with alias ``ip``.
         After ``translate_config()`` the value lives in ``entry["switch"]``
         as a plain string.
 
         Resolution logic:
-            1. If the value does NOT look like an IP or hostname (no ``.``)
-               it is assumed to be a serial number already → pass through.
+            1. If the value does NOT look like an IPv4 address it is
+               assumed to be a serial number already → pass through.
             2. Otherwise the fabric switch inventory is consulted via
-               :class:`FabricSwitchInventory` to map management IP or
-               hostname → switch serial number.
+               :class:`FabricSwitchInventory` to map ``fabricManagementIp``
+               → ``switchId`` (serial number).
             3. If resolution fails, raise ``NDModuleError`` with a clear
                message.
 
@@ -506,18 +507,18 @@ class NDPolicyModule:
         if config is None:
             return []
 
-        # Cheap gate — skip the fabric inventory GET when every identifier
-        # already looks like a serial number.
+        # Cheap gate — skip the fabric inventory GET when no identifier looks
+        # like an IPv4 address (i.e. every entry is already a serial number).
         needs_any = False
         for entry in config:
             sv = entry.get("switch")
             if isinstance(sv, list):
                 for se in sv:
                     val = se.get("serial_number") or se.get("ip") or ""
-                    if _needs_resolution(val):
+                    if _looks_like_ipv4(val):
                         needs_any = True
                         break
-            elif isinstance(sv, str) and _needs_resolution(sv):
+            elif isinstance(sv, str) and _looks_like_ipv4(sv):
                 needs_any = True
             if needs_any:
                 break
@@ -527,7 +528,6 @@ class NDPolicyModule:
 
         inventory = self._get_inventory()
         ip_map = inventory.by_ip()
-        hostname_map = {sw.hostname.strip().lower(): sw for sw in inventory.switches if sw.hostname}
 
         def _resolve(identifier):
             if identifier is None:
@@ -535,7 +535,7 @@ class NDPolicyModule:
             value = str(identifier).strip()
             if not value:
                 return value
-            sw = ip_map.get(value) or hostname_map.get(value.lower())
+            sw = ip_map.get(value)
             return sw.switch_id if sw is not None else None
 
         for entry in config:
@@ -544,30 +544,30 @@ class NDPolicyModule:
             if isinstance(switch_value, list):
                 for switch_entry in switch_value:
                     original = switch_entry.get("serial_number") or switch_entry.get("ip")
-                    if not _needs_resolution(original):
+                    if not _looks_like_ipv4(original):
                         continue
                     resolved = _resolve(original)
                     if resolved is None:
                         raise NDModuleError(
                             msg=(
-                                f"Unable to resolve switch identifier '{original}' to a serial number "
-                                f"in fabric '{self.fabric_name}'. Provide a valid switch serial_number, "
-                                "management IP, or hostname from the fabric inventory."
+                                f"Unable to resolve switch IP '{original}' to a serial number "
+                                f"in fabric '{self.fabric_name}'. Provide a valid switch serial number "
+                                "or management IP from the fabric inventory."
                             )
                         )
                     switch_entry["serial_number"] = resolved
                     if "ip" in switch_entry:
                         switch_entry["ip"] = resolved
             elif isinstance(switch_value, str):
-                if not _needs_resolution(switch_value):
+                if not _looks_like_ipv4(switch_value):
                     continue
                 resolved = _resolve(switch_value)
                 if resolved is None:
                     raise NDModuleError(
                         msg=(
-                            f"Unable to resolve switch identifier '{switch_value}' to a serial number "
-                            f"in fabric '{self.fabric_name}'. Provide a valid switch serial_number, "
-                            "management IP, or hostname from the fabric inventory."
+                            f"Unable to resolve switch IP '{switch_value}' to a serial number "
+                            f"in fabric '{self.fabric_name}'. Provide a valid switch serial number "
+                            "or management IP from the fabric inventory."
                         )
                     )
                 entry["switch"] = resolved
@@ -642,8 +642,8 @@ class NDPolicyModule:
             1. **Pydantic validation** — each ``config[]`` entry is validated
                against ``PlaybookPolicyConfig``.  Also applies defaults
                (priority=500, description="", etc.)
-            2. **Resolve switch identifiers** — IPs/hostnames → serial numbers
-               via a fabric inventory API call.
+            2. **Resolve switch identifiers** — management IPv4 addresses →
+               serial numbers via a fabric inventory API call.
             3. **Translate config** — flatten the two-level (globals + switch
                entry) structure into one dict per (policy, switch).
             4. **Validate translated config** — ensure every entry has a switch.
@@ -673,7 +673,7 @@ class NDPolicyModule:
         self.config = normalized_config
         self.module.params["config"] = normalized_config
 
-        # Step 2: Resolve switch IPs/hostnames → serial numbers
+        # Step 2: Resolve switch management IPs → serial numbers
         resolved_config = self.resolve_switch_identifiers(
             copy.deepcopy(self.config),
         )
@@ -1807,15 +1807,33 @@ class NDPolicyModule:
             self.log.debug(f"[cache] Case B: matched {len(matches)} policies")
             return matches, None
 
-        # Case C: use_desc_as_key=true, filter by templateName + exact description.
-        # O(1) composite-index lookup, then exact-match post-filter on description.
+        # Case C: use_desc_as_key=true, filter by exact description on the switch.
+        #
+        # When use_desc_as_key=true, *description* is the identity within a
+        # (switch, fabric) scope — NOT (switch, templateName).  We therefore
+        # scan all policies on the switch and match by description, ignoring
+        # templateName at lookup time.  The downstream classifier
+        # (_get_diff_merged_single) compares want.templateName against
+        # have.templateName to decide between:
+        #   - Case 13/14: same template → SKIP or UPDATE in place
+        #   - Case 15:    different template → DELETE old + CREATE new
+        #   - Case 16:    multiple matches  → fail (ambiguous duplicates)
+        #
+        # Using the (switch, templateName) composite index here would
+        # silently hide Case 15 and the cross-template variant of Case 16
+        # because any policy under a different template would be invisible
+        # to the lookup.
+        #
+        # Performance: O(N) over policies on the switch (typically a few
+        # hundred at most).  For workloads where this becomes a hotspot
+        # we can introduce a (switch, description) index in _prefetch_all_policies.
         want_desc = want.get("description", "") or ""
         if not want_desc:
             return [], "description is required when use_desc_as_key=true and name is a template name"
 
-        candidates = self._policies_by_switch_template_cache.get((switch_id, template_name), [])
-        matches = [p for p in candidates if (p.get("description", "") or "") == want_desc]
-        self.log.debug(f"[cache] Case C: matched {len(matches)} policies")
+        switch_policies_all = self._policies_by_switch_cache.get(switch_id, [])
+        matches = [p for p in switch_policies_all if (p.get("description", "") or "") == want_desc]
+        self.log.debug(f"[cache] Case C: matched {len(matches)} policies (by description, " f"any template) on switch {switch_id}")
         return matches, None
 
     # =========================================================================

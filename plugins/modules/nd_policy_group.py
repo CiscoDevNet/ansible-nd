@@ -7,7 +7,7 @@ DOCUMENTATION = r"""
 ---
 module: nd_policy_group
 short_description: Manage policy groups on Cisco Nexus Dashboard
-version_added: "0.7.0"
+version_added: "2.0.0"
 description:
 - Manage policy groups on Cisco Nexus Dashboard Fabric Controller (NDFC).
 - Policy groups apply a template to multiple switches simultaneously.
@@ -318,10 +318,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.sw
     SwitchDataModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
     NDStateMachine,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_policy_group import (
     PolicyGroupOrchestrator,
 )
@@ -869,11 +869,7 @@ def main():
         # Deploy unchanged policies when deploy=true (push config even if no diff).
         # Scope strictly to policies the user mentioned in `config:` so we never
         # touch unrelated fabric policies.
-        #
-        # ``policyActions/pushConfig`` is not supported for policy groups
-        # (the controller silently ignores policyGroup IDs there), so this
-        # deploy path goes through ``switchActions/deploy`` against the
-        # union of switches referenced by the unchanged groups.
+
         if state == "merged" and orchestrator.deploy and not module.check_mode:
             sent_identifiers = {item.get_identifier_value() for item in nd_state_machine.sent}
             proposed_identifiers = {item.get_identifier_value() for item in nd_state_machine.proposed}
