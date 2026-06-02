@@ -69,7 +69,7 @@ options:
       update_group_switches:
         description:
         - The list of switches that belong to this update group.
-        - Each entry is a switch fabric management IP address.
+        - Each entry is a switch fabric management IP address (IPv4 or IPv6). Switch serial numbers are not accepted.
         - Switch IP addresses are resolved to switchIds via the fabric inventory before the request is sent.
         - An update group must contain at least one switch; ND does not permit a zero-switch group.
         type: list
@@ -84,17 +84,24 @@ options:
       installation_order_devices:
         description:
         - The order in which switches are upgraded when O(config.execution=serial).
-        - Each entry is a switch fabric management IP address.
+        - Each entry is a switch fabric management IP address (IPv4 or IPv6). Switch serial numbers are not accepted.
         - Switch IP addresses are resolved to switchIds via the fabric inventory before the request is sent.
+        - Nexus Dashboard accepts this field on write but never returns it on read, so the module cannot detect
+          drift on it. A change to O(config.installation_order_devices) alone is therefore not reported as changed
+          and is not sent; set it alongside another changed field to ensure it is applied.
         type: list
         elements: str
       recommended_version:
         description:
         - The recommended target software version for this group.
+        - Nexus Dashboard accepts this field on write but never returns it on read, so, like
+          O(config.installation_order_devices), a change to it alone is not reported as changed and is not sent.
         type: str
       latest_recommended_version:
         description:
         - The latest available recommended software version for this group.
+        - Nexus Dashboard accepts this field on write but never returns it on read, so, like
+          O(config.installation_order_devices), a change to it alone is not reported as changed and is not sent.
         type: str
       report_selection:
         description:

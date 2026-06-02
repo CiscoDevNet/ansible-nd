@@ -410,6 +410,48 @@ def test_fabric_update_group_00150() -> None:
     assert body == {"attachUpdateGroups": [{"updateGroupName": "leaf_group", "switchIds": ["FDO1", "FDO2"], "forceCreated": False}]}
 
 
+def test_fabric_update_group_00160() -> None:
+    """
+    # Summary
+
+    Verify the create-path settings PUT carries the user's switches even when the GET issued right
+    after `attachGroup` returns EMPTY membership (ND read-after-write lag). The PUT body's
+    `updateGroupSwitches` must come from the user's model (re-applied by `merge`), never from the
+    stale GET - otherwise the full-replace PUT would detach the switches that were just attached.
+
+    This locks in the guarantee that an eventually-consistent GET cannot turn the create-path settings
+    PUT into an accidental detach.
+
+    ## Test
+
+    - attachGroup 207 success, GET returns the group with `updateGroupSwitches: []`, then PUT
+    - The PUT body still carries the user's resolved switchIds
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.create()
+    - FabricUpdateGroupOrchestrator._apply_settings()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+        yield responses_fabric_update_group(f"{method_name}c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send, instance = _resolving_instance(gen_responses)
+    model = _build_model()
+
+    with does_not_raise():
+        instance.create(model)
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group"
+    assert rest_send.verb == HttpVerbEnum.PUT.value
+    body = rest_send.committed_payload
+    assert body["updateGroupSwitches"] == ["FDO1", "FDO2"]
+
+
 # =============================================================================
 # Test: update
 # =============================================================================

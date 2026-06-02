@@ -696,5 +696,49 @@
                 "FDO1"
             ]
         }
+    },
+    "test_fabric_update_group_00160a": {
+        "TEST_NOTES": ["create with eventually-consistent GET: attachGroup POST returns 207 status:success"],
+        "RETURN_CODE": 207,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/actions/attachGroup",
+        "MESSAGE": "OK",
+        "DATA": {
+            "attachUpdateGroups": [
+                {
+                    "updateGroupName": "leaf_group",
+                    "status": "success",
+                    "warningMessage": "Update group attached successful"
+                }
+            ]
+        }
+    },
+    "test_fabric_update_group_00160b": {
+        "TEST_NOTES": [
+            "create with eventually-consistent GET: the GET right after attachGroup returns the group with EMPTY",
+            "membership (ND read lag). The PUT body must still carry the user's switches (from the model via merge),",
+            "NOT the stale empty membership - otherwise the settings PUT would detach the just-attached switches."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroupName": "leaf_group",
+            "execution": "parallel",
+            "contingency": "pause",
+            "analysis": "noAnalysis",
+            "isMaintenance": false,
+            "isDisruptiveUpdate": false,
+            "updateGroupSwitches": []
+        }
+    },
+    "test_fabric_update_group_00160c": {
+        "TEST_NOTES": ["create with eventually-consistent GET: settings PUT returns 204"],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "No Content",
+        "DATA": {}
     }
 }
