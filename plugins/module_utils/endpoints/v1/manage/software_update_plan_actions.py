@@ -8,6 +8,11 @@ These endpoints back the GUI's switch-centric update-group flow. Unlike the grou
 `updateGroups` CRUD endpoints, they are ghost-safe by construction: `attachGroup` requires at least
 one switch, and `detachGroup` auto-deletes a group server-side once its last switch is removed.
 
+All three endpoints share the same shape - a POST to
+`/api/v1/manage/fabrics/{fabric_name}/softwareUpdatePlan/actions/{action}` - so the path and verb
+live on a common `_EpFabricSoftwareUpdatePlanActionBase`; each concrete endpoint just sets its
+`_action` segment.
+
 ## Endpoints
 
 - `EpFabricSoftwareUpdatePlanAttachGroup` - Create an update group and assign switches to it
@@ -20,7 +25,7 @@ one switch, and `detachGroup` auto-deletes a group server-side once its last swi
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import ClassVar, Literal
 from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
@@ -30,7 +35,49 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
-class EpFabricSoftwareUpdatePlanAttachGroup(FabricNameMixin, NDEndpointBaseModel):
+class _EpFabricSoftwareUpdatePlanActionBase(FabricNameMixin, NDEndpointBaseModel):
+    """
+    # Summary
+
+    Base class for the switch-centric Fabric Software Management action endpoints. Every action is a
+    POST to `/api/v1/manage/fabrics/{fabric_name}/softwareUpdatePlan/actions/{_action}`; subclasses
+    set the `_action` segment, the `verb`, and their own `class_name`.
+
+    `verb` is intentionally left abstract here (rather than defined as POST on the base) so the
+    endpoint metaclass keeps treating this base as abstract and does not require it to carry a
+    `class_name` field - mirroring the `_EpFabricUpdateGroupBase` pattern in this package.
+
+    ## Raises
+
+    ### ValueError
+
+    - Via `path` property if `fabric_name` is not set.
+    """
+
+    # Action path segment (e.g. "attachGroup"). Overridden per subclass. Accessed via `self._action`
+    # (instance access) - the leading-underscore ClassVar trap that bites Pydantic v2 on Python 3.10
+    # only fires on CLASS-level access, which this never does.
+    _action: ClassVar[str] = ""
+
+    @property
+    def path(self) -> str:
+        """
+        # Summary
+
+        Build the action endpoint path. `fabric_name` is percent-encoded with `safe=""`.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `fabric_name` is not set before accessing `path`.
+        """
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "softwareUpdatePlan", "actions", self._action)
+
+
+class EpFabricSoftwareUpdatePlanAttachGroup(_EpFabricSoftwareUpdatePlanActionBase):
     """
     # Summary
 
@@ -47,42 +94,19 @@ class EpFabricSoftwareUpdatePlanAttachGroup(FabricNameMixin, NDEndpointBaseModel
     - Via `path` property if `fabric_name` is not set.
     """
 
+    _action: ClassVar[str] = "attachGroup"
+
     class_name: Literal["EpFabricSoftwareUpdatePlanAttachGroup"] = Field(
         default="EpFabricSoftwareUpdatePlanAttachGroup", frozen=True, description="Class name for backward compatibility"
     )
 
     @property
-    def path(self) -> str:
-        """
-        # Summary
-
-        Build the attachGroup action endpoint path. `fabric_name` is percent-encoded with `safe=""`.
-
-        ## Raises
-
-        ### ValueError
-
-        - If `fabric_name` is not set before accessing `path`.
-        """
-        if self.fabric_name is None:
-            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "softwareUpdatePlan", "actions", "attachGroup")
-
-    @property
     def verb(self) -> HttpVerbEnum:
-        """
-        # Summary
-
-        Return `HttpVerbEnum.POST`.
-
-        ## Raises
-
-        None
-        """
+        """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.POST
 
 
-class EpFabricSoftwareUpdatePlanDetachGroup(FabricNameMixin, NDEndpointBaseModel):
+class EpFabricSoftwareUpdatePlanDetachGroup(_EpFabricSoftwareUpdatePlanActionBase):
     """
     # Summary
 
@@ -100,42 +124,19 @@ class EpFabricSoftwareUpdatePlanDetachGroup(FabricNameMixin, NDEndpointBaseModel
     - Via `path` property if `fabric_name` is not set.
     """
 
+    _action: ClassVar[str] = "detachGroup"
+
     class_name: Literal["EpFabricSoftwareUpdatePlanDetachGroup"] = Field(
         default="EpFabricSoftwareUpdatePlanDetachGroup", frozen=True, description="Class name for backward compatibility"
     )
 
     @property
-    def path(self) -> str:
-        """
-        # Summary
-
-        Build the detachGroup action endpoint path. `fabric_name` is percent-encoded with `safe=""`.
-
-        ## Raises
-
-        ### ValueError
-
-        - If `fabric_name` is not set before accessing `path`.
-        """
-        if self.fabric_name is None:
-            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "softwareUpdatePlan", "actions", "detachGroup")
-
-    @property
     def verb(self) -> HttpVerbEnum:
-        """
-        # Summary
-
-        Return `HttpVerbEnum.POST`.
-
-        ## Raises
-
-        None
-        """
+        """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.POST
 
 
-class EpFabricSoftwareUpdatePlanPropose(FabricNameMixin, NDEndpointBaseModel):
+class EpFabricSoftwareUpdatePlanPropose(_EpFabricSoftwareUpdatePlanActionBase):
     """
     # Summary
 
@@ -155,36 +156,13 @@ class EpFabricSoftwareUpdatePlanPropose(FabricNameMixin, NDEndpointBaseModel):
     - Via `path` property if `fabric_name` is not set.
     """
 
+    _action: ClassVar[str] = "propose"
+
     class_name: Literal["EpFabricSoftwareUpdatePlanPropose"] = Field(
         default="EpFabricSoftwareUpdatePlanPropose", frozen=True, description="Class name for backward compatibility"
     )
 
     @property
-    def path(self) -> str:
-        """
-        # Summary
-
-        Build the propose action endpoint path. `fabric_name` is percent-encoded with `safe=""`.
-
-        ## Raises
-
-        ### ValueError
-
-        - If `fabric_name` is not set before accessing `path`.
-        """
-        if self.fabric_name is None:
-            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "softwareUpdatePlan", "actions", "propose")
-
-    @property
     def verb(self) -> HttpVerbEnum:
-        """
-        # Summary
-
-        Return `HttpVerbEnum.POST`.
-
-        ## Raises
-
-        None
-        """
+        """Return the HTTP verb for this endpoint."""
         return HttpVerbEnum.POST

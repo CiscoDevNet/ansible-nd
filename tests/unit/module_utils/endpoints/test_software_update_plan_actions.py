@@ -22,6 +22,7 @@ import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.software_update_plan_actions import (
     EpFabricSoftwareUpdatePlanAttachGroup,
     EpFabricSoftwareUpdatePlanDetachGroup,
+    EpFabricSoftwareUpdatePlanPropose,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
@@ -255,6 +256,117 @@ def test_ep_software_update_plan_actions_00140():
 
 
 # =============================================================================
+# Test: EpFabricSoftwareUpdatePlanPropose
+# =============================================================================
+
+
+def test_ep_software_update_plan_actions_00150():
+    """
+    # Summary
+
+    Verify EpFabricSoftwareUpdatePlanPropose basic instantiation.
+
+    ## Test
+
+    - Instance can be created
+    - class_name is set correctly
+    - verb is POST
+    - fabric_name defaults to None
+
+    ## Classes and Methods
+
+    - EpFabricSoftwareUpdatePlanPropose.__init__()
+    - EpFabricSoftwareUpdatePlanPropose.verb
+    - EpFabricSoftwareUpdatePlanPropose.class_name
+    """
+    with does_not_raise():
+        instance = EpFabricSoftwareUpdatePlanPropose()
+    assert instance.class_name == "EpFabricSoftwareUpdatePlanPropose"
+    assert instance.verb == HttpVerbEnum.POST
+    assert instance.fabric_name is None
+
+
+def test_ep_software_update_plan_actions_00160():
+    """
+    # Summary
+
+    Verify path raises ValueError when fabric_name is None.
+
+    ## Test
+
+    - fabric_name is not set
+    - Accessing path raises ValueError
+
+    ## Classes and Methods
+
+    - EpFabricSoftwareUpdatePlanPropose.path
+    """
+    instance = EpFabricSoftwareUpdatePlanPropose()
+    with pytest.raises(ValueError, match="fabric_name must be set"):
+        result = instance.path  # pylint: disable=unused-variable
+
+
+def test_ep_software_update_plan_actions_00170():
+    """
+    # Summary
+
+    Verify path returns the correct propose action URL.
+
+    ## Test
+
+    - fabric_name is set
+    - path returns /api/v1/manage/fabrics/SITE1/softwareUpdatePlan/actions/propose
+
+    ## Classes and Methods
+
+    - EpFabricSoftwareUpdatePlanPropose.path
+    """
+    with does_not_raise():
+        instance = EpFabricSoftwareUpdatePlanPropose()
+        instance.fabric_name = "SITE1"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/SITE1/softwareUpdatePlan/actions/propose"
+
+
+def test_ep_software_update_plan_actions_00180():
+    """
+    # Summary
+
+    Verify fabric_name is percent-encoded in the propose path.
+
+    ## Test
+
+    - fabric_name = "fab/odd"
+    - path encodes the slash
+
+    ## Classes and Methods
+
+    - EpFabricSoftwareUpdatePlanPropose.path
+    """
+    instance = EpFabricSoftwareUpdatePlanPropose()
+    instance.fabric_name = "fab/odd"
+    assert instance.path == "/api/v1/manage/fabrics/fab%2Fodd/softwareUpdatePlan/actions/propose"
+
+
+def test_ep_software_update_plan_actions_00190():
+    """
+    # Summary
+
+    Verify fabric_name="" raises ValueError (Pydantic min_length=1).
+
+    ## Test
+
+    - Setting fabric_name to empty string raises ValueError
+
+    ## Classes and Methods
+
+    - EpFabricSoftwareUpdatePlanPropose.__init__()
+    """
+    with pytest.raises(ValueError):
+        EpFabricSoftwareUpdatePlanPropose(fabric_name="")
+
+
+# =============================================================================
 # Test: Cross-class
 # =============================================================================
 
@@ -263,24 +375,28 @@ def test_ep_software_update_plan_actions_00200():
     """
     # Summary
 
-    Verify attach/detach endpoints are both POST with distinct action paths.
+    Verify attach/detach/propose endpoints are all POST with distinct action paths.
 
     ## Test
 
-    - Both classes with the same fabric_name produce distinct paths
-    - Both have verb POST
+    - All three classes with the same fabric_name produce distinct paths
+    - All have verb POST
 
     ## Classes and Methods
 
     - EpFabricSoftwareUpdatePlanAttachGroup.path
     - EpFabricSoftwareUpdatePlanDetachGroup.path
+    - EpFabricSoftwareUpdatePlanPropose.path
     """
     with does_not_raise():
         attach = EpFabricSoftwareUpdatePlanAttachGroup(fabric_name="SITE1")
         detach = EpFabricSoftwareUpdatePlanDetachGroup(fabric_name="SITE1")
+        propose = EpFabricSoftwareUpdatePlanPropose(fabric_name="SITE1")
 
     assert attach.path == "/api/v1/manage/fabrics/SITE1/softwareUpdatePlan/actions/attachGroup"
     assert detach.path == "/api/v1/manage/fabrics/SITE1/softwareUpdatePlan/actions/detachGroup"
-    assert attach.path != detach.path
+    assert propose.path == "/api/v1/manage/fabrics/SITE1/softwareUpdatePlan/actions/propose"
+    assert len({attach.path, detach.path, propose.path}) == 3
     assert attach.verb == HttpVerbEnum.POST
     assert detach.verb == HttpVerbEnum.POST
+    assert propose.verb == HttpVerbEnum.POST

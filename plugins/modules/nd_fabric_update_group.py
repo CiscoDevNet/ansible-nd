@@ -147,7 +147,10 @@ options:
       groups and applies them immediately. Nexus Dashboard names the generated groups itself, in the
       form C(fabric_platform_role) for V(roleBased) or C(fabric_platform_OddGroup) /
       C(fabric_platform_EvenGroup) for V(evenOdd).
-    - O(auto_assign) is mutually exclusive with O(config), and is only valid with O(state=merged) or O(state=overridden).
+    - O(auto_assign) is mutually exclusive with O(config), and is only valid with O(state=merged).
+    - O(state=overridden) is not supported with O(auto_assign) - the auto-assign action already regroups every
+      switch in the fabric, so it inherently enforces a complete state, and the per-group delete semantics of
+      O(state=overridden) do not apply to a single fabric-wide action.
     - In check mode no change is reported, because the auto-assign action cannot be previewed.
     type: str
     choices: [ roleBased, evenOdd ]
@@ -228,7 +231,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Resul
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
 
-def _run_auto_assign(module: AnsibleModule) -> NDOutput:
+def _run_auto_assign(module: AnsibleModule, output: NDOutput) -> None:
     """
     # Summary
 
@@ -237,14 +240,16 @@ def _run_auto_assign(module: AnsibleModule) -> NDOutput:
     snapshotted before and after so `changed` reflects whether the regrouping altered the fabric.
     In check mode the `propose` action is skipped (it cannot be previewed) and no change is reported.
 
+    The supplied `output` is populated in place. The `before` snapshot is assigned as soon as it is
+    taken (with `after` seeded to it) so that if `propose` or the post-snapshot query fails, the
+    caller's error path still surfaces the captured `before`/`after` context instead of an empty result.
+
     ## Raises
 
     ### Exception
 
     - Propagated from the orchestrator if a query or the `propose` request fails.
     """
-    output = NDOutput(output_level=module.params.get("output_level", "normal"))
-
     sender = Sender()
     sender.ansible_module = module
     rest_send_params = dict(module.params)
@@ -256,12 +261,48 @@ def _run_auto_assign(module: AnsibleModule) -> NDOutput:
     orchestrator = FabricUpdateGroupOrchestrator(rest_send=rest_send, results=Results())
 
     before = NDConfigCollection.from_api_response(response_data=orchestrator.query_all(), model_class=FabricUpdateGroupModel)
+    # Seed before/after now: if propose or the after-snapshot raises, the caller's except path still
+    # has the before context (after == before reflects "nothing applied yet").
+    output.assign(before=before, after=before)
     if not module.check_mode:
         orchestrator.propose(module.params["auto_assign"])
     after = NDConfigCollection.from_api_response(response_data=orchestrator.query_all(), model_class=FabricUpdateGroupModel)
 
     output.assign(before=before, after=after)
-    return output
+
+
+def _validate_report_analysis_exclusion(module: AnsibleModule) -> None:
+    """
+    # Summary
+
+    Fail with a clear message if any config item selects both `analysis` and a report type. Nexus
+    Dashboard rejects `analysis` set together with `reports` / `report_selection` at a value other than
+    `noReport` (400 "Both Analysis and Report type can not be selected togather"), and even
+    `analysis: noAnalysis` counts as analysis being selected. Enforcing it here turns a raw ND 400 into
+    an actionable validation error. Skipped for O(state=deleted), where settings fields are ignored.
+
+    ## Raises
+
+    None
+
+    Calls `module.fail_json` (which raises) on a conflicting config item.
+    """
+    if module.params.get("state") == "deleted":
+        return
+    for item in module.params.get("config") or []:
+        if not isinstance(item, dict):
+            continue
+        analysis_selected = item.get("analysis") is not None
+        report_selected = item.get("reports") not in (None, "noReport") or item.get("report_selection") not in (None, "noReport")
+        if analysis_selected and report_selected:
+            module.fail_json(
+                msg=(
+                    f"update_group_name '{item.get('update_group_name')}': analysis cannot be combined with a report type. "
+                    "Nexus Dashboard rejects 'analysis' set together with 'reports' or 'report_selection' at any value other "
+                    "than 'noReport' (even analysis: noAnalysis counts as analysis being selected). "
+                    "Specify analysis or a report type, but not both."
+                )
+            )
 
 
 def main():
@@ -275,15 +316,20 @@ def main():
     )
     require_pydantic(module)
 
+    _validate_report_analysis_exclusion(module)
+
     auto_assign = module.params.get("auto_assign")
     if auto_assign is not None:
         state = module.params["state"]
-        if state not in ("merged", "overridden"):
-            module.fail_json(msg=f"auto_assign is only valid with state 'merged' or 'overridden', got '{state}'.")
+        if state != "merged":
+            module.fail_json(
+                msg=f"auto_assign is only valid with state 'merged', got '{state}'. "
+                "The auto-assign action already regroups every switch in the fabric, so state 'overridden' is not supported with it."
+            )
 
         output = NDOutput(output_level=module.params.get("output_level", "normal"))
         try:
-            output = _run_auto_assign(module)
+            _run_auto_assign(module, output)
             module.exit_json(**output.format())
         except Exception as e:
             module.fail_json(msg=f"Module execution failed: {str(e)}", **output.format())

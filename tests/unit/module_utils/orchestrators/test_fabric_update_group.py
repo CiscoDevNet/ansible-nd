@@ -623,6 +623,39 @@ def test_fabric_update_group_00250() -> None:
     assert body["analysis"] == "snapshot"
 
 
+def test_fabric_update_group_00260() -> None:
+    """
+    # Summary
+
+    Verify `update` rejects an empty `update_group_switches` (an empty update group is not permitted;
+    `state: deleted` is the way to remove a group) before issuing any membership or settings write.
+
+    ## Test
+
+    - The model carries an empty `update_group_switches`
+    - `update` GETs the current group, then raises `RuntimeError` (wrapped) without an attach/detach/PUT
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.update()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send, instance = _resolving_instance(gen_responses)
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=[])
+
+    with pytest.raises(RuntimeError, match=r"Update failed for .*leaf_group.*must be non-empty.*state: deleted"):
+        instance.update(model)
+
+    # The only request issued was the initial GET; no attach/detach/PUT followed.
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group"
+    assert rest_send.verb == HttpVerbEnum.GET.value
+
+
 # =============================================================================
 # Test: delete
 # =============================================================================
@@ -1119,15 +1152,28 @@ def test_fabric_update_group_00750() -> None:
     """
     # Summary
 
-    Verify `_looks_like_ip` heuristic: strings with dots are IPs, others are switchIds.
+    Verify `_is_ip_address` accepts valid IPv4 and IPv6 addresses and rejects switchIds, malformed
+    dotted strings, CIDR-prefixed values, and non-strings.
+
+    ## Test
+
+    - A valid IPv4 address is an IP
+    - A valid IPv6 address is an IP (no dot - the old dot heuristic would have rejected it)
+    - A switchId serial, a malformed dotted string, a CIDR-prefixed value, an empty string, and a
+      non-string are not IPs
 
     ## Classes and Methods
 
-    - FabricUpdateGroupOrchestrator._looks_like_ip()
+    - FabricUpdateGroupOrchestrator._is_ip_address()
     """
-    assert FabricUpdateGroupOrchestrator._looks_like_ip("192.168.12.151") is True
-    assert FabricUpdateGroupOrchestrator._looks_like_ip("FDO12345ABC") is False
-    assert FabricUpdateGroupOrchestrator._looks_like_ip("") is False
+    assert FabricUpdateGroupOrchestrator._is_ip_address("192.168.12.151") is True
+    assert FabricUpdateGroupOrchestrator._is_ip_address("2001:db8::1") is True
+    assert FabricUpdateGroupOrchestrator._is_ip_address("fe80::200:5aee:feaa:20a2") is True
+    assert FabricUpdateGroupOrchestrator._is_ip_address("FDO12345ABC") is False
+    assert FabricUpdateGroupOrchestrator._is_ip_address("1.2.3") is False
+    assert FabricUpdateGroupOrchestrator._is_ip_address("192.168.12.151/32") is False
+    assert FabricUpdateGroupOrchestrator._is_ip_address("") is False
+    assert FabricUpdateGroupOrchestrator._is_ip_address(None) is False
 
 
 def test_fabric_update_group_00760() -> None:
@@ -1191,8 +1237,9 @@ def test_fabric_update_group_00790() -> None:
     """
     # Summary
 
-    Verify `_switch_ids_to_ips` is best-effort: when the switch map cannot be loaded, the switchIds are
-    returned unchanged rather than raising.
+    Verify `_switch_ids_to_ips` does NOT swallow a switch-inventory load failure: it propagates so a
+    real fault surfaces as an error rather than masquerading as unconverted switchIds (which would
+    diff against the user's IPs and report a silent perpetual `changed`).
 
     ## Classes and Methods
 
@@ -1200,10 +1247,8 @@ def test_fabric_update_group_00790() -> None:
     """
     instance = _bare_instance(_RaisingFabricContext())
 
-    with does_not_raise():
-        result = instance._switch_ids_to_ips(["FDO1", "FDO2"])
-
-    assert result == ["FDO1", "FDO2"]
+    with pytest.raises(RuntimeError, match=r"switch inventory unavailable"):
+        instance._switch_ids_to_ips(["FDO1", "FDO2"])
 
 
 # =============================================================================
@@ -1269,3 +1314,47 @@ def test_fabric_update_group_00810() -> None:
 
     with pytest.raises(RuntimeError, match=r"Auto-assign \(propose\) failed for fabric 'fabric_1'"):
         instance.propose("roleBased")
+
+
+# =============================================================================
+# Test: _raise_on_207_action_errors
+# =============================================================================
+
+
+def test_fabric_update_group_00900() -> None:
+    """
+    # Summary
+
+    Verify `_raise_on_207_action_errors` treats a 207 item with a MISSING `status` as a failure. ND
+    reports success explicitly, so an absent status means the per-item outcome is unknown and must not
+    be assumed successful.
+
+    ## Test
+
+    - A 207 item with no `status` key raises `RuntimeError`
+    - The raised message names the offending group
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator._raise_on_207_action_errors()
+    """
+    result = {"attachUpdateGroups": [{"updateGroupName": "g1", "warningMessage": "no status echoed"}]}
+
+    with pytest.raises(RuntimeError, match=r"Per-item failures in attachUpdateGroups.*g1.*None"):
+        FabricUpdateGroupOrchestrator._raise_on_207_action_errors(result, "attachUpdateGroups", "warningMessage")
+
+
+def test_fabric_update_group_00910() -> None:
+    """
+    # Summary
+
+    Verify `_raise_on_207_action_errors` does not raise when every item reports `status: success`.
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator._raise_on_207_action_errors()
+    """
+    result = {"attachUpdateGroups": [{"updateGroupName": "g1", "status": "success"}, {"updateGroupName": "g2", "status": "success"}]}
+
+    with does_not_raise():
+        FabricUpdateGroupOrchestrator._raise_on_207_action_errors(result, "attachUpdateGroups", "warningMessage")

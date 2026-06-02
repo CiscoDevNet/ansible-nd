@@ -683,5 +683,18 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
         "MESSAGE": "No Content",
         "DATA": {}
+    },
+    "test_fabric_update_group_00260a": {
+        "TEST_NOTES": ["update with empty update_group_switches: GET current group; update() must reject before any write"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroupName": "leaf_group",
+            "updateGroupSwitches": [
+                "FDO1"
+            ]
+        }
     }
 }

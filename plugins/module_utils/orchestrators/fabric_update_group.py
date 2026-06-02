@@ -35,6 +35,7 @@ ND apply the change and return `success` instead.
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Any, ClassVar, Type
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -170,19 +171,27 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         return api_endpoint
 
     @staticmethod
-    def _looks_like_ip(value: str) -> bool:
+    def _is_ip_address(value: str) -> bool:
         """
         # Summary
 
-        Heuristic: a switch identifier is a fabric management IP address if it is a string containing a
-        dot. switchIds (serial numbers, e.g. `FDO12345ABC`) never contain dots. Switches are supplied as
-        IP addresses only, so a value that fails this check is rejected by `_resolve_switch_id`.
+        Return True if `value` is a valid IPv4 or IPv6 address. Switches are supplied as fabric
+        management IP addresses only; switchIds (serial numbers, e.g. `FDO12345ABC`) are not valid IP
+        addresses, so a value that fails this check is rejected by `_resolve_switch_id`. Parsing with
+        `ipaddress.ip_address` (rather than a dot heuristic) accepts IPv6 management addresses, which
+        contain no dot, and rejects prefixed (CIDR) values, which a switch identity never carries.
 
         ## Raises
 
         None
         """
-        return isinstance(value, str) and "." in value
+        if not isinstance(value, str):
+            return False
+        try:
+            ipaddress.ip_address(value)
+            return True
+        except ValueError:
+            return False
 
     def _resolve_switch_id(self, value: str) -> str:
         """
@@ -200,7 +209,7 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         - If `value` is not an IP address (switches must be specified as fabric management IP addresses).
         - If no switch with that `fabricManagementIp` exists in the fabric (propagated from `FabricContext`).
         """
-        if not self._looks_like_ip(value):
+        if not self._is_ip_address(value):
             raise RuntimeError(
                 f"Switch identifier '{value}' is not a fabric management IP address; "
                 "update_group_switches and installation_order_devices accept IP addresses only."
@@ -230,18 +239,23 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         """
         # Summary
 
-        Map wire `switchId`s to their `fabricManagementIp`s via `FabricContext` (best-effort). switchIds
-        absent from the fabric (e.g. stale serials) are passed through unchanged. Used to denormalize GET
-        responses so the user sees IP-based output that matches the IP-based input they supplied.
+        Map wire `switchId`s to their `fabricManagementIp`s via `FabricContext`. switchIds absent from
+        the fabric (e.g. stale serials) are passed through unchanged. Used to denormalize GET responses
+        so the user sees IP-based output that matches the IP-based input they supplied.
+
+        A failure to load the switch inventory is NOT swallowed: it propagates so the caller fails
+        loudly. Returning unconverted switchIds here would leave `before` carrying switchIds while the
+        user's `proposed` carries IPs, so the `issubset` idempotency diff would never match and the
+        module would report `changed` and re-PUT on every run with no error surfaced. A genuine fault
+        (auth, network) must not masquerade as a perpetual no-op diff.
 
         ## Raises
 
-        None
+        ### RuntimeError
+
+        - If the switch inventory cannot be loaded (propagated from `FabricContext.switch_map_by_id`).
         """
-        try:
-            switch_map_by_id = self.fabric_context.switch_map_by_id
-        except Exception:  # pylint: disable=broad-except
-            return list(values)
+        switch_map_by_id = self.fabric_context.switch_map_by_id
         return [switch_map_by_id.get(v, v) for v in values]
 
     def _denormalize_switches_in_response(self, item: Any) -> Any:
@@ -251,14 +265,15 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         For a single GET response dict, replace switchIds in `updateGroupSwitches` and
         `installationOrderDevices` with their matching IPs so the user sees consistent IP-based output.
 
-        Denormalization is best-effort: if the switch map cannot be loaded (e.g. the inventory call
-        fails), the lists are returned unmodified rather than raising - switchIds shown to the user
-        are still correct, just not user-friendlier IPs. Per-switchId lookups that miss the map (stale
-        serials) are also passed through unchanged.
+        Per-switchId lookups that miss the map (stale serials) are passed through unchanged. A failure
+        to load the switch inventory is NOT swallowed - it propagates (see `_switch_ids_to_ips`) so an
+        inventory fault surfaces as an error rather than as a silent perpetual `changed`.
 
         ## Raises
 
-        None
+        ### RuntimeError
+
+        - If the switch inventory cannot be loaded (propagated from `_switch_ids_to_ips`).
         """
         if not isinstance(item, dict):
             return item
@@ -281,18 +296,21 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         task. The user opts past warnings by setting `force_created`, which makes ND apply the change
         and return `success`; `force_created` therefore governs the request, never response handling.
 
+        A missing `status` key is treated as a failure: ND reports success explicitly, so the absence
+        of `status` means the per-item outcome is unknown and must not be assumed successful.
+
         ## Raises
 
         ### RuntimeError
 
-        - If any item in the response reports a status other than `success`.
+        - If any item in the response reports a status other than `success` (including a missing status).
         """
         if not isinstance(result, dict):
             return
         items = result.get(response_key)
         if not isinstance(items, list):
             return
-        failures = [item for item in items if isinstance(item, dict) and item.get("status") not in (None, "success")]
+        failures = [item for item in items if isinstance(item, dict) and item.get("status") != "success"]
         if failures:
             details = ", ".join(f"{item.get('updateGroupName')}: {item.get('status')} - {item.get(message_key)}" for item in failures)
             raise RuntimeError(f"Per-item failures in {response_key} response: {details}")
