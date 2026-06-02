@@ -223,16 +223,21 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         Replace IP entries in `updateGroupSwitches` and `installationOrderDevices` with the matching
         switchIds before sending. Mutates the payload dict in place and returns it.
 
+        A value that is already a known switchId is passed through unchanged. This is what makes a
+        settings-only update (membership omitted) work: the membership seeded from the current-group GET
+        is already switchIds, so it must not be run through `_resolve_switch_id` (which accepts IPs only).
+
         ## Raises
 
         ### RuntimeError
 
-        - If any IP in either list cannot be resolved in the fabric (propagated from `_resolve_switch_id`).
+        - If any value in either list is neither a known switchId nor a resolvable IP (propagated from `_resolve_switch_id`).
         """
+        known_ids = self.fabric_context.switch_map_by_id
         for key in _SWITCH_LIST_PAYLOAD_KEYS:
             values = payload.get(key)
             if isinstance(values, list):
-                payload[key] = [self._resolve_switch_id(v) for v in values]
+                payload[key] = [v if v in known_ids else self._resolve_switch_id(v) for v in values]
         return payload
 
     def _switch_ids_to_ips(self, values: list) -> list:
@@ -407,16 +412,24 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         # Summary
 
         GET a single update group, returning None if the group cannot be read (e.g. a zero-switch
-        ghost group, which ND returns HTTP 400 for).
+        ghost group, which ND returns HTTP 400 for) or does not exist (HTTP 404). Any other failure
+        (auth, server, transient) is propagated so a real error is not silently treated as a ghost.
 
         ## Raises
 
-        None
+        ### Exception
+
+        - If the GET fails with a status code other than 400 (ghost) or 404 (not found).
         """
         try:
             return self._get_group_raw(update_group_name)
         except Exception:  # pylint: disable=broad-except
-            return None
+            # TODO(4.2.1) ND returns HTTP 400 (not 404/empty) for a zero-switch ghost group that cannot be read.
+            # Only treat the documented ghost/not-found codes as "unreadable"; re-raise anything else so a
+            # transient/auth/server failure is not silently turned into a destructive DELETE.
+            if self.rest_send.return_code in (400, 404):
+                return None
+            raise
 
     def _delete_group(self, update_group_name: str) -> None:
         """
@@ -532,15 +545,26 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
 
         ### RuntimeError
 
-        - If `update_group_switches` resolves to an empty set (an empty update group is not permitted -
-          use `state: deleted`), a switch IP cannot be resolved, a request fails, or an action
-          endpoint reports a non-success status.
+        - If `update_group_switches` is given as an explicit empty list (an empty update group is not
+          permitted - use `state: deleted`), a switch IP cannot be resolved, a request fails, or an
+          action endpoint reports a non-success status.
+
+        ## Notes
+
+        - An omitted `update_group_switches` (`None`) means membership is not being managed: the current
+          membership is kept and only group settings are applied. This is what makes a settings-only
+          update (e.g. changing `execution` or `reports`) possible without re-listing every switch.
         """
         try:
             update_group_name = model_instance.update_group_name
             current_raw = self._get_group_raw(update_group_name)
+            desired = model_instance.update_group_switches
+            if desired is None:
+                # Membership not being managed; keep current members, apply settings only.
+                self._apply_settings(model_instance, current_raw=current_raw)
+                return {}
             current_ids = list(current_raw.get("updateGroupSwitches") or [])
-            desired_ids = [self._resolve_switch_id(s) for s in (model_instance.update_group_switches or [])]
+            desired_ids = [self._resolve_switch_id(s) for s in desired]
             if not desired_ids:
                 raise RuntimeError("update_group_switches must be non-empty; an empty update group is not permitted (use state: deleted)")
             to_add = [s for s in desired_ids if s not in current_ids]

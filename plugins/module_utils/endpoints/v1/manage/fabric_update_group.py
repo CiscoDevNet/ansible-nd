@@ -22,6 +22,7 @@ under the ND Manage Fabric Software Management API.
 from __future__ import annotations
 
 from typing import ClassVar, Literal
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -66,9 +67,9 @@ class _EpFabricUpdateGroupBase(UpdateGroupNameMixin, FabricNameMixin, NDEndpoint
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         if self._require_update_group_name and self.update_group_name is None:
             raise ValueError(f"{type(self).__name__}.path: update_group_name must be set before accessing path.")
-        segments = ["fabrics", self.fabric_name, "updateGroups"]
+        segments = ["fabrics", quote(self.fabric_name, safe=""), "updateGroups"]
         if self.update_group_name is not None:
-            segments.append(self.update_group_name)
+            segments.append(quote(self.update_group_name, safe=""))
         return BasePath.path(*segments)
 
 

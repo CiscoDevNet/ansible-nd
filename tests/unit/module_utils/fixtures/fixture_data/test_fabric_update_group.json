@@ -740,5 +740,91 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
         "MESSAGE": "No Content",
         "DATA": {}
+    },
+    "test_fabric_update_group_00270a": {
+        "TEST_NOTES": [
+            "state merged, settings-only: update_group_switches omitted (None). GET current group; membership",
+            "FDO1,FDO2 must be kept and only settings PUT issued (no attach/detach)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroupName": "leaf_group",
+            "execution": "parallel",
+            "contingency": "pause",
+            "analysis": "noAnalysis",
+            "isMaintenance": false,
+            "isDisruptiveUpdate": false,
+            "reportSelection": "advanced",
+            "updateGroupSwitches": ["FDO1", "FDO2"]
+        }
+    },
+    "test_fabric_update_group_00270b": {
+        "TEST_NOTES": ["state merged, settings-only: settings PUT returns 204"],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "No Content",
+        "DATA": {}
+    },
+    "test_fabric_update_group_00280a": {
+        "TEST_NOTES": [
+            "state replaced, settings-only: update_group_switches omitted (None). GET current group; membership",
+            "FDO1,FDO2 is kept (required PUT key) while omitted optional reportSelection is reset."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroupName": "leaf_group",
+            "execution": "parallel",
+            "contingency": "pause",
+            "analysis": "noAnalysis",
+            "isMaintenance": false,
+            "isDisruptiveUpdate": false,
+            "reportSelection": "advanced",
+            "updateGroupSwitches": ["FDO1", "FDO2"]
+        }
+    },
+    "test_fabric_update_group_00280b": {
+        "TEST_NOTES": ["state replaced, settings-only: settings PUT returns 204"],
+        "RETURN_CODE": 204,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "No Content",
+        "DATA": {}
+    },
+    "test_fabric_update_group_00330a": {
+        "TEST_NOTES": [
+            "delete with non-ghost GET failure: the preliminary GET returns 500. _get_group_raw_or_none must",
+            "re-raise (not treat as a ghost group) so delete() fails without issuing a destructive DELETE."
+        ],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"message": "backend unavailable"}
+    },
+    "test_fabric_update_group_00340a": {
+        "TEST_NOTES": [
+            "delete with not-found GET: the preliminary GET returns 404 (group already gone). _get_group_raw_or_none",
+            "returns None and delete() falls back to the group-centric DELETE to free the name."
+        ],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "Not Found",
+        "DATA": {"message": "Update group not found"}
+    },
+    "test_fabric_update_group_00340b": {
+        "TEST_NOTES": ["delete not-found fallback: group-centric DELETE frees the name (204)"],
+        "RETURN_CODE": 204,
+        "METHOD": "DELETE",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group",
+        "MESSAGE": "No Content",
+        "DATA": {}
     }
 }

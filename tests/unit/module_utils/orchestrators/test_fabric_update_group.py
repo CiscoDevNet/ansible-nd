@@ -698,6 +698,86 @@ def test_fabric_update_group_00260() -> None:
     assert rest_send.verb == HttpVerbEnum.GET.value
 
 
+def test_fabric_update_group_00270() -> None:
+    """
+    # Summary
+
+    Verify `update` with `state: merged` and an omitted `update_group_switches` (settings-only update)
+    keeps the current membership and issues only GET + settings PUT (no attach/detach).
+
+    ## Test
+
+    - The model carries settings but omits `update_group_switches` (None)
+    - Current membership is FDO1, FDO2; the PUT body preserves it and overlays the user's settings
+    - No attachGroup / detachGroup request is issued
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.update()
+    - FabricUpdateGroupOrchestrator._apply_settings()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send, instance = _resolving_instance(gen_responses)
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", analysis="snapshot")
+
+    with does_not_raise():
+        instance.update(model)
+
+    # The last request is the settings PUT; no attach/detach intervened.
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group"
+    assert rest_send.verb == HttpVerbEnum.PUT.value
+    body = rest_send.committed_payload
+    assert body["updateGroupSwitches"] == ["FDO1", "FDO2"]
+    assert body["analysis"] == "snapshot"
+    assert body["reportSelection"] == "advanced"
+
+
+def test_fabric_update_group_00280() -> None:
+    """
+    # Summary
+
+    Verify `update` with `state: replaced` and an omitted `update_group_switches` keeps the current
+    membership (a required PUT key) while still resetting an omitted optional field.
+
+    ## Test
+
+    - The model carries settings but omits `update_group_switches` (None)
+    - `state` is `replaced`: the PUT seeds only required fields from the current group, so membership
+      FDO1, FDO2 is preserved while the omitted optional `reportSelection` is reset (absent)
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.update()
+    - FabricUpdateGroupOrchestrator._apply_settings()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send, instance = _resolving_instance(gen_responses)
+    rest_send.params["state"] = "replaced"
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", analysis="snapshot")
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group"
+    assert rest_send.verb == HttpVerbEnum.PUT.value
+    body = rest_send.committed_payload
+    assert body["updateGroupSwitches"] == ["FDO1", "FDO2"]
+    assert body["analysis"] == "snapshot"
+    assert "reportSelection" not in body
+
+
 # =============================================================================
 # Test: delete
 # =============================================================================
@@ -780,6 +860,78 @@ def test_fabric_update_group_00320() -> None:
     ## Classes and Methods
 
     - FabricUpdateGroupOrchestrator.delete()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+        yield responses_fabric_update_group(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    model = _build_model()
+
+    with does_not_raise():
+        instance.delete(model)
+
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group"
+    assert rest_send.verb == HttpVerbEnum.DELETE.value
+
+
+def test_fabric_update_group_00330() -> None:
+    """
+    # Summary
+
+    Verify `delete` propagates a non-ghost GET failure instead of falling back to a destructive DELETE.
+
+    A zero-switch ghost group returns HTTP 400; any other failure (here 500) must not be mistaken for a
+    ghost. `delete` re-raises so a transient/auth/server error is never turned into a DELETE.
+
+    ## Test
+
+    - GET single returns 500
+    - `delete` raises `RuntimeError` (wrapped) and issues no DELETE; the last request is the GET
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.delete()
+    - FabricUpdateGroupOrchestrator._get_group_raw_or_none()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_update_group(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    model = _build_model()
+
+    with pytest.raises(RuntimeError, match=r"Delete failed for .*leaf_group"):
+        instance.delete(model)
+
+    # Only the GET was issued; no DELETE followed the unexpected failure.
+    assert rest_send.path == "/api/v1/manage/fabrics/fabric_1/updateGroups/leaf_group"
+    assert rest_send.verb == HttpVerbEnum.GET.value
+
+
+def test_fabric_update_group_00340() -> None:
+    """
+    # Summary
+
+    Verify `delete` treats a 404 on the single GET as "group already gone" and falls back to the
+    group-centric DELETE to free the reserved name.
+
+    ## Test
+
+    - GET single returns 404
+    - `delete` issues DELETE against the per-name URL
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.delete()
+    - FabricUpdateGroupOrchestrator._get_group_raw_or_none()
     """
     method_name = inspect.stack()[0][3]
 
