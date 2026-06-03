@@ -144,6 +144,11 @@ class EpManageSwitchesListGet(_EpManageSwitchesBase):
         return HttpVerbEnum.GET
 
 
+# TODO: Remove EpManageSwitchesGet once the in-flight stacked branches have merged into develop.
+# It is currently unused here -- nd_maintenance_mode resolves per-switch intendedSystemMode from the
+# bulk EpManageSwitchesListGet snapshot, not from a per-switch GET. It is retained for now because
+# sibling branches in the current stack may still reference the per-switch endpoint; revisit after
+# the stack lands and delete it if no caller has appeared.
 class EpManageSwitchesGet(FabricNameMixin, NDEndpointBaseModel):
     """
     # Summary
