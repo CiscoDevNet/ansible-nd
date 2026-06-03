@@ -17,8 +17,8 @@ description:
 - Manage the system mode of one or more switches in a fabric on Cisco Nexus Dashboard.
 - Wraps the C(POST /api/v1/manage/fabrics/{fabric_name}/switchActions/changeSystemMode) endpoint, which sets a single
   C(mode) (C(normal) or C(maintenance)) for a batch of switches in one request.
-- For idempotency the module reads each switch's current C(intendedSystemMode) from C(GET /api/v1/manage/fabrics/{fabric_name}/switches/{switch_id})
-  and only POSTs the subset of switches whose intent differs from the requested mode.
+- For idempotency the module reads every switch's current C(intendedSystemMode) from a single bulk
+  C(GET /api/v1/manage/fabrics/{fabric_name}/switches) and only POSTs the subset of switches whose intent differs from the requested mode.
 - If any requested switch is currently in C(migration) mode, the module fails before any change is made and asks the
   operator to clear the migration state via the ND UI's "Recalculate and Deploy" workflow.
 - This module currently supports O(state=merged) only. A future O(state=gathered) will report current per-switch system
