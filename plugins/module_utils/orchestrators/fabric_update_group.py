@@ -339,17 +339,26 @@ class FabricUpdateGroupOrchestrator(NDBaseOrchestrator[FabricUpdateGroupModel]):
         # Summary
 
         Build a single `attachUpdateGroups` item. When `switch_ids` is None the model's
-        `update_group_switches` are resolved (IP -> switchId); otherwise the provided already-resolved
-        list is used verbatim.
+        `update_group_switches` are resolved (IP -> switchId) and must be non-empty (this is the create
+        path - a new group needs at least one switch); otherwise the provided already-resolved list is
+        used verbatim (the update path, which has already validated membership).
 
         ## Raises
 
         ### RuntimeError
 
         - If a switch IP cannot be resolved (propagated from `_resolve_switch_id`).
+        - If `switch_ids` is None and the model carries no switches: a new update group must list at least
+          one switch (ND does not permit a zero-switch group). Reached only on the create path; the update
+          path passes an explicit `switch_ids` and guards the empty case itself.
         """
         if switch_ids is None:
             switch_ids = [self._resolve_switch_id(s) for s in (model_instance.update_group_switches or [])]
+            if not switch_ids:
+                raise RuntimeError(
+                    f"update_group_name '{model_instance.update_group_name}': update_group_switches must be non-empty when "
+                    "creating an update group; ND does not permit a zero-switch group."
+                )
         return {
             "updateGroupName": model_instance.update_group_name,
             "switchIds": switch_ids,

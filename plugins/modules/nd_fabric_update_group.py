@@ -72,6 +72,11 @@ options:
         - Each entry is a switch fabric management IP address (IPv4 or IPv6). Switch serial numbers are not accepted.
         - Switch IP addresses are resolved to switchIds via the fabric inventory before the request is sent.
         - An update group must contain at least one switch; ND does not permit a zero-switch group.
+        - When creating a new update group, O(config.update_group_switches) is required and must be non-empty.
+        - When updating an existing group, omitting O(config.update_group_switches) leaves the current membership
+          unchanged (membership is not managed) and applies only the other provided settings, whereas providing it
+          reconciles membership to exactly the listed switches. An explicit empty list is rejected in both cases;
+          use O(state=deleted) to remove a group.
         type: list
         elements: str
       force_created:

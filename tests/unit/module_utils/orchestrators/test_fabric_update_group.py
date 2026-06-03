@@ -452,6 +452,44 @@ def test_fabric_update_group_00160() -> None:
     assert body["updateGroupSwitches"] == ["FDO1", "FDO2"]
 
 
+@pytest.mark.parametrize(
+    "switches",
+    [
+        pytest.param(None, id="omitted"),
+        pytest.param([], id="explicit_empty_list"),
+    ],
+)
+def test_fabric_update_group_00170(switches: list[str] | None) -> None:
+    """
+    # Summary
+
+    Verify `create` rejects a group with no switches - both an omitted `update_group_switches` (`None`)
+    and an explicit empty list - failing fast with a clear message before any wire request. On the
+    create path there is no existing membership to preserve, so (unlike `update`, where `None` means
+    "membership not managed") a missing switch list is simply invalid: ND does not permit a zero-switch
+    group.
+
+    ## Test
+
+    - The model carries no switches (omitted, then explicit empty list)
+    - `create` raises `RuntimeError` (wrapped) naming `update_group_switches` before issuing any request
+
+    ## Classes and Methods
+
+    - FabricUpdateGroupOrchestrator.create()
+    - FabricUpdateGroupOrchestrator._attach_item()
+    """
+    rest_send = RestSend({"check_mode": False, "fabric_name": "fabric_1"})
+    instance = FabricUpdateGroupOrchestrator(rest_send=rest_send)
+    model = FabricUpdateGroupModel(update_group_name="leaf_group", update_group_switches=switches)
+
+    with pytest.raises(RuntimeError, match=r"Create failed for .*leaf_group.*update_group_switches must be non-empty.*zero-switch group"):
+        instance.create(model)
+
+    # No wire request was issued; the guard fired while building the attach item.
+    assert rest_send._path is None
+
+
 # =============================================================================
 # Test: update
 # =============================================================================
