@@ -26,8 +26,8 @@ class MaintenanceModeSwitchModel(NDNestedModel):
     # Summary
 
     Single switch entry in `config.switches`. The user supplies `switch_ip`; the orchestrator resolves
-    it to the switch serial number (`switchId`) via `FabricContext.get_switch_id()` before building the
-    `switchIds` array in the POST body.
+    it to the switch serial number (`switchId`) from the bulk `EpManageSwitchesListGet` snapshot cached
+    by `query_all()` before building the `switchIds` array in the POST body.
 
     ## Raises
 
