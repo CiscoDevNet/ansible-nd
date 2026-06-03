@@ -102,10 +102,9 @@ class SviPolicyModel(NDNestedModel):
 
     # --- Validators ---
 
-    # TODO(ND 4.3): remove this validator once ND 4.2 reaches end-of-support.
-    # ND 4.2 returns `routingTag` as an integer on GET despite the OpenAPI spec declaring it as string and accepting
-    # string on POST/PUT. Cisco has confirmed this is fixed in ND 4.3, so once 4.2 is deprecated this coercion is
-    # dead weight. Tracked in `project_svi_hsrp_phase2.md`.
+    # TODO(4.2.1) GET returns `routingTag` as an integer though the OpenAPI spec declares it as string and POST/PUT accept string.
+    # Remove this validator once ND 4.2 reaches end-of-support. Cisco has confirmed this is fixed in ND 4.3, so once 4.2 is
+    # deprecated this coercion is dead weight. Tracked in `project_svi_hsrp_phase2.md`.
     @field_validator("routing_tag", mode="before")
     @classmethod
     def coerce_routing_tag_to_string(cls, value):
