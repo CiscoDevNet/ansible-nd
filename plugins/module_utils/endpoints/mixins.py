@@ -56,6 +56,12 @@ class InclAllMsdSwitchesMixin(BaseModel):
     incl_all_msd_switches: BooleanStringEnum = Field(default=BooleanStringEnum.FALSE, description="Include all MSD switches")
 
 
+class InterfaceNameMixin(BaseModel):
+    """Mixin for endpoints that require interface_name parameter."""
+
+    interface_name: Optional[str] = Field(default=None, min_length=1, description="Interface name")
+
+
 class LinkUuidMixin(BaseModel):
     """Mixin for endpoints that require link_uuid parameter."""
 
@@ -78,6 +84,12 @@ class NetworkNameMixin(BaseModel):
     """Mixin for endpoints that require network_name parameter."""
 
     network_name: Optional[str] = Field(default=None, min_length=1, max_length=64, description="Network name")
+
+
+class OffsetMixin(BaseModel):
+    """Mixin for endpoints that require a pagination offset parameter."""
+
+    offset: Optional[int] = Field(default=None, ge=0, description="Pagination offset")
 
 
 class OffsetMixin(BaseModel):

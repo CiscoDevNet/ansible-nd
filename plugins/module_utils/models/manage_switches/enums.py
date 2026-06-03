@@ -49,6 +49,52 @@ class SwitchRole(str, Enum):
         """Return list of valid choices."""
         return [e.value for e in cls]
 
+    @classmethod
+    def from_user_input(cls, value: str) -> "SwitchRole":
+        """
+        Convert user-friendly input to enum value.
+        Accepts underscore-separated values like 'border_gateway' -> 'borderGateway'
+        """
+        if not value:
+            return cls.LEAF
+        # Try direct match first
+        try:
+            return cls(value)
+        except ValueError:
+            pass
+        # Try converting underscore to camelCase
+        parts = value.lower().split("_")
+        camel_case = parts[0] + "".join(word.capitalize() for word in parts[1:])
+        try:
+            return cls(camel_case)
+        except ValueError:
+            raise ValueError(f"Invalid switch role: {value}. Valid options: {cls.choices()}")
+
+    @classmethod
+    def normalize(cls, value: str | "SwitchRole" | None) -> "SwitchRole":
+        """
+        Normalize input to enum value (case-insensitive).
+        Accepts: LEAF, leaf, border_gateway, borderGateway, etc.
+        """
+        if value is None:
+            return cls.LEAF
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            v_lower = value.lower()
+            # Try direct match with lowercase
+            for role in cls:
+                if role.value.lower() == v_lower:
+                    return role
+            # Try converting underscore to camelCase
+            parts = v_lower.split("_")
+            if len(parts) > 1:
+                camel_case = parts[0] + "".join(word.capitalize() for word in parts[1:])
+                for role in cls:
+                    if role.value == camel_case:
+                        return role
+        raise ValueError(f"Invalid SwitchRole: {value}. Valid: {cls.choices()}")
+
 
 class SystemMode(str, Enum):
     """
@@ -89,6 +135,60 @@ class PlatformType(str, Enum):
     def choices(cls) -> list[str]:
         return [e.value for e in cls]
 
+    @classmethod
+    def normalize(cls, value: str | "PlatformType" | None) -> "PlatformType":
+        """
+        Normalize input to enum value (case-insensitive).
+        Accepts: NX_OS, nx-os, NX-OS, ios_xe, ios-xe, etc.
+        """
+        if value is None:
+            return cls.NX_OS
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            v_normalized = value.lower().replace("_", "-")
+            for pt in cls:
+                if pt.value == v_normalized:
+                    return pt
+        raise ValueError(f"Invalid PlatformType: {value}. Valid: {cls.choices()}")
+
+
+class ShallowDiscoveryPlatformType(str, Enum):
+    """
+    Platform type for shallow discovery.
+
+    Used for POST /fabrics/{fabricName}/actions/shallowDiscovery only.
+    Excludes 'apic' which is not supported by the shallowDiscovery endpoint.
+    Based on: components/schemas/shallowDiscoveryRequest.platformType
+    """
+
+    NX_OS = "nx-os"
+    OTHER = "other"
+    IOS_XE = "ios-xe"
+    IOS_XR = "ios-xr"
+    SONIC = "sonic"
+
+    @classmethod
+    def choices(cls) -> list[str]:
+        return [e.value for e in cls]
+
+    @classmethod
+    def normalize(cls, value: str | "ShallowDiscoveryPlatformType" | None) -> "ShallowDiscoveryPlatformType":
+        """
+        Normalize input to enum value (case-insensitive).
+        Accepts: NX_OS, nx-os, NX-OS, ios_xe, ios-xe, etc.
+        """
+        if value is None:
+            return cls.NX_OS
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            v_normalized = value.lower().replace("_", "-")
+            for pt in cls:
+                if pt.value == v_normalized:
+                    return pt
+        raise ValueError(f"Invalid ShallowDiscoveryPlatformType: {value}. Valid: {cls.choices()}")
+
 
 class SnmpV3AuthProtocol(str, Enum):
     """
@@ -120,6 +220,23 @@ class SnmpV3AuthProtocol(str, Enum):
     @classmethod
     def choices(cls) -> list[str]:
         return [e.value for e in cls]
+
+    @classmethod
+    def normalize(cls, value: str | "SnmpV3AuthProtocol" | None) -> "SnmpV3AuthProtocol":
+        """
+        Normalize input to enum value (case-insensitive).
+        Accepts: MD5, md5, MD5_DES, md5-des, etc.
+        """
+        if value is None:
+            return cls.MD5
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            v_normalized = value.lower().replace("_", "-")
+            for proto in cls:
+                if proto.value == v_normalized:
+                    return proto
+        raise ValueError(f"Invalid SnmpV3AuthProtocol: {value}. Valid: {cls.choices()}")
 
 
 class DiscoveryStatus(str, Enum):
@@ -248,6 +365,7 @@ __all__ = [
     "SwitchRole",
     "SystemMode",
     "PlatformType",
+    "ShallowDiscoveryPlatformType",
     "SnmpV3AuthProtocol",
     "DiscoveryStatus",
     "ConfigSyncStatus",
