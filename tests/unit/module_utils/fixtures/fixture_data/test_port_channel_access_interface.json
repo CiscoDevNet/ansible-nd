@@ -3,8 +3,7 @@
         "Fixture data for tests/unit/module_utils/orchestrators/test_port_channel_access_interface.py",
         "Each key matches a test function + suffix (a/b/c/...) per CLAUDE.md unit-test conventions.",
         "The fixtures simulate ND responses for:",
-        "  - GET /api/v1/manage/fabrics/{fabric_name}/summary  (fabric_summary via FabricContext)",
-        "  - GET /api/v1/manage/fabrics/{fabric_name}/deploymentFreeze (deploymentFreeze via FabricContext)",
+        "  - GET /api/v1/manage/fabrics/{fabric_name}/summary  (fabric_summary via FabricContext; FabricContext.fabric_is_deployment_frozen() reads the fabricStatus field from this response, not a separate /deploymentFreeze endpoint)",
         "  - GET /api/v1/manage/fabrics/{fabric_name}/switches (switch_map via FabricContext)",
         "  - GET /api/v1/manage/fabrics/{fabric_name}/switches/{sn}/interfaces (EpManageInterfacesListGet per switch)"
     ],
@@ -17,16 +16,6 @@
         "DATA": {
             "name": "fabric_1",
             "ownerCluster": "cluster_a"
-        }
-    },
-    "test_query_all_happy_path_00400_freeze": {
-        "TEST_NOTES": ["Deployment freeze: disabled (for validate_prerequisites)"],
-        "RETURN_CODE": 200,
-        "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/deploymentFreeze",
-        "MESSAGE": "OK",
-        "DATA": {
-            "deploymentFreeze": false
         }
     },
     "test_query_all_happy_path_00400b": {
@@ -145,16 +134,6 @@
             "ownerCluster": "cluster_a"
         }
     },
-    "test_query_all_no_match_00410_freeze": {
-        "TEST_NOTES": ["Deployment freeze: disabled"],
-        "RETURN_CODE": 200,
-        "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/deploymentFreeze",
-        "MESSAGE": "OK",
-        "DATA": {
-            "deploymentFreeze": false
-        }
-    },
     "test_query_all_no_match_00410b": {
         "TEST_NOTES": ["Switch list: one switch"],
         "RETURN_CODE": 200,
@@ -229,16 +208,6 @@
         "DATA": {
             "name": "fabric_1",
             "ownerCluster": "cluster_a"
-        }
-    },
-    "test_query_all_switch_404_00430_freeze": {
-        "TEST_NOTES": ["Deployment freeze: disabled"],
-        "RETURN_CODE": 200,
-        "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/deploymentFreeze",
-        "MESSAGE": "OK",
-        "DATA": {
-            "deploymentFreeze": false
         }
     },
     "test_query_all_switch_404_00430b": {
