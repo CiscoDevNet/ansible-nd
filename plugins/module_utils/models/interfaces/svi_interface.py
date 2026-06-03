@@ -57,7 +57,9 @@ class SviPolicyModel(NDNestedModel):
     None
     """
 
-    policy_type: SviPolicyTypeEnum = Field(default=SviPolicyTypeEnum.SVI, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)")
+    policy_type: SviPolicyTypeEnum = Field(
+        default=SviPolicyTypeEnum.SVI, alias="policyType", frozen=True, description="Interface policy type (hardcoded for this module)"
+    )
     admin_state: bool | None = Field(default=None, alias="adminState", description="Enable or disable the interface")
     description: AsciiDescription = Field(default=None, alias="description", max_length=254, description="Interface description")
     extra_config: str | None = Field(default=None, alias="extraConfig", description="Additional CLI for the interface")
