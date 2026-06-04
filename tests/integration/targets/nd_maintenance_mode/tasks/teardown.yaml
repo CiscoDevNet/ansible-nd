@@ -1,0 +1,21 @@
+---
+# Teardown for nd_maintenance_mode
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Called from main.yaml after the merged-state tests (in the block's `always`
+# section, so it runs even when an earlier task fails). Restores both test
+# switches to mode 'normal'.
+
+- name: "TEARDOWN: Restore both test switches to mode normal"
+  cisco.nd.nd_maintenance_mode:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      mode: normal
+      switches:
+        - switch_ip: "{{ test_switch_ip_a }}"
+        - switch_ip: "{{ test_switch_ip_b }}"
+    state: merged
+  tags: always
