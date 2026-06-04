@@ -294,7 +294,18 @@ def _validate_report_analysis_exclusion(module: AnsibleModule) -> None:
     Dashboard rejects `analysis` set together with `reports` / `report_selection` at a value other than
     `noReport` (400 "Both Analysis and Report type can not be selected togather"), and even
     `analysis: noAnalysis` counts as analysis being selected. Enforcing it here turns a raw ND 400 into
-    an actionable validation error. Skipped for O(state=deleted), where settings fields are ignored.
+    an actionable validation error. Skipped for state=deleted, where settings fields are ignored.
+
+    ## Design note
+
+    This lives at the module level (over `module.params["config"]`, i.e. user INPUT) rather than as a
+    `FabricUpdateGroupModel` validator on purpose. The model is built from GET responses too —
+    `from_response` -> `model_validate` runs every validator on each existing group read back from ND
+    (NDStateMachine's `before` snapshot, `_run_auto_assign`, the merge read in the orchestrator). A
+    cross-field validator rejecting analysis+report would therefore fire on read and could abort the whole
+    run on a group ND itself accepted, violating the "never stricter than ND on read" rule already applied
+    to `UpdateReportCheckModel.report_check_name`. The check is also state-aware (skipped for deleted), and
+    state is not a model field. Running it here keeps it input-only and fail-fast, before any wire request.
 
     ## Raises
 
