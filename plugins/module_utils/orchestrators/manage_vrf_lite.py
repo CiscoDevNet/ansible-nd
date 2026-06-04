@@ -8,7 +8,7 @@ from __future__ import absolute_import, annotations, division, print_function
 
 import json
 from collections import defaultdict
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -83,7 +83,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
     delete_bulk_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsPost
 
     @staticmethod
-    def prepare_module_params(module: Any, module_config: Any, normalized_config: list[dict[str, Any]] | None = None) -> None:
+    def prepare_module_params(module: Any, module_config: Any, normalized_config: Optional[list[dict[str, Any]]] = None) -> None:
         """Normalize module params while preserving nested playbook config."""
         state = module_config.state
         if normalized_config is None:
@@ -299,7 +299,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         }
         return self.inject_runtime_metadata(output)
 
-    def deploy_pending(self, result: dict[str, Any]) -> dict[str, Any] | None:
+    def deploy_pending(self, result: dict[str, Any]) -> Optional[dict[str, Any]]:
         module = self._module()
         config_actions = get_config_actions(module.params)
 

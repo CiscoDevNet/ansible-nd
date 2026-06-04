@@ -7,14 +7,14 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
-    loads_maybe_json,
+    parse_value,
 )
 
 
-def normalize_vrf_lite_list(vrf_lite_items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+def normalize_vrf_lite_list(vrf_lite_items: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for item in vrf_lite_items or []:
         interface = item.get("interface")
@@ -37,13 +37,13 @@ def normalize_vrf_lite_list(vrf_lite_items: list[dict[str, Any]] | None) -> list
 
 
 def build_vrf_lite_extension_values(
-    vrf_lite_items: list[dict[str, Any]] | None,
+    vrf_lite_items: Optional[list[dict[str, Any]]],
     existing_extension_values: Any = None,
 ) -> str:
     """
     Build extensionValues string expected by top-down VRF attachment APIs.
     """
-    existing_outer = loads_maybe_json(existing_extension_values)
+    existing_outer = parse_value(existing_extension_values)
     if isinstance(existing_outer, dict):
         existing_outer = dict(existing_outer)
     else:
@@ -90,12 +90,12 @@ def parse_vrf_lite_extension_values(extension_values: Any) -> list[dict[str, Any
     """
     Parse controller extensionValues into playbook-style vrf_lite list.
     """
-    outer = loads_maybe_json(extension_values)
+    outer = parse_value(extension_values)
     if not isinstance(outer, dict):
         return []
 
     inner = outer.get("VRF_LITE_CONN")
-    inner = loads_maybe_json(inner)
+    inner = parse_value(inner)
     if not isinstance(inner, dict):
         return []
 
@@ -131,7 +131,7 @@ def parse_vrf_lite_extension_values(extension_values: Any) -> list[dict[str, Any
     return normalize_vrf_lite_list(parsed)
 
 
-def build_instance_values(import_evpn_rt: str | None, export_evpn_rt: str | None) -> str:
+def build_instance_values(import_evpn_rt: Optional[str], export_evpn_rt: Optional[str]) -> str:
     values = {
         "loopbackId": "",
         "loopbackIpAddress": "",
@@ -143,7 +143,7 @@ def build_instance_values(import_evpn_rt: str | None, export_evpn_rt: str | None
 
 
 def parse_instance_values(instance_values: Any) -> dict[str, Any]:
-    parsed = loads_maybe_json(instance_values)
+    parsed = parse_value(instance_values)
     if isinstance(parsed, dict):
         return parsed
     return {}

@@ -32,6 +32,10 @@
     test_dot1q: "{{ vrf_lite_dot1q | default(500) }}"
     test_ipv4_addr: "{{ vrf_lite_ipv4_addr | default('10.33.0.2/24') }}"
     test_neighbor_ipv4: "{{ vrf_lite_neighbor_ipv4 | default('10.33.0.1') }}"
+    test_interface2: "{{ vrf_lite_interface2 | default('Ethernet1/21') }}"
+    test_dot1q2: "{{ vrf_lite_dot1q2 | default((vrf_lite_dot1q | default(500) | int) + 1) }}"
+    test_ipv4_addr2: "{{ vrf_lite_ipv4_addr2 | default('10.33.1.2/24') }}"
+    test_neighbor_ipv4_2: "{{ vrf_lite_neighbor_ipv4_2 | default('10.33.1.1') }}"
     test_peer_vrf: "{{ vrf_lite_peer_vrf | default(vrf_name | default('TENANT_A')) }}"
     deploy_local: true
   delegate_to: localhost

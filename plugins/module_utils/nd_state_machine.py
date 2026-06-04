@@ -68,7 +68,7 @@ class NDStateMachine:
         # Initialize collections
         try:
             response_data = self.model_orchestrator.query_all()
-            config_data = self.module.params.get("config", [])
+            config_data = self.module.params.get("config") or []
             normalize_config = getattr(self.model_orchestrator, "normalize_proposed_config", None)
             if callable(normalize_config):
                 config_data = normalize_config(config=config_data, current=response_data, state=self.state)

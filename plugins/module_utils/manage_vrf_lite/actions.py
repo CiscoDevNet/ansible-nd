@@ -7,7 +7,7 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
     copy_dict_items,
@@ -233,7 +233,7 @@ def _entry_extensions(entry: Any) -> list[dict[str, Any]]:
     return copy_dict_items(getattr(entry, "extensions", None) or [])
 
 
-def _entry_vlan_id(module: Any, entry: Any, raw_attach: dict[str, Any] | None = None) -> int:
+def _entry_vlan_id(module: Any, entry: Any, raw_attach: Optional[dict[str, Any]] = None) -> int:
     if getattr(entry, "vlan_id", None) is not None:
         return int(entry.vlan_id)
 

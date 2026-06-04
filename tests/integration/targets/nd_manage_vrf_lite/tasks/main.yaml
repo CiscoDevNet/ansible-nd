@@ -15,9 +15,12 @@
   tasks:
     - name: Test that we have a Nexus Dashboard host, username and password
       tags: always
-      ansible.builtin.fail:
-        msg: "Please define the following variables: ansible_host, ansible_user and ansible_password."
-      when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+      ansible.builtin.assert:
+        that:
+          - ansible_host is defined
+          - ansible_user is defined
+          - ansible_password is defined
+        fail_msg: "Please define the following variables: ansible_host, ansible_user and ansible_password."
 
     - name: Discover nd_manage_vrf_lite test cases
       tags: always

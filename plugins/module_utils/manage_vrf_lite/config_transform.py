@@ -6,7 +6,7 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
-from typing import Any
+from typing import Any, Optional, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
     copy_dict_items,
@@ -60,7 +60,7 @@ def explode_playbook_to_entries(
     config: list[dict[str, Any]],
     module: Any,
     state: str,
-    current_entries: list[dict[str, Any]] | None = None,
+    current_entries: Optional[list[dict[str, Any]]] = None,
 ) -> list[dict[str, Any]]:
     """Flatten nested playbook config into attachment-level state-machine entries."""
     entries: list[dict[str, Any]] = []
@@ -121,7 +121,7 @@ def replacement_scope_vrfs(config: list[dict[str, Any]]) -> list[str]:
 def group_attachment_entries_to_vrfs(
     entries: list[Any],
     module: Any = None,
-    include_vrfs: list[str] | set[str] | None = None,
+    include_vrfs: Optional[Union[list[str], set[str]]] = None,
 ) -> list[dict[str, Any]]:
     """Convert flat state-machine entries back to the public nested VRF shape."""
     sn_to_ip = {}

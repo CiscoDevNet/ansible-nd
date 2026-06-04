@@ -7,7 +7,7 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
     coerce_dict_list,
@@ -26,7 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_p
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule as NDModuleV2
 
 
-def _parse_vrf_template_vlan(vrf_object: dict[str, Any]) -> int | None:
+def _parse_vrf_template_vlan(vrf_object: dict[str, Any]) -> Optional[int]:
     template_cfg = vrf_object.get("vrfTemplateConfig")
     if not template_cfg:
         return None
@@ -185,7 +185,7 @@ def _flatten_to_entries(nested: list[dict[str, Any]], module: Any = None) -> lis
 def query_vrf_lite_state(
     module: Any,
     fabric_name: str,
-    filter_vrfs: set[str] | None = None,
+    filter_vrfs: Optional[set[str]] = None,
     flat: bool = False,
 ) -> list[dict[str, Any]]:
     """

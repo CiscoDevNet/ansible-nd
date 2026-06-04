@@ -6,7 +6,7 @@
 
 from __future__ import absolute_import, annotations, division, print_function
 
-from typing import Any
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -88,7 +88,7 @@ def _load_switch_inventory(module: Any, fabric_name: str) -> dict[str, dict[str,
     return inventory
 
 
-def _extract_support_flag(value: Any) -> bool | None:
+def _extract_support_flag(value: Any) -> Optional[bool]:
     if isinstance(value, bool):
         return value
 
@@ -114,7 +114,7 @@ def _extract_support_flag(value: Any) -> bool | None:
     return None
 
 
-def _query_vrf_lite_support(module: Any, fabric_name: str, vrf_name: str, serial_number: str) -> bool | None:
+def _query_vrf_lite_support(module: Any, fabric_name: str, vrf_name: str, serial_number: str) -> Optional[bool]:
     nd_v2 = NDModuleV2(module)
     response = request_with_verify_settings(
         module,

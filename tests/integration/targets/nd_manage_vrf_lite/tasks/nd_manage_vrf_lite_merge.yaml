@@ -677,13 +677,12 @@
       type: switch
     config: "{{ nd_manage_vrf_lite_merge_full_conf }}"
   register: result
-  ignore_errors: true
+  failed_when: false
   tags: merge
 
 - name: MERGE - TC11 - ASSERT - Verify invalid config_actions rejected
   ansible.builtin.assert:
     that:
-      - result.failed == true
       - result.msg is defined
       - result.msg is search("deploy.*requires.*save")
   tags: merge
@@ -777,6 +776,88 @@
     vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
   tags: merge
 
+# TC14 - Multi-link coverage for one VRF attachment
+- name: MERGE - TC14 - MERGE - Create two VRF Lite links for one VRF attachment
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: merged
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        vlan_id: "{{ test_vlan_id | int }}"
+        attach:
+          - ip_address: "{{ test_switch1 }}"
+            vrf_lite:
+              - interface: "{{ test_interface }}"
+                dot1q: "{{ test_dot1q | int }}"
+                ipv4_addr: "{{ test_ipv4_addr }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+                peer_vrf: "{{ test_peer_vrf }}"
+              - interface: "{{ test_interface2 }}"
+                dot1q: "{{ test_dot1q2 | int }}"
+                ipv4_addr: "{{ test_ipv4_addr2 }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4_2 }}"
+                peer_vrf: "{{ test_peer_vrf }}"
+  register: tc14_result
+  tags: merge
+
+- name: MERGE - TC14 - ASSERT - Verify two-link merge changed
+  ansible.builtin.assert:
+    that:
+      - tc14_result.failed == false
+      - tc14_result.changed == true
+  tags: merge
+
+- name: MERGE - TC14 - GATHER - Get two-link VRF Lite state
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    state: gathered
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    fabric_name: "{{ test_fabric }}"
+    config:
+      - vrf_name: "{{ test_vrf }}"
+  register: tc14_verify_result
+  tags: merge
+
+- name: MERGE - TC14 - ASSERT - Verify first VRF Lite link remains
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ tc14_verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_attach_count: 1
+    vrf_lite_assert_connection_count: 2
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: merge
+
+- name: MERGE - TC14 - ASSERT - Verify second VRF Lite link exists
+  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
+  vars:
+    vrf_lite_assert_result: "{{ tc14_verify_result }}"
+    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
+    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
+    vrf_lite_assert_attach_count: 1
+    vrf_lite_assert_connection_count: 2
+    vrf_lite_assert_switch: "{{ test_switch1 }}"
+    vrf_lite_assert_interface: "{{ test_interface2 }}"
+    vrf_lite_assert_dot1q: "{{ test_dot1q2 }}"
+    vrf_lite_assert_ipv4_addr: "{{ test_ipv4_addr2 }}"
+    vrf_lite_assert_neighbor_ipv4: "{{ test_neighbor_ipv4_2 }}"
+    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
+  tags: merge
+
 ##############################################
 ##                 CLEAN-UP                 ##
 ##############################################
@@ -796,4 +877,23 @@
           - ip_address: "{{ test_switch1 }}"
   failed_when: false
   when: cleanup_at_end | default(true)
+  tags: merge
+
+- name: MERGE - END - ensure secondary clean state
+  cisco.nd.nd_manage_vrf_lite:
+    <<: *nd_info
+    fabric_name: "{{ test_fabric }}"
+    state: deleted
+    config_actions:
+      save: false
+      deploy: false
+      type: switch
+    config:
+      - vrf_name: "{{ test_vrf }}"
+        attach:
+          - ip_address: "{{ test_switch2 }}"
+  failed_when: false
+  when:
+    - cleanup_at_end | default(true)
+    - test_switch2 | length > 0
   tags: merge

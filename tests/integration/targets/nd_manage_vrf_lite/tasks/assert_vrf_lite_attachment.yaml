@@ -45,6 +45,7 @@
       - (vrf_lite_assert_entries[0].vlan_id | int) == (vrf_lite_assert_vlan_id | int)
       - (vrf_lite_assert_entries[0].attach | default([]) | length) == (vrf_lite_assert_attach_count | default(1) | int)
       - vrf_lite_assert_attach_entries | length == 1
+      - (vrf_lite_assert_attach_entries[0].vrf_lite | default([]) | length) == (vrf_lite_assert_connection_count | default(1) | int)
       - vrf_lite_assert_lite_entries | length == 1
       - (vrf_lite_assert_lite_entries[0].dot1q | int) == (vrf_lite_assert_dot1q | int)
       - vrf_lite_assert_lite_entries[0].ipv4_addr == vrf_lite_assert_ipv4_addr

@@ -580,9 +580,8 @@
   when: test_switch2 | length > 0
   tags: delete
 
-# TC9 - Delete with verify.enabled=false still refreshes after/current correctly
-# Requires a second VRF Lite-capable switch in the lab inventory.
-- name: DELETE - TC9 - MERGE - Create two VRF Lite attachments for verify-disabled delete
+# TC9 - Delete with verify.enabled=false clears a multi-link VRF Lite attachment
+- name: DELETE - TC9 - MERGE - Create two VRF Lite links for verify-disabled delete
   cisco.nd.nd_manage_vrf_lite:
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
@@ -602,30 +601,22 @@
                 ipv4_addr: "{{ test_ipv4_addr }}"
                 neighbor_ipv4: "{{ test_neighbor_ipv4 }}"
                 peer_vrf: "{{ test_peer_vrf }}"
-          - ip_address: "{{ test_switch2 }}"
-            vrf_lite:
-              - interface: "{{ test_interface }}"
-                dot1q: "{{ test_dot1q | int + 1 }}"
-                ipv4_addr: "10.33.0.6/24"
-                neighbor_ipv4: "10.33.0.5"
+              - interface: "{{ test_interface2 }}"
+                dot1q: "{{ test_dot1q2 | int }}"
+                ipv4_addr: "{{ test_ipv4_addr2 }}"
+                neighbor_ipv4: "{{ test_neighbor_ipv4_2 }}"
                 peer_vrf: "{{ test_peer_vrf }}"
   register: tc9_setup_result
-  when:
-    - test_switch2 | length > 0
-    - switch2_vrf_lite_enabled | default(false) | bool
   tags: delete
 
-- name: DELETE - TC9 - ASSERT - Verify two-attachment setup
+- name: DELETE - TC9 - ASSERT - Verify two-link setup
   ansible.builtin.assert:
     that:
       - tc9_setup_result.failed == false
       - tc9_setup_result.changed == true
-  when:
-    - test_switch2 | length > 0
-    - switch2_vrf_lite_enabled | default(false) | bool
   tags: delete
 
-- name: DELETE - TC9 - DELETE - Delete one attachment with verify disabled
+- name: DELETE - TC9 - DELETE - Delete multi-link attachment with verify disabled
   cisco.nd.nd_manage_vrf_lite:
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
@@ -641,12 +632,9 @@
         attach:
           - ip_address: "{{ test_switch1 }}"
   register: tc9_delete_result
-  when:
-    - test_switch2 | length > 0
-    - switch2_vrf_lite_enabled | default(false) | bool
   tags: delete
 
-- name: DELETE - TC9 - ASSERT - Verify delete output keeps remaining attachment
+- name: DELETE - TC9 - ASSERT - Verify delete output clears attachment
   vars:
     tc9_after_vrf: >-
       {{
@@ -669,13 +657,6 @@
       - >
         (
           tc9_after_vrf[0].attach | default([])
-          | selectattr('ip_address', 'equalto', test_switch2)
-          | list
-          | length
-        ) == 1
-      - >
-        (
-          tc9_after_vrf[0].attach | default([])
           | selectattr('ip_address', 'equalto', test_switch1)
           | list
           | length
@@ -683,16 +664,13 @@
       - >
         (
           tc9_current_vrf[0].attach | default([])
-          | selectattr('ip_address', 'equalto', test_switch2)
+          | selectattr('ip_address', 'equalto', test_switch1)
           | list
           | length
-        ) == 1
-  when:
-    - test_switch2 | length > 0
-    - switch2_vrf_lite_enabled | default(false) | bool
+        ) == 0
   tags: delete
 
-- name: DELETE - TC9 - GATHER - Verify remaining attachment after verify-disabled delete
+- name: DELETE - TC9 - GATHER - Verify multi-link attachment removed after verify-disabled delete
   cisco.nd.nd_manage_vrf_lite:
     <<: *nd_info
     fabric_name: "{{ test_fabric }}"
@@ -704,26 +682,16 @@
     config:
       - vrf_name: "{{ test_vrf }}"
   register: tc9_verify_result
-  when:
-    - test_switch2 | length > 0
-    - switch2_vrf_lite_enabled | default(false) | bool
   tags: delete
 
-- name: DELETE - TC9 - ASSERT - Verify gathered keeps remaining attachment
-  ansible.builtin.include_tasks: assert_vrf_lite_attachment.yaml
-  vars:
-    vrf_lite_assert_result: "{{ tc9_verify_result }}"
-    vrf_lite_assert_vrf_name: "{{ test_vrf }}"
-    vrf_lite_assert_vlan_id: "{{ test_vlan_id }}"
-    vrf_lite_assert_switch: "{{ test_switch2 }}"
-    vrf_lite_assert_interface: "{{ test_interface }}"
-    vrf_lite_assert_dot1q: "{{ test_dot1q | int + 1 }}"
-    vrf_lite_assert_ipv4_addr: "10.33.0.6/24"
-    vrf_lite_assert_neighbor_ipv4: "10.33.0.5"
-    vrf_lite_assert_peer_vrf: "{{ test_peer_vrf }}"
-  when:
-    - test_switch2 | length > 0
-    - switch2_vrf_lite_enabled | default(false) | bool
+- name: DELETE - TC9 - ASSERT - Verify gathered has no attachment
+  ansible.builtin.assert:
+    that:
+      - tc9_verify_result.failed == false
+      - tc9_verify_result.gathered is defined
+      - tc9_verify_result.gathered | length == 1
+      - tc9_verify_result.gathered[0].vrf_name == test_vrf
+      - tc9_verify_result.gathered[0].attach | default([]) | length == 0
   tags: delete
 
 ##############################################
