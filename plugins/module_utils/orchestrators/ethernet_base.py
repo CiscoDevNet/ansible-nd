@@ -245,15 +245,22 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         if policy is None:
             return
 
+        # Parse the wire policy through the same model so both sides share identical Pydantic coercion before
+        # comparison. Comparing the model's typed value (e.g. float 50.0 for a storm-control level, int 10 for
+        # access_vlan) directly against the raw wire value (which ND may echo as int 50 or str "50"/"10") would
+        # flag an unchanged field as modified (50.0 != "50") and wrongly raise on an idempotent re-run of a
+        # port-channel member. from_response() applies the same coercion ND data already round-trips through in
+        # query_all, so a value the model could not represent would have failed there first.
+        existing_model = type(policy).from_response(existing_policy)
+
         changed_fields = set()
-        for field_name, field_info in type(policy).model_fields.items():
+        for field_name in type(policy).model_fields:
             if field_name == "policy_type":
                 continue
             proposed_value = getattr(policy, field_name)
             if proposed_value is None:
                 continue
-            wire_alias = field_info.alias or field_name
-            if proposed_value != existing_policy.get(wire_alias):
+            if proposed_value != getattr(existing_model, field_name):
                 changed_fields.add(field_name)
 
         non_whitelisted = changed_fields - self.PORT_CHANNEL_MODIFIABLE_FIELDS
@@ -277,6 +284,11 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         The field is NOT present in `configData.networkOS.policy` — looking there always returns `None`
         and was the cause of the membership check silently never firing.
 
+        Only a positive integer is treated as membership (NX-OS port-channel IDs are 1-4096). `None`, the
+        `-1` sentinel, `0`, and any negative value all return `None`, so every caller can check membership
+        uniformly with `is None` / `is not None` and a `0`/non-positive value can never be mistaken for a
+        real port-channel by a truthiness test.
+
         ## Raises
 
         None
@@ -284,7 +296,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         if existing_data is None:
             return None
         pc_id = existing_data.get("operData", {}).get("portChannelId")
-        if pc_id is None or pc_id == -1:
+        if not isinstance(pc_id, int) or pc_id < 1:
             return None
         return pc_id
 
@@ -304,7 +316,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         - If the existing wire state shows the interface is a port-channel member.
         """
         port_channel_id = self._existing_port_channel_id(existing_data)
-        if port_channel_id:
+        if port_channel_id is not None:
             raise RuntimeError(
                 f"Interface {model_instance.interface_name} is a member of port-channel {port_channel_id}. "
                 f"Refusing to normalize a port-channel member (this would strip its channel-group membership). "
@@ -565,7 +577,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             switch_id = self._resolve_switch_id(model_instance.switch_ip)
             existing_data = kwargs.get("existing_data") or self._existing_interface(model_instance.interface_name, switch_id)
             port_channel_id = self._existing_port_channel_id(existing_data)
-            if port_channel_id:
+            if port_channel_id is not None:
                 if state == "overridden":
                     logger.info(
                         "Skipping port-channel member %s on switch %s (member of port-channel %s) during state:overridden",

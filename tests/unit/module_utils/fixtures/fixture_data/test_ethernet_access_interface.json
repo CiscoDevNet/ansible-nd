@@ -663,6 +663,65 @@
             ]
         }
     },
+    "test_update_pc_member_string_typed_wire_00565a": {
+        "TEST_NOTES": [
+            "00565: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "fabricManagementIp": "192.168.1.1",
+                    "switchId": "FDO11111AAA"
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_string_typed_wire_00565b": {
+        "TEST_NOTES": [
+            "00565: interfaceList -- Ethernet1/1 is a port-channel member whose stormControlBroadcastLevel is echoed by ND as the STRING \"50\".",
+            "The model coerces storm_control_broadcast_level to float 50.0; the comparison must coerce both sides identically (50.0 == 50.0) rather than 50.0 != \"50\".",
+            "Regression for the float-vs-raw-wire type mismatch that wrongly flagged an unchanged non-whitelisted field on an idempotent re-run."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "configData": {
+                        "mode": "access",
+                        "networkOS": {
+                            "networkOSType": "nx-os",
+                            "policy": {
+                                "policyType": "accessHost",
+                                "stormControlBroadcastLevel": "50"
+                            }
+                        }
+                    },
+                    "operData": {
+                        "portChannelId": 10
+                    }
+                }
+            ]
+        }
+    },
+    "test_update_pc_member_string_typed_wire_00565c": {
+        "TEST_NOTES": [
+            "00565: PUT response -- update succeeded (no spurious port-channel restriction raised)"
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F1",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
     "test_delete_pc_member_blocked_00570a": {
         "TEST_NOTES": [
             "00570: switch_map fetch -- resolves 192.168.1.1 -> FDO11111AAA"

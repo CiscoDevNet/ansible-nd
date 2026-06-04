@@ -53,6 +53,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.types import Ascii
 # class attribute in ModelPrivateAttr regardless of ClassVar annotation.
 _INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
 
+# This module exclusively manages ethernet interfaces (interface_type is frozen to "ethernet"),
+# so the canonical wire prefix is always "Ethernet". Any case-insensitive NX-OS abbreviation of
+# this name (e.g. "e", "eth", "ether") expands to the full form so user input matches the wire key.
+_CANONICAL_INTERFACE_TYPE = "Ethernet"
+
 
 class EthernetAccessPolicyModel(NDNestedModel):
     """
@@ -243,16 +248,22 @@ class EthernetAccessInterfaceModel(NDBaseModel):
         """
         # Summary
 
-        Normalize the leading alphabetic prefix of an interface name to ND's canonical Title case so that
-        any user-supplied casing round-trips against the wire form. Examples:
+        Normalize the leading alphabetic prefix of an interface name to ND's canonical `Ethernet` form so that
+        any user-supplied casing or NX-OS abbreviation round-trips against the wire form. Examples:
 
         - `ethernet1/1` -> `Ethernet1/1`
         - `ETHERNET1/1` -> `Ethernet1/1`
         - `etHernet1/1` -> `Ethernet1/1`
+        - `eth1/1` -> `Ethernet1/1` (abbreviation expanded)
+        - `e1/1` -> `Ethernet1/1` (abbreviation expanded)
         - `Ethernet1/1` -> `Ethernet1/1` (idempotent)
 
-        Only the leading alphabetic run is rewritten; digits and separators (`/`, `-`) are preserved verbatim,
-        so subinterface and breakout forms (`Ethernet1/1.10`, `Ethernet1/1/1`) pass through unchanged.
+        Because the wire key is matched exactly, an abbreviated prefix that is not expanded would never match
+        ND's `Ethernet...` form, silently breaking idempotency. Any case-insensitive prefix of `Ethernet`
+        (`e`, `et`, `eth`, ...) is therefore expanded to the full canonical name. An unrecognized prefix falls
+        back to Title case so it still round-trips. Only the leading alphabetic run is rewritten; digits and
+        separators (`/`, `.`, `-`) are preserved verbatim, so subinterface and breakout forms
+        (`Ethernet1/1.10`, `Ethernet1/1/1`) pass through unchanged.
 
         ## Raises
 
@@ -264,6 +275,8 @@ class EthernetAccessInterfaceModel(NDBaseModel):
         if not match:
             return value
         prefix, rest = match.groups()
+        if _CANONICAL_INTERFACE_TYPE.lower().startswith(prefix.lower()):
+            return _CANONICAL_INTERFACE_TYPE + rest
         return prefix[0].upper() + prefix[1:].lower() + rest
 
     # --- Argument Spec ---

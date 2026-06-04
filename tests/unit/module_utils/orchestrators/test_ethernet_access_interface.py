@@ -615,6 +615,44 @@ def test_ethernet_access_orchestrator_00560() -> None:
     assert instance._pending_deploys == []
 
 
+def test_ethernet_access_orchestrator_00565() -> None:
+    """
+    # Summary
+
+    Verify `update` does NOT raise on a port-channel member when the wire echoes a non-whitelisted field
+    with a different scalar type than the model's coercion (ND returns `stormControlBroadcastLevel` as the
+    string `"50"` while the model carries float `50.0`). Regression for the float-vs-raw-wire comparison
+    that flagged an unchanged field as modified and wrongly blocked an idempotent re-run.
+
+    ## Test
+
+    - switches-list resolves 192.168.1.1 -> FDO11111AAA
+    - interfaceList reports Ethernet1/1 as a port-channel member with `stormControlBroadcastLevel="50"` (str)
+    - The model carries `storm_control_broadcast_level=50.0` (float) — same logical value, different type
+    - Both sides are coerced through the model, so the field is NOT flagged -> `update` succeeds and deploys
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.update()
+    - EthernetBaseOrchestrator._check_port_channel_restrictions()
+    """
+
+    def responses():
+        yield responses_access("test_update_pc_member_string_typed_wire_00565a")
+        yield responses_access("test_update_pc_member_string_typed_wire_00565b")
+        yield responses_access("test_update_pc_member_string_typed_wire_00565c")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = EthernetAccessInterfaceOrchestrator(rest_send=rest_send)
+    model = _build_access_model({"storm_control_broadcast_level": 50.0})
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA")]
+
+
 def test_ethernet_access_orchestrator_00570() -> None:
     """
     # Summary
@@ -758,6 +796,51 @@ def test_ethernet_access_orchestrator_00600() -> None:
 
     assert instance._pending_normalizes == [("Ethernet1/2", "FDO22222BBB")]
     assert instance._pending_deploys == [("Ethernet1/2", "FDO22222BBB")]
+
+
+@pytest.mark.parametrize(
+    "operdata,expected",
+    [
+        ({"portChannelId": 10}, 10),
+        ({"portChannelId": 1}, 1),
+        ({"portChannelId": -1}, None),
+        ({"portChannelId": 0}, None),
+        ({"portChannelId": -5}, None),
+        ({"portChannelId": None}, None),
+        ({}, None),
+        ({"portChannelId": "10"}, None),
+    ],
+    ids=[
+        "member_10",
+        "member_1",
+        "not_member_sentinel_-1",
+        "non_positive_zero",
+        "negative",
+        "explicit_none",
+        "absent",
+        "non_int_string",
+    ],
+)
+def test_ethernet_access_orchestrator_00605(operdata, expected) -> None:
+    """
+    # Summary
+
+    Verify `_existing_port_channel_id` treats only a positive integer as port-channel membership. `None`,
+    the `-1` sentinel, `0`, negatives, an absent key, and non-int values all return `None`, so every caller
+    can check membership uniformly with `is None` / `is not None` and no `0`/non-positive value can be
+    mistaken for a real port-channel by a truthiness test.
+
+    ## Test
+
+    - A positive `portChannelId` is returned verbatim
+    - `-1`, `0`, negatives, `None`, absent, and non-int values all map to `None`
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator._existing_port_channel_id()
+    """
+    assert EthernetAccessInterfaceOrchestrator._existing_port_channel_id({"operData": operdata}) == expected
+    assert EthernetAccessInterfaceOrchestrator._existing_port_channel_id(None) is None
 
 
 def test_ethernet_access_orchestrator_00610() -> None:

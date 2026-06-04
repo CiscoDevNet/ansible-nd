@@ -666,9 +666,10 @@ def test_ethernet_access_interface_00530():
         ("ETHERNET1/1", "Ethernet1/1"),
         ("etHernet1/1", "Ethernet1/1"),
         ("EtHeRnEt1/1", "Ethernet1/1"),
-        ("e1/1", "E1/1"),
-        ("eth1/1/1", "Eth1/1/1"),
-        ("ETH1/1/1", "Eth1/1/1"),
+        ("e1/1", "Ethernet1/1"),
+        ("eth1/1/1", "Ethernet1/1/1"),
+        ("ETH1/1/1", "Ethernet1/1/1"),
+        ("ether1/1", "Ethernet1/1"),
         ("Ethernet1/1.10", "Ethernet1/1.10"),
         ("ETHERNET1/1.10", "Ethernet1/1.10"),
         ("", ""),
@@ -679,9 +680,10 @@ def test_ethernet_access_interface_00530():
         "all_upper",
         "mixed_case_1",
         "mixed_case_2",
-        "single_letter",
-        "breakout",
-        "breakout_upper",
+        "single_letter_abbrev",
+        "eth_abbrev_breakout",
+        "eth_abbrev_breakout_upper",
+        "ether_abbrev",
         "subinterface",
         "subinterface_upper",
         "empty_passthrough",
@@ -691,12 +693,13 @@ def test_ethernet_access_interface_00550(value, expected):
     """
     # Summary
 
-    Verify `normalize_interface_name` rewrites the leading alphabetic prefix to ND canonical Title case so
-    that mixed-case or fully-uppercase user input round-trips against the wire form.
+    Verify `normalize_interface_name` rewrites the leading alphabetic prefix to ND's canonical `Ethernet`
+    form so that mixed-case, fully-uppercase, or abbreviated user input round-trips against the wire form.
 
     ## Test
 
-    - Any casing of the alphabetic prefix is normalized to Title case
+    - Any casing of the alphabetic prefix is normalized to `Ethernet`
+    - Case-insensitive abbreviations of `Ethernet` (`e`, `eth`, `ether`) are expanded to the full name
     - Digits, slashes, and dots after the prefix are preserved verbatim
     - Empty / non-string input is returned unchanged
 
