@@ -574,7 +574,7 @@ def test_vrf_workflow_coordinator_00065_deleted_ignores_absent_vrf_attachment_qu
     }
 
     def missing_vrf(*_args, **_kwargs):
-        raise Exception("Request failed (400): Bad Request: {'message': 'VRF(s) " "already-absent-vrf not found in fabric msd_p'}")
+        raise Exception("Request failed (400): Bad Request: {'message': 'VRF(s) already-absent-vrf not found in fabric msd_p'}")
 
     monkeypatch.setattr(coordinator, "_current_attachment_details", missing_vrf)
 

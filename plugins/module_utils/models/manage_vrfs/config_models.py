@@ -18,6 +18,8 @@ Cross-field parameter dependencies (l3vni_wo_vlan, TRM group, no_rp,
 netflow, bgp_password) are enforced by ``@model_validator`` hooks.
 """
 
+from __future__ import annotations
+
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (

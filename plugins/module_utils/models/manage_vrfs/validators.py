@@ -6,6 +6,8 @@
 
 """Common validators for VRF-related fields."""
 
+from __future__ import annotations
+
 import re
 from ipaddress import ip_address, ip_network
 

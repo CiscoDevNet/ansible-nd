@@ -20,6 +20,8 @@ Detection algorithm (mirrors dcnm_vrf action plugin logic):
  4. Return the matching concrete strategy instance.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
@@ -49,7 +51,7 @@ _FEDERATION_MANAGER_NOT_FOUND_ERRORS: frozenset[str] = frozenset(
     [
         "A federation manager does not exist",
         "Invalid JSON response: this API is allowed only for remote user",
-        "Invalid JSON response: cannot serve APIs as federation state is secondary. " "Use primary cluster for APIs",
+        "Invalid JSON response: cannot serve APIs as federation state is secondary. Use primary cluster for APIs",
         "Invalid JSON response: cannot serve APIs as federation state is not established yet",
     ]
 )
@@ -271,7 +273,7 @@ class VrfFabricResolver:
         The dict returned maps fabricName -> fabric properties, with a ``members``
         list added to parent fabric entries so _detect_fabric_type can walk it.
         """
-        path = "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/" "fabrics/msd/fabric-associations"
+        path = "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/fabrics/msd/fabric-associations"
         response = self._nd.request(
             path,
             method="GET",

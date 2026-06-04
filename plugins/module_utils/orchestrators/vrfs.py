@@ -33,6 +33,8 @@ Architecture overview
                                   └── per child ──► nd_vrf (recursive)
 """
 
+from __future__ import annotations
+
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel

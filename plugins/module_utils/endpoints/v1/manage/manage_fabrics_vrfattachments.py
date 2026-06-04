@@ -16,6 +16,8 @@ Endpoints covered:
 - List VRF attachments (query)
 """
 
+from __future__ import annotations
+
 __author__ = "Akshayanat C S"
 
 

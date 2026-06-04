@@ -14,6 +14,8 @@ Endpoints covered:
 - List ACI fabric flow telemetry VRF rules
 """
 
+from __future__ import annotations
+
 __author__ = "Akshayanat C S"
 
 

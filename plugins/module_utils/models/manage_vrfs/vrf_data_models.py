@@ -16,6 +16,8 @@ Covers:
 - PUT /fabrics/{fabricName}/vrfs/{vrfName}
 """
 
+from __future__ import annotations
+
 from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (

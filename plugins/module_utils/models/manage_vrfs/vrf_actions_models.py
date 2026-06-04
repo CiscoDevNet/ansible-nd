@@ -16,6 +16,8 @@ Covers:
 - POST /fabrics/{fabricName}/vrfActions/stretch
 """
 
+from __future__ import annotations
+
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (

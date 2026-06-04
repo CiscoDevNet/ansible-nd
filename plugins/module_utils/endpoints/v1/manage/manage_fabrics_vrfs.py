@@ -18,6 +18,8 @@ Endpoints covered:
 - Delete a single VRF
 """
 
+from __future__ import annotations
+
 __author__ = "Akshayanat C S"
 
 

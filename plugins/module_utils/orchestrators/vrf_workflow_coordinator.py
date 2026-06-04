@@ -22,6 +22,8 @@ directly. For parent fabrics it:
   5. Aggregates and structures the combined results.
 """
 
+from __future__ import annotations
+
 import copy
 import time
 
