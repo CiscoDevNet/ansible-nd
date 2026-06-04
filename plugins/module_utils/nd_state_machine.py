@@ -34,12 +34,9 @@ class NDStateMachine:
         sender = Sender()
         sender.ansible_module = self.module
 
-        self.rest_send = RestSend(
-            {
-                "check_mode": self.module.check_mode,
-                "state": self.module.params.get("state"),
-            }
-        )
+        rest_send_params = dict(self.module.params)
+        rest_send_params["check_mode"] = self.module.check_mode
+        self.rest_send = RestSend(rest_send_params)
         self.rest_send.sender = sender
         self.rest_send.response_handler = ResponseHandler()
 
