@@ -128,9 +128,22 @@ class NdV1Strategy:
         return_code = response.get("RETURN_CODE", -1)
         if return_code not in self.success_codes:
             return False
-        if response.get("ERROR") is not None:
-            return False
         data = response.get("DATA")
+        if isinstance(data, dict) and isinstance(data.get("results"), list):
+            saw_status = False
+            for item in data.get("results", []):
+                if not isinstance(item, dict):
+                    continue
+                status = str(item.get("status", "")).lower()
+                if not status:
+                    continue
+                saw_status = True
+                if status in ("failed", "failure", "error"):
+                    return False
+            if saw_status:
+                return True
+        if response.get("ERROR") is not None or response.get("error") is not None:
+            return False
         if isinstance(data, dict) and data.get("error") is not None:
             return False
         return True
@@ -224,9 +237,12 @@ class NdV1Strategy:
 
         response_data = response.get("DATA") if response else None
         return_code = response.get("RETURN_CODE", -1) if response else -1
+        response_error = response.get("error") if response else None
 
         # No response data - connection failure
-        if response_data is None:
+        if isinstance(response_error, dict) and response_error.get("message") is not None:
+            msg = f"ND Error {response_error.get('code', -1)}: {response_error.get('message')}"
+        elif response_data is None:
             request_path = response.get("REQUEST_PATH", "unknown") if response else "unknown"
             message = response.get("MESSAGE", "Unknown error") if response else "Unknown error"
             msg = f"Connection failed for {request_path}. {message}"
@@ -254,6 +270,19 @@ class NdV1Strategy:
             # errors array format
             if msg is None and "errors" in data_dict and len(data_dict.get("errors", [])) > 0:
                 msg = f"ND Error: {'; '.join(str(e) for e in data_dict['errors'])}"
+
+            if msg is None and "results" in data_dict and len(data_dict.get("results", [])) > 0:
+                parts = []
+                for item in data_dict["results"]:
+                    if not isinstance(item, dict):
+                        continue
+                    status = str(item.get("status", "")).lower()
+                    if status in ("failed", "failure", "error"):
+                        name = item.get("vrfName") or item.get("name") or "item"
+                        message = item.get("message", "operation failed")
+                        parts.append(f"{name}: {message}")
+                if parts:
+                    msg = "ND Error: " + "; ".join(parts)
 
             # Unknown dict format - fallback
             if msg is None:

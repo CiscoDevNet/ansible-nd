@@ -12,9 +12,11 @@ from __future__ import annotations
 
 
 import copy
+from datetime import datetime
 import inspect
 import json
 import logging
+import os
 from time import sleep
 from typing import Any, Optional
 
@@ -136,10 +138,62 @@ class RestSend:
         self.saved_check_mode: Optional[bool] = None
 
         self.check_mode = self.params.get("check_mode", False)
+        if isinstance(self.params.get("timeout"), int):
+            self.timeout = self.params["timeout"]
 
         msg = "ENTERED RestSend(): "
         msg += f"check_mode: {self.check_mode}"
         self.log.debug(msg)
+
+    def _temporary_debug_log(self, event: str, **kwargs: Any) -> None:
+        """Temporarily capture REST payloads/responses while nd_vrf is debugged."""
+        if self.params.get("output_level") != "debug" and not os.environ.get(
+            "ND_REST_SEND_DEBUG"
+        ):
+            return
+
+        record = {
+            "time": datetime.now().isoformat(timespec="seconds"),
+            "pid": os.getpid(),
+            "event": event,
+            "verb": str(self.verb),
+            "path": self.path,
+        }
+        record.update(kwargs)
+
+        try:
+            with open("/tmp/nd_rest_send_debug.jsonl", "a", encoding="utf-8") as fd:
+                fd.write(json.dumps(record, default=str, sort_keys=True))
+                fd.write("\n")
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+    @staticmethod
+    def _successful_207_marked_as_error(response: dict[str, Any]) -> bool:
+        """Return True when the HTTPAPI wrapper marks a successful ND 207 as error."""
+        if response.get("RETURN_CODE") != 207:
+            return False
+
+        top_level_error = response.get("error") or response.get("ERROR")
+        data = response.get("DATA")
+        if top_level_error is None or not isinstance(data, dict):
+            return False
+
+        results = data.get("results")
+        if not isinstance(results, list):
+            return False
+
+        saw_status = False
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status", "")).lower()
+            if not status:
+                continue
+            saw_status = True
+            if status in ("failed", "failure", "error"):
+                return False
+        return saw_status
 
     def restore_settings(self) -> None:
         """
@@ -323,6 +377,11 @@ class RestSend:
         self.sender.payload = self.payload
         success = False
         while timeout > 0 and success is False:
+            self._temporary_debug_log(
+                "request",
+                timeout_remaining=timeout,
+                payload=self.payload,
+            )
             msg = f"{self.class_name}.{method_name}: "
             msg += "Calling sender.commit(): "
             msg += f"timeout {timeout}, success {success}, verb {self.verb}, path {self.path}."
@@ -331,6 +390,12 @@ class RestSend:
             try:
                 self.sender.commit()
             except ValueError as error:
+                self._temporary_debug_log(
+                    "request_error",
+                    timeout_remaining=timeout,
+                    payload=self.payload,
+                    error=str(error),
+                )
                 raise ValueError(error) from error
 
             self.response_current = self.sender.response
@@ -346,6 +411,26 @@ class RestSend:
                 msg += f"Error detail: {error}"
                 self.log.debug(msg)
                 raise ValueError(msg) from error
+
+            self._temporary_debug_log(
+                "response",
+                timeout_remaining=timeout,
+                payload=self.payload,
+                response=self.response_current,
+                result=self.result_current,
+            )
+            if self._successful_207_marked_as_error(self.response_current):
+                self._temporary_debug_log(
+                    "httpapi_207_success_marked_error",
+                    timeout_remaining=timeout,
+                    payload=self.payload,
+                    response=self.response_current,
+                    result=self.result_current,
+                    note=(
+                        "ND returned HTTP 207 with successful DATA.results item "
+                        "statuses; the HTTPAPI wrapper added a top-level error."
+                    ),
+                )
 
             msg = f"{self.class_name}.{method_name}: "
             msg += f"timeout: {timeout}. "
