@@ -16,7 +16,6 @@ Endpoints covered:
 - List VRF attachments (query)
 """
 
-
 __author__ = "Akshayanat C S"
 
 
@@ -43,7 +42,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
-
 
 # ============================================================================
 # Endpoint-specific query parameter classes

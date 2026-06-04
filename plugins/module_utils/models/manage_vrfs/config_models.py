@@ -36,7 +36,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums 
     VrfType,
 )
 
-
 _CUSTOM_VRF_TEMPLATE_FIELDS = (
     "service_vrf_template_name",
     "vrf_template_name",
@@ -120,9 +119,7 @@ class VrfAttachmentConfigModel(NDNestedModel):
         mode="before",
     )
     @classmethod
-    def _normalize_rt(
-        cls, v: str | list[str] | None
-    ) -> list[str] | None:
+    def _normalize_rt(cls, v: str | list[str] | None) -> list[str] | None:
         return VrfValidators.normalize_route_targets(v)
 
 
@@ -198,33 +195,22 @@ class VrfChildConfigModel(NDNestedModel):
     overlay_mcast_group: str | None = Field(
         default=None,
         alias="overlayMcastGroup",
-        description=(
-            "Overlay multicast group IPv4 address (224.0.0.0/4 range); "
-            "requires trm_enable=True"
-        ),
+        description=("Overlay multicast group IPv4 address (224.0.0.0/4 range); " "requires trm_enable=True"),
     )
     trm_bgw_msite: bool | None = Field(
         default=None,
         alias="trmBgwMsite",
-        description=(
-            "Enable TRM on border gateway multisite; requires trm_enable=True"
-        ),
+        description=("Enable TRM on border gateway multisite; requires trm_enable=True"),
     )
     import_mvpn_rt: list[str] | None = Field(
         default=None,
         alias="importMvpnRt",
-        description=(
-            "MVPN import route targets (comma-separated string or list); "
-            "requires trm_enable=True"
-        ),
+        description=("MVPN import route targets (comma-separated string or list); " "requires trm_enable=True"),
     )
     export_mvpn_rt: list[str] | None = Field(
         default=None,
         alias="exportMvpnRt",
-        description=(
-            "MVPN export route targets (comma-separated string or list); "
-            "requires trm_enable=True"
-        ),
+        description=("MVPN export route targets (comma-separated string or list); " "requires trm_enable=True"),
     )
 
     # --- Routing / advertising overrides ---
@@ -257,10 +243,7 @@ class VrfChildConfigModel(NDNestedModel):
     bgp_passwd_encrypt: int | None = Field(
         default=None,
         alias="bgpPasswdEncrypt",
-        description=(
-            "BGP password encryption type: 3 (3DES) or 7 (Cisco Type-7); "
-            "required when bgp_password is set"
-        ),
+        description=("BGP password encryption type: 3 (3DES) or 7 (Cisco Type-7); " "required when bgp_password is set"),
     )
 
     # --- Netflow overrides ---
@@ -301,9 +284,7 @@ class VrfChildConfigModel(NDNestedModel):
         mode="before",
     )
     @classmethod
-    def _normalize_rt(
-        cls, v: str | list[str] | None
-    ) -> list[str] | None:
+    def _normalize_rt(cls, v: str | list[str] | None) -> list[str] | None:
         return VrfValidators.normalize_route_targets(v)
 
     # ------------------------------------------------------------------
@@ -327,10 +308,7 @@ class VrfChildConfigModel(NDNestedModel):
             }
             set_fields = [k for k, v in trm_fields.items() if v is not None]
             if set_fields:
-                raise ValueError(
-                    f"The following fields require trm_enable=True: "
-                    f"{', '.join(set_fields)}"
-                )
+                raise ValueError(f"The following fields require trm_enable=True: " f"{', '.join(set_fields)}")
         return self
 
     @model_validator(mode="after")
@@ -343,10 +321,7 @@ class VrfChildConfigModel(NDNestedModel):
             if self.rp_address is not None:
                 bad["rp_address"] = self.rp_address
             if bad:
-                raise ValueError(
-                    f"The following fields are not applicable when no_rp=True: "
-                    f"{', '.join(bad.keys())}"
-                )
+                raise ValueError(f"The following fields are not applicable when no_rp=True: " f"{', '.join(bad.keys())}")
         return self
 
     @model_validator(mode="after")
@@ -360,9 +335,7 @@ class VrfChildConfigModel(NDNestedModel):
     def _check_bgp_password(self):
         """Require bgp_passwd_encrypt when bgp_password is set."""
         if self.bgp_password is not None and self.bgp_passwd_encrypt is None:
-            raise ValueError(
-                "bgp_passwd_encrypt (3 or 7) is required when bgp_password is set"
-            )
+            raise ValueError("bgp_passwd_encrypt (3 or 7) is required when bgp_password is set")
         return self
 
 
@@ -389,9 +362,7 @@ class VrfConfigModel(NDBaseModel):
 
     vrf_name: str = Field(
         alias="vrfName",
-        description=(
-            "Name of the VRF (max 94 chars; use tenant~vrfName for multi-tenant)"
-        ),
+        description=("Name of the VRF (max 94 chars; use tenant~vrfName for multi-tenant)"),
     )
     vrf_id: int | None = Field(
         default=None,
@@ -403,10 +374,7 @@ class VrfConfigModel(NDBaseModel):
     vrf_type: str | None = Field(
         default=None,
         alias="vrfType",
-        description=(
-            "VRF schema type. Leave unset to derive it from fabric "
-            "management.type; set to userDefined for custom template VRFs"
-        ),
+        description=("VRF schema type. Leave unset to derive it from fabric " "management.type; set to userDefined for custom template VRFs"),
     )
 
     # --- Custom/user-defined VRF templates ---
@@ -429,17 +397,12 @@ class VrfConfigModel(NDBaseModel):
     vrf_template_config: dict[str, str] | None = Field(
         default=None,
         alias="vrfTemplateConfig",
-        description=(
-            "Template parameter values for userDefined VRFs. Schema requires "
-            "a JSON object with string values"
-        ),
+        description=("Template parameter values for userDefined VRFs. Schema requires " "a JSON object with string values"),
     )
 
     # --- Security group ---
 
-    default_security_action: Literal[
-        "unenforcedOrNone", "enforcedPermit", "enforcedDeny"
-    ] | None = Field(
+    default_security_action: Literal["unenforcedOrNone", "enforcedPermit", "enforcedDeny"] | None = Field(
         default=None,
         alias="defaultSecurityAction",
         description="Default security group enforcement action",
@@ -459,35 +422,24 @@ class VrfConfigModel(NDBaseModel):
         alias="vlanId",
         ge=2,
         le=4094,
-        description=(
-            "VLAN ID for the VRF SVI (2–4094); "
-            "not used when l3vni_wo_vlan=True"
-        ),
+        description=("VLAN ID for the VRF SVI (2–4094); " "not used when l3vni_wo_vlan=True"),
     )
     vrf_vlan_name: str | None = Field(
         default=None,
         alias="vrfVlanName",
-        description=(
-            "VLAN name for the VRF SVI; not used when l3vni_wo_vlan=True"
-        ),
+        description=("VLAN name for the VRF SVI; not used when l3vni_wo_vlan=True"),
     )
     vrf_intf_desc: str | None = Field(
         default=None,
         alias="vrfIntfDesc",
-        description=(
-            "Description for the VRF SVI interface; "
-            "not used when l3vni_wo_vlan=True"
-        ),
+        description=("Description for the VRF SVI interface; " "not used when l3vni_wo_vlan=True"),
     )
     vrf_int_mtu: int = Field(
         default=9216,
         alias="vrfIntMtu",
         ge=68,
         le=9216,
-        description=(
-            "MTU for the VRF SVI interface (68–9216); "
-            "not used when l3vni_wo_vlan=True"
-        ),
+        description=("MTU for the VRF SVI interface (68–9216); " "not used when l3vni_wo_vlan=True"),
     )
 
     # --- L3VNI without VLAN ---
@@ -495,10 +447,7 @@ class VrfConfigModel(NDBaseModel):
     l3vni_wo_vlan: bool = Field(
         default=False,
         alias="l3vniWoVlan",
-        description=(
-            "Configure L3VNI without VLAN/SVI. When True, vlan_id, "
-            "vrf_vlan_name, and vrf_intf_desc must not be set"
-        ),
+        description=("Configure L3VNI without VLAN/SVI. When True, vlan_id, " "vrf_vlan_name, and vrf_intf_desc must not be set"),
     )
 
     # --- Description ---
@@ -546,10 +495,7 @@ class VrfConfigModel(NDBaseModel):
     ipv6_linklocal_enable: bool = Field(
         default=True,
         alias="ipv6LinkLocalEnable",
-        description=(
-            "Enable IPv6 link-local on VRF SVI; "
-            "not applicable when l3vni_wo_vlan=True"
-        ),
+        description=("Enable IPv6 link-local on VRF SVI; " "not applicable when l3vni_wo_vlan=True"),
     )
 
     # --- Route targets ---
@@ -607,47 +553,32 @@ class VrfConfigModel(NDBaseModel):
         alias="rpLoopbackId",
         ge=0,
         le=1023,
-        description=(
-            "Loopback interface ID for RP (0–1023); requires trm_enable=True"
-        ),
+        description=("Loopback interface ID for RP (0–1023); requires trm_enable=True"),
     )
     underlay_mcast_ip: str | None = Field(
         default=None,
         alias="underlayMcastIp",
-        description=(
-            "Underlay IPv4 multicast address; requires trm_enable=True"
-        ),
+        description=("Underlay IPv4 multicast address; requires trm_enable=True"),
     )
     overlay_mcast_group: str | None = Field(
         default=None,
         alias="overlayMcastGroup",
-        description=(
-            "Overlay multicast group IPv4 address (224.0.0.0/4 range); "
-            "requires trm_enable=True"
-        ),
+        description=("Overlay multicast group IPv4 address (224.0.0.0/4 range); " "requires trm_enable=True"),
     )
     trm_bgw_msite: bool = Field(
         default=False,
         alias="trmBgwMsite",
-        description=(
-            "Enable TRM on border gateway multisite; requires trm_enable=True"
-        ),
+        description=("Enable TRM on border gateway multisite; requires trm_enable=True"),
     )
     import_mvpn_rt: list[str] | None = Field(
         default=None,
         alias="importMvpnRt",
-        description=(
-            "MVPN import route targets (comma-separated string or list); "
-            "requires trm_enable=True"
-        ),
+        description=("MVPN import route targets (comma-separated string or list); " "requires trm_enable=True"),
     )
     export_mvpn_rt: list[str] | None = Field(
         default=None,
         alias="exportMvpnRt",
-        description=(
-            "MVPN export route targets (comma-separated string or list); "
-            "requires trm_enable=True"
-        ),
+        description=("MVPN export route targets (comma-separated string or list); " "requires trm_enable=True"),
     )
 
     # --- Advertising ---
@@ -680,10 +611,7 @@ class VrfConfigModel(NDBaseModel):
     bgp_passwd_encrypt: int | None = Field(
         default=None,
         alias="bgpPasswdEncrypt",
-        description=(
-            "BGP password encryption type: 3 (3DES) or 7 (Cisco Type-7); "
-            "required when bgp_password is set"
-        ),
+        description=("BGP password encryption type: 3 (3DES) or 7 (Cisco Type-7); " "required when bgp_password is set"),
     )
 
     # --- Netflow ---
@@ -735,9 +663,7 @@ class VrfConfigModel(NDBaseModel):
             return None
         v = str(v).strip()
         if v not in VrfType.choices():
-            raise ValueError(
-                f"vrf_type must be one of {VrfType.choices()}, got: {v}"
-            )
+            raise ValueError(f"vrf_type must be one of {VrfType.choices()}, got: {v}")
         return v
 
     @field_validator("deploy_type", mode="before")
@@ -752,19 +678,14 @@ class VrfConfigModel(NDBaseModel):
 
     @field_validator("vrf_template_config", mode="before")
     @classmethod
-    def _validate_vrf_template_config(
-        cls, v: dict[str, str] | None
-    ) -> dict[str, str] | None:
+    def _validate_vrf_template_config(cls, v: dict[str, str] | None) -> dict[str, str] | None:
         if v is None:
             return None
         if not isinstance(v, dict):
             raise ValueError("vrf_template_config must be a dictionary")
         bad = [key for key, value in v.items() if not isinstance(value, str)]
         if bad:
-            raise ValueError(
-                "vrf_template_config values must be strings for keys: "
-                f"{', '.join(str(key) for key in bad)}"
-            )
+            raise ValueError("vrf_template_config values must be strings for keys: " f"{', '.join(str(key) for key in bad)}")
         return v
 
     @field_validator("vrf_vlan_name", mode="before")
@@ -797,9 +718,7 @@ class VrfConfigModel(NDBaseModel):
         mode="before",
     )
     @classmethod
-    def _normalize_rt(
-        cls, v: str | list[str] | None
-    ) -> list[str] | None:
+    def _normalize_rt(cls, v: str | list[str] | None) -> list[str] | None:
         return VrfValidators.normalize_route_targets(v)
 
     # ------------------------------------------------------------------
@@ -817,25 +736,15 @@ class VrfConfigModel(NDBaseModel):
             }
             set_fields = [k for k, v in vlan_fields.items() if v is not None]
             if set_fields:
-                raise ValueError(
-                    f"The following fields must not be set when "
-                    f"l3vni_wo_vlan=True: {', '.join(set_fields)}"
-                )
+                raise ValueError(f"The following fields must not be set when " f"l3vni_wo_vlan=True: {', '.join(set_fields)}")
         return self
 
     @model_validator(mode="after")
     def _check_custom_vrf_template_fields(self):
         """Custom template fields are valid only for vrf_type=userDefined."""
-        set_fields = [
-            field
-            for field in _CUSTOM_VRF_TEMPLATE_FIELDS
-            if getattr(self, field) is not None
-        ]
+        set_fields = [field for field in _CUSTOM_VRF_TEMPLATE_FIELDS if getattr(self, field) is not None]
         if set_fields and self.vrf_type != VrfType.USER_DEFINED.value:
-            raise ValueError(
-                "The following fields require vrf_type=userDefined: "
-                f"{', '.join(set_fields)}"
-            )
+            raise ValueError("The following fields require vrf_type=userDefined: " f"{', '.join(set_fields)}")
         return self
 
     @model_validator(mode="after")
@@ -855,10 +764,7 @@ class VrfConfigModel(NDBaseModel):
             }
             set_fields = [k for k, v in trm_fields.items() if v is not None]
             if set_fields:
-                raise ValueError(
-                    f"The following fields require trm_enable=True: "
-                    f"{', '.join(set_fields)}"
-                )
+                raise ValueError(f"The following fields require trm_enable=True: " f"{', '.join(set_fields)}")
         return self
 
     @model_validator(mode="after")
@@ -871,10 +777,7 @@ class VrfConfigModel(NDBaseModel):
             if self.rp_address is not None:
                 bad["rp_address"] = self.rp_address
             if bad:
-                raise ValueError(
-                    f"The following fields are not applicable when no_rp=True: "
-                    f"{', '.join(bad.keys())}"
-                )
+                raise ValueError(f"The following fields are not applicable when no_rp=True: " f"{', '.join(bad.keys())}")
         return self
 
     @model_validator(mode="after")
@@ -888,9 +791,7 @@ class VrfConfigModel(NDBaseModel):
     def _check_bgp_password(self):
         """Require bgp_passwd_encrypt when bgp_password is set."""
         if self.bgp_password is not None and self.bgp_passwd_encrypt is None:
-            raise ValueError(
-                "bgp_passwd_encrypt (3 or 7) is required when bgp_password is set"
-            )
+            raise ValueError("bgp_passwd_encrypt (3 or 7) is required when bgp_password is set")
         return self
 
 
@@ -920,9 +821,7 @@ class VrfParentConfigModel(NDBaseModel):
 
     vrf_name: str = Field(
         alias="vrfName",
-        description=(
-            "Name of the VRF (max 94 chars; use tenant~vrfName for multi-tenant)"
-        ),
+        description=("Name of the VRF (max 94 chars; use tenant~vrfName for multi-tenant)"),
     )
     vrf_id: int | None = Field(
         default=None,
@@ -934,10 +833,7 @@ class VrfParentConfigModel(NDBaseModel):
     vrf_type: str | None = Field(
         default=None,
         alias="vrfType",
-        description=(
-            "VRF schema type. Leave unset to derive it from fabric "
-            "management.type; set to userDefined for custom template VRFs"
-        ),
+        description=("VRF schema type. Leave unset to derive it from fabric " "management.type; set to userDefined for custom template VRFs"),
     )
 
     # --- Custom/user-defined VRF templates ---
@@ -960,17 +856,12 @@ class VrfParentConfigModel(NDBaseModel):
     vrf_template_config: dict[str, str] | None = Field(
         default=None,
         alias="vrfTemplateConfig",
-        description=(
-            "Template parameter values for userDefined VRFs. Schema requires "
-            "a JSON object with string values"
-        ),
+        description=("Template parameter values for userDefined VRFs. Schema requires " "a JSON object with string values"),
     )
 
     # --- Security group ---
 
-    default_security_action: Literal[
-        "unenforcedOrNone", "enforcedPermit", "enforcedDeny"
-    ] | None = Field(
+    default_security_action: Literal["unenforcedOrNone", "enforcedPermit", "enforcedDeny"] | None = Field(
         default=None,
         alias="defaultSecurityAction",
         description="Default security group enforcement action",
@@ -990,35 +881,24 @@ class VrfParentConfigModel(NDBaseModel):
         alias="vlanId",
         ge=2,
         le=4094,
-        description=(
-            "VLAN ID for the VRF SVI (2–4094); "
-            "not used when l3vni_wo_vlan=True"
-        ),
+        description=("VLAN ID for the VRF SVI (2–4094); " "not used when l3vni_wo_vlan=True"),
     )
     vrf_vlan_name: str | None = Field(
         default=None,
         alias="vrfVlanName",
-        description=(
-            "VLAN name for the VRF SVI; not used when l3vni_wo_vlan=True"
-        ),
+        description=("VLAN name for the VRF SVI; not used when l3vni_wo_vlan=True"),
     )
     vrf_intf_desc: str | None = Field(
         default=None,
         alias="vrfIntfDesc",
-        description=(
-            "Description for the VRF SVI interface; "
-            "not used when l3vni_wo_vlan=True"
-        ),
+        description=("Description for the VRF SVI interface; " "not used when l3vni_wo_vlan=True"),
     )
     vrf_int_mtu: int = Field(
         default=9216,
         alias="vrfIntMtu",
         ge=68,
         le=9216,
-        description=(
-            "MTU for the VRF SVI interface (68–9216); "
-            "not used when l3vni_wo_vlan=True"
-        ),
+        description=("MTU for the VRF SVI interface (68–9216); " "not used when l3vni_wo_vlan=True"),
     )
 
     # --- L3VNI without VLAN ---
@@ -1026,9 +906,7 @@ class VrfParentConfigModel(NDBaseModel):
     l3vni_wo_vlan: bool = Field(
         default=False,
         alias="l3vniWoVlan",
-        description=(
-            "Configure L3VNI without VLAN/SVI across all member fabrics"
-        ),
+        description=("Configure L3VNI without VLAN/SVI across all member fabrics"),
     )
 
     # --- Description ---
@@ -1134,47 +1012,32 @@ class VrfParentConfigModel(NDBaseModel):
         alias="rpLoopbackId",
         ge=0,
         le=1023,
-        description=(
-            "Loopback interface ID for RP (0–1023); requires trm_enable=True"
-        ),
+        description=("Loopback interface ID for RP (0–1023); requires trm_enable=True"),
     )
     underlay_mcast_ip: str | None = Field(
         default=None,
         alias="underlayMcastIp",
-        description=(
-            "Underlay IPv4 multicast address; requires trm_enable=True"
-        ),
+        description=("Underlay IPv4 multicast address; requires trm_enable=True"),
     )
     overlay_mcast_group: str | None = Field(
         default=None,
         alias="overlayMcastGroup",
-        description=(
-            "Overlay multicast group IPv4 address (224.0.0.0/4 range); "
-            "requires trm_enable=True"
-        ),
+        description=("Overlay multicast group IPv4 address (224.0.0.0/4 range); " "requires trm_enable=True"),
     )
     trm_bgw_msite: bool = Field(
         default=False,
         alias="trmBgwMsite",
-        description=(
-            "Enable TRM on border gateway multisite; requires trm_enable=True"
-        ),
+        description=("Enable TRM on border gateway multisite; requires trm_enable=True"),
     )
     import_mvpn_rt: list[str] | None = Field(
         default=None,
         alias="importMvpnRt",
-        description=(
-            "MVPN import route targets (comma-separated string or list); "
-            "requires trm_enable=True"
-        ),
+        description=("MVPN import route targets (comma-separated string or list); " "requires trm_enable=True"),
     )
     export_mvpn_rt: list[str] | None = Field(
         default=None,
         alias="exportMvpnRt",
-        description=(
-            "MVPN export route targets (comma-separated string or list); "
-            "requires trm_enable=True"
-        ),
+        description=("MVPN export route targets (comma-separated string or list); " "requires trm_enable=True"),
     )
 
     # --- Advertising ---
@@ -1207,10 +1070,7 @@ class VrfParentConfigModel(NDBaseModel):
     bgp_passwd_encrypt: int | None = Field(
         default=None,
         alias="bgpPasswdEncrypt",
-        description=(
-            "BGP password encryption type: 3 (3DES) or 7 (Cisco Type-7); "
-            "required when bgp_password is set"
-        ),
+        description=("BGP password encryption type: 3 (3DES) or 7 (Cisco Type-7); " "required when bgp_password is set"),
     )
 
     # --- Netflow ---
@@ -1231,17 +1091,11 @@ class VrfParentConfigModel(NDBaseModel):
     child_fabric_config: list[VrfChildConfigModel] | None = Field(
         default=None,
         alias="childFabricConfig",
-        description=(
-            "Per-child-fabric override entries for multisite / multicluster "
-            "deployments"
-        ),
+        description=("Per-child-fabric override entries for multisite / multicluster " "deployments"),
     )
     deploy: bool = Field(
         default=True,
-        description=(
-            "Deploy parent VRF attachment changes once after all child fabric "
-            "tasks complete"
-        ),
+        description=("Deploy parent VRF attachment changes once after all child fabric " "tasks complete"),
     )
     deploy_type: str = Field(
         default="switch",
@@ -1273,9 +1127,7 @@ class VrfParentConfigModel(NDBaseModel):
             return None
         v = str(v).strip()
         if v not in VrfType.choices():
-            raise ValueError(
-                f"vrf_type must be one of {VrfType.choices()}, got: {v}"
-            )
+            raise ValueError(f"vrf_type must be one of {VrfType.choices()}, got: {v}")
         return v
 
     @field_validator("deploy_type", mode="before")
@@ -1290,19 +1142,14 @@ class VrfParentConfigModel(NDBaseModel):
 
     @field_validator("vrf_template_config", mode="before")
     @classmethod
-    def _validate_vrf_template_config(
-        cls, v: dict[str, str] | None
-    ) -> dict[str, str] | None:
+    def _validate_vrf_template_config(cls, v: dict[str, str] | None) -> dict[str, str] | None:
         if v is None:
             return None
         if not isinstance(v, dict):
             raise ValueError("vrf_template_config must be a dictionary")
         bad = [key for key, value in v.items() if not isinstance(value, str)]
         if bad:
-            raise ValueError(
-                "vrf_template_config values must be strings for keys: "
-                f"{', '.join(str(key) for key in bad)}"
-            )
+            raise ValueError("vrf_template_config values must be strings for keys: " f"{', '.join(str(key) for key in bad)}")
         return v
 
     @field_validator("vrf_vlan_name", mode="before")
@@ -1335,9 +1182,7 @@ class VrfParentConfigModel(NDBaseModel):
         mode="before",
     )
     @classmethod
-    def _normalize_rt(
-        cls, v: str | list[str] | None
-    ) -> list[str] | None:
+    def _normalize_rt(cls, v: str | list[str] | None) -> list[str] | None:
         return VrfValidators.normalize_route_targets(v)
 
     # ------------------------------------------------------------------
@@ -1355,10 +1200,7 @@ class VrfParentConfigModel(NDBaseModel):
             }
             set_fields = [k for k, v in vlan_fields.items() if v is not None]
             if set_fields:
-                raise ValueError(
-                    f"The following fields must not be set when "
-                    f"l3vni_wo_vlan=True: {', '.join(set_fields)}"
-                )
+                raise ValueError(f"The following fields must not be set when " f"l3vni_wo_vlan=True: {', '.join(set_fields)}")
         return self
 
     @model_validator(mode="after")
@@ -1378,10 +1220,7 @@ class VrfParentConfigModel(NDBaseModel):
             }
             set_fields = [k for k, v in trm_fields.items() if v is not None]
             if set_fields:
-                raise ValueError(
-                    f"The following fields require trm_enable=True: "
-                    f"{', '.join(set_fields)}"
-                )
+                raise ValueError(f"The following fields require trm_enable=True: " f"{', '.join(set_fields)}")
         return self
 
     @model_validator(mode="after")
@@ -1395,24 +1234,15 @@ class VrfParentConfigModel(NDBaseModel):
     def _check_bgp_password(self):
         """Require bgp_passwd_encrypt when bgp_password is set."""
         if self.bgp_password is not None and self.bgp_passwd_encrypt is None:
-            raise ValueError(
-                "bgp_passwd_encrypt (3 or 7) is required when bgp_password is set"
-            )
+            raise ValueError("bgp_passwd_encrypt (3 or 7) is required when bgp_password is set")
         return self
 
     @model_validator(mode="after")
     def _check_custom_vrf_template_fields(self):
         """Custom template fields are valid only for vrf_type=userDefined."""
-        set_fields = [
-            field
-            for field in _CUSTOM_VRF_TEMPLATE_FIELDS
-            if getattr(self, field) is not None
-        ]
+        set_fields = [field for field in _CUSTOM_VRF_TEMPLATE_FIELDS if getattr(self, field) is not None]
         if set_fields and self.vrf_type != VrfType.USER_DEFINED.value:
-            raise ValueError(
-                "The following fields require vrf_type=userDefined: "
-                f"{', '.join(set_fields)}"
-            )
+            raise ValueError("The following fields require vrf_type=userDefined: " f"{', '.join(set_fields)}")
         return self
 
     @model_validator(mode="after")
@@ -1425,8 +1255,5 @@ class VrfParentConfigModel(NDBaseModel):
             if self.rp_address is not None:
                 bad["rp_address"] = self.rp_address
             if bad:
-                raise ValueError(
-                    f"The following fields are not applicable when no_rp=True: "
-                    f"{', '.join(bad.keys())}"
-                )
+                raise ValueError(f"The following fields are not applicable when no_rp=True: " f"{', '.join(bad.keys())}")
         return self

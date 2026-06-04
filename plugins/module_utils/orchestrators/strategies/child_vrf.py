@@ -32,9 +32,7 @@ class ChildVrfStrategy(StandaloneVrfStrategy):
     ):
         super().__init__(fabric_name=fabric_name, fabric_data=fabric_data, **kwargs)
         # Prefer explicit cluster_name (coordinator fast-path), fall back to fabric_data.
-        self._cluster_name: str | None = cluster_name or (
-            (fabric_data or {}).get("clusterName")
-        )
+        self._cluster_name: str | None = cluster_name or ((fabric_data or {}).get("clusterName"))
 
     # ── Fabric type identity ────────────────────────────────────────
 

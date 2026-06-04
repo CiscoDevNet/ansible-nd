@@ -33,7 +33,6 @@ Architecture overview
                                   └── per child ──► nd_vrf (recursive)
 """
 
-
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
@@ -120,65 +119,37 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         management = fabric_data.get("management") if isinstance(fabric_data, dict) else {}
         if isinstance(management, dict) and management.get("type"):
             return management["type"]
-        details = (
-            fabric_data.get("manageFabricDetails")
-            if isinstance(fabric_data, dict)
-            else {}
-        )
+        details = fabric_data.get("manageFabricDetails") if isinstance(fabric_data, dict) else {}
         management = details.get("management") if isinstance(details, dict) else {}
         if isinstance(management, dict) and management.get("type"):
             return management["type"]
         return VrfType.VXLAN_IBGP.value
 
-    def _transform_child_config_to_payload_model_data(
-        self, config: dict[str, Any], fabric_name: str
-    ) -> dict[str, Any]:
+    def _transform_child_config_to_payload_model_data(self, config: dict[str, Any], fabric_name: str) -> dict[str, Any]:
         """Transform child overrides into a fabricData-only VRF payload."""
         transformed: dict[str, Any] = {
-            "fabric_name": self._value(
-                config, "fabric_name", "fabricName", default=fabric_name
-            ),
+            "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
             "vrf_name": self._value(config, "vrf_name", "vrfName"),
         }
 
         trm_kwargs = {
             "ipv4_trm": self._value(config, "trm_enable", "ipv4_trm"),
             "v4_rp_absent": self._value(config, "no_rp", "v4_rp_absent"),
-            "v4_rp_external": self._value(
-                config, "rp_external", "v4_rp_external"
-            ),
+            "v4_rp_external": self._value(config, "rp_external", "v4_rp_external"),
             "v4_rp_address": self._value(config, "rp_address", "v4_rp_address"),
-            "loopback_number": self._value(
-                config, "rp_loopback_id", "loopback_number"
-            ),
-            "l3_vni_multicast_group": self._value(
-                config, "underlay_mcast_ip", "l3_vni_multicast_group"
-            ),
-            "v4_multicast_group": self._value(
-                config, "overlay_mcast_group", "v4_multicast_group"
-            ),
-            "trm_on_bgw": self._value(
-                config, "trm_bgw_msite", "trm_on_bgw"
-            ),
-            "mvpn_route_target_import": self._value(
-                config, "import_mvpn_rt", "mvpn_route_target_import"
-            ),
-            "mvpn_route_target_export": self._value(
-                config, "export_mvpn_rt", "mvpn_route_target_export"
-            ),
+            "loopback_number": self._value(config, "rp_loopback_id", "loopback_number"),
+            "l3_vni_multicast_group": self._value(config, "underlay_mcast_ip", "l3_vni_multicast_group"),
+            "v4_multicast_group": self._value(config, "overlay_mcast_group", "v4_multicast_group"),
+            "trm_on_bgw": self._value(config, "trm_bgw_msite", "trm_on_bgw"),
+            "mvpn_route_target_import": self._value(config, "import_mvpn_rt", "mvpn_route_target_import"),
+            "mvpn_route_target_export": self._value(config, "export_mvpn_rt", "mvpn_route_target_export"),
         }
         trm_kwargs = {k: v for k, v in trm_kwargs.items() if v is not None}
 
         fabric_kwargs = {
-            "l3_vni_without_vlan": self._value(
-                config, "l3vni_wo_vlan", "l3_vni_without_vlan", default=False
-            ),
-            "advertise_host_route": self._value(
-                config, "adv_host_routes", "advertise_host_route", default=False
-            ),
-            "advertise_default_route": self._value(
-                config, "adv_default_routes", "advertise_default_route", default=True
-            ),
+            "l3_vni_without_vlan": self._value(config, "l3vni_wo_vlan", "l3_vni_without_vlan", default=False),
+            "advertise_host_route": self._value(config, "adv_host_routes", "advertise_host_route", default=False),
+            "advertise_default_route": self._value(config, "adv_default_routes", "advertise_default_route", default=True),
             "configure_static_default_route": self._value(
                 config,
                 "static_default_route",
@@ -186,28 +157,20 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 default=True,
             ),
             "bgp_password": self._value(config, "bgp_password", "bgpPassword"),
-            "bgp_password_key_type": self._value(
-                config, "bgp_passwd_encrypt", "bgp_password_key_type", default=3
-            ),
+            "bgp_password_key_type": self._value(config, "bgp_passwd_encrypt", "bgp_password_key_type", default=3),
             "netflow": self._value(config, "netflow_enable", "netflow", default=False),
-            "netflow_monitor": self._value(
-                config, "nf_monitor", "netflow_monitor"
-            ),
+            "netflow_monitor": self._value(config, "nf_monitor", "netflow_monitor"),
         }
         fabric_kwargs = {k: v for k, v in fabric_kwargs.items() if v is not None}
         if trm_kwargs:
             fabric_kwargs["trm_data"] = TrmData(**trm_kwargs)
 
         if fabric_kwargs:
-            transformed["fabric_data"] = VxlanFabricInstance(
-                **fabric_kwargs
-            ).to_payload()
+            transformed["fabric_data"] = VxlanFabricInstance(**fabric_kwargs).to_payload()
 
         return transformed
 
-    def _transform_config_to_payload_model_data(
-        self, config: dict[str, Any], fabric_name: str
-    ) -> dict[str, Any]:
+    def _transform_config_to_payload_model_data(self, config: dict[str, Any], fabric_name: str) -> dict[str, Any]:
         """
         Transform playbook-facing VRF config into VrfDataModel-shaped data.
 
@@ -223,9 +186,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             default=self._default_vrf_type(),
         )
         transformed: dict[str, Any] = {
-            "fabric_name": self._value(
-                config, "fabric_name", "fabricName", default=fabric_name
-            ),
+            "fabric_name": self._value(config, "fabric_name", "fabricName", default=fabric_name),
             "vrf_name": self._value(config, "vrf_name", "vrfName"),
             "vrf_type": vrf_type,
         }
@@ -264,9 +225,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             value = self._value(config, *names)
             if value is not None:
                 if vrf_type != VrfType.USER_DEFINED.value:
-                    raise ValueError(
-                        f"{target} requires vrf_type={VrfType.USER_DEFINED.value}"
-                    )
+                    raise ValueError(f"{target} requires vrf_type={VrfType.USER_DEFINED.value}")
                 transformed[target] = value
 
         if vrf_type == VrfType.USER_DEFINED.value:
@@ -281,12 +240,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 "vrfIntfDesc",
                 "vrfInterfaceDescription",
             ),
-            vrf_description=self._value(
-                config, "vrf_description", "vrfDescription"
-            ),
-            mtu=self._value(
-                config, "vrf_int_mtu", "mtu", "vrfIntMtu", default=9216
-            ),
+            vrf_description=self._value(config, "vrf_description", "vrfDescription"),
+            mtu=self._value(config, "vrf_int_mtu", "mtu", "vrfIntMtu", default=9216),
             routing_tag=self._value(
                 config,
                 "loopback_route_tag",
@@ -308,12 +263,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 "v6VrfRouteMap",
                 default="FABRIC-RMAP-REDIST-SUBNET",
             ),
-            max_bgp_paths=self._value(
-                config, "max_bgp_paths", "maxBgpPaths", default=1
-            ),
-            max_ibgp_paths=self._value(
-                config, "max_ibgp_paths", "maxIbgpPaths", default=2
-            ),
+            max_bgp_paths=self._value(config, "max_bgp_paths", "maxBgpPaths", default=1),
+            max_ibgp_paths=self._value(config, "max_ibgp_paths", "maxIbgpPaths", default=2),
             ipv6_link_local=self._value(
                 config,
                 "ipv6_linklocal_enable",
@@ -321,15 +272,9 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 "ipv6LinkLocal",
                 default=True,
             ),
-            disable_rt_auto=self._value(
-                config, "disable_rt_auto", "disableRtAuto", default=False
-            ),
-            route_target_import=self._value(
-                config, "import_vpn_rt", "route_target_import"
-            ),
-            route_target_export=self._value(
-                config, "export_vpn_rt", "route_target_export"
-            ),
+            disable_rt_auto=self._value(config, "disable_rt_auto", "disableRtAuto", default=False),
+            route_target_import=self._value(config, "import_vpn_rt", "route_target_import"),
+            route_target_export=self._value(config, "export_vpn_rt", "route_target_export"),
             evpn_route_target_import=self._value(
                 config,
                 "import_evpn_rt",
@@ -345,25 +290,13 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         trm_data = TrmData(
             ipv4_trm=self._value(config, "trm_enable", "ipv4_trm", default=False),
             ipv6_trm=self._value(config, "ipv6_trm", default=False),
-            v4_rp_absent=self._value(
-                config, "no_rp", "v4_rp_absent", default=False
-            ),
-            v4_rp_external=self._value(
-                config, "rp_external", "v4_rp_external", default=False
-            ),
+            v4_rp_absent=self._value(config, "no_rp", "v4_rp_absent", default=False),
+            v4_rp_external=self._value(config, "rp_external", "v4_rp_external", default=False),
             v4_rp_address=self._value(config, "rp_address", "v4_rp_address"),
-            loopback_number=self._value(
-                config, "rp_loopback_id", "loopback_number"
-            ),
-            l3_vni_multicast_group=self._value(
-                config, "underlay_mcast_ip", "l3_vni_multicast_group"
-            ),
-            v4_multicast_group=self._value(
-                config, "overlay_mcast_group", "v4_multicast_group"
-            ),
-            trm_on_bgw=self._value(
-                config, "trm_bgw_msite", "trm_on_bgw", default=False
-            ),
+            loopback_number=self._value(config, "rp_loopback_id", "loopback_number"),
+            l3_vni_multicast_group=self._value(config, "underlay_mcast_ip", "l3_vni_multicast_group"),
+            v4_multicast_group=self._value(config, "overlay_mcast_group", "v4_multicast_group"),
+            trm_on_bgw=self._value(config, "trm_bgw_msite", "trm_on_bgw", default=False),
             mvpn_route_target_import=self._value(
                 config,
                 "import_mvpn_rt",
@@ -377,15 +310,9 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         )
 
         fabric_data = VxlanFabricInstance(
-            l3_vni_without_vlan=self._value(
-                config, "l3vni_wo_vlan", "l3_vni_without_vlan", default=False
-            ),
-            advertise_host_route=self._value(
-                config, "adv_host_routes", "advertise_host_route", default=False
-            ),
-            advertise_default_route=self._value(
-                config, "adv_default_routes", "advertise_default_route", default=True
-            ),
+            l3_vni_without_vlan=self._value(config, "l3vni_wo_vlan", "l3_vni_without_vlan", default=False),
+            advertise_host_route=self._value(config, "adv_host_routes", "advertise_host_route", default=False),
+            advertise_default_route=self._value(config, "adv_default_routes", "advertise_default_route", default=True),
             configure_static_default_route=self._value(
                 config,
                 "static_default_route",
@@ -393,13 +320,9 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 default=True,
             ),
             bgp_password=self._value(config, "bgp_password", "bgpPassword"),
-            bgp_password_key_type=self._value(
-                config, "bgp_passwd_encrypt", "bgp_password_key_type", default=3
-            ),
+            bgp_password_key_type=self._value(config, "bgp_passwd_encrypt", "bgp_password_key_type", default=3),
             netflow=self._value(config, "netflow_enable", "netflow", default=False),
-            netflow_monitor=self._value(
-                config, "nf_monitor", "netflow_monitor"
-            ),
+            netflow_monitor=self._value(config, "nf_monitor", "netflow_monitor"),
             trm_data=trm_data,
         )
 
@@ -417,17 +340,9 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         for entry in raw_config:
             if isinstance(entry, dict):
                 if self.strategy.is_child:
-                    result.append(
-                        self._transform_child_config_to_payload_model_data(
-                            entry, fabric_name
-                        )
-                    )
+                    result.append(self._transform_child_config_to_payload_model_data(entry, fabric_name))
                 else:
-                    result.append(
-                        self._transform_config_to_payload_model_data(
-                            entry, fabric_name
-                        )
-                    )
+                    result.append(self._transform_config_to_payload_model_data(entry, fabric_name))
             else:
                 result.append(entry)
         return result
@@ -484,9 +399,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 operation_type=OperationType.CREATE,
             )
         except Exception as e:
-            raise Exception(
-                f"Bulk create VRFs failed: {e}"
-            ) from e
+            raise Exception(f"Bulk create VRFs failed: {e}") from e
 
     # ── Update ────────────────────────────────────────────────────
 
@@ -501,11 +414,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             )
             payload = model_instance.to_payload()
             if self.strategy.is_child:
-                payload = {
-                    key: value
-                    for key, value in payload.items()
-                    if key in ("fabricName", "vrfName", "vrfType", "fabricData")
-                }
+                payload = {key: value for key, value in payload.items() if key in ("fabricName", "vrfName", "vrfType", "fabricData")}
             return self._request(
                 path=endpoint.path,
                 verb=endpoint.verb,
@@ -513,9 +422,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 operation_type=OperationType.UPDATE,
             )
         except Exception as e:
-            raise Exception(
-                f"Update VRF failed for {model_instance.get_identifier_value()}: {e}"
-            ) from e
+            raise Exception(f"Update VRF failed for {model_instance.get_identifier_value()}: {e}") from e
 
     # ── Delete ────────────────────────────────────────────────────
 

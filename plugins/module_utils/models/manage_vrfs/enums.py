@@ -11,7 +11,6 @@ Extracted from OpenAPI schema (manage.json) for Nexus Dashboard Manage APIs v1.1
 
 from enum import Enum
 
-
 # =============================================================================
 # ENUMS - Extracted from OpenAPI Schema components/schemas
 # =============================================================================

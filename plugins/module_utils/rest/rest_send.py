@@ -16,7 +16,7 @@ import inspect
 import json
 import logging
 from time import sleep
-from typing import Optional
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.rest.protocols.response_handler import ResponseHandlerProtocol

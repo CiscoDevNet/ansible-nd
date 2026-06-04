@@ -65,9 +65,7 @@ class VrfValidators:
         if not v:
             return None
         if "/" not in v:
-            raise ValueError(
-                f"CIDR notation required (IPv4/mask format): {v}"
-            )
+            raise ValueError(f"CIDR notation required (IPv4/mask format): {v}")
         try:
             ip_network(v, strict=False)
             return v
@@ -83,15 +81,11 @@ class VrfValidators:
         if not v:
             return None
         if "/" not in v:
-            raise ValueError(
-                f"CIDR notation required (IPv6/prefix-length format): {v}"
-            )
+            raise ValueError(f"CIDR notation required (IPv6/prefix-length format): {v}")
         try:
             net = ip_network(v, strict=False)
             if net.version != 6:
-                raise ValueError(
-                    f"Expected IPv6 CIDR, got IPv4: {v}"
-                )
+                raise ValueError(f"Expected IPv6 CIDR, got IPv4: {v}")
             return v
         except ValueError as exc:
             raise ValueError(f"Invalid IPv6 CIDR format: {v}") from exc
@@ -134,10 +128,7 @@ class VrfValidators:
             r"\.(25[0-5]|2[0-4]\d|1\d{2}|\d{1,2}):\d{1,9}))$"
         )
         if not re.match(pattern, v):
-            raise ValueError(
-                f"Invalid route target format: {v}. "
-                "Expected AS:NN, IP:NN, or large-community format."
-            )
+            raise ValueError(f"Invalid route target format: {v}. " "Expected AS:NN, IP:NN, or large-community format.")
         return v
 
     @staticmethod
@@ -154,9 +145,7 @@ class VrfValidators:
         if not v:
             return None
         if len(v) > 94:
-            raise ValueError(
-                f"VRF name must not exceed 94 characters: {v}"
-            )
+            raise ValueError(f"VRF name must not exceed 94 characters: {v}")
         return v
 
     @staticmethod
@@ -170,9 +159,7 @@ class VrfValidators:
         if v is None:
             return None
         if not (2 <= v <= 4094):
-            raise ValueError(
-                f"VLAN ID must be between 2 and 4094, got: {v}"
-            )
+            raise ValueError(f"VLAN ID must be between 2 and 4094, got: {v}")
         return v
 
     @staticmethod
@@ -186,9 +173,7 @@ class VrfValidators:
         if v is None:
             return None
         if not (0 <= v <= 1023):
-            raise ValueError(
-                f"Loopback ID must be between 0 and 1023, got: {v}"
-            )
+            raise ValueError(f"Loopback ID must be between 0 and 1023, got: {v}")
         return v
 
     @staticmethod
@@ -202,9 +187,7 @@ class VrfValidators:
         if v is None:
             return None
         if not (68 <= v <= 9216):
-            raise ValueError(
-                f"MTU must be between 68 and 9216, got: {v}"
-            )
+            raise ValueError(f"MTU must be between 68 and 9216, got: {v}")
         return v
 
     @staticmethod
@@ -218,9 +201,7 @@ class VrfValidators:
         if v is None:
             return None
         if not (2 <= v <= 4094):
-            raise ValueError(
-                f"dot1qId must be between 2 and 4094, got: {v}"
-            )
+            raise ValueError(f"dot1qId must be between 2 and 4094, got: {v}")
         return v
 
     @staticmethod
@@ -235,13 +216,9 @@ class VrfValidators:
             return None
         v = str(v).strip()
         if len(v) > 128:
-            raise ValueError(
-                f"vrfVlanName must not exceed 128 characters: {v}"
-            )
+            raise ValueError(f"vrfVlanName must not exceed 128 characters: {v}")
         if re.search(r"[\?,\\\s]", v):
-            raise ValueError(
-                f"vrfVlanName must not contain '?', '\\', or whitespace: {v}"
-            )
+            raise ValueError(f"vrfVlanName must not contain '?', '\\', or whitespace: {v}")
         return v
 
     @staticmethod
@@ -259,19 +236,12 @@ class VrfValidators:
         try:
             addr = ip_address(v)
             if addr.version != 4:
-                raise ValueError(
-                    f"Expected IPv4 multicast address, got IPv6: {v}"
-                )
+                raise ValueError(f"Expected IPv4 multicast address, got IPv6: {v}")
             if addr not in ip_network("224.0.0.0/4"):
-                raise ValueError(
-                    f"overlay_mcast_group must be in the 224.0.0.0/4 "
-                    f"multicast range, got: {v}"
-                )
+                raise ValueError(f"overlay_mcast_group must be in the 224.0.0.0/4 " f"multicast range, got: {v}")
             return v
         except ValueError as exc:
-            raise ValueError(
-                f"Invalid overlay multicast group address: {v}"
-            ) from exc
+            raise ValueError(f"Invalid overlay multicast group address: {v}") from exc
 
     @staticmethod
     def validate_bgp_passwd_encrypt(v: int | None) -> int | None:
@@ -283,15 +253,11 @@ class VrfValidators:
         if v is None:
             return None
         if v not in (3, 7):
-            raise ValueError(
-                f"bgp_passwd_encrypt must be 3 (3DES) or 7 (Cisco Type-7), got: {v}"
-            )
+            raise ValueError(f"bgp_passwd_encrypt must be 3 (3DES) or 7 (Cisco Type-7), got: {v}")
         return v
 
     @staticmethod
-    def normalize_route_targets(
-        v: str | list[str] | None
-    ) -> list[str] | None:
+    def normalize_route_targets(v: str | list[str] | None) -> list[str] | None:
         """
         Normalise a route-target value to a validated list.
 
@@ -327,9 +293,7 @@ class VrfValidators:
     # ------------------------------------------------------------------
 
     @classmethod
-    def require_vrf_name(
-        cls, v: str | None, field: str = "vrf_name"
-    ) -> str:
+    def require_vrf_name(cls, v: str | None, field: str = "vrf_name") -> str:
         """Validate and require a non-empty VRF name."""
         result = cls.validate_vrf_name(v)
         if result is None:

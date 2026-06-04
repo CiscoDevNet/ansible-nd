@@ -31,7 +31,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums 
     VrfAttachmentSwitchRole,
 )
 
-
 # =============================================================================
 # Shared nested models
 # =============================================================================
@@ -101,9 +100,7 @@ class VrfOrNetworkPreviewModel(NDNestedModel):
     pending_configs: list[str] | None = Field(
         default=None,
         alias="pendingConfigs",
-        description=(
-            "List of pending configuration commands for the switch"
-        ),
+        description=("List of pending configuration commands for the switch"),
     )
 
 
@@ -148,9 +145,7 @@ class VrfAttachmentPreviewModel(NDNestedModel):
     pending_configs: list[str] | None = Field(
         default=None,
         alias="pendingConfigs",
-        description=(
-            "List of pending configuration commands for the switch"
-        ),
+        description=("List of pending configuration commands for the switch"),
     )
     vrf_name: str = Field(
         default=...,
@@ -176,10 +171,7 @@ class VrfStretchItemModel(NDNestedModel):
     )
     stretch: str = Field(
         default=...,
-        description=(
-            "Stretch target. Use 'allBgwList' to stretch to all border "
-            "gateways, or 'none' to remove stretching."
-        ),
+        description=("Stretch target. Use 'allBgwList' to stretch to all border " "gateways, or 'none' to remove stretching."),
     )
 
 
@@ -227,9 +219,7 @@ class VrfDeployRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     vrf_names: list[str] = Field(
         default=...,
@@ -240,18 +230,12 @@ class VrfDeployRequestModel(NDBaseModel):
     switch_fabric_names: list[str] | None = Field(
         default=None,
         alias="switchFabricNames",
-        description=(
-            "Names of the switch fabrics to which deployment should be "
-            "limited. Leave unset to deploy to all fabrics."
-        ),
+        description=("Names of the switch fabrics to which deployment should be " "limited. Leave unset to deploy to all fabrics."),
     )
     switch_ids: list[str] | None = Field(
         default=None,
         alias="switchIds",
-        description=(
-            "Serial numbers of the switches to which deployment should "
-            "be limited. Leave unset to deploy to all switches."
-        ),
+        description=("Serial numbers of the switches to which deployment should " "be limited. Leave unset to deploy to all switches."),
     )
 
 
@@ -264,17 +248,12 @@ class VrfExportRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     vrf_names: list[str] | None = Field(
         default=None,
         alias="vrfNames",
-        description=(
-            "Names of the VRFs to export. If null or empty, all VRFs "
-            "in the fabric are exported."
-        ),
+        description=("Names of the VRFs to export. If null or empty, all VRFs " "in the fabric are exported."),
     )
 
 
@@ -287,9 +266,7 @@ class VrfRemoveRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     vrf_names: list[str] = Field(
         default=...,
@@ -308,9 +285,7 @@ class VrfStretchRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     attachments: list[VrfStretchItemModel] | None = Field(
         default=None,
@@ -332,16 +307,11 @@ class VrfRemoveResponseModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     results: list[MultiStatusBaseModel] | None = Field(
         default=None,
-        description=(
-            "Status of each VRF removal. Will contain only the entries "
-            "with failure status."
-        ),
+        description=("Status of each VRF removal. Will contain only the entries " "with failure status."),
     )
 
 
@@ -354,9 +324,7 @@ class VrfStretch207ResponseModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     results: list[VrfStretchStatusModel] | None = Field(
         default=None,
@@ -373,15 +341,11 @@ class VrfPreviewResponseModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     attachments: list[VrfAttachmentPreviewModel] | None = Field(
         default=None,
-        description=(
-            "List of pending configuration changes per VRF per switch"
-        ),
+        description=("List of pending configuration changes per VRF per switch"),
     )
 
 

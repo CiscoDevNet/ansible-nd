@@ -137,21 +137,13 @@ class BaseVrfStrategy(ABC):
 
         Returns [] for strategies that have no children.
         """
-        return [
-            m.get("fabricName", "")
-            for m in self.fabric_data.get("members", [])
-            if m.get("fabricName")
-        ]
+        return [m.get("fabricName", "") for m in self.fabric_data.get("members", []) if m.get("fabricName")]
 
-    def build_child_task_args(
-        self, child_fabric_name: str, vrf_configs: list[dict], state: str
-    ) -> dict[str, Any]:
+    def build_child_task_args(self, child_fabric_name: str, vrf_configs: list[dict], state: str) -> dict[str, Any]:
         """
         Build the module_args dict for a child fabric invocation.
 
         Override in parent strategies to inject fabric_details.
         Default raises — non-parent strategies should never call this.
         """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support child fabric tasks."
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not support child fabric tasks.")

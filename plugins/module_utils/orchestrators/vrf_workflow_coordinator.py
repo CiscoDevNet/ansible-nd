@@ -163,19 +163,12 @@ class VrfWorkflowCoordinator:
                 model = model_cls.from_config(entry)
                 parsed.append(model.to_config())
             except ValidationError as exc:
-                self.module.fail_json(
-                    msg=(
-                        f"config[{idx}] validation failed "
-                        f"({model_cls.__name__}, state={state!r}): {exc}"
-                    )
-                )
+                self.module.fail_json(msg=(f"config[{idx}] validation failed " f"({model_cls.__name__}, state={state!r}): {exc}"))
         return parsed
 
     # ── Workflow handlers ─────────────────────────────────────────
 
-    def _handle_standalone_workflow(
-        self, module_args: dict, fabric_type: str
-    ) -> dict[str, Any]:
+    def _handle_standalone_workflow(self, module_args: dict, fabric_type: str) -> dict[str, Any]:
         """
         Direct pass-through to the state machine.
 
@@ -183,17 +176,13 @@ class VrfWorkflowCoordinator:
         to child fabrics that are targeted directly with state=gathered.
         """
         state = module_args.get("state", "merged")
-        module_args["config"] = self._parse_config(
-            module_args.get("config") or [], self.strategy.config_model_cls, state
-        )
+        module_args["config"] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
         result = self._run_state_machine_with_attachments(module_args)
         result.setdefault("fabric_type", fabric_type)
         result.setdefault("workflow", "Standalone Fabric VRF Processing")
         return result
 
-    def _handle_child_workflow(
-        self, module_args: dict, fabric_type: str
-    ) -> dict[str, Any]:
+    def _handle_child_workflow(self, module_args: dict, fabric_type: str) -> dict[str, Any]:
         """
         Enforce the Multisite / Multicluster operational model for child fabrics.
 
@@ -204,9 +193,7 @@ class VrfWorkflowCoordinator:
         fabric_name = module_args.get("fabric")
 
         if state == "gathered":
-            module_args["config"] = self._parse_config(
-                module_args.get("config") or [], self.strategy.config_model_cls, state
-            )
+            module_args["config"] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
             result = self._run_state_machine(module_args)
             result.setdefault("fabric_type", fabric_type)
             result.setdefault(
@@ -224,9 +211,7 @@ class VrfWorkflowCoordinator:
             )
         )
 
-    def _handle_parent_workflow(
-        self, module_args: dict, fabric_type: str
-    ) -> dict[str, Any]:
+    def _handle_parent_workflow(self, module_args: dict, fabric_type: str) -> dict[str, Any]:
         """
         Full parent orchestration: parent fabric first, then all child fabrics.
 
@@ -241,18 +226,12 @@ class VrfWorkflowCoordinator:
         log_type = "multicluster" if "multicluster" in fabric_type else "multisite"
         parent_fabric = module_args.get("fabric")
         state = module_args.get("state", "merged")
-        config: list[dict] = self._parse_config(
-            module_args.get("config") or [], self.strategy.config_model_cls, state
-        )
+        config: list[dict] = self._parse_config(module_args.get("config") or [], self.strategy.config_model_cls, state)
 
         # Collect member fabric names for relationship validation
         child_member_names = self.strategy.child_fabric_members()
         child_member_name_set = set(child_member_names)
-        child_fabric_data_map: dict[str, dict] = {
-            m.get("fabricName"): m
-            for m in self.strategy.fabric_data.get("members", [])
-            if m.get("fabricName")
-        }
+        child_fabric_data_map: dict[str, dict] = {m.get("fabricName"): m for m in self.strategy.fabric_data.get("members", []) if m.get("fabricName")}
 
         # Step 2 & 3 — split config into parent config + child task groups
         parent_config: list[dict] = []
@@ -267,9 +246,7 @@ class VrfWorkflowCoordinator:
                     if child_fabric_name not in child_member_name_set:
                         self.module.fail_json(
                             msg=(
-                                f"Fabric '{child_fabric_name}' is not a member of "
-                                f"parent fabric '{parent_fabric}'. "
-                                f"Known members: {child_member_names}"
+                                f"Fabric '{child_fabric_name}' is not a member of " f"parent fabric '{parent_fabric}'. " f"Known members: {child_member_names}"
                             )
                         )
                     child_tasks_dict = self._accumulate_child_task(
@@ -304,9 +281,7 @@ class VrfWorkflowCoordinator:
                     # Abort on first child failure
                     break
 
-        if not parent_result.get("failed", False) and not any(
-            result.get("failed", False) for result in child_results
-        ):
+        if not parent_result.get("failed", False) and not any(result.get("failed", False) for result in child_results):
             deploy_payloads = parent_result.pop("_deferred_deploy_payloads", [])
             deploy_payload = parent_result.pop("_deferred_deploy_payload", None)
             if deploy_payload:
@@ -321,9 +296,7 @@ class VrfWorkflowCoordinator:
                     self._merge_api_trace(parent_result, deploy_trace)
 
         # Step 6 — aggregate and structure results
-        return self._build_structured_result(
-            parent_result, child_results, parent_fabric, fabric_type, log_type
-        )
+        return self._build_structured_result(parent_result, child_results, parent_fabric, fabric_type, log_type)
 
     # ── Config splitting helpers ──────────────────────────────────
 
@@ -363,18 +336,14 @@ class VrfWorkflowCoordinator:
                 "fabric": child_fabric_name,
                 "module_args": child_module_args,
                 "vrf_list": [child_cfg["vrf_name"]],
-                "strategy": VrfFabricResolver.strategy_from_fabric_details(
-                    child_fabric_name, child_fabric_data
-                ),
+                "strategy": VrfFabricResolver.strategy_from_fabric_details(child_fabric_name, child_fabric_data),
             }
 
         return child_tasks_dict
 
     # ── State machine runner ──────────────────────────────────────
 
-    def _run_state_machine(
-        self, module_args: dict, strategy: BaseVrfStrategy | None = None
-    ) -> dict[str, Any]:
+    def _run_state_machine(self, module_args: dict, strategy: BaseVrfStrategy | None = None) -> dict[str, Any]:
         """
         Run NDStateMachine for the given module_args and return the result dict.
 
@@ -407,9 +376,7 @@ class VrfWorkflowCoordinator:
                 rest_send=rest_send,
                 strategy=active_strategy,
             )
-            self.module.params["config"] = orchestrator.prepare_config_data(
-                module_args.get("config") or []
-            )
+            self.module.params["config"] = orchestrator.prepare_config_data(module_args.get("config") or [])
             self.module.params["state"] = state
             sm = NDStateMachine(module=self.module, model_orchestrator=orchestrator)
 
@@ -701,11 +668,7 @@ class VrfWorkflowCoordinator:
             )
 
         verbosity_levels = final.get("verbosity_level", [])
-        indices = [
-            i
-            for i, level in enumerate(verbosity_levels)
-            if level <= verbosity
-        ]
+        indices = [i for i, level in enumerate(verbosity_levels) if level <= verbosity]
         for final_key, result_key in field_map.items():
             values = final.get(final_key, [])
             selected = [values[i] for i in indices if i < len(values)]
@@ -737,9 +700,13 @@ class VrfWorkflowCoordinator:
         if current_vrf_names == []:
             return {}
 
-        desired = desired if desired is not None else self._desired_attachment_map(
-            module_args,
-            strategy,
+        desired = (
+            desired
+            if desired is not None
+            else self._desired_attachment_map(
+                module_args,
+                strategy,
+            )
         )
         vrf_names = self._configured_vrf_names(config)
         deploy_enabled = self._deploy_enabled_by_vrf(config)
@@ -822,11 +789,7 @@ class VrfWorkflowCoordinator:
         attach map because a delete task should converge what is currently on
         ND, not what the playbook happens to include under ``attach``.
         """
-        vrf_names = (
-            vrf_names
-            if vrf_names is not None
-            else self._configured_vrf_names(module_args.get("config") or [])
-        )
+        vrf_names = vrf_names if vrf_names is not None else self._configured_vrf_names(module_args.get("config") or [])
         attachments = self._current_attachment_details_ignore_missing(
             module_args,
             strategy,
@@ -1013,12 +976,7 @@ class VrfWorkflowCoordinator:
 
         missing = sorted(wanted_ips.difference(resolved))
         if missing:
-            self.module.fail_json(
-                msg=(
-                    "Unable to resolve attach.ip_address values to switchId "
-                    f"on fabric '{strategy.fabric_name}': {missing}"
-                )
-            )
+            self.module.fail_json(msg=("Unable to resolve attach.ip_address values to switchId " f"on fabric '{strategy.fabric_name}': {missing}"))
         return resolved
 
     def _switch_ip_candidates(self, switch: dict[str, Any]) -> set[str]:
@@ -1172,15 +1130,9 @@ class VrfWorkflowCoordinator:
             detach_keys = set(current.keys()).difference(desired.keys())
         elif state == "replaced":
             vrf_names = set(self._configured_vrf_names(config))
-            detach_keys = {
-                key for key in current.keys()
-                if key[0] in vrf_names and key not in desired
-            }
+            detach_keys = {key for key in current.keys() if key[0] in vrf_names and key not in desired}
 
-        return [
-            {"vrfName": vrf_name, "switchId": switch_id, "attach": False}
-            for vrf_name, switch_id in sorted(detach_keys)
-        ]
+        return [{"vrfName": vrf_name, "switchId": switch_id, "attach": False} for vrf_name, switch_id in sorted(detach_keys)]
 
     def _planned_attach_payloads(
         self,
@@ -1221,9 +1173,7 @@ class VrfWorkflowCoordinator:
         operation_type: OperationType,
     ) -> dict[str, Any]:
         """Send attach/detach payload and return mergeable API trace."""
-        request = VrfAttachDetachRequestModel(
-            attachments=[VrfAttachmentModel(**payload) for payload in payloads]
-        )
+        request = VrfAttachDetachRequestModel(attachments=[VrfAttachmentModel(**payload) for payload in payloads])
         orchestrator, results = self._new_vrf_orchestrator(module_args, strategy)
         endpoint = orchestrator._make_endpoint(EpManageFabricsVrfAttachmentsPost)
         orchestrator._request(
@@ -1283,9 +1233,7 @@ class VrfWorkflowCoordinator:
             )
 
         if vrf_level_names:
-            payloads.append(
-                VrfDeployRequestModel(vrf_names=sorted(vrf_level_names)).to_payload()
-            )
+            payloads.append(VrfDeployRequestModel(vrf_names=sorted(vrf_level_names)).to_payload())
 
         return payloads
 
@@ -1317,11 +1265,7 @@ class VrfWorkflowCoordinator:
             return []
 
         vrf_level_names: set[str] = set()
-        switch_level_names = {
-            vrf_name
-            for vrf_name in pending_vrfs
-            if deploy_type.get(vrf_name, "switch") == "switch"
-        }
+        switch_level_names = {vrf_name for vrf_name in pending_vrfs if deploy_type.get(vrf_name, "switch") == "switch"}
         vrf_level_names.update(pending_vrfs.difference(switch_level_names))
 
         deploy_target_map: dict[str, set[str]] = {}
@@ -1331,9 +1275,7 @@ class VrfWorkflowCoordinator:
                 strategy,
                 sorted(switch_level_names),
             )
-            switch_ids_by_vrf: dict[str, set[str]] = {
-                vrf_name: set() for vrf_name in switch_level_names
-            }
+            switch_ids_by_vrf: dict[str, set[str]] = {vrf_name: set() for vrf_name in switch_level_names}
             for attachment in attachment_details:
                 vrf_name = attachment.get("vrfName")
                 switch_id = attachment.get("switchId")
@@ -1374,11 +1316,7 @@ class VrfWorkflowCoordinator:
         vrf_names: list[str] | None = None,
     ) -> None:
         """Wait until configured VRFs are absent or in notApplicable state."""
-        vrf_name_set = set(
-            vrf_names
-            if vrf_names is not None
-            else self._configured_vrf_names(module_args.get("config") or [])
-        )
+        vrf_name_set = set(vrf_names if vrf_names is not None else self._configured_vrf_names(module_args.get("config") or []))
         if not vrf_name_set:
             return
 
@@ -1396,19 +1334,12 @@ class VrfWorkflowCoordinator:
                     status = vrf.get("vrf_status") or vrf.get("vrfStatus") or ""
                     last_statuses[name] = str(status)
 
-            if all(
-                name not in last_statuses or last_statuses[name] in ready_statuses
-                for name in vrf_name_set
-            ):
+            if all(name not in last_statuses or last_statuses[name] in ready_statuses for name in vrf_name_set):
                 return
 
             if time.time() >= deadline:
                 self.module.fail_json(
-                    msg=(
-                        "Timed out waiting for VRFs to become deletable after "
-                        f"detach deployment on fabric '{strategy.fabric_name}': "
-                        f"{last_statuses}"
-                    )
+                    msg=("Timed out waiting for VRFs to become deletable after " f"detach deployment on fabric '{strategy.fabric_name}': " f"{last_statuses}")
                 )
             time.sleep(5)
 
@@ -1521,10 +1452,6 @@ class VrfWorkflowCoordinator:
 
             if child_result.get("failed", False):
                 structured["failed"] = True
-                structured["msg"] = (
-                    f"Child fabric task failed for "
-                    f"'{child_result.get('child_fabric')}': "
-                    f"{child_result.get('msg', 'Unknown error')}"
-                )
+                structured["msg"] = f"Child fabric task failed for " f"'{child_result.get('child_fabric')}': " f"{child_result.get('msg', 'Unknown error')}"
 
         return structured

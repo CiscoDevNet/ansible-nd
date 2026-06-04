@@ -20,7 +20,6 @@ Detection algorithm (mirrors dcnm_vrf action plugin logic):
  4. Return the matching concrete strategy instance.
 """
 
-
 from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
@@ -39,7 +38,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
     ChildVrfStrategy,
 )
 
-
 # ---------------------------------------------------------------------------
 # Module-level constants and helpers
 # ---------------------------------------------------------------------------
@@ -47,13 +45,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 # Error messages returned by the NDFC federated-fabrics API when the site is
 # not part of a federation (standalone or MSD-only deployments).  Mirrors
 # FEDERATION_MANAGER_NOT_FOUND_ERRORS in the dcnm_vrf action plugin.
-_FEDERATION_MANAGER_NOT_FOUND_ERRORS: frozenset[str] = frozenset([
-    "A federation manager does not exist",
-    "Invalid JSON response: this API is allowed only for remote user",
-    "Invalid JSON response: cannot serve APIs as federation state is secondary. "
-    "Use primary cluster for APIs",
-    "Invalid JSON response: cannot serve APIs as federation state is not established yet",
-])
+_FEDERATION_MANAGER_NOT_FOUND_ERRORS: frozenset[str] = frozenset(
+    [
+        "A federation manager does not exist",
+        "Invalid JSON response: this API is allowed only for remote user",
+        "Invalid JSON response: cannot serve APIs as federation state is secondary. " "Use primary cluster for APIs",
+        "Invalid JSON response: cannot serve APIs as federation state is not established yet",
+    ]
+)
 
 
 def _nd_onemanage_proxy(version_str: str) -> str:
@@ -94,6 +93,7 @@ def _response_data(response: Any) -> Any:
 # ---------------------------------------------------------------------------
 # Internal fabric-type detection helper
 # ---------------------------------------------------------------------------
+
 
 def _detect_fabric_type(
     fabric_name: str,
@@ -142,6 +142,7 @@ def _detect_fabric_type(
 # ---------------------------------------------------------------------------
 # Public resolver
 # ---------------------------------------------------------------------------
+
 
 class VrfFabricResolver:
     """
@@ -270,10 +271,7 @@ class VrfFabricResolver:
         The dict returned maps fabricName -> fabric properties, with a ``members``
         list added to parent fabric entries so _detect_fabric_type can walk it.
         """
-        path = (
-            "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/"
-            "fabrics/msd/fabric-associations"
-        )
+        path = "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/" "fabrics/msd/fabric-associations"
         response = self._nd.request(
             path,
             method="GET",
@@ -306,15 +304,11 @@ class VrfFabricResolver:
                 if fabric_parent:
                     if fabric_parent not in fabric_associations:
                         fabric_associations[fabric_parent] = {}
-                    fabric_associations[fabric_parent].setdefault("members", []).append(
-                        fabric_data
-                    )
+                    fabric_associations[fabric_parent].setdefault("members", []).append(fabric_data)
 
         return fabric_associations
 
-    def _fetch_manage_fabric_details(
-        self, fabric_name: str, cluster_name: str | None = None
-    ) -> dict[str, Any]:
+    def _fetch_manage_fabric_details(self, fabric_name: str, cluster_name: str | None = None) -> dict[str, Any]:
         """
         GET ND Manage fabric details for the target fabric.
 
@@ -344,9 +338,7 @@ class VrfFabricResolver:
         """
         enriched = dict(fabric_data or {})
         try:
-            details = self._fetch_manage_fabric_details(
-                self.fabric_name, enriched.get("clusterName")
-            )
+            details = self._fetch_manage_fabric_details(self.fabric_name, enriched.get("clusterName"))
         except Exception:
             details = {}
 
@@ -380,9 +372,7 @@ class VrfFabricResolver:
         try:
             fed_data = self._fetch_federated_fabric_associations()
             if fed_data != self._NO_FEDERATION_MANAGER:
-                fabric_type, fabric_data = _detect_fabric_type(
-                    self.fabric_name, fed_data, "mcfg"
-                )
+                fabric_type, fabric_data = _detect_fabric_type(self.fabric_name, fed_data, "mcfg")
                 if fabric_type:
                     return fabric_type, fabric_data
                 # Fabric present but unclassified by mcfg — fall through to Phase 2
@@ -392,14 +382,9 @@ class VrfFabricResolver:
 
         # Phase 2 — MSD associations
         msd_data = self._fetch_fabric_associations()
-        fabric_type, fabric_data = _detect_fabric_type(
-            self.fabric_name, msd_data, "msd"
-        )
+        fabric_type, fabric_data = _detect_fabric_type(self.fabric_name, msd_data, "msd")
         if not fabric_type:
-            raise ValueError(
-                f"Fabric '{self.fabric_name}' not found in any NDFC fabric "
-                "associations. Verify the fabric name and ND connectivity."
-            )
+            raise ValueError(f"Fabric '{self.fabric_name}' not found in any NDFC fabric " "associations. Verify the fabric name and ND connectivity.")
         return fabric_type, fabric_data
 
     def _build_strategy(self, fabric_type: str, fabric_data: dict) -> BaseVrfStrategy:
@@ -414,9 +399,7 @@ class VrfFabricResolver:
         elif fabric_type == "multisite_parent":
             return MultisiteParentVrfStrategy(**common)
         elif fabric_type == "multicluster_child":
-            return ChildVrfStrategy(
-                cluster_name=fabric_data.get("clusterName"), **common
-            )
+            return ChildVrfStrategy(cluster_name=fabric_data.get("clusterName"), **common)
         elif fabric_type == "multisite_child":
             return ChildVrfStrategy(**common)
         else:
@@ -426,9 +409,7 @@ class VrfFabricResolver:
     # ── Fast-path strategy builder (no API call) ───────────────────
 
     @staticmethod
-    def strategy_from_fabric_details(
-        fabric_name: str, fabric_details: dict
-    ) -> BaseVrfStrategy:
+    def strategy_from_fabric_details(fabric_name: str, fabric_details: dict) -> BaseVrfStrategy:
         """
         Build a strategy from a fabric_details dict, accepting two forms:
 

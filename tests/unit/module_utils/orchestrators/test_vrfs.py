@@ -56,9 +56,7 @@ def _transform(
         _Strategy(fabric_data, is_child, is_parent),
     )
     if is_child:
-        return instance._transform_child_config_to_payload_model_data(
-            config, fabric_name
-        )
+        return instance._transform_child_config_to_payload_model_data(config, fabric_name)
     return instance._transform_config_to_payload_model_data(config, fabric_name)
 
 
@@ -178,9 +176,7 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
     }
 
     standalone = VrfConfigModel.from_config(config).to_config()
-    parent = VrfParentConfigModel.from_config(
-        dict(config, child_fabric_config=[{"fabric": "AK-VXLAN"}])
-    ).to_config()
+    parent = VrfParentConfigModel.from_config(dict(config, child_fabric_config=[{"fabric": "AK-VXLAN"}])).to_config()
 
     for parsed in (standalone, parent):
         assert parsed["deploy"] is False
@@ -210,9 +206,7 @@ def test_vrfs_00026_config_models_match_argument_specs():
         VrfChildConfigModel,
     )
 
-    assert set(VrfChildConfigModel.model_fields) == set(
-        _child_fabric_config_element_spec()
-    )
+    assert set(VrfChildConfigModel.model_fields) == set(_child_fabric_config_element_spec())
 
 
 def test_vrfs_00027_config_model_accepts_schema_security_fields():

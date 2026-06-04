@@ -40,7 +40,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_da
     Metadata,
 )
 
-
 # =============================================================================
 # Instance value nested models
 # =============================================================================
@@ -57,10 +56,7 @@ class DpuInstanceValuesModel(NDNestedModel):
     dpu_secure: bool | None = Field(
         default=False,
         alias="dpuSecure",
-        description=(
-            "Enable DPU secure mode for communication between the DPU "
-            "and the host switch"
-        ),
+        description=("Enable DPU secure mode for communication between the DPU " "and the host switch"),
     )
     dpu_affinity: DpuAffinity | None = Field(
         default=None,
@@ -82,10 +78,7 @@ class VrfAttachmentInstanceValuesModel(NDNestedModel):
     dpu_secure: bool | None = Field(
         default=False,
         alias="dpuSecure",
-        description=(
-            "Enable DPU secure mode for communication between the DPU "
-            "and the host switch"
-        ),
+        description=("Enable DPU secure mode for communication between the DPU " "and the host switch"),
     )
     dpu_affinity: DpuAffinity | None = Field(
         default=None,
@@ -134,18 +127,12 @@ class VrfAttachmentInstanceValuesModel(NDNestedModel):
         default=None,
         alias="vrfVlanName",
         max_length=128,
-        description=(
-            "Name of the VLAN used for the VRF SVI. "
-            "Must not contain ?, \\, or whitespace."
-        ),
+        description=("Name of the VLAN used for the VRF SVI. " "Must not contain ?, \\, or whitespace."),
     )
     svi_ipv4_address: str | None = Field(
         default=None,
         alias="sviIpv4Address",
-        description=(
-            "IPv4 address with prefix in CIDR notation for the SVI. "
-            "Applicable for classic LAN VRFs only."
-        ),
+        description=("IPv4 address with prefix in CIDR notation for the SVI. " "Applicable for classic LAN VRFs only."),
     )
     svi_neighbor_ipv4_address: str | None = Field(
         default=None,
@@ -155,9 +142,7 @@ class VrfAttachmentInstanceValuesModel(NDNestedModel):
     svi_ipv6_address: str | None = Field(
         default=None,
         alias="sviIpv6Address",
-        description=(
-            "IPv6 address with prefix in CIDR notation for the SVI"
-        ),
+        description=("IPv6 address with prefix in CIDR notation for the SVI"),
     )
     svi_neighbor_ipv6_address: str | None = Field(
         default=None,
@@ -234,10 +219,7 @@ class VrfExtensionModel(NDNestedModel):
     ipv4_address: str | None = Field(
         default=None,
         alias="ipv4Address",
-        description=(
-            "IPv4 address with prefix in CIDR notation for the extension "
-            "interface"
-        ),
+        description=("IPv4 address with prefix in CIDR notation for the extension " "interface"),
     )
     neighbor_ipv4_address: str | None = Field(
         default=None,
@@ -247,10 +229,7 @@ class VrfExtensionModel(NDNestedModel):
     ipv6_address: str | None = Field(
         default=None,
         alias="ipv6Address",
-        description=(
-            "IPv6 address with prefix in CIDR notation for the extension "
-            "interface"
-        ),
+        description=("IPv6 address with prefix in CIDR notation for the extension " "interface"),
     )
     neighbor_ipv6_address: str | None = Field(
         default=None,
@@ -273,26 +252,17 @@ class VrfExtensionModel(NDNestedModel):
     )
     netflow: bool | None = Field(
         default=False,
-        description=(
-            "Enable netflow on the VRF-Lite sub-interface. "
-            "Supported only if netflow is enabled on the fabric."
-        ),
+        description=("Enable netflow on the VRF-Lite sub-interface. " "Supported only if netflow is enabled on the fabric."),
     )
     auto_peer_config: bool | None = Field(
         default=False,
         alias="autoPeerConfig",
-        description=(
-            "Indicates if the peer configuration is auto-generated "
-            "(read-only)"
-        ),
+        description=("Indicates if the peer configuration is auto-generated " "(read-only)"),
     )
     peer_vrf_name: str | None = Field(
         default=None,
         alias="peerVrfName",
-        description=(
-            "Name of the peer VRF associated with this extension "
-            "on the neighbor switch"
-        ),
+        description=("Name of the peer VRF associated with this extension " "on the neighbor switch"),
     )
     route_map_in: str | None = Field(
         default=None,
@@ -373,32 +343,22 @@ class VrfAttachmentModel(NDNestedModel):
     instance_values: VrfAttachmentInstanceValuesModel | None = Field(
         default=None,
         alias="instanceValues",
-        description=(
-            "Per-attachment instance configuration overrides. "
-            "Set to null to remove all instance values."
-        ),
+        description=("Per-attachment instance configuration overrides. " "Set to null to remove all instance values."),
     )
     extension_values: list[VrfExtensionModel] | None = Field(
         default=None,
         alias="extensionValues",
-        description=(
-            "List of VRF-Lite extension configurations for this attachment"
-        ),
+        description=("List of VRF-Lite extension configurations for this attachment"),
     )
     extra_config: str | None = Field(
         default=None,
         alias="extraConfig",
-        description=(
-            "Additional CLI configuration to append to this attachment"
-        ),
+        description=("Additional CLI configuration to append to this attachment"),
     )
     # vrfAttachment additional field
     attach: bool = Field(
         default=...,
-        description=(
-            "True to attach the VRF to the switch; "
-            "False to detach it."
-        ),
+        description=("True to attach the VRF to the switch; " "False to detach it."),
     )
 
 
@@ -411,9 +371,7 @@ class VrfAttachDetachRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     attachments: list[VrfAttachmentModel] | None = Field(
         default=None,
@@ -465,16 +423,11 @@ class VrfAttach207ResponseModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     results: list[VrfAttachmentStatusModel] | None = Field(
         default=None,
-        description=(
-            "Status of each attachment operation. Contains only entries "
-            "with failure status in case of partial success."
-        ),
+        description=("Status of each attachment operation. Contains only entries " "with failure status in case of partial success."),
     )
 
 
@@ -533,10 +486,7 @@ class VrfAttachmentDetailModel(NDNestedModel):
     )
     attach: bool | None = Field(
         default=None,
-        description=(
-            "True if the VRF is attached / should be attached "
-            "to the switch"
-        ),
+        description=("True if the VRF is attached / should be attached " "to the switch"),
     )
     switch_role: VrfAttachmentSwitchRole | None = Field(
         default=None,
@@ -557,10 +507,7 @@ class VrfAttachmentDetailModel(NDNestedModel):
     show_vlan: bool | None = Field(
         default=None,
         alias="showVlan",
-        description=(
-            "Flag indicating whether the VLAN field is relevant for "
-            "this attachment entry"
-        ),
+        description=("Flag indicating whether the VLAN field is relevant for " "this attachment entry"),
     )
     vrf_id: int | None = Field(
         default=None,
@@ -570,9 +517,7 @@ class VrfAttachmentDetailModel(NDNestedModel):
     switch_fabric_name: str | None = Field(
         default=None,
         alias="switchFabricName",
-        description=(
-            "Name of the fabric that the switch is a member of"
-        ),
+        description=("Name of the fabric that the switch is a member of"),
     )
 
 
@@ -590,25 +535,17 @@ class VrfAttachmentExportRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     switch_ids: list[str] | None = Field(
         default=None,
         alias="switchIds",
-        description=(
-            "Serial numbers of the switches to filter by. "
-            "If null or empty, all switches are included."
-        ),
+        description=("Serial numbers of the switches to filter by. " "If null or empty, all switches are included."),
     )
     vrf_names: list[str] | None = Field(
         default=None,
         alias="vrfNames",
-        description=(
-            "Names of the VRFs to filter by. "
-            "If null or empty, all VRFs are included."
-        ),
+        description=("Names of the VRFs to filter by. " "If null or empty, all VRFs are included."),
     )
 
 
@@ -621,25 +558,17 @@ class VrfAttachmentQueryRequestModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     switch_ids: list[str] | None = Field(
         default=None,
         alias="switchIds",
-        description=(
-            "Serial numbers of the switches to filter by. "
-            "If null or empty, all switches are included."
-        ),
+        description=("Serial numbers of the switches to filter by. " "If null or empty, all switches are included."),
     )
     vrf_names: list[str] | None = Field(
         default=None,
         alias="vrfNames",
-        description=(
-            "Names of the VRFs to filter by. "
-            "If null or empty, all VRFs are included."
-        ),
+        description=("Names of the VRFs to filter by. " "If null or empty, all VRFs are included."),
     )
 
 
@@ -652,9 +581,7 @@ class VrfAttachmentQueryResponseModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     attachments: list[VrfAttachmentDetailModel] | None = Field(
         default=None,
@@ -680,15 +607,11 @@ class VrfFlowRulesTenantsResponseModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     tenants: list[str] | None = Field(
         default=None,
-        description=(
-            "List of tenant names that have VRF flow rules configured"
-        ),
+        description=("List of tenant names that have VRF flow rules configured"),
     )
 
 
@@ -701,15 +624,11 @@ class VrfFlowRulesVrfsResponseModel(NDBaseModel):
     """
 
     identifiers: ClassVar[list[str]] = []
-    identifier_strategy: ClassVar[
-        Literal["single", "composite", "hierarchical", "singleton"] | None
-    ] = "singleton"
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     vrfs: list[str] | None = Field(
         default=None,
-        description=(
-            "List of VRF names that have flow rules configured"
-        ),
+        description=("List of VRF names that have flow rules configured"),
     )
 
 
