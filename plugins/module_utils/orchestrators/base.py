@@ -114,7 +114,9 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             return {}
 
         if not self.rest_send.success:
-            raise Exception(f"Request failed {self.rest_send.error_summary}")
+            response = self.rest_send.response_current
+            detail = response.get("error") or response.get("DATA") or response
+            raise Exception(f"Request failed {self.rest_send.error_summary}: {detail}")
 
         return self.rest_send.response_current.get("DATA", {})
 
@@ -157,6 +159,10 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
             return result or []
         except Exception as e:
             raise Exception(f"Query all failed: {e}") from e
+
+    def prepare_config_data(self, raw_config):
+        """Hook for subclasses to backfill or normalize raw user config before the proposed collection is built. Returns the list unchanged by default."""
+        return raw_config
 
     @model_validator(mode="after")
     def validate_bulk_endpoints(self):
