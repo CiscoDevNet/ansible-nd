@@ -229,7 +229,10 @@ EXAMPLES = r"""
 RETURN = r"""
 """
 
+import logging
+
 from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_update_group.fabric_update_group import FabricUpdateGroupModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
@@ -327,6 +330,8 @@ def main():
         mutually_exclusive=[["config", "auto_assign"]],
     )
     require_pydantic(module)
+    setup_logging(module)
+    module_log = logging.getLogger("nd.nd_fabric_update_group")
 
     _validate_report_analysis_exclusion(module)
 
@@ -341,9 +346,12 @@ def main():
 
         output = NDOutput(output_level=module.params.get("output_level", "normal"))
         try:
+            module_log.debug("auto_assign begin auto_assign=%s check_mode=%s", auto_assign, module.check_mode)
             _run_auto_assign(module, output)
+            module_log.debug("auto_assign end")
             module.exit_json(**output.format())
         except Exception as e:
+            module_log.exception("Unhandled exception during auto_assign")
             module.fail_json(msg=f"Module execution failed: {str(e)}", **output.format())
         return
 
@@ -353,9 +361,12 @@ def main():
     )
 
     try:
+        module_log.debug("manage_state begin state=%s check_mode=%s", module.params.get("state"), module.check_mode)
         nd_state_machine.manage_state()
+        module_log.debug("manage_state end")
         module.exit_json(**nd_state_machine.output.format())
     except Exception as e:
+        module_log.exception("Unhandled exception during module execution")
         module.fail_json(msg=f"Module execution failed: {str(e)}", **nd_state_machine.output.format())
 
 
