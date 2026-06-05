@@ -19,6 +19,9 @@ from typing import Any, Union
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDModuleError,
+)
 
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
@@ -105,6 +108,110 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 
 # Max hops is not supported by the module.
 _DISCOVERY_MAX_HOPS: int = 0
+_REQUEST_RETRY_COUNT: int = 1
+_REQUEST_RETRY_DELAY: int = 1
+_REQUEST_ERRORS = (NDModuleError, TypeError, ValueError)
+_MODEL_ERRORS = (ValidationError, TypeError, ValueError)
+_OUTPUT_CONVERSION_ERRORS = (AttributeError, TypeError, ValueError)
+_FABRIC_OPERATION_ERRORS = (NDModuleError, SwitchOperationError, TypeError, ValueError)
+
+
+@dataclass
+class ApiCallSpec:
+    """Arguments for a tracked switch API call."""
+
+    endpoint: Any
+    payload: dict[str, Any]
+    action: str
+    op_type: OperationType
+    diff: dict[str, Any] | None = None
+    context: str = ""
+
+
+@dataclass
+class SwitchApiFieldValidationSpec:
+    """Arguments for validating config fields against bootstrap API data."""
+
+    nd: NDModule
+    serial: str
+    model: str | None
+    version: str | None
+    config_data: Any
+    bootstrap_data: dict[str, Any]
+    log: logging.Logger
+    context: str
+    hostname: str | None = None
+
+
+@dataclass
+class DiscoveryBatchSpec:
+    """Arguments for one bulk discovery request."""
+
+    switches: list["SwitchConfigModel"]
+    username: str
+    password: str
+    auth_proto: SnmpV3AuthProtocol
+    platform_type: PlatformType
+
+
+@dataclass
+class BulkAddSpec:
+    """Arguments for one bulk add request."""
+
+    switches: list[tuple["SwitchConfigModel", dict[str, Any]]]
+    username: str
+    password: str
+    auth_proto: SnmpV3AuthProtocol
+    platform_type: PlatformType
+    preserve_config: bool
+
+
+@dataclass
+class PostAddProcessingSpec:
+    """Arguments for post-add wait, credentials, role update, and finalize tasks."""
+
+    switch_actions: list[tuple[str, "SwitchConfigModel"]]
+    wait_utils: Any
+    context: str
+    all_preserve_config: bool = False
+    skip_greenfield_check: bool = False
+    update_roles: bool = False
+
+
+@dataclass
+class AddPhaseSpec:
+    """Arguments for a normal add phase."""
+
+    add_configs: list["SwitchConfigModel"]
+    plan: "SwitchPlan"
+    discovered_data: dict[str, dict[str, Any]]
+    existing_by_ip: dict[str, "SwitchDataModel"]
+    context: str
+
+
+def _request_with_retry_policy(
+    nd: NDModule,
+    *,
+    path: str,
+    verb: Any,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run nd.request with a short-lived RestSend retry policy.
+
+    RestSend models retries as timeout / send_interval.  Keep retry_delay at
+    least one second because a zero interval would never reduce the timeout.
+    """
+    rest_send = nd._get_rest_send()  # pylint: disable=protected-access
+    original_timeout = rest_send.timeout
+    original_send_interval = rest_send.send_interval
+
+    rest_send.timeout = _REQUEST_RETRY_COUNT * _REQUEST_RETRY_DELAY
+    rest_send.send_interval = _REQUEST_RETRY_DELAY
+    try:
+        return nd.request(path=path, verb=verb, data=data)
+    finally:
+        rest_send.timeout = original_timeout
+        rest_send.send_interval = original_send_interval
 
 
 @dataclass
@@ -130,47 +237,41 @@ class SwitchServiceContext:
 
     def api_call(
         self,
-        endpoint,
-        payload: dict[str, Any],
-        *,
-        action: str,
-        op_type: "OperationType",
-        diff: dict[str, Any] | None = None,
-        context: str = "",
+        spec: ApiCallSpec,
     ) -> dict[str, Any]:
         """Execute an API call with standard error handling and result registration.
 
         Args:
-            endpoint: Endpoint object with ``path`` and ``verb`` attributes.
-            payload: Request payload dict.
-            action: Action label for result tracking.
-            op_type: Operation type enum value.
-            diff: Custom diff dict; defaults to ``payload`` if not provided.
-            context: Human-readable label for error messages.
+            spec: API call details, result metadata, and error context.
 
         Returns:
             The API response dict.
         """
         try:
-            self.nd.request(path=endpoint.path, verb=endpoint.verb, data=payload)
-        except Exception as e:
-            msg = f"{context}: {e}" if context else str(e)
+            _request_with_retry_policy(
+                self.nd,
+                path=spec.endpoint.path,
+                verb=spec.endpoint.verb,
+                data=spec.payload,
+            )
+        except _REQUEST_ERRORS as e:
+            msg = f"{spec.context}: {e}" if spec.context else str(e)
             self.log.error(msg)
             self.nd.module.fail_json(msg=msg)
 
         response = self.nd.rest_send.response_current
         result = self.nd.rest_send.result_current
-        ApiDataChecker.check(response.get("DATA", {}), context, self.log, self.nd.module.fail_json)
+        ApiDataChecker.check(response.get("DATA", {}), spec.context, self.log, self.nd.module.fail_json)
 
-        self.results.action = action
-        self.results.operation_type = op_type
+        self.results.action = spec.action
+        self.results.operation_type = spec.op_type
         self.results.response_current = response
         self.results.result_current = result
-        self.results.diff_current = diff if diff is not None else payload
+        self.results.diff_current = spec.diff if spec.diff is not None else spec.payload
         self.results.register_api_call()
 
         if not result.get("success"):
-            msg = f"{context} failed: {response}" if context else f"API call failed: {response}"
+            msg = f"{spec.context} failed: {response}" if spec.context else f"API call failed: {response}"
             self.log.error(msg)
             self.nd.module.fail_json(msg=msg)
 
@@ -307,7 +408,7 @@ class SwitchDiffEngine:
                     nd.module.fail_json(msg=error_msg)
                 else:
                     raise ValueError(error_msg) from e
-            except Exception as e:
+            except (TypeError, ValueError) as e:
                 error_msg = f"Configuration validation failed for " f"config index {idx}: {str(e)}"
                 log.error(error_msg)
                 if hasattr(nd, "module"):
@@ -615,15 +716,7 @@ class SwitchDiffEngine:
 
     @staticmethod
     def validate_switch_api_fields(
-        nd: NDModule,
-        serial: str,
-        model: str | None,
-        version: str | None,
-        config_data,
-        bootstrap_data: dict[str, Any],
-        log: logging.Logger,
-        context: str,
-        hostname: str | None = None,
+        spec: SwitchApiFieldValidationSpec,
     ) -> None:
         """Validate user-supplied switch fields against the bootstrap API response.
 
@@ -646,28 +739,28 @@ class SwitchDiffEngine:
         Returns:
             None.
         """
-        bs_data = bootstrap_data.get("data") or {}
+        bs_data = spec.bootstrap_data.get("data") or {}
         mismatches: list[str] = []
 
-        if model is not None and model != bootstrap_data.get("model"):
-            mismatches.append(f"model: provided '{model}', " f"bootstrap reports '{bootstrap_data.get('model')}'")
+        if spec.model is not None and spec.model != spec.bootstrap_data.get("model"):
+            mismatches.append(f"model: provided '{spec.model}', " f"bootstrap reports '{spec.bootstrap_data.get('model')}'")
 
-        if version is not None and version != bootstrap_data.get("softwareVersion"):
-            mismatches.append(f"version: provided '{version}', " f"bootstrap reports '{bootstrap_data.get('softwareVersion')}'")
+        if spec.version is not None and spec.version != spec.bootstrap_data.get("softwareVersion"):
+            mismatches.append(f"version: provided '{spec.version}', " f"bootstrap reports '{spec.bootstrap_data.get('softwareVersion')}'")
 
-        if config_data is not None:
-            bs_gateway = bootstrap_data.get("gatewayIpMask") or bs_data.get("gatewayIpMask")
-            if config_data.gateway is not None and config_data.gateway != bs_gateway:
-                mismatches.append(f"config_data.gateway: provided '{config_data.gateway}', " f"bootstrap reports '{bs_gateway}'")
+        if spec.config_data is not None:
+            bs_gateway = spec.bootstrap_data.get("gatewayIpMask") or bs_data.get("gatewayIpMask")
+            if spec.config_data.gateway is not None and spec.config_data.gateway != bs_gateway:
+                mismatches.append(f"config_data.gateway: provided '{spec.config_data.gateway}', " f"bootstrap reports '{bs_gateway}'")
 
             bs_models = bs_data.get("models", [])
-            if config_data.models and sorted(config_data.models) != sorted(bs_models):
-                mismatches.append(f"config_data.models: provided {config_data.models}, " f"bootstrap reports {bs_models}")
+            if spec.config_data.models and sorted(spec.config_data.models) != sorted(bs_models):
+                mismatches.append(f"config_data.models: provided {spec.config_data.models}, " f"bootstrap reports {bs_models}")
 
         if mismatches:
-            nd.module.fail_json(
+            spec.nd.module.fail_json(
                 msg=(
-                    f"{context} field mismatch for serial '{serial}'. "
+                    f"{spec.context} field mismatch for serial '{spec.serial}'. "
                     f"The following provided values do not match the "
                     f"bootstrap API data:\n" + "\n".join(f"  - {m}" for m in mismatches)
                 )
@@ -675,23 +768,23 @@ class SwitchDiffEngine:
 
         # Log any fields that were omitted and will be sourced from the API
         pulled: list[str] = []
-        if model is None:
+        if spec.model is None:
             pulled.append("model")
-        if version is None:
+        if spec.version is None:
             pulled.append("version")
-        if hostname is None:
+        if spec.hostname is None:
             pulled.append("hostname")
-        if config_data is None:
+        if spec.config_data is None:
             pulled.append("config_data (gateway + models)")
         if pulled:
-            log.info(
+            spec.log.info(
                 "%s serial '%s': the following fields were not provided and will be sourced from the bootstrap API: %s",
-                context,
-                serial,
+                spec.context,
+                spec.serial,
                 ", ".join(pulled),
             )
         else:
-            log.debug("%s field validation passed for serial '%s'", context, serial)
+            spec.log.debug("%s field validation passed for serial '%s'", spec.context, spec.serial)
 
 
 # =========================================================================
@@ -743,14 +836,16 @@ class SwitchDiscoveryService:
             )
             try:
                 discovered_batch = self.bulk_discover(
-                    switches=switches,
-                    username=username,
-                    password=password,
-                    auth_proto=auth_proto,
-                    platform_type=platform_type,
+                    DiscoveryBatchSpec(
+                        switches=switches,
+                        username=username,
+                        password=password,
+                        auth_proto=auth_proto,
+                        platform_type=platform_type,
+                    )
                 )
                 all_discovered.update(discovered_batch)
-            except Exception as e:
+            except _REQUEST_ERRORS as e:
                 seed_ips = [sw.seed_ip for sw in switches]
                 msg = f"Discovery failed for credential group " f"(username={username}, IPs={seed_ips}): {e}"
                 log.error(msg)
@@ -761,11 +856,7 @@ class SwitchDiscoveryService:
 
     def bulk_discover(
         self,
-        switches: list[SwitchConfigModel],
-        username: str,
-        password: str,
-        auth_proto: SnmpV3AuthProtocol,
-        platform_type: PlatformType,
+        spec: DiscoveryBatchSpec,
     ) -> dict[str, dict[str, Any]]:
         """Run one bulk discovery call for switches with shared credentials.
 
@@ -784,12 +875,12 @@ class SwitchDiscoveryService:
         results = self.ctx.results
 
         log.debug("ENTER: bulk_discover()")
-        log.debug("Discovering %s switches in bulk", len(switches))
+        log.debug("Discovering %s switches in bulk", len(spec.switches))
 
         endpoint = EpManageFabricsActionsShallowDiscoveryPost()
         endpoint.fabric_name = self.ctx.fabric
 
-        seed_ips = [switch.seed_ip for switch in switches]
+        seed_ips = [switch.seed_ip for switch in spec.switches]
         log.debug("Seed IPs: %s", seed_ips)
 
         max_hops = _DISCOVERY_MAX_HOPS
@@ -797,10 +888,10 @@ class SwitchDiscoveryService:
         discovery_request = ShallowDiscoveryRequestModel(
             seedIpCollection=seed_ips,
             maxHop=max_hops,
-            platformType=platform_type,
-            snmpV3AuthProtocol=auth_proto,
-            username=username,
-            password=password,
+            platformType=spec.platform_type,
+            snmpV3AuthProtocol=spec.auth_proto,
+            username=spec.username,
+            password=spec.password,
         )
 
         payload = discovery_request.to_payload()
@@ -809,7 +900,12 @@ class SwitchDiscoveryService:
         log.debug("Discovery payload (password masked): %s", mask_password(payload))
 
         try:
-            nd.request(path=endpoint.path, verb=endpoint.verb, data=payload)
+            _request_with_retry_policy(
+                nd,
+                path=endpoint.path,
+                verb=endpoint.verb,
+                data=payload,
+            )
 
             response = nd.rest_send.response_current
             result = nd.rest_send.result_current
@@ -908,7 +1004,7 @@ class SwitchDiscoveryService:
             log.debug("EXIT: bulk_discover() -> %s discovered", len(discovered_results))
             return discovered_results
 
-        except Exception as e:
+        except _REQUEST_ERRORS as e:
             msg = f"Bulk discovery failed for switches " f"{', '.join(seed_ips)}: {e}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
@@ -989,12 +1085,7 @@ class SwitchFabricOps:
 
     def bulk_add(
         self,
-        switches: list[tuple[SwitchConfigModel, dict[str, Any]]],
-        username: str,
-        password: str,
-        auth_proto: SnmpV3AuthProtocol,
-        platform_type: PlatformType,
-        preserve_config: bool,
+        spec: BulkAddSpec,
     ) -> dict[str, Any]:
         """Add multiple discovered switches to the fabric.
 
@@ -1013,13 +1104,13 @@ class SwitchFabricOps:
         log = self.ctx.log
 
         log.debug("ENTER: bulk_add()")
-        log.debug("Adding %s switches to fabric", len(switches))
+        log.debug("Adding %s switches to fabric", len(spec.switches))
 
         endpoint = EpManageFabricsSwitchesPost()
         endpoint.fabric_name = self.ctx.fabric
 
         switch_discoveries = []
-        for switch_config, discovered in switches:
+        for switch_config, discovered in spec.switches:
             required_fields = ["hostname", "ip", "serialNumber", "model"]
             missing_fields = [f for f in required_fields if not discovered.get(f)]
 
@@ -1051,18 +1142,18 @@ class SwitchFabricOps:
 
         add_request = AddSwitchesRequestModel(
             switches=switch_discoveries,
-            platformType=platform_type,
-            preserveConfig=preserve_config,
-            snmpV3AuthProtocol=auth_proto,
-            username=username,
-            password=password,
+            platformType=spec.platform_type,
+            preserveConfig=spec.preserve_config,
+            snmpV3AuthProtocol=spec.auth_proto,
+            username=spec.username,
+            password=spec.password,
         )
 
         payload = add_request.to_payload()
-        serial_numbers = [d.get("serialNumber") for _cfg, d in switches]
+        serial_numbers = [d.get("serialNumber") for _cfg, d in spec.switches]
         log.info(
             "Bulk adding %s switches to fabric %s: %s",
-            len(switches),
+            len(spec.switches),
             self.ctx.fabric,
             ", ".join(serial_numbers),
         )
@@ -1070,11 +1161,13 @@ class SwitchFabricOps:
         log.debug("Add payload (password masked): %s", mask_password(payload))
 
         response = self.ctx.api_call(
-            endpoint,
-            payload,
-            action="create",
-            op_type=OperationType.CREATE,
-            context=f"Bulk add switches to fabric '{self.ctx.fabric}' ({', '.join(serial_numbers)})",
+            ApiCallSpec(
+                endpoint=endpoint,
+                payload=payload,
+                action="create",
+                op_type=OperationType.CREATE,
+                context=f"Bulk add switches to fabric '{self.ctx.fabric}' ({', '.join(serial_numbers)})",
+            )
         )
 
         return response
@@ -1137,12 +1230,14 @@ class SwitchFabricOps:
 
         try:
             self.ctx.api_call(
-                endpoint,
-                payload,
-                action="delete",
-                op_type=OperationType.DELETE,
-                diff={"deleted": serial_numbers},
-                context=f"Bulk delete switches from fabric '{self.ctx.fabric}' ({serial_numbers})",
+                ApiCallSpec(
+                    endpoint=endpoint,
+                    payload=payload,
+                    action="delete",
+                    op_type=OperationType.DELETE,
+                    diff={"deleted": serial_numbers},
+                    context=f"Bulk delete switches from fabric '{self.ctx.fabric}' ({serial_numbers})",
+                )
             )
 
             log.info("Bulk delete submitted for %s switch(es)", len(serial_numbers))
@@ -1200,12 +1295,14 @@ class SwitchFabricOps:
             log.debug("Credentials payload (masked): %s", mask_password(payload))
 
             self.ctx.api_call(
-                endpoint,
-                payload,
-                action="save_credentials",
-                op_type=OperationType.UPDATE,
-                diff={"switchIds": serial_numbers, "username": username},
-                context=f"Save credentials for switches {serial_numbers}",
+                ApiCallSpec(
+                    endpoint=endpoint,
+                    payload=payload,
+                    action="save_credentials",
+                    op_type=OperationType.UPDATE,
+                    diff={"switchIds": serial_numbers, "username": username},
+                    context=f"Save credentials for switches {serial_numbers}",
+                )
             )
             log.info("Credentials saved for %s switch(es)", len(serial_numbers))
 
@@ -1248,11 +1345,13 @@ class SwitchFabricOps:
         log.debug("ChangeRoles payload: %s", payload)
 
         self.ctx.api_call(
-            endpoint,
-            payload,
-            action="update_role",
-            op_type=OperationType.UPDATE,
-            context=f"Update switch roles in fabric '{self.ctx.fabric}'",
+            ApiCallSpec(
+                endpoint=endpoint,
+                payload=payload,
+                action="update_role",
+                op_type=OperationType.UPDATE,
+                context=f"Update switch roles in fabric '{self.ctx.fabric}'",
+            )
         )
         log.info("Roles updated for %s switch(es)", len(switch_roles))
 
@@ -1291,12 +1390,7 @@ class SwitchFabricOps:
 
     def post_add_processing(
         self,
-        switch_actions: list[tuple[str, SwitchConfigModel]],
-        wait_utils,
-        context: str,
-        all_preserve_config: bool = False,
-        skip_greenfield_check: bool = False,
-        update_roles: bool = False,
+        spec: PostAddProcessingSpec,
     ) -> None:
         """Run post-add tasks for newly processed switches.
 
@@ -1313,39 +1407,39 @@ class SwitchFabricOps:
         """
         nd = self.ctx.nd
         log = self.ctx.log
-        all_serials = [sn for sn, _cfg in switch_actions]
+        all_serials = [sn for sn, _cfg in spec.switch_actions]
 
         log.info(
             "Waiting for %s %s switch(es) to become manageable: %s",
             len(all_serials),
-            context,
+            spec.context,
             all_serials,
         )
 
         wait_kwargs: dict[str, Any] = {}
-        if all_preserve_config:
+        if spec.all_preserve_config:
             wait_kwargs["all_preserve_config"] = True
-        if skip_greenfield_check:
+        if spec.skip_greenfield_check:
             wait_kwargs["skip_greenfield_check"] = True
 
-        success = wait_utils.wait_for_switch_manageable(
+        success = spec.wait_utils.wait_for_switch_manageable(
             all_serials,
             **wait_kwargs,
         )
         if not success:
-            msg = f"One or more {context} switches failed to become " f"manageable in fabric '{self.ctx.fabric}'. " f"Switches: {all_serials}"
+            msg = f"One or more {spec.context} switches failed to become " f"manageable in fabric '{self.ctx.fabric}'. " f"Switches: {all_serials}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
 
-        self.bulk_save_credentials(switch_actions)
+        self.bulk_save_credentials(spec.switch_actions)
 
-        if update_roles:
-            self.bulk_update_roles(switch_actions)
+        if spec.update_roles:
+            self.bulk_update_roles(spec.switch_actions)
 
         try:
             self.finalize(serial_numbers=all_serials)
-        except Exception as e:
-            msg = f"Failed to finalize (config-save/deploy) for " f"{context} switches {all_serials}: {e}"
+        except _FABRIC_OPERATION_ERRORS as e:
+            msg = f"Failed to finalize (config-save/deploy) for " f"{spec.context} switches {all_serials}: {e}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
 
@@ -1589,10 +1683,12 @@ class POAPHandler:
             switch_actions.append((poap_cfg.serial_number, switch_cfg))
 
         self.fabric_ops.post_add_processing(
-            switch_actions,
-            wait_utils=self.wait_utils,
-            context="bootstrap",
-            skip_greenfield_check=True,
+            PostAddProcessingSpec(
+                switch_actions=switch_actions,
+                wait_utils=self.wait_utils,
+                context="bootstrap",
+                skip_greenfield_check=True,
+            )
         )
 
         log.debug("EXIT: _handle_poap_bootstrap()")
@@ -1666,7 +1762,7 @@ class POAPHandler:
                         switch_role,
                     )
                     switch_role = api_role
-            except Exception:
+            except ValueError:
                 pass
 
         # Build the data block from resolved values (replaces build_poap_data_block)
@@ -1738,11 +1834,13 @@ class POAPHandler:
         )
 
         self.ctx.api_call(
-            endpoint,
-            payload,
-            action="bootstrap",
-            op_type=OperationType.CREATE,
-            context=f"importBootstrap for {[m.serial_number for m in models]}",
+            ApiCallSpec(
+                endpoint=endpoint,
+                payload=payload,
+                action="bootstrap",
+                op_type=OperationType.CREATE,
+                context=f"importBootstrap for {[m.serial_number for m in models]}",
+            )
         )
 
         log.info("importBootstrap API response success")
@@ -1832,11 +1930,13 @@ class POAPHandler:
         )
 
         self.ctx.api_call(
-            endpoint,
-            payload,
-            action="preprovision",
-            op_type=OperationType.CREATE,
-            context=f"preProvision for {[m.serial_number for m in models]}",
+            ApiCallSpec(
+                endpoint=endpoint,
+                payload=payload,
+                action="preprovision",
+                op_type=OperationType.CREATE,
+                context=f"preProvision for {[m.serial_number for m in models]}",
+            )
         )
 
         log.info("preProvision API response success")
@@ -1933,12 +2033,14 @@ class POAPHandler:
             log.debug("changeSwitchSerialNumber payload: %s", payload)
 
             self.ctx.api_call(
-                endpoint,
-                payload,
-                action="swap_serial",
-                op_type=OperationType.UPDATE,
-                diff={"old_serial": old_serial, "new_serial": new_serial},
-                context=f"changeSwitchSerialNumber {old_serial} → {new_serial}",
+                ApiCallSpec(
+                    endpoint=endpoint,
+                    payload=payload,
+                    action="swap_serial",
+                    op_type=OperationType.UPDATE,
+                    diff={"old_serial": old_serial, "new_serial": new_serial},
+                    context=f"changeSwitchSerialNumber {old_serial} → {new_serial}",
+                )
             )
 
             log.info("Serial number swap successful: %s → %s", old_serial, new_serial)
@@ -1981,7 +2083,7 @@ class POAPHandler:
 
         try:
             self._import_bootstrap_switches(import_models)
-        except Exception as e:
+        except _REQUEST_ERRORS as e:
             msg = f"importBootstrap failed after serial swap: {e}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
@@ -1994,10 +2096,12 @@ class POAPHandler:
             switch_actions.append((poap_cfg.serial_number, switch_cfg))
 
         self.fabric_ops.post_add_processing(
-            switch_actions,
-            wait_utils=self.wait_utils,
-            context="swap",
-            skip_greenfield_check=True,
+            PostAddProcessingSpec(
+                switch_actions=switch_actions,
+                wait_utils=self.wait_utils,
+                context="swap",
+                skip_greenfield_check=True,
+            )
         )
 
         log.info(
@@ -2160,7 +2264,7 @@ class RMAHandler:
 
         try:
             self.fabric_ops.finalize(serial_numbers=all_new_serials)
-        except Exception as e:
+        except _FABRIC_OPERATION_ERRORS as e:
             msg = f"Failed to finalize (config-save/deploy) for RMA " f"switches {all_new_serials}: {e}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
@@ -2210,7 +2314,7 @@ class RMAHandler:
 
             old_serial = old_switch.serial_number or old_switch.switch_id
             if not old_serial:
-                nd.module.fail_json(msg=(f"RMA: Switch at '{seed_ip}' has no serial number in " f"the inventory response."))
+                nd.module.fail_json(msg=f"RMA: Switch at '{seed_ip}' has no serial number in " f"the inventory response.")
 
             ad = old_switch.additional_data
             if ad is None:
@@ -2350,15 +2454,17 @@ class RMAHandler:
         log.debug("RMA payload (masked): %s", mask_password(payload))
 
         self.ctx.api_call(
-            endpoint,
-            payload,
-            action="rma",
-            op_type=OperationType.CREATE,
-            diff={
-                "old_switch_id": rma_model.old_switch_id,
-                "new_switch_id": rma_model.new_switch_id,
-            },
-            context=f"RMA provision {rma_model.old_switch_id} → {rma_model.new_switch_id}",
+            ApiCallSpec(
+                endpoint=endpoint,
+                payload=payload,
+                action="rma",
+                op_type=OperationType.CREATE,
+                diff={
+                    "old_switch_id": rma_model.old_switch_id,
+                    "new_switch_id": rma_model.new_switch_id,
+                },
+                context=f"RMA provision {rma_model.old_switch_id} → {rma_model.new_switch_id}",
+            )
         )
 
         log.info("RMA provision API response success")
@@ -2407,12 +2513,9 @@ class NDSwitchResourceModule:
         # Shared context for service classes
         config_actions = self.module.params.get("config_actions") or {}
 
-        # Configure RestSend once: fix timeout to request_retry_count so all
-        # API calls use a single retry iteration instead of the default 300s loop.
-        # check_mode is NOT overridden globally — read-only calls that must reach
-        # the controller override it locally via save_settings()/restore_settings().
-        self.request_retry_count: int = 1
-        self.nd.rest_send_timeout = self.request_retry_count
+        # Keep switch lifecycle API failures fast. RestSend models retries as
+        # timeout / send_interval, so these values are applied per request by
+        # _request_with_retry_policy() and restored immediately afterward.
 
         self.ctx = SwitchServiceContext(
             nd=nd,
@@ -2435,7 +2538,7 @@ class NDSwitchResourceModule:
             self.proposed_cfgs: list[SwitchConfigModel] = []
             # Plan stored here after compute_changes so check-mode output can use it
             self._plan: SwitchPlan | None = None
-        except Exception as e:
+        except _FABRIC_OPERATION_ERRORS as e:
             msg = f"Failed to query fabric '{self.fabric}' inventory " f"during initialization: {e}"
             log.error(msg)
             nd.module.fail_json(msg=msg)
@@ -2493,7 +2596,7 @@ class NDSwitchResourceModule:
                 entry.pop("operation_type", None)
                 entry["password"] = "<password>"
                 result.append(entry)
-            except Exception as exc:
+            except _OUTPUT_CONVERSION_ERRORS as exc:
                 self.log.warning("Could not convert config %s for output: %s", cfg.seed_ip, exc)
         return result
 
@@ -2513,7 +2616,6 @@ class NDSwitchResourceModule:
             containing ``before``, ``after``, ``diff``, and ``changed``.
         """
         before_list = self._inventory_to_config_list(self.before)
-        existing_by_ip = self.inventory.by_ip()
         diff_list: list[dict[str, Any]] = []
 
         if self._plan is not None:
@@ -2552,7 +2654,7 @@ class NDSwitchResourceModule:
                     entry["password"] = "<password>"
                     entry["_action"] = "added"
                     diff_list.append(entry)
-                except Exception as exc:
+                except _OUTPUT_CONVERSION_ERRORS as exc:
                     self.log.warning("check_mode diff: could not convert %s: %s", cfg.seed_ip, exc)
 
             # Switches whose role would be updated (overridden/replaced)
@@ -2564,7 +2666,7 @@ class NDSwitchResourceModule:
                     entry["password"] = "<password>"
                     entry["_action"] = "updated"
                     diff_list.append(entry)
-                except Exception as exc:
+                except _OUTPUT_CONVERSION_ERRORS as exc:
                     self.log.warning("check_mode diff: could not convert %s: %s", cfg.seed_ip, exc)
 
             # Simulate the post-operation inventory for "after":
@@ -2640,7 +2742,7 @@ class NDSwitchResourceModule:
             for sw in self.existing:
                 try:
                     gathered.append(SwitchConfigModel.from_switch_data(sw).to_gathered_dict())
-                except (ValueError, Exception) as exc:
+                except _OUTPUT_CONVERSION_ERRORS as exc:
                     msg = f"Failed to convert switch {sw.switch_id!r} to gathered format: {exc}"
                     self.log.error(msg)
                     self.nd.module.fail_json(msg=msg)
@@ -2677,7 +2779,7 @@ class NDSwitchResourceModule:
                     entry["password"] = "<password>"
                     entry["_action"] = "added"
                     diff_list.append(entry)
-                except Exception as exc:
+                except _OUTPUT_CONVERSION_ERRORS as exc:
                     self.log.warning("Could not convert added config for diff: %s", exc)
             output_level = self.module.params.get("output_level", "normal")
             fmt_kwargs: dict[str, Any] = {
@@ -2744,7 +2846,6 @@ class NDSwitchResourceModule:
 
         # Enforce state constraints
         rma_configs = [c for c in proposed_config if c.operation_type == "rma"]
-        poap_configs = [c for c in proposed_config if c.operation_type in ("poap", "preprovision", "swap")]
         if rma_configs and self.state != "merged":
             self.nd.module.fail_json(msg="RMA configs are only supported with state=merged")
 
@@ -2871,11 +2972,7 @@ class NDSwitchResourceModule:
 
     def _execute_add_phase(
         self,
-        add_configs: list["SwitchConfigModel"],
-        plan: "SwitchPlan",
-        discovered_data: dict[str, dict[str, Any]],
-        existing_by_ip: dict[str, "SwitchDataModel"],
-        context: str,
+        spec: AddPhaseSpec,
     ) -> list[tuple[str, "SwitchConfigModel"]]:
         """Shared credential-group → bulk_add → migration → post-processing logic.
 
@@ -2894,14 +2991,14 @@ class NDSwitchResourceModule:
             List of ``(serial_number, SwitchConfigModel)`` pairs that were processed.
         """
         switch_actions: list[tuple[str, SwitchConfigModel]] = []
-        have_migration = bool(plan.migration_mode)
+        have_migration = bool(spec.plan.migration_mode)
 
-        if add_configs and discovered_data:
-            credential_groups = group_switches_by_credentials(add_configs, self.log)
+        if spec.add_configs and spec.discovered_data:
+            credential_groups = group_switches_by_credentials(spec.add_configs, self.log)
             for group_key, group_switches in credential_groups.items():
                 username, _pw_hash, auth_proto, platform_type, preserve_config = group_key
                 password = group_switches[0].password
-                pairs = [(cfg, discovered_data[cfg.seed_ip]) for cfg in group_switches if cfg.seed_ip in discovered_data]
+                pairs = [(cfg, spec.discovered_data[cfg.seed_ip]) for cfg in group_switches if cfg.seed_ip in spec.discovered_data]
                 if not pairs:
                     self.log.warning(
                         "No discovery data for group %s — skipping bulk_add",
@@ -2909,12 +3006,14 @@ class NDSwitchResourceModule:
                     )
                     continue
                 self.fabric_ops.bulk_add(
-                    switches=pairs,
-                    username=username,
-                    password=password,
-                    auth_proto=auth_proto,
-                    platform_type=platform_type,
-                    preserve_config=preserve_config,
+                    BulkAddSpec(
+                        switches=pairs,
+                        username=username,
+                        password=password,
+                        auth_proto=auth_proto,
+                        platform_type=platform_type,
+                        preserve_config=preserve_config,
+                    )
                 )
                 for cfg, disc in pairs:
                     sn = disc.get("serialNumber")
@@ -2924,8 +3023,8 @@ class NDSwitchResourceModule:
                         self.sent_adds.append(cfg)
 
         # Migration-mode switches — no add needed, but role + finalize applies
-        for cfg in plan.migration_mode:
-            sw = existing_by_ip.get(cfg.seed_ip)
+        for cfg in spec.plan.migration_mode:
+            sw = spec.existing_by_ip.get(cfg.seed_ip)
             if sw and sw.switch_id:
                 switch_actions.append((sw.switch_id, cfg))
                 self._log_operation("migrate", cfg.seed_ip)
@@ -2936,11 +3035,13 @@ class NDSwitchResourceModule:
             if all_preserve_config:
                 self.log.info("All switches brownfield (preserve_config=True) — reload detection skipped")
             self.fabric_ops.post_add_processing(
-                switch_actions,
-                wait_utils=self.wait_utils,
-                context=context,
-                all_preserve_config=all_preserve_config,
-                update_roles=have_migration,
+                PostAddProcessingSpec(
+                    switch_actions=switch_actions,
+                    wait_utils=self.wait_utils,
+                    context=spec.context,
+                    all_preserve_config=all_preserve_config,
+                    update_roles=have_migration,
+                )
             )
 
         return switch_actions
@@ -3046,7 +3147,15 @@ class NDSwitchResourceModule:
 
         # --- Normal + normal_readd bulk_add (one combined pass) -----------------
         add_configs = plan.to_add + plan.normal_readd
-        switch_actions = self._execute_add_phase(add_configs, plan, discovered_data, existing_by_ip, "merged")
+        switch_actions = self._execute_add_phase(
+            AddPhaseSpec(
+                add_configs=add_configs,
+                plan=plan,
+                discovered_data=discovered_data,
+                existing_by_ip=existing_by_ip,
+                context="merged",
+            )
+        )
 
         if not switch_actions and idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
@@ -3186,7 +3295,15 @@ class NDSwitchResourceModule:
 
         # --- Phase 3: Combined add (normal to_add + to_update + normal_readd) ---
         add_configs = plan.to_add + plan.to_update + plan.normal_readd
-        switch_actions = self._execute_add_phase(add_configs, plan, discovered_data, existing_by_ip, "overridden")
+        switch_actions = self._execute_add_phase(
+            AddPhaseSpec(
+                add_configs=add_configs,
+                plan=plan,
+                discovered_data=discovered_data,
+                existing_by_ip=existing_by_ip,
+                context="overridden",
+            )
+        )
 
         if not switch_actions and idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")
@@ -3317,7 +3434,15 @@ class NDSwitchResourceModule:
 
         # --- Phase 3: Combined add (normal to_add + to_update + normal_readd) ---
         add_configs = plan.to_add + plan.to_update + plan.normal_readd
-        switch_actions = self._execute_add_phase(add_configs, plan, discovered_data, existing_by_ip, "replaced")
+        switch_actions = self._execute_add_phase(
+            AddPhaseSpec(
+                add_configs=add_configs,
+                plan=plan,
+                discovered_data=discovered_data,
+                existing_by_ip=existing_by_ip,
+                context="replaced",
+            )
+        )
 
         if not switch_actions and idempotent_save_req:
             self.log.info("No adds/migrations but config-sync required — running finalize")

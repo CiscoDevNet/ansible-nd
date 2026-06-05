@@ -140,8 +140,8 @@ class SwitchesValidate(BaseModel):
                     role_mismatch_for_this_entry = {
                         "nd_index": i,
                         "ip_address": ip_address,
-                        "expected_role": role_expected.value,
-                        "response_role": switch_role.value,
+                        "expected_role": getattr(role_expected, "value", role_expected),
+                        "response_role": getattr(switch_role, "value", switch_role),
                     }
 
             if not found_match:
