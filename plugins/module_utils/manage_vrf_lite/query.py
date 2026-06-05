@@ -9,9 +9,6 @@ from __future__ import absolute_import, annotations, division, print_function
 import json
 from typing import Any, Optional
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
-    coerce_dict_list,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     request_with_verify_settings,
@@ -49,19 +46,32 @@ def _parse_vrf_template_vlan(vrf_object: dict[str, Any]) -> Optional[int]:
         return None
 
 
+def _result_list(data: Any, keys: tuple[str, ...]) -> list[Any]:
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in keys:
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+    return []
+
+
 def _query_fabric_switches(module: Any, nd_v2: Any, fabric_name: str) -> dict[str, str]:
     """Return serial->mgmt-ip mapping from fabric switch inventory."""
     # TODO: Use a shared FabricContext/fabric inventory helper when available.
     path = VrfLiteEndpoints.fabric_switches(fabric_name)
     response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.GET)
 
-    switches = coerce_dict_list(
+    switches = _result_list(
         response if not isinstance(response, dict) else response.get("switches", response),
-        list_keys=("switches", "DATA", "data", "items"),
+        ("switches", "DATA", "data", "items"),
     )
 
     sn_to_ip = {}
     for switch in switches:
+        if not isinstance(switch, dict):
+            continue
         serial = switch.get("serialNumber")
         mgmt_ip = switch.get("fabricManagementIp")
         if serial and mgmt_ip:
@@ -74,7 +84,7 @@ def _query_vrfs(module: Any, nd_v2: Any, fabric_name: str) -> list[dict[str, Any
     path = VrfLiteEndpoints.vrfs(fabric_name)
     response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.GET)
 
-    return coerce_dict_list(response, list_keys=("DATA", "data", "vrfs", "items"))
+    return [item for item in _result_list(response, ("DATA", "data", "vrfs", "items")) if isinstance(item, dict)]
 
 
 def _query_vrf_attachments(module: Any, nd_v2: Any, fabric_name: str, vrf_names: list[str]) -> list[dict[str, Any]]:
@@ -84,7 +94,7 @@ def _query_vrf_attachments(module: Any, nd_v2: Any, fabric_name: str, vrf_names:
     path = VrfLiteEndpoints.vrf_attachments_query(fabric_name, ",".join(vrf_names))
     response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.GET)
 
-    return coerce_dict_list(response, list_keys=("DATA", "data", "vrfs", "items"))
+    return [item for item in _result_list(response, ("DATA", "data", "vrfs", "items")) if isinstance(item, dict)]
 
 
 def _query_vrf_switch_details(
@@ -108,7 +118,9 @@ def _query_vrf_switch_details(
     response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.GET)
 
     detail_map: dict[str, dict[str, Any]] = {}
-    for vrf_switch in coerce_dict_list(response, list_keys=("DATA", "data", "vrfs", "items")):
+    for vrf_switch in _result_list(response, ("DATA", "data", "vrfs", "items")):
+        if not isinstance(vrf_switch, dict):
+            continue
         for switch_detail in vrf_switch.get("switchDetailsList") or []:
             if not isinstance(switch_detail, dict):
                 continue

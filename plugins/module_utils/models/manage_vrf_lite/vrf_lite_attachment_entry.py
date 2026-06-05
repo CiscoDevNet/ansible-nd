@@ -7,7 +7,7 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, Optional
+from typing import ClassVar, Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,

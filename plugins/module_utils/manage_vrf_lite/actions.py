@@ -9,10 +9,6 @@ from __future__ import absolute_import, annotations, division, print_function
 import json
 from typing import Any, Optional
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
-    copy_dict_items,
-    try_int,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     _raise_vrf_lite_error,
@@ -27,8 +23,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_e
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_payloads import (
     build_instance_values,
     build_vrf_lite_extension_values,
-    normalize_vrf_lite_list,
     parse_instance_values,
+    vrf_lite_items_to_config,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -230,7 +226,7 @@ def _build_instance_values_for_payload(import_evpn_rt: Any, export_evpn_rt: Any,
 
 
 def _entry_extensions(entry: Any) -> list[dict[str, Any]]:
-    return copy_dict_items(getattr(entry, "extensions", None) or [])
+    return entry.to_config().get("extensions", []) if hasattr(entry, "to_config") else list(getattr(entry, "extensions", None) or [])
 
 
 def _entry_vlan_id(module: Any, entry: Any, raw_attach: Optional[dict[str, Any]] = None) -> int:
@@ -240,14 +236,16 @@ def _entry_vlan_id(module: Any, entry: Any, raw_attach: Optional[dict[str, Any]]
     vlan_map = module.params.get("_vrf_lite_vrf_vlan_map") or {}
     mapped_vlan = vlan_map.get(entry.vrf_name)
     if mapped_vlan not in (None, ""):
-        vlan = try_int(mapped_vlan)
-        if vlan is not None:
-            return vlan
+        try:
+            return int(mapped_vlan)
+        except (TypeError, ValueError):
+            pass
 
     if isinstance(raw_attach, dict) and raw_attach.get("vlan") not in (None, ""):
-        vlan = try_int(raw_attach.get("vlan"))
-        if vlan is not None:
-            return vlan
+        try:
+            return int(raw_attach.get("vlan"))
+        except (TypeError, ValueError):
+            pass
 
     _raise_vrf_lite_error(
         msg=("vlan_id is required for VRF '{0}' because the current VRF VLAN " "could not be determined from the controller.").format(entry.vrf_name),
@@ -264,7 +262,7 @@ def build_attach_payload_for_entry(module: Any, nd_v2: Any, entry: Any) -> dict[
     vlan_id = _entry_vlan_id(module, entry, raw_attach)
 
     resolved_extensions = []
-    for lite_item in normalize_vrf_lite_list(_entry_extensions(entry)):
+    for lite_item in vrf_lite_items_to_config(_entry_extensions(entry)):
         resolved_extensions.append(_reserve_dot1q_if_needed(nd_v2, entry.vrf_name, serial_number, lite_item))
 
     extension_values = build_vrf_lite_extension_values(

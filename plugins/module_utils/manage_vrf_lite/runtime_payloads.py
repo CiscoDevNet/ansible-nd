@@ -9,31 +9,33 @@ from __future__ import absolute_import, annotations, division, print_function
 import json
 from typing import Any, Optional
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
-    parse_value,
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_model import (
+    VrfLiteConnectionModel,
 )
 
 
-def normalize_vrf_lite_list(vrf_lite_items: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
-    normalized: list[dict[str, Any]] = []
+def vrf_lite_items_to_config(vrf_lite_items: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
     for item in vrf_lite_items or []:
-        interface = item.get("interface")
-        if not interface:
+        try:
+            model = VrfLiteConnectionModel.model_validate(item, by_alias=True, by_name=True)
+        except ValidationError:
             continue
+        data = model.model_dump(by_alias=False, exclude_none=True)
+        items.append({key: value for key, value in data.items() if value != ""})
+    return sorted(items, key=lambda i: i.get("interface", ""))
 
-        normalized_item = {
-            "interface": str(interface).strip(),
-            "dot1q": item.get("dot1q"),
-            "ipv4_addr": item.get("ipv4_addr"),
-            "neighbor_ipv4": item.get("neighbor_ipv4"),
-            "ipv6_addr": item.get("ipv6_addr"),
-            "neighbor_ipv6": item.get("neighbor_ipv6"),
-            "peer_vrf": item.get("peer_vrf"),
-        }
-        normalized.append({k: v for k, v in normalized_item.items() if v is not None and v != ""})
 
-    normalized.sort(key=lambda i: i.get("interface", ""))
-    return normalized
+def _json_value(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
+    if value in (None, ""):
+        return None
+    try:
+        return json.loads(str(value))
+    except Exception:
+        return None
 
 
 def build_vrf_lite_extension_values(
@@ -43,14 +45,14 @@ def build_vrf_lite_extension_values(
     """
     Build extensionValues string expected by top-down VRF attachment APIs.
     """
-    existing_outer = parse_value(existing_extension_values)
+    existing_outer = _json_value(existing_extension_values)
     if isinstance(existing_outer, dict):
         existing_outer = dict(existing_outer)
     else:
         existing_outer = {}
 
-    normalized = normalize_vrf_lite_list(vrf_lite_items)
-    if not normalized:
+    configured_items = vrf_lite_items_to_config(vrf_lite_items)
+    if not configured_items:
         if "VRF_LITE_CONN" in existing_outer:
             existing_outer["VRF_LITE_CONN"] = json.dumps(
                 {"VRF_LITE_CONN": []},
@@ -62,7 +64,7 @@ def build_vrf_lite_extension_values(
         return json.dumps(existing_outer, separators=(",", ":"))
 
     connection_rows: list[dict[str, Any]] = []
-    for item in normalized:
+    for item in configured_items:
         row = {
             "DOT1Q_ID": "",
             "IF_NAME": item.get("interface", ""),
@@ -90,12 +92,12 @@ def parse_vrf_lite_extension_values(extension_values: Any) -> list[dict[str, Any
     """
     Parse controller extensionValues into playbook-style vrf_lite list.
     """
-    outer = parse_value(extension_values)
+    outer = _json_value(extension_values)
     if not isinstance(outer, dict):
         return []
 
     inner = outer.get("VRF_LITE_CONN")
-    inner = parse_value(inner)
+    inner = _json_value(inner)
     if not isinstance(inner, dict):
         return []
 
@@ -128,7 +130,7 @@ def parse_vrf_lite_extension_values(extension_values: Any) -> list[dict[str, Any
         if item.get("interface"):
             parsed.append({k: v for k, v in item.items() if v is not None and v != ""})
 
-    return normalize_vrf_lite_list(parsed)
+    return vrf_lite_items_to_config(parsed)
 
 
 def build_instance_values(import_evpn_rt: Optional[str], export_evpn_rt: Optional[str]) -> str:
@@ -143,7 +145,7 @@ def build_instance_values(import_evpn_rt: Optional[str], export_evpn_rt: Optiona
 
 
 def parse_instance_values(instance_values: Any) -> dict[str, Any]:
-    parsed = parse_value(instance_values)
+    parsed = _json_value(instance_values)
     if isinstance(parsed, dict):
         return parsed
     return {}

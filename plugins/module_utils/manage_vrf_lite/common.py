@@ -9,9 +9,6 @@ from __future__ import absolute_import, annotations, division, print_function
 import ipaddress
 from typing import Any, NoReturn
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
-    get_params as _get_params,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exceptions import (
     VrfLiteResourceError,
 )
@@ -20,6 +17,13 @@ DEFAULT_VERIFY_TIMEOUT = 10
 DEFAULT_VERIFY_RETRIES = 5
 DEFAULT_CONFIG_ACTION_TYPE = "switch"
 CONFIG_ACTION_TYPE_CHOICES = ("switch", "global")
+
+
+def _params(source: Any) -> dict[str, Any]:
+    if isinstance(source, dict):
+        return source
+    params = getattr(source, "params", None)
+    return params if isinstance(params, dict) else {}
 
 
 def _raise_vrf_lite_error(msg: str, **details: Any) -> NoReturn:
@@ -77,7 +81,7 @@ def vrf_name_from_config_item(item: Any) -> str:
 
 def append_runtime_warning(source: Any, message: str) -> None:
     """Collect runtime warnings without requiring direct Ansible dependencies."""
-    params = _get_params(source)
+    params = _params(source)
     warnings = params.get("_warnings")
     if not isinstance(warnings, list):
         warnings = []
@@ -86,7 +90,7 @@ def append_runtime_warning(source: Any, message: str) -> None:
 
 
 def get_runtime_warnings(source: Any) -> list[str]:
-    params = _get_params(source)
+    params = _params(source)
     warnings = params.get("_warnings")
     if not isinstance(warnings, list):
         return []
@@ -103,7 +107,7 @@ def get_runtime_warnings(source: Any) -> list[str]:
 
 
 def get_verify_settings(source: Any) -> dict[str, Any]:
-    params = _get_params(source)
+    params = _params(source)
     raw_verify = params.get("verify")
     if isinstance(raw_verify, dict):
         return {
@@ -117,10 +121,6 @@ def get_verify_settings(source: Any) -> dict[str, Any]:
         "retries": DEFAULT_VERIFY_RETRIES,
         "timeout": DEFAULT_VERIFY_TIMEOUT,
     }
-
-
-def get_verify_timeout(source: Any) -> int:
-    return get_verify_settings(source).get("timeout", DEFAULT_VERIFY_TIMEOUT)
 
 
 def request_with_verify_settings(module: Any, nd_v2: Any, path: str, verb: Any) -> Any:
@@ -149,7 +149,7 @@ def request_with_verify_settings(module: Any, nd_v2: Any, path: str, verb: Any) 
 
 
 def get_config_actions(source: Any) -> dict[str, Any]:
-    params = _get_params(source)
+    params = _params(source)
     raw_actions = params.get("config_actions")
     if isinstance(raw_actions, dict):
         action_type_raw = raw_actions.get("type", DEFAULT_CONFIG_ACTION_TYPE)
@@ -168,10 +168,3 @@ def get_config_actions(source: Any) -> dict[str, Any]:
         "deploy": True,
         "type": DEFAULT_CONFIG_ACTION_TYPE,
     }
-
-
-def normalize_config_list(source: Any, state: str) -> list:
-    params = _get_params(source)
-    if state == "gathered":
-        return list(params.get("_gather_filter_config") or [])
-    return list(params.get("config") or [])

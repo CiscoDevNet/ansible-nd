@@ -8,13 +8,13 @@ from __future__ import absolute_import, annotations, division, print_function
 
 from typing import Any, Optional, Union
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.data import (
-    copy_dict_items,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     _resolve_serial,
     append_runtime_warning,
     vrf_name_from_config_item,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_attachment_entry import (
+    VrfLiteAttachmentEntry,
 )
 
 
@@ -51,9 +51,14 @@ def _entry_from_attach(module: Any, vrf_item: dict[str, Any], attach: dict[str, 
 
     extensions = attach.get("extensions", attach.get("vrf_lite"))
     if extensions is not None:
-        entry["extensions"] = copy_dict_items(extensions)
+        entry["extensions"] = extensions
 
     return {key: value for key, value in entry.items() if value is not None}
+
+
+def _merge_current_entry(current: dict[str, Any], proposed: dict[str, Any]) -> dict[str, Any]:
+    """Build the effective merged attachment row before generic diffing."""
+    return VrfLiteAttachmentEntry.from_config(current).merge(VrfLiteAttachmentEntry.from_config(proposed)).to_config()
 
 
 def explode_playbook_to_entries(
@@ -62,10 +67,11 @@ def explode_playbook_to_entries(
     state: str,
     current_entries: Optional[list[dict[str, Any]]] = None,
 ) -> list[dict[str, Any]]:
-    """Flatten nested playbook config into attachment-level state-machine entries."""
+    """Flatten nested playbook config into attachment-level payload DTO data."""
     entries: list[dict[str, Any]] = []
     current_entries = current_entries or []
-    current_keys = {(item.get("vrf_name"), item.get("switch_ip")) for item in current_entries}
+    current_by_key = {(item.get("vrf_name"), item.get("switch_ip")): item for item in current_entries}
+    current_keys = set(current_by_key)
     for vrf_item in config or []:
         if not isinstance(vrf_item, dict):
             continue
@@ -89,6 +95,8 @@ def explode_playbook_to_entries(
             entry = _entry_from_attach(module, vrf_item, attach)
             if not entry.get("switch_ip") or not entry.get("vrf_name"):
                 continue
+            if state == "merged" and (entry.get("vrf_name"), entry.get("switch_ip")) in current_by_key:
+                entry = _merge_current_entry(current_by_key[(entry.get("vrf_name"), entry.get("switch_ip"))], entry)
             entries.append(entry)
 
             if state == "deleted" and (entry.get("vrf_name"), entry.get("switch_ip")) not in current_keys:
@@ -123,7 +131,7 @@ def group_attachment_entries_to_vrfs(
     module: Any = None,
     include_vrfs: Optional[Union[list[str], set[str]]] = None,
 ) -> list[dict[str, Any]]:
-    """Convert flat state-machine entries back to the public nested VRF shape."""
+    """Convert flat attachment DTOs back to the public nested VRF shape."""
     sn_to_ip = {}
     vlan_map = {}
     known_vrfs = set()
