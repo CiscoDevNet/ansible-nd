@@ -1,0 +1,28 @@
+---
+# Overridden state tests for nd_fabric_update_group
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# Create a second group so overridden has something to remove.
+- name: "OVERRIDDEN PRE: Add ansible_spine_group via merged"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ update_group_spine }}"
+    state: merged
+
+- name: "OVERRIDDEN: Override with only ansible_leaf_group present"
+  cisco.nd.nd_fabric_update_group: &override_leaf_only
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ update_group_leaf }}"
+    state: overridden
+  register: nm_overridden_leaf
+
+- name: "OVERRIDDEN: Verify spine group was removed and leaf group remains"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_leaf is changed
+      - nm_overridden_leaf.after | selectattr('update_group_name', 'equalto', 'ansible_leaf_group') | list | length == 1
+      - nm_overridden_leaf.after | selectattr('update_group_name', 'equalto', 'ansible_spine_group') | list | length == 0

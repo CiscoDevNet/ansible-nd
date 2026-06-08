@@ -13,11 +13,11 @@ from __future__ import absolute_import, annotations, division, print_function
 
 from typing import Optional
 
-from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
     Field,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
 
 
 class ClusterNameMixin(BaseModel):
@@ -84,6 +84,12 @@ class SwitchSerialNumberMixin(BaseModel):
     """Mixin for endpoints that require switch_sn parameter."""
 
     switch_sn: Optional[str] = Field(default=None, min_length=1, description="Switch serial number")
+
+
+class UpdateGroupNameMixin(BaseModel):
+    """Mixin for endpoints that require update_group_name parameter."""
+
+    update_group_name: Optional[str] = Field(default=None, min_length=1, description="Update group name")
 
 
 class VrfNameMixin(BaseModel):
