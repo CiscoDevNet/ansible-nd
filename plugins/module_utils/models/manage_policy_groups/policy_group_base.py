@@ -136,9 +136,11 @@ class PolicyGroupCreate(NDBaseModel):
     )
     priority: int | None = Field(
         default=500,
-        ge=0,
+        ge=0,  # 0 is the server-reset sentinel (controller zeroes the field for some
+        # templates and echoes the value into templateInputs.PRIORITY instead).
+        # User-visible range is 1-2000; 0 is never a valid user priority.
         le=2000,
-        description="Priority of the policy group (1-2000)",
+        description="Priority of the policy group (1-2000). 0 is the server-reset sentinel.",
     )
     source: str | None = Field(
         default="",
@@ -178,6 +180,11 @@ class PolicyGroupCreate(NDBaseModel):
                 raise ValueError(f"Invalid switch ID: {sid!r}. Must be a non-empty string.")
         return v
 
+    # TODO(4.2.1): wire-shape-vs-schema workaround — the controller echoes the
+    # user-set priority into ``templateInputs.PRIORITY`` and resets the top-level
+    # ``priority`` field to 0 for some templates (e.g. ``switch_freeform``).  This
+    # validator lifts the value back to the top level so that have/want comparisons
+    # remain schema-consistent.  Remove once the controller stops doing this.
     @model_validator(mode="before")
     @classmethod
     def _normalize_priority_from_template_inputs(cls, data: Any) -> Any:
