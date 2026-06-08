@@ -6,10 +6,10 @@ from __future__ import annotations
 DOCUMENTATION = r"""
 ---
 module: nd_policy_group
-short_description: Manage policy groups on Cisco Nexus Dashboard
+short_description: Manage policy groups on Cisco Nexus Dashboard (ND)
 version_added: "2.0.0"
 description:
-- Manage policy groups on Cisco Nexus Dashboard Fabric Controller (NDFC).
+- Manage policy groups on Cisco Nexus Dashboard (ND)
 - Policy groups apply a template to multiple switches simultaneously.
 - Each policy group is uniquely identified by the combination of
   O(config.description) and O(config.name) (template name).

@@ -211,6 +211,77 @@
           - result.failed == true
       tags: sanity
 
+    ##############################################
+    ##  TC8 - use_desc_as_key + non-existent    ##
+    ##  POLICY-ID must FAIL (regression for B2) ##
+    ##############################################
+    #
+    # Previously this case silently skipped (action="skip" in Case 7 of
+    # _get_diff_merged_single).  Bugfix B2 changed it to a hard failure
+    # so an operator typo in a POLICY-ID does not look like success.
+    - name: "SANITY TC8 - use_desc_as_key with non-existent POLICY-ID must fail"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        use_desc_as_key: true
+        config:
+          - name: "POLICY-99999999"
+            description: "ghost policy reference"
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      ignore_errors: true
+      tags: sanity
+
+    - name: "SANITY TC8 - Verify failure for missing POLICY-ID"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+      tags: sanity
+
+    ##############################################
+    ##  TC9 - Mixed top-level config shapes      ##
+    ##  must FAIL (regression for B11)          ##
+    ##############################################
+    #
+    # `translate_config` rejects mixing legacy globals (entries WITHOUT
+    # a `switch:` key, paired with a separate top-level switch entry)
+    # and self-contained gathered-style entries (entries WITH an embedded
+    # `switch:` list).  Mixing the two shapes at the top level produces
+    # ambiguous semantics and is rejected up-front before any API call.
+    - name: "SANITY TC9 - Mixed legacy + self-contained shapes must fail"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          # Legacy global entry (no switch key inside the policy entry)
+          - name: switch_freeform
+            description: "legacy global entry"
+            template_inputs:
+              CONF: "system vlan long-name"
+          # Self-contained gathered-style entry (switch list embedded)
+          - name: switch_freeform
+            description: "self-contained entry"
+            template_inputs:
+              CONF: "no ip domain-lookup"
+            switch:
+              - serial_number: "{{ switch_serial_1 }}"
+          # Legacy top-level switch entry (pairs with the first item)
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      ignore_errors: true
+      tags: sanity
+
+    - name: "SANITY TC9 - Verify failure for mixed config shape"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+
   always:
     - name: "SANITY - Cleanup"
       ansible.builtin.import_tasks: ../tasks/cleanup.yaml

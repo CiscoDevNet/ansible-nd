@@ -643,13 +643,23 @@
           - result.changed == true
       tags: gathered_round_trip
 
-    # NOTE: A post-create gather verification was intentionally omitted here.
-    # The controller intermittently returns ``pushConfig`` "Policy X does not
-    # exist" for freshly-created switch_freeform policy groups (an
-    # eventually-consistent race between the create POST returning a policyId
-    # and that ID becoming deployable).  TC11i/j already assert the re-create
-    # path reported ``changed=true``; persistence is verified by the final
-    # cleanup task, which will fail if the group cannot be found/deleted.
+    - name: "RT TC11l - Verify re-created freeform via gather"
+      cisco.nd.nd_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - name: switch_freeform
+            description: "IT-RT-System vlan long-name"
+      register: final_freeform
+      tags: gathered_round_trip
+
+    - name: "RT TC11m - Verify freeform group is back"
+      ansible.builtin.assert:
+        that:
+          - final_freeform.gathered | length == 1
+          - final_freeform.gathered[0].name == 'switch_freeform'
+          - final_freeform.gathered[0].description == 'IT-RT-System vlan long-name'
+      tags: gathered_round_trip
 
   always:
     - name: "RT - Final cleanup"

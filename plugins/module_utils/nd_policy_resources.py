@@ -2192,16 +2192,16 @@ class NDPolicyModule:
         # ── Phase 3: Execute delete_and_create removals ─────────────────
         #
         # We must fully remove old policies BEFORE creating replacements.
-        # This follows the same delete logic as _execute_deleted:
-        #
-        #   1. markDelete → try for all old policies
-        #   2. PYTHON-type fallback → direct DELETE /policies/{policyId}
-        #   3. deploy=true → switchActions/deploy to push config removal
-        #
         # If the old policy's config isn't removed from the switch first,
         # the old template's config lines will remain on the device even
         # after the new template is deployed (different templates produce
         # different config — the new one won't negate the old one).
+        #
+        # The full markDelete → switch-deploy → direct-DELETE fallback
+        # flow is shared with ``_execute_deleted`` Phase B and lives in
+        # ``_delete_policies_with_fallback``.  Result rows are SUPPRESSED
+        # here because Phase 4 below emits the combined ``policy_replace``
+        # rows for these entries.
         #
         # If any removal fails, we must NOT create a replacement for that
         # entry — otherwise we'd create a duplicate.
@@ -2220,53 +2220,13 @@ class NDPolicyModule:
                     if pid and sw:
                         dac_switch_map[pid] = sw
 
-                # Step 3a: Attempt markDelete for all old policies
-                self.log.info(f"Phase 3a: markDelete for {len(remove_ids)} old policies")
-                mark_delete_data = self._api_mark_delete(remove_ids)
-
-                # Classify the 207 response into the three buckets.
-                # ``warning`` entries are surfaced via self._warnings by
-                # the helper and DO NOT appear in any failure bucket.
-                mark_succeeded, mark_failed_python, mark_failed_other = self._parse_mark_delete_response(
-                    mark_delete_data,
+                delete_result = self._delete_policies_with_fallback(
                     remove_ids,
+                    policy_switch_map=dac_switch_map,
                     context_label="markDelete (delete_and_create)",
+                    register_results=False,
                 )
-
-                self.log.info(
-                    f"Phase 3a results: {len(mark_succeeded)} markDeleted, "
-                    f"{len(mark_failed_python)} PYTHON-type, "
-                    f"{len(mark_failed_other)} other failures"
-                )
-
-                # Track truly failed (non-PYTHON) as remove failures
-                remove_failed_ids.update(mark_failed_other)
-
-                # Step 3b: switch-level deploy to push removal config
-                if mark_succeeded and self.deploy:
-                    dac_switches = list({dac_switch_map[pid] for pid in mark_succeeded if pid in dac_switch_map})
-                    if dac_switches:
-                        self.log.info(f"Phase 3b: switchActions/deploy for " f"{len(dac_switches)} switch(es) to push removal config")
-                        self._api_deploy_switches(dac_switches)
-                    else:
-                        self.log.warning("Phase 3b: No switch IDs found for markDeleted policies — skipping switch deploy")
-
-                # Step 3c: Direct DELETE for PYTHON-type policies
-                if mark_failed_python:
-                    self.log.info(f"Phase 3d: Direct DELETE for " f"{len(mark_failed_python)} PYTHON-type policies")
-                    direct_deleted, direct_failed = self._direct_delete_policies(mark_failed_python)
-                    # Direct-DELETE exceptions are terminal removal failures
-                    # for this entry — the caller will skip the create to
-                    # avoid producing a duplicate alongside the un-removed
-                    # old policy.
-                    remove_failed_ids.update(direct_failed)
-
-                    # Deploy to affected switches to push config removal
-                    if direct_deleted and self.deploy:
-                        affected_switches = list({dac_switch_map[pid] for pid in direct_deleted if pid in dac_switch_map})
-                        if affected_switches:
-                            self.log.info(f"Phase 3d: switchActions/deploy for " f"{len(affected_switches)} switch(es)")
-                            self._api_deploy_switches(affected_switches)
+                remove_failed_ids.update(delete_result["remove_failed_ids"])
 
         # ── Phase 4: Bulk create ────────────────────────────────────────
         #
@@ -2757,204 +2717,19 @@ class NDPolicyModule:
         unique_policy_ids = list(dict.fromkeys(all_policy_ids_to_delete))
         self.log.info(f"Total policies to delete: {len(unique_policy_ids)} " f"(deduplicated from {len(all_policy_ids_to_delete)})")
 
-        # ---------------------------------------------------------------------
-        # Delete strategy: markDelete-first with automatic fallback
-        #
-        # Rather than trying to predict which templates are PYTHON content-type
-        # upfront, we send ALL policies through markDelete and inspect the
-        # 207 Multi-Status response for per-policy failures.  Any policy that
-        # fails with "content type PYTHON" is automatically retried via
-        # direct DELETE /policies/{policyId}.
-        #
-        # This is more robust than maintaining a hardcoded set of template
-        # names, since the content type is an ND-internal property that
-        # varies across templates and ND versions.
-        # ---------------------------------------------------------------------
-
-        # Step 1: Attempt markDelete for all policies
-        self.log.info(f"{'Step 1/3' if self.deploy else 'Step 1/1'}: " f"markDelete for {len(unique_policy_ids)} policies")
-        mark_delete_data = self._api_mark_delete(unique_policy_ids)
-
-        # Classify the 207 response into the three buckets.
-        # NOTE: the local var ``mark_failed`` corresponds to the helper's
-        # ``mark_failed_other`` return (i.e. failures NOT due to PYTHON
-        # content type).  The shorter name is preserved because it is
-        # referenced by the result-registration block below.
-        mark_succeeded, mark_failed_python, mark_failed = self._parse_mark_delete_response(
-            mark_delete_data,
+        # Dispatch the shared markDelete → switch-deploy → direct-DELETE
+        # fallback flow.  See ``_delete_policies_with_fallback`` for the
+        # full strategy (also used by ``_execute_merged`` Phase 3).
+        # ``register_results=True`` because here we DO want per-step
+        # result rows (policy_mark_delete, policy_switch_deploy,
+        # policy_direct_delete) in the task output.
+        self._delete_policies_with_fallback(
             unique_policy_ids,
+            policy_switch_map=policy_switch_map,
+            policy_template_map=policy_template_map,
             context_label="markDelete",
+            register_results=True,
         )
-
-        self.log.info(
-            f"markDelete results: {len(mark_succeeded)} succeeded, "
-            f"{len(mark_failed_python)} failed (PYTHON-type, will retry), "
-            f"{len(mark_failed)} failed (other errors)"
-        )
-
-        # Register markDelete result
-        if mark_succeeded:
-            self._register_result(
-                action="policy_mark_delete",
-                state="deleted",
-                operation_type=OperationType.DELETE,
-                return_code=200,
-                message=f"Marked {len(mark_succeeded)} policies for deletion",
-                success=True,
-                found=True,
-                diff={
-                    "action": "mark_delete",
-                    "policy_ids": mark_succeeded,
-                },
-            )
-
-        if mark_failed:
-            self._register_result(
-                action="policy_mark_delete",
-                state="deleted",
-                operation_type=OperationType.DELETE,
-                return_code=207,
-                message=(f"markDelete failed for {len(mark_failed)} policy(ies): " f"{mark_failed}"),
-                success=False,
-                found=True,
-                diff={
-                    "action": "mark_delete_failed",
-                    "policy_ids": mark_failed,
-                },
-            )
-
-        # ── Step 2: switch deploy for markDeleted (non-PYTHON) ──
-        #
-        # After markDelete, a switch-level deploy pushes the removal
-        # (negative) config to the affected switches.
-
-        normal_delete_ids = mark_succeeded
-
-        deploy_success = True
-        if normal_delete_ids and self.deploy:
-            # Step 2a: switch-level deploy to push removal config
-            normal_switches = list({policy_switch_map[pid] for pid in normal_delete_ids if pid in policy_switch_map})
-            if normal_switches:
-                self.log.info(f"Step 2/3: switchActions/deploy for {len(normal_switches)} switch(es) " f"to push removal config: {normal_switches}")
-                deploy_data = self._api_deploy_switches(normal_switches)
-
-                if isinstance(deploy_data, dict) and deploy_data:
-                    status_str = deploy_data.get("status", "")
-                    if status_str:
-                        self.log.info(f"switchActions/deploy status: {status_str}")
-                else:
-                    self.log.warning("switchActions/deploy returned empty body — " "treating as success (ND commonly returns {} for this endpoint)")
-
-                self._register_result(
-                    action="policy_switch_deploy",
-                    state="deleted",
-                    operation_type=OperationType.DELETE,
-                    return_code=200,
-                    message=(f"Deployed removal config to {len(normal_switches)} switch(es) " f"for {len(normal_delete_ids)} markDeleted policies"),
-                    success=True,
-                    found=True,
-                    diff={
-                        "action": "switch_deploy",
-                        "switch_ids": normal_switches,
-                        "policy_ids": normal_delete_ids,
-                    },
-                )
-            else:
-                self.log.warning("No switch IDs found for markDeleted policies — " "skipping switch deploy")
-
-        elif normal_delete_ids and not self.deploy:
-            # deploy=false: markDelete already happened; switch-level deploy
-            # is skipped so config remains on device but policy is marked
-            # for deletion on the controller.  No remove needed — the
-            # next switch-level deploy (manual or via future playbook run
-            # with deploy=true) will clean up.
-            self.log.info(f"Deploy=false: {len(normal_delete_ids)} policies markDeleted but not deployed")
-
-        # ── Step 3: direct DELETE + switchActions/deploy for PYTHON-type ──
-        #
-        # PYTHON content-type templates cannot be markDeleted.  We use
-        # direct DELETE to remove the record, then switch-level deploy
-        # to push the config removal to the devices.
-        if mark_failed_python:
-            self.log.info(f"Falling back to direct DELETE for {len(mark_failed_python)} " f"PYTHON-type policies: {mark_failed_python}")
-            deleted_direct, failed_direct = self._direct_delete_policies(mark_failed_python)
-
-            if deleted_direct:
-                tpl_names = list({policy_template_map.get(pid, "unknown") for pid in deleted_direct})
-                self._register_result(
-                    action="policy_direct_delete",
-                    state="deleted",
-                    operation_type=OperationType.DELETE,
-                    return_code=200,
-                    message=(
-                        f"Directly deleted {len(deleted_direct)} PYTHON-type "
-                        f"policy(ies) ({', '.join(tpl_names)}). "
-                        "These templates use content type PYTHON and cannot "
-                        "be markDeleted — direct DELETE is used instead."
-                    ),
-                    success=True,
-                    found=True,
-                    diff={
-                        "action": "direct_delete",
-                        "policy_ids": deleted_direct,
-                        "templates": tpl_names,
-                    },
-                )
-            if failed_direct:
-                self._register_result(
-                    action="policy_direct_delete",
-                    state="deleted",
-                    operation_type=OperationType.DELETE,
-                    return_code=-1,
-                    message=(f"Direct DELETE failed for {len(failed_direct)} " f"policy(ies): {failed_direct}"),
-                    success=False,
-                    found=True,
-                    diff={
-                        "action": "direct_delete_failed",
-                        "policy_ids": failed_direct,
-                    },
-                )
-
-            # Deploy to affected switches so ND pushes the config removal
-            # to the devices.  Direct DELETE removes the policy record but
-            # the device still has the running config until we deploy.
-            # This MUST be last — switchActions/deploy is fabric-wide and
-            # would also push any pending markDeleted policy removals.
-            if deleted_direct and self.deploy:
-                affected_switches = list({policy_switch_map[pid] for pid in deleted_direct if pid in policy_switch_map})
-                if affected_switches:
-                    self.log.info(f"Deploying config to {len(affected_switches)} switch(es) " f"after direct DELETE: {affected_switches}")
-                    deploy_data = self._api_deploy_switches(affected_switches)
-
-                    deploy_ok = True
-                    if isinstance(deploy_data, dict) and deploy_data:
-                        status_str = deploy_data.get("status", "")
-                        if status_str:
-                            self.log.info(f"switchActions/deploy status: {status_str}")
-                        else:
-                            self.log.warning("switchActions/deploy returned non-empty body " f"but no 'status' field: {deploy_data}")
-                    else:
-                        self.log.warning("switchActions/deploy returned empty body — " "treating as success (ND commonly returns {} " "for this endpoint)")
-
-                    self._register_result(
-                        action="policy_switch_deploy",
-                        state="deleted",
-                        operation_type=OperationType.DELETE,
-                        return_code=207,
-                        message=(f"Deployed config to {len(affected_switches)} " f"switch(es) to push removal of directly-deleted " f"PYTHON-type policies"),
-                        success=deploy_ok,
-                        found=True,
-                        diff={
-                            "action": "switch_deploy",
-                            "switch_ids": affected_switches,
-                            "policy_ids": deleted_direct,
-                            "deploy_success": deploy_ok,
-                        },
-                    )
-
-        # If nothing succeeded at all, we're done
-        if not mark_succeeded and not mark_failed_python:
-            self.log.info("No policies were successfully deleted — done")
 
         self.log.debug("EXIT: _execute_deleted()")
 
@@ -3517,6 +3292,295 @@ class NDPolicyModule:
                 self.log.error(f"Direct DELETE also failed for {pid}")
                 failed_direct.append(pid)
         return deleted_direct, failed_direct
+
+    def _log_deploy_status(self, deploy_data: Any, context_label: str) -> None:
+        """Inspect a ``switchActions/deploy`` response body and log appropriately.
+
+        Centralises the response-shape handling that was previously inlined
+        at every deploy call site:
+
+        - ``dict`` with non-empty ``status`` → log at INFO.
+        - ``dict`` with no ``status`` field → log at WARNING (suspicious).
+        - empty / non-dict body → log at WARNING (ND occasionally returns
+          ``{}`` on success for this endpoint).
+
+        Args:
+            deploy_data: Whatever ``_api_deploy_switches`` returned.
+            context_label: Short prefix included in the log line so
+                call sites are distinguishable.
+
+        Returns:
+            None.
+        """
+        if isinstance(deploy_data, dict) and deploy_data:
+            status_str = deploy_data.get("status", "")
+            if status_str:
+                self.log.info(f"{context_label}: switchActions/deploy status: {status_str}")
+            else:
+                self.log.warning(f"{context_label}: switchActions/deploy returned non-empty body " f"but no 'status' field: {deploy_data}")
+        else:
+            self.log.warning(f"{context_label}: switchActions/deploy returned empty body — " "treating as success (ND commonly returns {} for this endpoint)")
+
+    def _delete_policies_with_fallback(
+        self,
+        policy_ids: list[str],
+        *,
+        policy_switch_map: dict[str, str],
+        policy_template_map: dict[str, str] | None = None,
+        context_label: str,
+        register_results: bool = True,
+    ) -> dict:
+        """Run the markDelete → switch-deploy → direct-DELETE fallback flow.
+
+        Centralises the deletion orchestration that was previously
+        duplicated between ``_execute_deleted`` Phase B (standalone
+        delete) and ``_execute_merged`` Phase 3 (delete-and-create
+        removal of the old policy before its replacement is created).
+
+        Strategy — markDelete-first with automatic fallback.  Rather
+        than trying to predict which templates are PYTHON content-type
+        upfront, ALL policies are sent through ``markDelete`` and the
+        207 Multi-Status response is inspected.  Any policy that fails
+        with ``"content type PYTHON"`` is automatically retried via
+        direct ``DELETE /policies/{policyId}``.  This is more robust
+        than maintaining a hardcoded set of template names, since the
+        content type is an ND-internal property that varies across
+        templates and ND versions.
+
+        Steps:
+
+        1. ``markDelete`` all ``policy_ids`` via ``_api_mark_delete``.
+        2. Classify the 207 response into succeeded /
+           failed-PYTHON / failed-other buckets via
+           ``_parse_mark_delete_response``.
+        3. If ``self.deploy`` and any markDelete-succeeded:
+           ``switchActions/deploy`` against the union of those
+           switches to push the removal config.
+        4. If any failed-PYTHON: direct ``DELETE /policies/<id>``
+           via ``_direct_delete_policies``.
+        5. If ``self.deploy`` and any direct-deleted:
+           ``switchActions/deploy`` against the union of those
+           switches.
+
+        When ``self.deploy`` is False, both deploy steps are skipped —
+        markDelete leaves the policy in markDeleted state on the
+        controller (next switch-level deploy cleans it up), while
+        direct DELETE removes the controller record but leaves the
+        running config on the switch until the next deploy.
+
+        The ``register_results`` flag controls whether per-step result
+        rows (``policy_mark_delete``, ``policy_switch_deploy``,
+        ``policy_direct_delete``) are pushed into ``self.results``.
+        Phase 3 (delete_and_create) sets this to ``False`` because the
+        surrounding create flow emits its own combined
+        ``policy_replace`` rows; Phase B (standalone delete) sets it
+        to ``True``.
+
+        Args:
+            policy_ids: Policy IDs to delete.  Caller is responsible
+                for deduplication.
+            policy_switch_map: Mapping from ``policy_id → switchId``,
+                used to target ``switchActions/deploy`` only at the
+                switches that actually need it.
+            policy_template_map: Optional mapping from ``policy_id →
+                templateName``, used purely for nicer
+                ``policy_direct_delete`` messages when
+                ``register_results=True``.
+            context_label: Short label included in logs and markDelete
+                warning messages so each caller's output is
+                distinguishable (e.g. ``"markDelete"`` vs.
+                ``"markDelete (delete_and_create)"``).
+            register_results: Whether to push per-step result rows.
+
+        Returns:
+            Dict with:
+                - ``mark_succeeded``: list[str]
+                - ``mark_failed_python``: list[str]
+                - ``mark_failed_other``: list[str]
+                - ``deleted_direct``: list[str]
+                - ``failed_direct``: list[str]
+                - ``remove_failed_ids``: set[str] — union of
+                  ``mark_failed_other`` and ``failed_direct``;
+                  policies whose removal could not be completed.
+        """
+        if not policy_ids:
+            return {
+                "mark_succeeded": [],
+                "mark_failed_python": [],
+                "mark_failed_other": [],
+                "deleted_direct": [],
+                "failed_direct": [],
+                "remove_failed_ids": set(),
+            }
+
+        template_map = policy_template_map or {}
+
+        # ── Step 1: markDelete ──────────────────────────────────────
+        self.log.info(f"{context_label}: Step 1 - markDelete for {len(policy_ids)} policy(ies)")
+        mark_delete_data = self._api_mark_delete(policy_ids)
+
+        mark_succeeded, mark_failed_python, mark_failed_other = self._parse_mark_delete_response(
+            mark_delete_data,
+            policy_ids,
+            context_label=context_label,
+        )
+
+        self.log.info(
+            f"{context_label}: markDelete results: {len(mark_succeeded)} succeeded, "
+            f"{len(mark_failed_python)} failed (PYTHON-type, will retry), "
+            f"{len(mark_failed_other)} failed (other errors)"
+        )
+
+        if register_results:
+            if mark_succeeded:
+                self._register_result(
+                    action="policy_mark_delete",
+                    state="deleted",
+                    operation_type=OperationType.DELETE,
+                    return_code=200,
+                    message=f"Marked {len(mark_succeeded)} policies for deletion",
+                    success=True,
+                    found=True,
+                    diff={
+                        "action": "mark_delete",
+                        "policy_ids": mark_succeeded,
+                    },
+                )
+            if mark_failed_other:
+                self._register_result(
+                    action="policy_mark_delete",
+                    state="deleted",
+                    operation_type=OperationType.DELETE,
+                    return_code=207,
+                    message=(f"markDelete failed for {len(mark_failed_other)} policy(ies): " f"{mark_failed_other}"),
+                    success=False,
+                    found=True,
+                    diff={
+                        "action": "mark_delete_failed",
+                        "policy_ids": mark_failed_other,
+                    },
+                )
+
+        # ── Step 2: switchActions/deploy for markDeleted (non-PYTHON) ──
+        if mark_succeeded and self.deploy:
+            normal_switches = list({policy_switch_map[pid] for pid in mark_succeeded if pid in policy_switch_map})
+            if normal_switches:
+                self.log.info(
+                    f"{context_label}: Step 2 - switchActions/deploy for " f"{len(normal_switches)} switch(es) to push removal config: " f"{normal_switches}"
+                )
+                deploy_data = self._api_deploy_switches(normal_switches)
+                self._log_deploy_status(deploy_data, context_label)
+
+                if register_results:
+                    self._register_result(
+                        action="policy_switch_deploy",
+                        state="deleted",
+                        operation_type=OperationType.DELETE,
+                        return_code=200,
+                        message=(f"Deployed removal config to {len(normal_switches)} " f"switch(es) for {len(mark_succeeded)} markDeleted policies"),
+                        success=True,
+                        found=True,
+                        diff={
+                            "action": "switch_deploy",
+                            "switch_ids": normal_switches,
+                            "policy_ids": mark_succeeded,
+                        },
+                    )
+            else:
+                self.log.warning(f"{context_label}: No switch IDs found for markDeleted policies — " "skipping switch deploy")
+        elif mark_succeeded and not self.deploy:
+            # deploy=false: markDelete already happened; switch-level deploy
+            # is skipped so config remains on device but policy is marked
+            # for deletion on the controller.  The next switch-level deploy
+            # (manual or via future playbook run with deploy=true) cleans up.
+            self.log.info(f"{context_label}: Deploy=false — {len(mark_succeeded)} policies " "markDeleted but not deployed")
+
+        # ── Step 3: direct DELETE + switch deploy for PYTHON-type ──
+        deleted_direct: list[str] = []
+        failed_direct: list[str] = []
+        if mark_failed_python:
+            self.log.info(f"{context_label}: Step 3 - direct DELETE for " f"{len(mark_failed_python)} PYTHON-type policies: {mark_failed_python}")
+            deleted_direct, failed_direct = self._direct_delete_policies(mark_failed_python)
+
+            if register_results:
+                if deleted_direct:
+                    tpl_names = list({template_map.get(pid, "unknown") for pid in deleted_direct})
+                    self._register_result(
+                        action="policy_direct_delete",
+                        state="deleted",
+                        operation_type=OperationType.DELETE,
+                        return_code=200,
+                        message=(
+                            f"Directly deleted {len(deleted_direct)} PYTHON-type "
+                            f"policy(ies) ({', '.join(tpl_names)}). "
+                            "These templates use content type PYTHON and cannot "
+                            "be markDeleted — direct DELETE is used instead."
+                        ),
+                        success=True,
+                        found=True,
+                        diff={
+                            "action": "direct_delete",
+                            "policy_ids": deleted_direct,
+                            "templates": tpl_names,
+                        },
+                    )
+                if failed_direct:
+                    self._register_result(
+                        action="policy_direct_delete",
+                        state="deleted",
+                        operation_type=OperationType.DELETE,
+                        return_code=-1,
+                        message=(f"Direct DELETE failed for {len(failed_direct)} " f"policy(ies): {failed_direct}"),
+                        success=False,
+                        found=True,
+                        diff={
+                            "action": "direct_delete_failed",
+                            "policy_ids": failed_direct,
+                        },
+                    )
+
+            # Deploy to affected switches so ND pushes the config removal
+            # to the devices.  Direct DELETE removes the policy record but
+            # the device still has the running config until we deploy.
+            # This MUST be last — switchActions/deploy is fabric-wide and
+            # would also push any pending markDeleted policy removals.
+            if deleted_direct and self.deploy:
+                affected_switches = list({policy_switch_map[pid] for pid in deleted_direct if pid in policy_switch_map})
+                if affected_switches:
+                    self.log.info(f"{context_label}: Deploying config to {len(affected_switches)} " f"switch(es) after direct DELETE: {affected_switches}")
+                    deploy_data = self._api_deploy_switches(affected_switches)
+                    self._log_deploy_status(deploy_data, context_label)
+
+                    if register_results:
+                        self._register_result(
+                            action="policy_switch_deploy",
+                            state="deleted",
+                            operation_type=OperationType.DELETE,
+                            return_code=207,
+                            message=(
+                                f"Deployed config to {len(affected_switches)} " f"switch(es) to push removal of directly-deleted " f"PYTHON-type policies"
+                            ),
+                            success=True,
+                            found=True,
+                            diff={
+                                "action": "switch_deploy",
+                                "switch_ids": affected_switches,
+                                "policy_ids": deleted_direct,
+                                "deploy_success": True,
+                            },
+                        )
+
+        if register_results and not mark_succeeded and not deleted_direct:
+            self.log.info(f"{context_label}: No policies were successfully deleted — done")
+
+        return {
+            "mark_succeeded": mark_succeeded,
+            "mark_failed_python": mark_failed_python,
+            "mark_failed_other": mark_failed_other,
+            "deleted_direct": deleted_direct,
+            "failed_direct": failed_direct,
+            "remove_failed_ids": set(mark_failed_other) | set(failed_direct),
+        }
 
     # =========================================================================
     # Results Helper

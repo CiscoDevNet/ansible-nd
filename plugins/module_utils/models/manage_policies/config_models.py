@@ -49,7 +49,7 @@ class PlaybookSwitchPolicyConfig(NDNestedModel):
     OpenAPI constraints applied:
         - name: maxLength=255 (templateName)
         - description: maxLength=255
-        - priority: 1–2000 (createBasePolicy.priority)
+        - priority: 1-2000 (createBasePolicy.priority)
     """
 
     identifiers: ClassVar[list[str]] = []
@@ -69,7 +69,7 @@ class PlaybookSwitchPolicyConfig(NDNestedModel):
         default=500,
         ge=1,
         le=2000,
-        description="Policy priority (1–2000, default 500)",
+        description="Policy priority (1-2000, default 500)",
     )
     create_additional_policy: bool = Field(
         default=True,
@@ -138,7 +138,7 @@ class PlaybookPolicyConfig(NDNestedModel):
 
     1. **Policy entry** — has ``name`` (template name or policy ID) plus
        optional description, priority, template_inputs.
-    2. **Switch entry** — has ``switch`` list only (no ``name``). Used to
+     2. **Switch entry** - has ``switch`` list only (no ``name``). Used to
        declare which switches receive the global policies.
 
     Context-aware validation (pass via ``model_validate(..., context={})``:
@@ -148,7 +148,7 @@ class PlaybookPolicyConfig(NDNestedModel):
     OpenAPI constraints applied:
         - name: maxLength=255 (templateName)
         - description: maxLength=255
-        - priority: 1–2000 (createBasePolicy.priority)
+        - priority: 1-2000 (createBasePolicy.priority)
     """
 
     identifiers: ClassVar[list[str]] = []
@@ -167,7 +167,7 @@ class PlaybookPolicyConfig(NDNestedModel):
         default=500,
         ge=1,
         le=2000,
-        description="Policy priority (1–2000, default 500)",
+        description="Policy priority (1-2000, default 500)",
     )
     create_additional_policy: bool = Field(
         default=True,
@@ -209,7 +209,7 @@ class PlaybookPolicyConfig(NDNestedModel):
         state = ctx.get("state")
         use_desc_as_key = ctx.get("use_desc_as_key", False)
 
-        # Switch-only entry — no policy fields to validate
+        # Switch-only entry - no policy fields to validate
         if self.name is None and self.switch is not None:
             return self
 

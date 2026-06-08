@@ -7,7 +7,7 @@ DOCUMENTATION = r"""
 ---
 module: nd_policy
 version_added: "2.0.0"
-short_description: Manages policies on Nexus Dashboard.
+short_description: Manages policies on Cisco Nexus Dashboard (ND).
 description:
 - Supports creating, updating, deleting, gathering, and deploying policies based on templates.
 - Supports C(merged) state for idempotent policy management.
@@ -535,7 +535,8 @@ EXAMPLES = r"""
     config: "{{ all_policies.gathered }}"
 """
 
-RETURN = r""
+RETURN = r"""
+"""
 
 # pylint: disable=logging-fstring-interpolation
 import logging

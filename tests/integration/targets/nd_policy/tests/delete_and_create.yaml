@@ -155,6 +155,136 @@
           - result.changed == false
       tags: replace
 
+    ##############################################################
+    ##  TC4 - PYTHON-content-type old policy on the delete side ##
+    ##  (regression for P6 helper extraction)                   ##
+    ##############################################################
+    #
+    # delete_and_create internally calls _parse_mark_delete_response
+    # and _direct_delete_policies (the P6 helpers).  TC1-TC3 above only
+    # exercise non-PYTHON templates (clock_timezone/clock_summertime),
+    # so the markDelete→direct-DELETE fallback path inside the merged
+    # Phase 3 helper invocation is otherwise untested.
+    #
+    # Here we:
+    #   1. Create a switch_freeform (PYTHON content-type) with description REPLACE-PY
+    #   2. Re-apply with the SAME description but a DIFFERENT template
+    #      (feature_enable), forcing delete_and_create
+    #   3. The old switch_freeform must be deleted via the direct-DELETE
+    #      fallback (markDelete will return "content type PYTHON" error)
+    #   4. The new feature_enable policy must be created
+    - name: "REPLACE TC4 SETUP - Create switch_freeform (PYTHON) with description REPLACE-PY"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        use_desc_as_key: true
+        config:
+          - name: switch_freeform
+            create_additional_policy: false
+            description: "REPLACE-PY"
+            priority: 310
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: setup_py
+      tags: replace
+
+    - name: "REPLACE TC4 SETUP - Verify creation"
+      ansible.builtin.assert:
+        that:
+          - setup_py.changed == true
+      tags: replace
+
+    - name: "REPLACE TC4 SETUP - Capture original PYTHON policy"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: pre_replace_py_gathered
+      tags: replace
+
+    - name: "REPLACE TC4 SETUP - Filter to REPLACE-PY matches"
+      ansible.builtin.set_fact:
+        pre_replace_py_matches: >-
+          {{ pre_replace_py_gathered.gathered
+             | selectattr('description', 'equalto', 'REPLACE-PY')
+             | list }}
+      tags: replace
+
+    - name: "REPLACE TC4 SETUP - Verify exactly 1 switch_freeform with REPLACE-PY"
+      ansible.builtin.assert:
+        that:
+          - pre_replace_py_matches | length == 1
+          - pre_replace_py_matches[0].name == "switch_freeform"
+      tags: replace
+
+    - name: "REPLACE TC4 - Reuse REPLACE-PY with feature_enable (forces PYTHON-fallback delete)"
+      cisco.nd.nd_policy: &replace_py_new
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        use_desc_as_key: true
+        config:
+          - name: feature_enable
+            create_additional_policy: false
+            description: "REPLACE-PY"
+            priority: 310
+            template_inputs:
+              featureName: lldp
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result
+      tags: replace
+
+    - name: "REPLACE TC4 - Verify replace was performed"
+      ansible.builtin.assert:
+        that:
+          - result.changed == true
+      tags: replace
+
+    - name: "REPLACE TC4 - Gather post-replace state"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: gathered
+        config:
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: post_replace_py_gathered
+      tags: replace
+
+    - name: "REPLACE TC4 - Filter to REPLACE-PY matches"
+      ansible.builtin.set_fact:
+        post_replace_py_matches: >-
+          {{ post_replace_py_gathered.gathered
+             | selectattr('description', 'equalto', 'REPLACE-PY')
+             | list }}
+      tags: replace
+
+    - name: "REPLACE TC4 - Old PYTHON policy gone, new feature_enable present"
+      ansible.builtin.assert:
+        that:
+          - post_replace_py_matches | length == 1
+          - post_replace_py_matches[0].name == "feature_enable"
+          # Different policyId proves the old switch_freeform was actually
+          # deleted (via direct-DELETE fallback) rather than updated.
+          - post_replace_py_matches[0].policy_id != pre_replace_py_matches[0].policy_id
+      tags: replace
+
+    - name: "REPLACE TC4 - Idempotence after PYTHON-fallback replace"
+      cisco.nd.nd_policy: *replace_py_new
+      register: result
+      tags: replace
+
+    - name: "REPLACE TC4 - Verify idempotence"
+      ansible.builtin.assert:
+        that:
+          - result.changed == false
+      tags: replace
+
   always:
     - name: "REPLACE - Cleanup"
       ansible.builtin.import_tasks: ../tasks/cleanup.yaml
