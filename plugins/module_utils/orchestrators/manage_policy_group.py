@@ -16,7 +16,7 @@ Extends ``NDBaseOrchestrator`` with custom logic for:
 from __future__ import annotations
 
 import logging
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 log = logging.getLogger("nd.PolicyGroupOrchestrator")
 
@@ -48,6 +48,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import (
     ResponseType,
 )
+
+if TYPE_CHECKING:
+    # Type-hint-only import to avoid a circular dependency at runtime
+    # (``nd_state_machine`` itself imports from ``orchestrators.base``).
+    from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import (
+        NDStateMachine,
+    )
 
 
 class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
@@ -593,6 +600,74 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             raise Exception("switchActions/deploy reported {0} failed switch(es): {1}".format(len(failures), "; ".join(failures)))
 
         return result
+
+    def deploy_unchanged_user_mentioned(self, state_machine: NDStateMachine) -> None:
+        """Push ``switchActions/deploy`` for user-mentioned policy groups that had no diff.
+
+        When the user sets ``deploy=true`` and lists a policy group in
+        ``config:`` whose desired state already matches the controller
+        (no diff), the state machine does not ``send`` it. But the user
+        expressed intent to deploy, so push the running config to the
+        affected switches anyway.
+
+        Strictly scoped to *user-mentioned* policies (the intersection of
+        ``state_machine.proposed`` and ``state_machine.existing``, minus
+        anything actually sent in this run). Never touches unrelated
+        fabric policies.
+
+        No-op when ``self.deploy`` is False; safe to call unconditionally
+        from the module's main() once the state machine has run.
+
+        ## Args
+
+        -   ``state_machine``: The fully-managed ``NDStateMachine`` whose
+            ``sent`` / ``proposed`` / ``existing`` collections describe
+            what just happened in this run.
+        """
+        if not self.deploy:
+            return
+
+        sent_identifiers = {item.get_identifier_value() for item in state_machine.sent}
+        proposed_identifiers = {item.get_identifier_value() for item in state_machine.proposed}
+        log.debug(
+            "deploy-unchanged: proposed_identifiers=%s",
+            sorted(map(str, proposed_identifiers)),
+        )
+        log.debug(
+            "deploy-unchanged: sent_identifiers=%s",
+            sorted(map(str, sent_identifiers)),
+        )
+
+        unchanged_switch_ids: set[str] = set()
+        unchanged_policy_ids: list[str] = []
+        for item in state_machine.existing:
+            ident = item.get_identifier_value()
+            in_proposed = ident in proposed_identifiers
+            in_sent = ident in sent_identifiers
+            pid = getattr(item, "policy_id", None)
+            log.debug(
+                "deploy-unchanged: existing item ident=%s policy_id=%s in_proposed=%s in_sent=%s",
+                ident,
+                pid,
+                in_proposed,
+                in_sent,
+            )
+            if in_proposed and not in_sent and pid:
+                unchanged_policy_ids.append(pid)
+                for sid in getattr(item, "switch_ids", None) or []:
+                    if sid:
+                        unchanged_switch_ids.add(sid)
+
+        if unchanged_switch_ids:
+            log.info(
+                "Deploying %d unchanged policy group(s) [%s] via switchActions/deploy on switches: %s",
+                len(unchanged_policy_ids),
+                unchanged_policy_ids,
+                sorted(unchanged_switch_ids),
+            )
+            self._switch_deploy(sorted(unchanged_switch_ids))
+        else:
+            log.debug("deploy-unchanged: no unchanged user-mentioned policies to push")
 
     def _get_current_switch_ids(self, policy_group_id: str) -> set:
         """Return a policy group's current switch_ids.

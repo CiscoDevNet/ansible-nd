@@ -597,7 +597,7 @@ class NDPolicyModule:
         ep.fabric_name = self.fabric_name
         self._record_call(ep, None)
 
-        rest_send = self.nd._get_rest_send()
+        rest_send = self.nd.get_rest_send()
         rest_send.save_settings()
         rest_send.check_mode = False
         try:

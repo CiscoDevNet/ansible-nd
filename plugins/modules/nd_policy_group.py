@@ -609,7 +609,7 @@ def _resolve_switch_ips_in_config(module, log, config, fabric_name):
         fabric_name,
     )
     nd = NDModule(module)
-    rest_send = nd._get_rest_send()
+    rest_send = nd.get_rest_send()
     rest_send.save_settings()
     rest_send.check_mode = False
     try:
@@ -867,49 +867,11 @@ def main():
         nd_state_machine.manage_state()
 
         # Deploy unchanged policies when deploy=true (push config even if no diff).
-        # Scope strictly to policies the user mentioned in `config:` so we never
-        # touch unrelated fabric policies.
-
-        if state == "merged" and orchestrator.deploy and not module.check_mode:
-            sent_identifiers = {item.get_identifier_value() for item in nd_state_machine.sent}
-            proposed_identifiers = {item.get_identifier_value() for item in nd_state_machine.proposed}
-            log.debug(
-                "deploy-unchanged: proposed_identifiers=%s",
-                sorted(map(str, proposed_identifiers)),
-            )
-            log.debug(
-                "deploy-unchanged: sent_identifiers=%s",
-                sorted(map(str, sent_identifiers)),
-            )
-            unchanged_switch_ids: set[str] = set()
-            unchanged_policy_ids: list[str] = []
-            for item in nd_state_machine.existing:
-                ident = item.get_identifier_value()
-                in_proposed = ident in proposed_identifiers
-                in_sent = ident in sent_identifiers
-                pid = getattr(item, "policy_id", None)
-                log.debug(
-                    "deploy-unchanged: existing item ident=%s policy_id=%s in_proposed=%s in_sent=%s",
-                    ident,
-                    pid,
-                    in_proposed,
-                    in_sent,
-                )
-                if in_proposed and not in_sent and pid:
-                    unchanged_policy_ids.append(pid)
-                    for sid in getattr(item, "switch_ids", None) or []:
-                        if sid:
-                            unchanged_switch_ids.add(sid)
-            if unchanged_switch_ids:
-                log.info(
-                    "Deploying %d unchanged policy group(s) [%s] via switchActions/deploy on switches: %s",
-                    len(unchanged_policy_ids),
-                    unchanged_policy_ids,
-                    sorted(unchanged_switch_ids),
-                )
-                orchestrator._switch_deploy(sorted(unchanged_switch_ids))
-            else:
-                log.debug("deploy-unchanged: no unchanged user-mentioned policies to push")
+        # The orchestrator method scopes strictly to policies the user mentioned
+        # in `config:` so we never touch unrelated fabric policies, and is a
+        # no-op when deploy=false.
+        if state == "merged" and not module.check_mode:
+            orchestrator.deploy_unchanged_user_mentioned(nd_state_machine)
 
         result = nd_state_machine.output.format()
         # Surface force-created items as a dedicated key so they're visible
