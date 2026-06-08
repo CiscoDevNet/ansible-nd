@@ -35,6 +35,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params im
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
     BasePath,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.switch_action_params import (
+    SwitchActionsTicketEndpointParams,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
 )
@@ -68,26 +71,6 @@ class SwitchActionsRemoveEndpointParams(TicketIdMixin, EndpointQueryParams):
     """
 
     force: bool | None = Field(default=None, description="Force removal of switches")
-
-
-class SwitchActionsTicketEndpointParams(TicketIdMixin, EndpointQueryParams):
-    """
-    # Summary
-
-    Endpoint-specific query parameters for switch action endpoints that accept a ticket ID.
-
-    ## Parameters
-
-    - ticket_id: Change control ticket ID (optional)
-
-    ## Usage
-
-    ```python
-    params = SwitchActionsTicketEndpointParams(ticket_id="CHG12345")
-    query_string = params.to_query_string()
-    # Returns: "ticketId=CHG12345"
-    ```
-    """
 
 
 class SwitchActionsImportEndpointParams(ClusterNameMixin, TicketIdMixin, EndpointQueryParams):

@@ -359,18 +359,3 @@ class AdvisoryLevel(str, Enum):
     @classmethod
     def choices(cls) -> list[str]:
         return [e.value for e in cls]
-
-
-__all__ = [
-    "SwitchRole",
-    "SystemMode",
-    "PlatformType",
-    "ShallowDiscoveryPlatformType",
-    "SnmpV3AuthProtocol",
-    "DiscoveryStatus",
-    "ConfigSyncStatus",
-    "VpcRole",
-    "RemoteCredentialStore",
-    "AnomalyLevel",
-    "AdvisoryLevel",
-]

@@ -325,14 +325,3 @@ class SwitchDataModel(NDBaseModel):
             "software_version": self.software_version,
             "mode": (ad.system_mode if ad and hasattr(ad, "system_mode") else None),
         }
-
-
-__all__ = [
-    "TelemetryIpCollection",
-    "VpcData",
-    "SwitchMetadata",
-    "AdditionalSwitchData",
-    "AdditionalAciSwitchData",
-    "Metadata",
-    "SwitchDataModel",
-]

@@ -213,10 +213,3 @@ class AddSwitchesRequestModel(NDBaseModel):
     def normalize_platform_type(cls, v: str | PlatformType | None) -> PlatformType:
         """Normalize platform type (case-insensitive: NX_OS, nx-os, etc.)."""
         return PlatformType.normalize(v)
-
-
-__all__ = [
-    "ShallowDiscoveryRequestModel",
-    "SwitchDiscoveryModel",
-    "AddSwitchesRequestModel",
-]

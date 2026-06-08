@@ -134,8 +134,3 @@ class RMASwitchModel(NDBaseModel):
     def from_response(cls, response: dict[str, Any]) -> "RMASwitchModel":
         """Create model instance from API response."""
         return cls.model_validate(response)
-
-
-__all__ = [
-    "RMASwitchModel",
-]

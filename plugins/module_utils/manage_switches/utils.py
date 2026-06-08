@@ -9,6 +9,8 @@ payload construction, credential grouping, bootstrap queries, and
 multi-phase switch wait utilities.
 """
 
+# pylint: disable=too-many-instance-attributes,too-many-arguments,too-many-positional-arguments,too-many-locals
+
 from __future__ import annotations
 
 import logging
@@ -16,6 +18,9 @@ import time
 from copy import deepcopy
 from typing import Any
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
+    NDModuleError,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_bootstrap import (
     EpManageFabricsBootstrapGet,
 )
@@ -30,8 +35,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 )
 from ansible_collections.cisco.nd.plugins.module_utils.utils import (
     FabricUtils,
-    SwitchOperationError,
 )
+
+_REQUEST_ERRORS = (NDModuleError, TypeError, ValueError, AttributeError)
 
 # =========================================================================
 # Payload Utilities
@@ -244,7 +250,7 @@ def query_bootstrap_switches(
             path=endpoint.path,
             verb=endpoint.verb,
         )
-    except Exception as e:
+    except _REQUEST_ERRORS as e:
         msg = f"Failed to query bootstrap switches for " f"fabric '{fabric}': {e}"
         log.error(msg)
         nd.module.fail_json(msg=msg)
@@ -795,7 +801,7 @@ class SwitchWaitUtils:
                 self.log.error("No switch data returned for fabric")
                 return None
             return switch_data
-        except Exception as e:
+        except _REQUEST_ERRORS as e:
             self.log.error("Failed to fetch switch data: %s", e)
             return None
 
@@ -816,7 +822,7 @@ class SwitchWaitUtils:
                 verb=self.ep_rediscover.verb,
                 data=payload,
             )
-        except Exception as e:
+        except _REQUEST_ERRORS as e:
             self.log.warning("Failed to trigger rediscovery: %s", e)
 
     def _get_discovery_status(
@@ -840,7 +846,7 @@ class SwitchWaitUtils:
                 if switch.get("ip") == seed_ip or switch.get("ipaddr") == seed_ip:
                     return switch
             return None
-        except Exception as e:
+        except _REQUEST_ERRORS as e:
             self.log.debug("Discovery status check failed: %s", e)
             return None
 
@@ -862,23 +868,8 @@ class SwitchWaitUtils:
             flag = fabric_info.get("management", {}).get("greenfieldDebugFlag", "").lower()
             self.log.debug("Greenfield debug flag value: '%s'", flag)
             self._greenfield_debug_enabled = flag == "enable"
-        except Exception as e:
+        except _REQUEST_ERRORS as e:
             self.log.debug("Failed to get greenfield debug flag: %s", e)
             self._greenfield_debug_enabled = False
 
         return self._greenfield_debug_enabled
-
-
-__all__ = [
-    "SwitchOperationError",
-    "PayloadUtils",
-    "FabricUtils",
-    "SwitchWaitUtils",
-    "mask_password",
-    "get_switch_field",
-    "determine_operation_type",
-    "group_switches_by_credentials",
-    "query_bootstrap_switches",
-    "build_bootstrap_index",
-    "build_poap_data_block",
-]

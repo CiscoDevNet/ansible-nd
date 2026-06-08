@@ -669,12 +669,3 @@ class SwitchConfigModel(NDBaseModel):
                 ),
             ),
         )
-
-
-__all__ = [
-    "ConfigDataModel",
-    "POAPConfigModel",
-    "PreprovisionConfigModel",
-    "RMAConfigModel",
-    "SwitchConfigModel",
-]

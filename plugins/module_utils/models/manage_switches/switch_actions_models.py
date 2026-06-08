@@ -100,9 +100,3 @@ class ChangeSwitchSerialNumberRequestModel(NDBaseModel):
         if result is None:
             raise ValueError("new_switch_id cannot be empty")
         return result
-
-
-__all__ = [
-    "SwitchCredentialsRequestModel",
-    "ChangeSwitchSerialNumberRequestModel",
-]
