@@ -68,10 +68,6 @@ class NDStateMachine:
         # Initialize collections
         try:
             response_data = self.model_orchestrator.query_all()
-            config_data = self.module.params.get("config") or []
-            normalize_config = getattr(self.model_orchestrator, "normalize_proposed_config", None)
-            if callable(normalize_config):
-                config_data = normalize_config(config=config_data, current=response_data, state=self.state)
             # State of configuration objects in ND before change execution
             self.before = NDConfigCollection.from_api_response(response_data=response_data, model_class=self.model_class)
             # State of current configuration objects in ND during change execution
@@ -79,6 +75,10 @@ class NDStateMachine:
             # Ongoing collection of configuration objects that were changed
             self.sent = NDConfigCollection(model_class=self.model_class)
             # Collection of configuration objects given by user
+            config_data = self.module.params.get("config") or []
+            normalize_config = getattr(self.model_orchestrator, "normalize_proposed_config", None)
+            if callable(normalize_config):
+                config_data = normalize_config(config=config_data, current=self.before, state=self.state)
             self.proposed = NDConfigCollection.from_ansible_config(data=config_data, model_class=self.model_class)
 
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)

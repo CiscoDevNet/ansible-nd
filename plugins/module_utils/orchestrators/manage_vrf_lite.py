@@ -180,12 +180,13 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             config = module.params.get("_vrf_lite_nested_config") or module.params.get("config") or []
         return replacement_scope_vrfs(config)
 
-    def normalize_proposed_config(self, config: list[dict[str, Any]], current: list[dict[str, Any]], state: str) -> list[dict[str, Any]]:
+    def normalize_proposed_config(self, config: list[dict[str, Any]], current: Any, state: str) -> list[dict[str, Any]]:
         """Explode nested user config into flat attachment entries for the state machine."""
         module = self._module()
         if state == "replaced":
             module.params["_replace_scope_vrfs"] = replacement_scope_vrfs(config)
-        return explode_playbook_to_entries(config=config, module=module, state=state, current_entries=current)
+        current_entries = current.to_ansible_config() if hasattr(current, "to_ansible_config") else current
+        return explode_playbook_to_entries(config=config, module=module, state=state, current_entries=current_entries)
 
     def get_replaced_deletion_items(
         self,
