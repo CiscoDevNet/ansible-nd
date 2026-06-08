@@ -22,7 +22,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_e
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_payloads import (
     build_instance_values,
-    build_vrf_lite_extension_values,
     parse_instance_values,
     vrf_lite_items_to_config,
 )
@@ -193,23 +192,6 @@ def _raw_attachment_entry(module: Any, vrf_name: str, serial_number: str) -> dic
     return raw_attach if isinstance(raw_attach, dict) else {}
 
 
-def _empty_vrf_lite_extension_values(existing_extension_values: Any) -> str:
-    rendered = build_vrf_lite_extension_values(
-        [],
-        existing_extension_values=existing_extension_values,
-    )
-    if rendered:
-        return rendered
-
-    return build_vrf_lite_extension_values(
-        [],
-        existing_extension_values={
-            "VRF_LITE_CONN": json.dumps({"VRF_LITE_CONN": []}, separators=(",", ":")),
-            "MULTISITE_CONN": json.dumps({"MULTISITE_CONN": []}, separators=(",", ":")),
-        },
-    )
-
-
 def _build_instance_values_for_payload(import_evpn_rt: Any, export_evpn_rt: Any, existing_instance_values: Any = None) -> str:
     # Make a defensive copy: parse_instance_values may return the input dict directly
     # when existing_instance_values is already a dict, and we must not mutate the caller's object.
@@ -223,6 +205,23 @@ def _build_instance_values_for_payload(import_evpn_rt: Any, export_evpn_rt: Any,
         existing.setdefault(key, "")
 
     return json.dumps(existing, separators=(",", ":"))
+
+
+def _manage_extension_values(vrf_lite_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    extension_values = []
+    for item in vrf_lite_items:
+        row = {
+            "interfaceName": item.get("interface", ""),
+            "ipv4Address": item.get("ipv4_addr", ""),
+            "neighborIpv4Address": item.get("neighbor_ipv4", ""),
+            "ipv6Address": item.get("ipv6_addr", ""),
+            "neighborIpv6Address": item.get("neighbor_ipv6", ""),
+            "peerVrfName": item.get("peer_vrf", ""),
+        }
+        if item.get("dot1q") not in (None, ""):
+            row["dot1qId"] = item.get("dot1q")
+        extension_values.append({key: value for key, value in row.items() if value not in (None, "")})
+    return extension_values
 
 
 def _entry_extensions(entry: Any) -> list[dict[str, Any]]:
@@ -265,26 +264,21 @@ def build_attach_payload_for_entry(module: Any, nd_v2: Any, entry: Any) -> dict[
     for lite_item in vrf_lite_items_to_config(_entry_extensions(entry)):
         resolved_extensions.append(_reserve_dot1q_if_needed(nd_v2, module.params.get("fabric_name"), entry.vrf_name, serial_number, lite_item))
 
-    extension_values = build_vrf_lite_extension_values(
-        resolved_extensions,
-        existing_extension_values=raw_attach.get("extension_values") if isinstance(raw_attach, dict) else None,
-    )
-    instance_values = _build_instance_values_for_payload(
-        getattr(entry, "import_evpn_rt", None),
-        getattr(entry, "export_evpn_rt", None),
-        raw_attach.get("instance_values") if isinstance(raw_attach, dict) else None,
+    instance_values = parse_instance_values(
+        _build_instance_values_for_payload(
+            getattr(entry, "import_evpn_rt", None),
+            getattr(entry, "export_evpn_rt", None),
+            raw_attach.get("instance_values") if isinstance(raw_attach, dict) else None,
+        )
     )
 
     return {
-        "fabric": module.params.get("fabric_name"),
         "vrfName": entry.vrf_name,
-        "serialNumber": serial_number,
-        "vlan": vlan_id,
-        "deployment": True,
-        "isAttached": True,
-        "extensionValues": extension_values,
+        "switchId": serial_number,
+        "vlanId": vlan_id,
+        "attach": True,
+        "extensionValues": _manage_extension_values(resolved_extensions),
         "instanceValues": instance_values,
-        "freeformConfig": "",
     }
 
 
@@ -302,15 +296,12 @@ def _build_detach_payload(
     # extensionValues/instanceValues. This clears the VRF Lite extension
     # data while keeping the switch attachment itself intact.
     return {
-        "fabric": module.params.get("fabric_name"),
         "vrfName": vrf_name,
-        "serialNumber": serial_number,
-        "vlan": vlan_id if vlan_id is not None else 0,
-        "deployment": True,
-        "isAttached": True,
-        "extensionValues": _empty_vrf_lite_extension_values(extension_values),
-        "instanceValues": instance_values if instance_values not in (None, "") else build_instance_values("", ""),
-        "freeformConfig": "",
+        "switchId": serial_number,
+        "vlanId": vlan_id if vlan_id is not None else 0,
+        "attach": True,
+        "extensionValues": [],
+        "instanceValues": parse_instance_values(instance_values) if instance_values not in (None, "") else parse_instance_values(build_instance_values("", "")),
     }
 
 
@@ -359,7 +350,7 @@ def _post_attachment_payload(nd_v2: Any, fabric_name: str, vrf_name: str, lan_at
         return {}
 
     path = VrfLiteEndpoints.vrf_attachments_post(fabric_name)
-    payload = [{"vrfName": vrf_name, "lanAttachList": lan_attach_list}]
+    payload = {"attachments": lan_attach_list}
     response = _request_vrf_lite_payload(nd_v2, path, HttpVerbEnum.POST, payload)
     failures = _collect_attachment_failures(response)
     if failures:
