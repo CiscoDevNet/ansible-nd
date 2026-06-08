@@ -1,0 +1,97 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_base_interface.py.",
+        "Keys follow the test_<module>_<NNNNN><a|b|c> convention.",
+        "Tests covering NDBaseInterfaceOrchestrator methods; many tests need no HTTP (queue ops, _configure_endpoint).",
+        "Switch A: fabricManagementIp=192.168.12.151, switchId=FDO12345ABC."
+    ],
+
+    "test_base_interface_00200a": {
+        "TEST_NOTES": ["_resolve_switch_id success: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.12.151", "switchId": "FDO12345ABC"}
+            ]
+        }
+    },
+
+    "test_base_interface_00210a": {
+        "TEST_NOTES": ["_resolve_switch_id unknown IP: switches list has different IP"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "10.0.0.99", "switchId": "FDO99999XYZ"}
+            ]
+        }
+    },
+
+    "test_base_interface_00300a": {
+        "TEST_NOTES": ["validate_prerequisites success: summary local + default"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "local": true, "fabricStatus": "default"}
+    },
+
+    "test_base_interface_00310a": {
+        "TEST_NOTES": ["validate_prerequisites fabric not found: summary 404"],
+        "RETURN_CODE": 404,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/missing_fabric/summary",
+        "MESSAGE": "Not Found",
+        "DATA": {}
+    },
+
+    "test_base_interface_00320a": {
+        "TEST_NOTES": ["validate_prerequisites frozen: summary fabricStatus=frozen"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {"name": "fabric_1", "local": true, "fabricStatus": "frozen"}
+    },
+
+    "test_base_interface_00620a": {
+        "TEST_NOTES": ["deploy_pending happy: POST interfaceActions/deploy succeeds"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_base_interface_00630a": {
+        "TEST_NOTES": ["deploy_pending failure: POST interfaceActions/deploy returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/deploy",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_base_interface_00710a": {
+        "TEST_NOTES": ["remove_pending happy: POST interfaceActions/remove succeeds"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/remove",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_base_interface_00720a": {
+        "TEST_NOTES": ["remove_pending failure: POST interfaceActions/remove returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/interfaceActions/remove",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    }
+}
