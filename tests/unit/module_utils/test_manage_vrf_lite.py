@@ -746,6 +746,26 @@ def test_manage_vrf_lite_00495c_delete_unknown_attachment_warns_during_explode()
     assert any("No matching VRF Lite attachment" in warning for warning in module.params["_warnings"])
 
 
+def test_manage_vrf_lite_00495d_query_all_prepares_state_machine_config(monkeypatch):
+    module = _DummyModule(
+        {
+            "fabric_name": "FABRIC1",
+            "state": "deleted",
+            "_vrf_lite_requested_state": "deleted",
+            "_vrf_lite_nested_config": [{"vrf_name": "BLUE"}],
+            "_ip_to_sn_mapping": {"10.0.0.1": "SN1"},
+            "_warnings": [],
+        }
+    )
+    current = [{"vrf_name": "BLUE", "switch_ip": "SN1", "vlan_id": 500}]
+    orchestrator = _vrf_lite_orchestrator(module)
+
+    monkeypatch.setattr(orchestrator, "_query_current_state", lambda flat=True: current)
+
+    assert orchestrator.query_all() == current
+    assert module.params["config"] == current
+
+
 def test_manage_vrf_lite_00496_verify_retry_policy_is_applied_to_reads():
     class _FakeRestSend:
         def __init__(self):
@@ -989,7 +1009,7 @@ def test_manage_vrf_lite_00800_attachment_post_uses_ndfc_top_level_list_payload(
     assert result == {"ok": True}
     assert nd_v2.calls == [
         (
-            "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/top-down/fabrics/FABRIC1/vrfs/attachments",
+            "/api/v1/manage/fabrics/FABRIC1/vrfs/attachments",
             HttpVerbEnum.POST,
             [{"vrfName": "BLUE", "lanAttachList": lan_attach_list}],
         )

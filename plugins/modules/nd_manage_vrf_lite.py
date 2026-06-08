@@ -270,8 +270,10 @@ def main() -> None:
             result = nd_state_machine.model_orchestrator.gather()
             module.exit_json(**result)
 
+        module.params["state"] = "overridden" if state == "replaced" else state
         nd_state_machine = NDStateMachine(module=module, model_orchestrator=ManageVrfLiteOrchestrator)
         nd_state_machine.manage_state()
+        module.params["state"] = state
 
         module.params["_changed_vrfs"] = sorted({item.vrf_name for item in nd_state_machine.sent})
 
@@ -291,8 +293,10 @@ def main() -> None:
         module.exit_json(**result)
 
     except VrfLiteResourceError as error:
+        module.params["state"] = state
         module.fail_json(msg=error.msg, **error.details)
     except Exception as error:
+        module.params["state"] = state
         module.fail_json(msg=str(error))
 
 

@@ -12,12 +12,8 @@ from typing import Any, ClassVar, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrfs import (
-    EpFabricVrfsGet,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrfs_attachments import (
-    EpFabricVrfsAttachmentsGet,
-    EpFabricVrfsAttachmentsPost,
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
+    EpManageFabricsGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.actions import (
@@ -60,7 +56,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_attachment_entry import (
     VrfLiteAttachmentEntry,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule as NDModuleV2
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     NDBaseOrchestrator,
@@ -74,13 +69,13 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
 
-    create_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsPost
-    update_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsPost
-    delete_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsPost
-    query_one_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsGet
-    query_all_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsGet
-    create_bulk_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsPost
-    delete_bulk_endpoint: type[NDEndpointBaseModel] = EpFabricVrfsAttachmentsPost
+    create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
+    update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
+    delete_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
+    query_one_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
+    query_all_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
+    create_bulk_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
+    delete_bulk_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
 
     @staticmethod
     def prepare_module_params(module: Any, module_config: Any, normalized_config: Optional[list[dict[str, Any]]] = None) -> None:
@@ -134,7 +129,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             module.fail_json(msg="Config parameter is required for state 'deleted'. Specify one or more vrf_name entries in config.")
 
         module.params["_changed_vrfs"] = []
-        module.params["_replace_scope_vrfs"] = []
+        module.params["_vrf_lite_requested_state"] = state
         module.params["_not_in_sync_vrfs"] = []
         module.params["_ip_to_sn_mapping"] = {}
         module.params["_sn_to_ip_mapping"] = {}
@@ -173,46 +168,26 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
 
     def _public_scope_vrfs(self) -> list[str]:
         module = self._module()
-        state = module.params.get("state", "merged")
+        state = module.params.get("_vrf_lite_requested_state") or module.params.get("state", "merged")
         if state == "gathered":
             config = module.params.get("_gather_filter_config") or []
         else:
             config = module.params.get("_vrf_lite_nested_config") or module.params.get("config") or []
         return replacement_scope_vrfs(config)
 
-    def normalize_proposed_config(self, config: list[dict[str, Any]], current: Any, state: str) -> list[dict[str, Any]]:
-        """Explode nested user config into flat attachment entries for the state machine."""
+    def _prepare_state_machine_config(self, current_entries: list[dict[str, Any]]) -> None:
+        """Prepare flat attachment rows before the generic state machine builds proposed."""
         module = self._module()
-        if state == "replaced":
-            module.params["_replace_scope_vrfs"] = replacement_scope_vrfs(config)
-        current_entries = current.to_ansible_config() if hasattr(current, "to_ansible_config") else current
-        return explode_playbook_to_entries(config=config, module=module, state=state, current_entries=current_entries)
-
-    def get_replaced_deletion_items(
-        self,
-        before: NDConfigCollection,
-        proposed: NDConfigCollection,
-        existing: NDConfigCollection,
-    ) -> list[NDBaseModel]:
-        """Delete omitted attachments only for VRFs mentioned by replaced state."""
-        scope_vrfs = set(self._module().params.get("_replace_scope_vrfs") or [])
-        if not scope_vrfs:
-            return []
-
-        proposed_keys = set(proposed.keys())
-        items = []
-        for item in before:
-            if getattr(item, "vrf_name", None) not in scope_vrfs:
-                continue
-            if item.get_identifier_value() in proposed_keys:
-                continue
-            current = existing.get(item.get_identifier_value())
-            if current is not None:
-                items.append(current)
-        return items
+        state = module.params.get("_vrf_lite_requested_state") or module.params.get("state", "merged")
+        if state == "gathered":
+            return
+        config = module.params.get("_vrf_lite_nested_config") or module.params.get("config") or []
+        module.params["config"] = explode_playbook_to_entries(config=config, module=module, state=state, current_entries=current_entries)
 
     def query_all(self, **kwargs: Any) -> list[dict[str, Any]]:
-        return self._query_current_state(flat=True)
+        current = self._query_current_state(flat=True)
+        self._prepare_state_machine_config(current)
+        return current
 
     def create(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
         return self.create_bulk([model_instance], **kwargs)

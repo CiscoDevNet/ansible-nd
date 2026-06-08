@@ -144,7 +144,7 @@ def _ensure_vrf_exists(module: Any, vrf_name: str) -> None:
         )
 
 
-def _reserve_dot1q_if_needed(nd_v2: Any, vrf_name: str, serial_number: str, lite_item: dict[str, Any]) -> dict[str, Any]:
+def _reserve_dot1q_if_needed(nd_v2: Any, fabric_name: str, vrf_name: str, serial_number: str, lite_item: dict[str, Any]) -> dict[str, Any]:
     if lite_item.get("dot1q") not in (None, ""):
         return lite_item
 
@@ -160,7 +160,7 @@ def _reserve_dot1q_if_needed(nd_v2: Any, vrf_name: str, serial_number: str, lite
         "allocatedTo": vrf_name,
     }
 
-    response = nd_v2.request(VrfLiteEndpoints.reserve_id(), HttpVerbEnum.POST, payload)
+    response = nd_v2.request(VrfLiteEndpoints.reserve_id(fabric_name), HttpVerbEnum.POST, payload)
 
     dot1q_value = None
     if isinstance(response, dict):
@@ -263,7 +263,7 @@ def build_attach_payload_for_entry(module: Any, nd_v2: Any, entry: Any) -> dict[
 
     resolved_extensions = []
     for lite_item in vrf_lite_items_to_config(_entry_extensions(entry)):
-        resolved_extensions.append(_reserve_dot1q_if_needed(nd_v2, entry.vrf_name, serial_number, lite_item))
+        resolved_extensions.append(_reserve_dot1q_if_needed(nd_v2, module.params.get("fabric_name"), entry.vrf_name, serial_number, lite_item))
 
     extension_values = build_vrf_lite_extension_values(
         resolved_extensions,
