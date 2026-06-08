@@ -3288,8 +3288,13 @@ class NDPolicyModule:
             try:
                 self._api_delete_policy(pid)
                 deleted_direct.append(pid)
-            except Exception:  # noqa: BLE001
-                self.log.error(f"Direct DELETE also failed for {pid}")
+            except Exception as exc:  # noqa: BLE001
+                self.log.error(
+                    "Direct DELETE also failed for %s (%s: %s)",
+                    pid,
+                    type(exc).__name__,
+                    exc,
+                )
                 failed_direct.append(pid)
         return deleted_direct, failed_direct
 

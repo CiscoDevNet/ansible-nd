@@ -604,7 +604,13 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             if isinstance(result, dict):
                 return set(result.get("switchIds", []) or [])
             return set()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "_get_current_switch_ids: GET for %s failed (%s: %s) — treating as no prior switches (removal-deploy may be skipped)",
+                policy_group_id,
+                type(exc).__name__,
+                exc,
+            )
             return set()
 
     @staticmethod
