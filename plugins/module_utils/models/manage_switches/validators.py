@@ -4,30 +4,15 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""Switch-specific validators.
-
-Domain-specific validators for switch models. Generic validators for IP, MAC,
-hostname, etc. are imported from common.validators and re-exported for convenience.
-"""
+"""Switch-specific validators."""
 
 from __future__ import annotations
 
 import re
 
-# Import and re-export generic validators from common module
 from ...common.validators import (
     _normalize_optional_string,
     _require_field,
-    validate_ip_address,
-    validate_cidr,
-    validate_ip_or_cidr_as_cidr,
-    validate_hostname,
-    validate_mac_address,
-    require_ip_address,
-    require_ip_or_cidr_as_cidr,
-    require_hostname,
-    require_mac_address,
-    validate_cidr_optional,
     check_credentials_pair,
 )
 

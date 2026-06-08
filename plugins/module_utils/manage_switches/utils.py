@@ -9,7 +9,7 @@ payload construction, credential grouping, bootstrap queries, and
 multi-phase switch wait utilities.
 """
 
-# pylint: disable=too-many-instance-attributes,too-many-arguments,too-many-positional-arguments,too-many-locals
+# pylint: disable=too-many-instance-attributes,too-many-arguments,too-many-locals
 
 from __future__ import annotations
 
@@ -355,6 +355,7 @@ class SwitchWaitUtils:
         nd_module,
         fabric: str,
         logger: logging.Logger | None = None,
+        *,
         max_attempts: int | None = None,
         wait_interval: int | None = None,
         fabric_utils: "FabricUtils" | None = None,

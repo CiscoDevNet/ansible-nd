@@ -33,7 +33,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     SystemMode,
     VpcRole,
 )
-from .validators import require_serial_number, validate_ip_address
+from ansible_collections.cisco.nd.plugins.module_utils.common.validators import validate_ip_address
+from .validators import require_serial_number
 
 
 class TelemetryIpCollection(NDNestedModel):

@@ -35,11 +35,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     SnmpV3AuthProtocol,
     SwitchRole,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.common.validators import (
+    require_hostname,
+    validate_cidr,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import (
     check_discovery_credentials_pair,
-    require_hostname,
     require_serial_number,
-    validate_cidr,
 )
 
 

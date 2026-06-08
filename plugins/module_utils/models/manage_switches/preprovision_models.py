@@ -25,12 +25,12 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.en
     SnmpV3AuthProtocol,
     SwitchRole,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import (
+from ansible_collections.cisco.nd.plugins.module_utils.common.validators import (
     require_hostname,
-    require_serial_number,
     validate_cidr,
     validate_ip_address,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import require_serial_number
 
 
 class PreProvisionSwitchModel(NDBaseModel):

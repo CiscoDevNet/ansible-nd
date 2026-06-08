@@ -6,7 +6,7 @@
 
 """Unit tests for manage_switches/nd_switch_resources.py."""
 
-# pylint: disable=missing-function-docstring,protected-access,too-few-public-methods,too-many-lines,too-many-arguments,too-many-positional-arguments
+# pylint: disable=missing-function-docstring,protected-access,too-few-public-methods,too-many-lines,too-many-arguments
 # pylint: disable=use-implicit-booleaness-not-comparison,unnecessary-lambda,cell-var-from-loop
 
 from __future__ import annotations
@@ -255,6 +255,16 @@ class StaticBootstrapCache:
         return self.data
 
 
+def raise_assertion(message):
+    """Raise AssertionError from lambdas assigned to fakes."""
+    raise AssertionError(message)
+
+
+def raise_switch_operation_error(message):
+    """Raise SwitchOperationError from lambdas assigned to fakes."""
+    raise SwitchOperationError(message)
+
+
 def _bootstrap_entry(serial="POAP1", hostname="api-host"):
     return {
         "serialNumber": serial,
@@ -269,7 +279,7 @@ def _bootstrap_entry(serial="POAP1", hostname="api-host"):
     }
 
 
-def _resource(state="merged", config=None, check_mode=False, existing=None, output_level="normal", results=None):
+def _resource(state="merged", *, config=None, check_mode=False, existing=None, output_level="normal", results=None):
     """Build an NDSwitchResourceModule shell without running its controller-querying constructor."""
     nd = FakeND()
     nd.module.check_mode = check_mode
@@ -710,7 +720,9 @@ def test_post_add_processing_waits_saves_updates_roles_and_finalize_paths():
     bad_finalize_ops = SwitchFabricOps(
         _ctx(nd=FakeND()),
         fabric_utils=SimpleNamespace(
-            save_config=lambda: (_ for _ in ()).throw(SwitchOperationError("save failed")), deploy_switches=lambda serials: None, deploy_config=lambda: None
+            save_config=lambda: raise_switch_operation_error("save failed"),
+            deploy_switches=lambda serials: None,
+            deploy_config=lambda: None,
         ),
     )
     bad_finalize_ops.ctx.save_config = True
@@ -1266,13 +1278,13 @@ def test_switch_wait_utils_public_wait_shortcuts_and_polling(monkeypatch):
 
     wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
     wait._wait_for_system_mode = lambda serials: True
-    wait._wait_for_discovery_state = lambda serials, state: (_ for _ in ()).throw(AssertionError("discovery should be skipped"))
+    wait._wait_for_discovery_state = lambda serials, state: raise_assertion("discovery should be skipped")
     assert wait.wait_for_switch_manageable(["SERIAL1"], all_preserve_config=True) is True
 
     fabric_utils = SimpleNamespace(get_fabric_info=lambda: {"management": {"greenfieldDebugFlag": "enable"}})
     wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=fabric_utils)
     wait._wait_for_system_mode = lambda serials: True
-    wait._wait_for_discovery_state = lambda serials, state: (_ for _ in ()).throw(AssertionError("discovery should be skipped"))
+    wait._wait_for_discovery_state = lambda serials, state: raise_assertion("discovery should be skipped")
     assert wait.wait_for_switch_manageable(["SERIAL1"]) is True
     assert wait._is_greenfield_debug_enabled() is True
 
