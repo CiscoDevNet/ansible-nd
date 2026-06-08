@@ -1300,13 +1300,17 @@ class NDPolicyModule:
         have_inputs = have.get("templateInputs") or {}
         input_diff = {}
         for key in want_inputs:
-            # Normalize both sides to lowercase strings to handle:
-            #   - Python bool True → "True" vs ND string "true"
-            #   - Python int 100 → "100" vs ND string "100"
-            # Also strip trailing whitespace/newlines to avoid false
-            # diffs from multiline template inputs (e.g., CONF blocks).
-            want_val = str(want_inputs[key]).strip().lower()
-            have_val = str(have_inputs.get(key, "")).strip().lower()
+            # Normalize both sides for comparison:
+            #   - str(...)   : Python int 100 → "100" vs ND string "100"
+            #                  Python bool True → "True" vs ND string "True"
+            #                  (ND echoes booleans capitalised, matching Python repr.)
+            #   - .strip()   : drop trailing whitespace/newlines from multiline
+            #                  template inputs (e.g., CONF blocks).
+            # Case is PRESERVED — switch_freeform / PYTHON-template content is
+            # case-sensitive (NX-OS commands, descriptions, hostnames), so a
+            # lower-case fold would hide genuine drift.
+            want_val = str(want_inputs[key]).strip()
+            have_val = str(have_inputs.get(key, "")).strip()
             if want_val != have_val:
                 input_diff[key] = {
                     "want": want_inputs[key],
@@ -1409,11 +1413,11 @@ class NDPolicyModule:
         positive equality on ``source`` works, and negation is rejected).
         Both are applied as client-side post-filters on the prefetched list.
 
-        # TODO: Re-evaluate ``templateName`` and ``source`` Lucene filtering
-        #       on newer ND controller builds.  If supported, narrowing on
-        #       templateName would reduce the response body further for
-        #       template-specific operations, and server-side source filtering
-        #       would eliminate the post-filter pass.
+        # FUTURE(4.2.1): ``templateName`` and ``source`` negation are not
+        #   supported as Lucene filter terms in the current ND API.  Both are
+        #   applied as client-side post-filters on the prefetched list.  If
+        #   server-side support is added in a later release, narrowing here
+        #   would reduce the response payload and eliminate the post-filter pass.
         """
         if not config_entries:
             return None
@@ -2809,7 +2813,10 @@ class NDPolicyModule:
         # being marked failed.
         succeeded_policies, warning_policies, failed_policies = self._inspect_207_policies(data)
 
-        # Warn if ND returned no per-policy detail at all
+        # Warn if ND returned no per-policy detail at all.
+        # NOTE(4.2.1): ND currently returns an empty body on some pushConfig
+        # success paths.  Treat as success for now; re-evaluate once the API
+        # guarantees a per-policy result list on every response.
         if not succeeded_policies and not warning_policies and not failed_policies and policy_ids:
             self.log.warning(f"pushConfig returned no per-policy results for " f"{len(policy_ids)} policy IDs — treating as success " "(ambiguous response)")
 
@@ -3036,6 +3043,16 @@ class NDPolicyModule:
         controller's existing values.  This prevents accidentally
         wiping template inputs when the user only wants to change
         description or priority.
+
+        .. note:: Silent-drop risk
+           ND silently drops unknown or misnamed body keys and still
+           returns 200.  This method does NOT perform a verifying GET
+           round-trip after the PUT, so a successful return only means
+           the controller accepted the request — not that every field
+           persisted.  Callers relying on correctness should use
+           ``state: gathered`` post-apply or the integration-test
+           validation action plugin (``nd_policy_validate``) for
+           end-to-end verification.
 
         Args:
             want: The want dict with desired policy fields.
@@ -3341,6 +3358,10 @@ class NDPolicyModule:
         duplicated between ``_execute_deleted`` Phase B (standalone
         delete) and ``_execute_merged`` Phase 3 (delete-and-create
         removal of the old policy before its replacement is created).
+
+        # TODO(4.2.1): Workaround — switch_freeform-type policies fail
+        # markDelete on ND; we fall back to direct DELETE /policies/<id>.
+        # Remove once ND supports markDelete for these templates natively.
 
         Strategy — markDelete-first with automatic fallback.  Rather
         than trying to predict which templates are PYTHON content-type

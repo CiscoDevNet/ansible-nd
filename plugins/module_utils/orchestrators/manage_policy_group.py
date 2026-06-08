@@ -20,6 +20,9 @@ from typing import ClassVar
 
 log = logging.getLogger("nd.PolicyGroupOrchestrator")
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    PrivateAttr,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
@@ -90,6 +93,15 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     fabric_name: str | None = None
     deploy: bool = True
 
+    # Per-instance cache of the raw ``query_all`` response (with the
+    # ``source``-artifact filter applied).  Declared as a Pydantic
+    # PrivateAttr so it is a first-class private attribute rather than
+    # an undeclared instance dict entry (which only "works" because the
+    # base config does not forbid extras).  ``query_all`` populates it
+    # on first call; mutation methods reset it to ``None`` via
+    # ``_invalidate_cache``.
+    _raw_cache: list | None = PrivateAttr(default=None)
+
     # ------------------------------------------------------------------ #
     # Query operations
     # ------------------------------------------------------------------ #
@@ -134,7 +146,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 duplicates (ND permits them) are not silently hidden.
         """
         try:
-            raw = getattr(self, "_raw_cache", None)
+            raw = self._raw_cache
             if raw is None:
                 ep = self.query_all_endpoint()
                 ep.fabric_name = self.fabric_name
@@ -150,8 +162,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 # ``""``, ``None``, and missing — all spec-valid forms.
                 raw = [g for g in groups if not g.get("source")]
                 # Cache without the per-call filters so other callers can re-derive
-                # their view. Use object.__setattr__ to bypass Pydantic validation.
-                object.__setattr__(self, "_raw_cache", raw)
+                # their view.  ``_raw_cache`` is a Pydantic PrivateAttr so plain
+                # assignment is correct here.
+                self._raw_cache = raw
 
             groups = raw
             # Exclude no-description groups for state-machine consumers so the
@@ -166,7 +179,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
 
     def _invalidate_cache(self) -> None:
         """Drop the cached query_all response after any mutation."""
-        object.__setattr__(self, "_raw_cache", None)
+        self._raw_cache = None
 
     @staticmethod
     def _deduplicate_groups(groups: list) -> list:
@@ -211,8 +224,8 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
 
     def query_filtered(
         self,
-        template_name: str = None,
-        description: str = None,
+        template_name: str | None = None,
+        description: str | None = None,
         *,
         deduplicate: bool = True,
     ) -> ResponseType:
@@ -233,7 +246,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             # ``source``-artifact filter applied. We re-apply the requested
             # template_name / description filters in memory to mirror the
             # semantics of the server-side Lucene query.
-            raw = getattr(self, "_raw_cache", None)
+            raw = self._raw_cache
             if raw is not None:
                 groups = raw
                 if template_name:
@@ -462,9 +475,10 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                 mark_failed_ids,
             )
 
-            # Step 2: Direct DELETE fallback for markDelete failures
-            # (switch_freeform / PYTHON-type groups that the controller does
-            # not allow to be markDeleted).
+            # Step 2: Direct DELETE fallback for markDelete failures.
+            # TODO(4.2.1): Workaround — switch_freeform-type policies fail
+            # markDelete on ND; we fall back to direct DELETE /policyGroups/<id>.
+            # Remove once ND supports markDelete for these templates natively.
             direct_deleted: list[str] = []
             if mark_failed_ids:
                 log.debug(
@@ -588,7 +602,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         single-resource endpoint only when the cache is empty (e.g. orchestrator
         used standalone without a prior ``query_all``).
         """
-        raw = getattr(self, "_raw_cache", None)
+        raw = self._raw_cache
         if raw is not None:
             for g in raw:
                 if g.get("policyId") == policy_group_id:

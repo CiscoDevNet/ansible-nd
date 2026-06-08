@@ -34,7 +34,7 @@ from __future__ import annotations
 # isort: on
 
 import traceback
-from typing import TYPE_CHECKING, Any, Callable, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 if TYPE_CHECKING:
     # Type checkers always see the real Pydantic types
@@ -44,19 +44,20 @@ if TYPE_CHECKING:
         BeforeValidator,
         ConfigDict,
         Field,
+        FieldSerializationInfo,
+        PrivateAttr,
         PydanticExperimentalWarning,
-        StrictBool,
         SecretStr,
+        SerializationInfo,
+        StrictBool,
         ValidationError,
+        ValidationInfo,
+        computed_field,
         field_serializer,
-        model_serializer,
         field_validator,
+        model_serializer,
         model_validator,
         validator,
-        computed_field,
-        FieldSerializationInfo,
-        SerializationInfo,
-        ValidationInfo,
     )
 
     HAS_PYDANTIC = True  # pylint: disable=invalid-name
@@ -70,19 +71,20 @@ else:
             BeforeValidator,
             ConfigDict,
             Field,
+            FieldSerializationInfo,
+            PrivateAttr,
             PydanticExperimentalWarning,
-            StrictBool,
             SecretStr,
+            SerializationInfo,
+            StrictBool,
             ValidationError,
+            ValidationInfo,
+            computed_field,
             field_serializer,
-            model_serializer,
             field_validator,
+            model_serializer,
             model_validator,
             validator,
-            computed_field,
-            FieldSerializationInfo,
-            SerializationInfo,
-            ValidationInfo,
         )
     except ImportError:
         HAS_PYDANTIC = False  # pylint: disable=invalid-name
@@ -126,6 +128,13 @@ else:
             if args:
                 return args[0]
             return kwargs.get("default")
+
+        # Fallback: PrivateAttr that returns the default value
+        def PrivateAttr(default: Any = None, *, default_factory: Optional[Callable[..., Any]] = None) -> Any:  # pylint: disable=invalid-name
+            """Pydantic PrivateAttr fallback when pydantic is not available."""
+            if default_factory is not None:
+                return default_factory()
+            return default
 
         # Fallback: field_serializer decorator that does nothing
         def field_serializer(*args, **kwargs):  # pylint: disable=unused-argument
@@ -270,7 +279,9 @@ def require_pydantic(module) -> None:
       message that includes installation instructions.
     """
     if not HAS_PYDANTIC:
-        from ansible.module_utils.basic import missing_required_lib  # pylint: disable=import-outside-toplevel
+        from ansible.module_utils.basic import (
+            missing_required_lib,  # pylint: disable=import-outside-toplevel
+        )
 
         module.fail_json(msg=missing_required_lib("pydantic"), exception=PYDANTIC_IMPORT_ERROR)
 
@@ -283,6 +294,7 @@ __all__ = [
     "Field",
     "HAS_PYDANTIC",
     "PYDANTIC_IMPORT_ERROR",
+    "PrivateAttr",
     "PydanticExperimentalWarning",
     "StrictBool",
     "SecretStr",
