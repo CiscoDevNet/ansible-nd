@@ -91,8 +91,8 @@ def _query_vrf_attachments(module: Any, nd_v2: Any, fabric_name: str, vrf_names:
     if not vrf_names:
         return []
 
-    path = VrfLiteEndpoints.vrf_attachments_query(fabric_name, ",".join(vrf_names))
-    response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.GET)
+    path = VrfLiteEndpoints.vrf_attachments_query(fabric_name)
+    response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.POST, {"vrfNames": vrf_names})
 
     return [item for item in _result_list(response, ("DATA", "data", "vrfs", "items")) if isinstance(item, dict)]
 

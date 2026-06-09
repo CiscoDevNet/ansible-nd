@@ -28,6 +28,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy im
     _target_vrfs_for_deploy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
+    _query_vrf_attachments,
     query_vrf_lite_state,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_payloads import (
@@ -592,10 +593,10 @@ def test_manage_vrf_lite_00493_attachment_deploy_false_does_not_suppress_attachm
         entry=entry,
     )
 
-    assert payload["switchId"] == "SN1"
-    assert payload["vlanId"] == 500
-    assert payload["attach"] is True
-    assert payload["instanceValues"]["deviceSupportL3VniNoVlan"] == "false"
+    assert payload["serialNumber"] == "SN1"
+    assert payload["vlan"] == 500
+    assert payload["deployment"] is True
+    assert json.loads(payload["instanceValues"])["deviceSupportL3VniNoVlan"] == "false"
 
 
 def test_manage_vrf_lite_00494_delete_builds_single_attachment_clear_payload():
@@ -634,11 +635,13 @@ def test_manage_vrf_lite_00494_delete_builds_single_attachment_clear_payload():
 
     payload = build_detach_payload_for_entry(module, entry)
 
-    assert payload["switchId"] == "SN2"
-    assert payload["vlanId"] == 500
-    assert payload["attach"] is True
-    assert payload["instanceValues"] == json.loads(instance_values)
-    assert payload["extensionValues"] == []
+    assert payload["serialNumber"] == "SN2"
+    assert payload["vlan"] == 500
+    assert payload["deployment"] is True
+    assert payload["isAttached"] is True
+    assert payload["instanceValues"] == instance_values
+    clear_outer = json.loads(payload["extensionValues"])
+    assert json.loads(clear_outer["VRF_LITE_CONN"]) == {"VRF_LITE_CONN": []}
 
 
 def test_manage_vrf_lite_00495_delete_query_filters_vrfs_without_managed_attachments(monkeypatch):
@@ -995,7 +998,7 @@ def test_manage_vrf_lite_00800_attachment_post_uses_manage_attachment_payload():
             return {"ok": True}
 
     nd_v2 = _FakeNDModule()
-    lan_attach_list = [{"switchId": "SN1", "attach": True}]
+    lan_attach_list = [{"serialNumber": "SN1", "isAttached": True}]
 
     result = _post_attachment_payload(
         nd_v2=nd_v2,

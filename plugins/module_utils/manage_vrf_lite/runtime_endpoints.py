@@ -28,11 +28,8 @@ class VrfLiteEndpoints:
         return VrfLiteEndpoints._fabric_path(fabric_name, "vrfs")
 
     @staticmethod
-    def vrf_attachments_query(fabric_name: str, vrf_names_csv: str) -> str:
-        return "{0}?vrf-names={1}".format(
-            VrfLiteEndpoints._fabric_path(fabric_name, "vrfs", "attachments"),
-            quote(vrf_names_csv, safe=""),
-        )
+    def vrf_attachments_query(fabric_name: str) -> str:
+        return VrfLiteEndpoints._fabric_path(fabric_name, "vrfAttachments", "query")
 
     @staticmethod
     def vrf_attachments_post(fabric_name: str) -> str:

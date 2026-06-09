@@ -11,10 +11,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_e
 
 def test_endpoints_api_v1_vrf_lite_00100_runtime_endpoints_use_develop_manage_paths():
     assert VrfLiteEndpoints.vrfs("Fab A") == "/api/v1/manage/fabrics/Fab%20A/vrfs"
-    assert (
-        VrfLiteEndpoints.vrf_attachments_query("Fab A", "BLUE,RED")
-        == "/api/v1/manage/fabrics/Fab%20A/vrfs/attachments?vrf-names=BLUE%2CRED"
-    )
+    assert VrfLiteEndpoints.vrf_attachments_query("Fab A") == "/api/v1/manage/fabrics/Fab%20A/vrfAttachments/query"
     assert VrfLiteEndpoints.vrf_attachments_post("Fab A") == "/api/v1/manage/fabrics/Fab%20A/vrfAttachments"
     assert VrfLiteEndpoints.vrf_deployments("Fab A") == "/api/v1/manage/fabrics/Fab%20A/vrfs/deployments"
     assert (

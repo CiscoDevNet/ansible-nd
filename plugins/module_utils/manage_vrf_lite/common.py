@@ -123,7 +123,7 @@ def get_verify_settings(source: Any) -> dict[str, Any]:
     }
 
 
-def request_with_verify_settings(module: Any, nd_v2: Any, path: str, verb: Any) -> Any:
+def request_with_verify_settings(module: Any, nd_v2: Any, path: str, verb: Any, data: Any = None) -> Any:
     """Run a controller read using the configured verify timeout/retry policy."""
     settings = get_verify_settings(module.params)
     timeout = settings.get("timeout", DEFAULT_VERIFY_TIMEOUT)
@@ -139,7 +139,7 @@ def request_with_verify_settings(module: Any, nd_v2: Any, path: str, verb: Any) 
         rest_send.save_settings()
         rest_send.timeout = timeout
         try:
-            return nd_v2.request(path, verb)
+            return nd_v2.request(path, verb, data)
         except Exception as error:
             last_error = error
             if attempt + 1 >= retries:
