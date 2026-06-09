@@ -345,23 +345,31 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
 
         ### RuntimeError
 
-        - If the normalize API request fails.
-        - If any per-interface PUT request fails.
+        - If the bulk normalize request fails. The message names the normalize-queued interfaces (none were reset) and
+          any per-interface resets that were consequently not attempted.
+        - If a per-interface PUT reset fails (raised by `_reset_interfaces` with partial-state detail).
         """
         if not self._pending_normalizes and not self._pending_resets:
             return None
         results: list = []
-        try:
-            if self._pending_normalizes:
+        if self._pending_normalizes:
+            try:
                 normalize_result = self._normalize_interfaces()
-                self._pending_normalizes = []
-                results.append(normalize_result)
-            if self._pending_resets:
-                reset_results = self._reset_interfaces()
-                self._pending_resets = []
-                results.extend(reset_results)
-        except Exception as e:
-            raise RuntimeError(f"Bulk delete-side flush failed (normalizes={self._pending_normalizes}, resets={self._pending_resets}): {e}") from e
+            except Exception as e:
+                normalized = [name for name, _ in self._pending_normalizes]
+                not_attempted = [name for name, _ in self._pending_resets]
+                msg = f"Bulk normalize failed for {normalized}: {e}. None of these interfaces were reset."
+                if not_attempted:
+                    msg += f" Per-interface resets were not attempted: {not_attempted}."
+                raise RuntimeError(msg) from e
+            self._pending_normalizes = []
+            results.append(normalize_result)
+        if self._pending_resets:
+            # `_reset_interfaces` raises a RuntimeError carrying precise partial-state detail on failure; let it
+            # propagate unwrapped rather than re-interpolate the full (now-stale) pending list as an "everything failed" message.
+            reset_results = self._reset_interfaces()
+            self._pending_resets = []
+            results.extend(reset_results)
         return results
 
     def _normalize_interfaces(self) -> ResponseType:
@@ -390,18 +398,34 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
         body. There is no bulk PUT equivalent — this path runs only for interfaces whose wire state carries an unresettable
         Class C field (`bandwidth`, `debounceLinkupTimer`, `inheritBandwidth`), so the request count stays low in practice.
 
+        Fail-fast: on the first PUT failure the remaining interfaces are not attempted. ND has no rollback for a per-interface
+        PUT, so interfaces reset before the failure stay at fabric default; the raised error names which interfaces
+        succeeded, which one failed, and which were not attempted so the user can reconcile the partial state.
+
         ## Raises
 
-        ### Exception
+        ### RuntimeError
 
-        - If any PUT request fails (propagated to caller).
+        - If a per-interface PUT request fails. The message names the failed interface, the interfaces successfully reset
+          before it (now at fabric default, not rolled back), and the interfaces not attempted.
         """
         results: list[ResponseType] = []
-        for interface_name, switch_id in self._pending_resets:
+        succeeded: list[str] = []
+        for index, (interface_name, switch_id) in enumerate(self._pending_resets):
             api_endpoint = self._configure_endpoint(self.update_endpoint(), switch_sn=switch_id)
             api_endpoint.set_identifiers(interface_name)
             payload = InterfaceDefaultConfig.to_reset_payload(interface_name, switch_id)
-            results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
+            try:
+                results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
+            except Exception as e:
+                not_attempted = [name for name, _ in self._pending_resets[index + 1 :]]
+                raise RuntimeError(
+                    f"Reset failed at {interface_name} on {switch_id}: {e}. "
+                    f"Successfully reset before failure: {succeeded or 'none'}. "
+                    f"Not attempted: {not_attempted or 'none'}. "
+                    f"Interfaces reset before the failure are now at fabric default and were not rolled back."
+                ) from e
+            succeeded.append(interface_name)
         return results
 
     def create(self, model_instance: ModelType, **kwargs) -> ResponseType:

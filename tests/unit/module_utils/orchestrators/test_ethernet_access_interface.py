@@ -22,6 +22,7 @@ Uses the file-based `Sender` from `tests/unit/module_utils/sender_file.py` as th
 # pylint: disable=protected-access
 # pylint: disable=redefined-outer-name
 # pylint: disable=too-many-lines
+# pylint: disable=use-implicit-booleaness-not-comparison
 
 from __future__ import annotations
 
@@ -958,3 +959,47 @@ def test_ethernet_access_orchestrator_00620() -> None:
     assert instance._pending_resets == [("Ethernet1/1", "FDO11111AAA")]
     assert instance._pending_normalizes == [("Ethernet1/2", "FDO22222BBB")]
     assert instance._pending_deploys == [("Ethernet1/1", "FDO11111AAA"), ("Ethernet1/2", "FDO22222BBB")]
+
+
+def test_ethernet_access_orchestrator_00630() -> None:
+    """
+    # Summary
+
+    Verify `remove_pending` is fail-fast on a mid-loop per-interface reset failure and reports accurate partial
+    state: the interface that failed, the interfaces successfully reset before it, and the interfaces not attempted.
+    Regression guard for PR #222 review (discussion_r3361373573): the prior wrapper interpolated the full pending
+    list, reporting every queued interface as failed even when earlier ones had already been reset on the controller.
+
+    ## Test
+
+    - `_pending_resets` carries three (interface, switch) pairs
+    - First PUT returns 200 (Ethernet1/1 reset), second PUT returns 500 (Ethernet1/2 fails)
+    - `remove_pending` raises RuntimeError naming the failed interface, the one reset before it, and the one not attempted
+    - The third interface is never requested (fail-fast: only two responses are consumed)
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.remove_pending()
+    - EthernetBaseOrchestrator._reset_interfaces()
+    """
+
+    def responses():
+        yield responses_access("test_reset_partial_failure_00630a")
+        yield responses_access("test_reset_partial_failure_00630b")
+
+    gen_responses = ResponseGenerator(responses())
+    instance = _build_orchestrator(gen_responses)
+    instance._pending_resets = [
+        ("Ethernet1/1", "FDO11111AAA"),
+        ("Ethernet1/2", "FDO11111AAA"),
+        ("Ethernet1/3", "FDO11111AAA"),
+    ]
+
+    with pytest.raises(RuntimeError) as exc_info:
+        instance.remove_pending()
+
+    message = str(exc_info.value)
+    assert "Reset failed at Ethernet1/2 on FDO11111AAA" in message
+    assert "Successfully reset before failure: ['Ethernet1/1']" in message
+    assert "Not attempted: ['Ethernet1/3']" in message
+    assert "were not rolled back" in message

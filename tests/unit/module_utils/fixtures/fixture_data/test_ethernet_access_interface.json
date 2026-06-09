@@ -1116,5 +1116,21 @@
                 }
             ]
         }
+    },
+    "test_reset_partial_failure_00630a": {
+        "TEST_NOTES": ["00630: first per-interface PUT reset succeeds (Ethernet1/1)"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F1",
+        "MESSAGE": "OK",
+        "DATA": {}
+    },
+    "test_reset_partial_failure_00630b": {
+        "TEST_NOTES": ["00630: second per-interface PUT reset fails (Ethernet1/2) -> remove_pending raises with partial-state detail"],
+        "RETURN_CODE": 500,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/Ethernet1%2F2",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {}
     }
 }
