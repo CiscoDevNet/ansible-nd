@@ -356,8 +356,8 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             try:
                 normalize_result = self._normalize_interfaces()
             except Exception as e:
-                normalized = [name for name, _ in self._pending_normalizes]
-                not_attempted = [name for name, _ in self._pending_resets]
+                normalized = [name for name, switch_id in self._pending_normalizes]
+                not_attempted = [name for name, switch_id in self._pending_resets]
                 msg = f"Bulk normalize failed for {normalized}: {e}. None of these interfaces were reset."
                 if not_attempted:
                     msg += f" Per-interface resets were not attempted: {not_attempted}."
@@ -418,7 +418,7 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
             try:
                 results.append(self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload))
             except Exception as e:
-                not_attempted = [name for name, _ in self._pending_resets[index + 1 :]]
+                not_attempted = [name for name, switch_id in self._pending_resets[index + 1 :]]
                 raise RuntimeError(
                     f"Reset failed at {interface_name} on {switch_id}: {e}. "
                     f"Successfully reset before failure: {succeeded or 'none'}. "
