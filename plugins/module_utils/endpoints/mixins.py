@@ -108,6 +108,12 @@ class PolicyGroupIdMixin(BaseModel):
     )
 
 
+class OffsetMixin(BaseModel):
+    """Mixin for endpoints that require a pagination offset parameter."""
+
+    offset: Optional[int] = Field(default=None, ge=0, description="Pagination offset")
+
+
 class SwitchSerialNumberMixin(BaseModel):
     """Mixin for endpoints that require switch_sn parameter."""
 
