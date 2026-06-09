@@ -192,21 +192,7 @@ class NDBaseInterfaceOrchestrator(NDBaseOrchestrator[ModelType]):
         except RuntimeError as e:
             if not self.rest_send.check_mode:
                 raise
-            self._warn(f"Capability preflight skipped in check mode: {e}")
-
-    def _warn(self, message: str) -> None:
-        """
-        # Summary
-
-        Emit a warning through `RestSend.warn`, which routes to the underlying `AnsibleModule.warn` so it surfaces in
-        `ansible-playbook` output. Used to soften non-fatal preflight failures (see `validate_switches_capable`) without
-        converting them into module errors.
-
-        ## Raises
-
-        None
-        """
-        self.rest_send.warn(message)
+            self.rest_send.warn(f"Capability preflight skipped in check mode: {e}")
 
     def validate_prerequisites(self) -> None:
         """

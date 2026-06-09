@@ -903,7 +903,6 @@ def test_base_interface_00830() -> None:
     ## Classes and Methods
 
     - NDBaseInterfaceOrchestrator.validate_switches_capable()
-    - NDBaseInterfaceOrchestrator._warn()
     """
     method_name = inspect.stack()[0][3]
 
@@ -942,7 +941,6 @@ def test_base_interface_00840() -> None:
     ## Classes and Methods
 
     - NDBaseInterfaceOrchestrator.validate_switches_capable()
-    - NDBaseInterfaceOrchestrator._warn()
     """
     method_name = inspect.stack()[0][3]
 
