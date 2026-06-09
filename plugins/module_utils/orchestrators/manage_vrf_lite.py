@@ -185,8 +185,16 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         module.params["config"] = explode_playbook_to_entries(config=config, module=module, state=state, current_entries=current_entries)
 
     def query_all(self, **kwargs: Any) -> list[dict[str, Any]]:
+        module = self._module()
         current = self._query_current_state(flat=True)
         self._prepare_state_machine_config(current)
+        if module.check_mode and module.params.get("state") == "deleted":
+            current_by_key = {(item.get("vrf_name"), item.get("switch_ip")) for item in current}
+            for planned in module.params.get("config") or []:
+                key = (planned.get("vrf_name"), planned.get("switch_ip")) if isinstance(planned, dict) else (None, None)
+                if key[0] and key[1] and key not in current_by_key:
+                    current.append(dict(planned))
+                    current_by_key.add(key)
         return current
 
     def create(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
@@ -393,6 +401,15 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         planned_actions = []
         if save_enabled:
             planned_actions.append("POST {0}".format(VrfLiteEndpoints.config_save(fabric_name)))
+        ip_to_sn = module.params.get("_ip_to_sn_mapping") or {}
+        target_switch_ids = sorted(
+            {
+                ip_to_sn.get(str(item.get("switch_ip")), str(item.get("switch_ip")))
+                for item in module.params.get("config") or []
+                if isinstance(item, dict) and item.get("vrf_name") in target_vrfs and item.get("switch_ip")
+            }
+        )
+
         if deploy_enabled and target_vrfs:
             planned_actions.append("POST {0} vrfNames={1}".format(VrfLiteEndpoints.vrf_deployments(fabric_name), ",".join(target_vrfs)))
 
@@ -447,7 +464,9 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                     _raise_vrf_lite_error(msg="Config save failed: {0}".format(error.msg), **error_dict)
 
         if deploy_enabled and target_vrfs:
-            deploy_payload = {"vrfNames": ",".join(target_vrfs)}
+            deploy_payload = {"vrfNames": target_vrfs}
+            if target_switch_ids:
+                deploy_payload["switchIds"] = target_switch_ids
             try:
                 deploy_resp = nd_v2.request(VrfLiteEndpoints.vrf_deployments(fabric_name), HttpVerbEnum.POST, deploy_payload)
                 responses.append(

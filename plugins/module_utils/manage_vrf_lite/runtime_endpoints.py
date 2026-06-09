@@ -37,7 +37,7 @@ class VrfLiteEndpoints:
 
     @staticmethod
     def vrf_deployments(fabric_name: str) -> str:
-        return VrfLiteEndpoints._fabric_path(fabric_name, "vrfs", "deployments")
+        return VrfLiteEndpoints._fabric_path(fabric_name, "vrfActions", "deploy")
 
     @staticmethod
     def vrf_switch(fabric_name: str, vrf_name: str, serial_number: str) -> str:

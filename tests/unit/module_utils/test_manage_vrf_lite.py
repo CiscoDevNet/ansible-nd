@@ -593,10 +593,11 @@ def test_manage_vrf_lite_00493_attachment_deploy_false_does_not_suppress_attachm
         entry=entry,
     )
 
-    assert payload["serialNumber"] == "SN1"
-    assert payload["vlan"] == 500
-    assert payload["deployment"] is True
-    assert json.loads(payload["instanceValues"])["deviceSupportL3VniNoVlan"] == "false"
+    assert payload["switchId"] == "SN1"
+    assert payload["vlanId"] == 500
+    assert payload["attach"] is True
+    assert payload["instanceValues"]["deviceSupportL3VniNoVlan"] == "false"
+    assert payload["extensionValues"] == [{"interfaceName": "Ethernet1/10", "dot1qId": 123}]
 
 
 def test_manage_vrf_lite_00494_delete_builds_single_attachment_clear_payload():
@@ -635,13 +636,11 @@ def test_manage_vrf_lite_00494_delete_builds_single_attachment_clear_payload():
 
     payload = build_detach_payload_for_entry(module, entry)
 
-    assert payload["serialNumber"] == "SN2"
-    assert payload["vlan"] == 500
-    assert payload["deployment"] is True
-    assert payload["isAttached"] is True
-    assert payload["instanceValues"] == instance_values
-    clear_outer = json.loads(payload["extensionValues"])
-    assert json.loads(clear_outer["VRF_LITE_CONN"]) == {"VRF_LITE_CONN": []}
+    assert payload["switchId"] == "SN2"
+    assert payload["vlanId"] == 500
+    assert payload["attach"] is True
+    assert payload["instanceValues"]["deviceSupportL3VniNoVlan"] == "false"
+    assert payload["extensionValues"] == []
 
 
 def test_manage_vrf_lite_00495_delete_query_filters_vrfs_without_managed_attachments(monkeypatch):

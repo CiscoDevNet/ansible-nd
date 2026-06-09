@@ -93,8 +93,16 @@ def _query_vrf_attachments(module: Any, nd_v2: Any, fabric_name: str, vrf_names:
 
     path = VrfLiteEndpoints.vrf_attachments_query(fabric_name)
     response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.POST, {"vrfNames": vrf_names})
+    attachments = _result_list(response, ("attachments", "DATA", "data", "items"))
+    if attachments and all(isinstance(item, dict) and "vrfName" in item and "lanAttachList" not in item for item in attachments):
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for item in attachments:
+            vrf_name = str(item.get("vrfName") or "").strip()
+            if vrf_name:
+                grouped.setdefault(vrf_name, []).append(item)
+        return [{"vrfName": vrf_name, "lanAttachList": items} for vrf_name, items in sorted(grouped.items())]
 
-    return [item for item in _result_list(response, ("DATA", "data", "vrfs", "items")) if isinstance(item, dict)]
+    return [item for item in _result_list(response, ("DATA", "data", "vrfs", "items", "attachments")) if isinstance(item, dict)]
 
 
 def _query_vrf_switch_details(
@@ -264,12 +272,12 @@ def query_vrf_lite_state(
                 continue
 
             attach_state = str(attach.get("lanAttachState") or attach.get("lanAttachedState") or "").upper()
-            attached_value = attach.get("isLanAttached", attach.get("isAttached", False))
+            attached_value = attach.get("isLanAttached", attach.get("isAttached", attach.get("attach", False)))
             is_attached = attached_value is True or str(attached_value).strip().lower() in ("true", "1", "yes")
             if not is_attached and attach_state not in ("PENDING", "OUT-OF-SYNC", "FAILED"):
                 continue
 
-            serial_number = attach.get("switchSerialNo") or attach.get("serialNumber")
+            serial_number = attach.get("switchSerialNo") or attach.get("serialNumber") or attach.get("switchId")
             if serial_number:
                 serials_to_enrich.append(str(serial_number).strip())
 
@@ -309,7 +317,7 @@ def query_vrf_lite_state(
             if not isinstance(attach, dict):
                 continue
 
-            serial_number = attach.get("switchSerialNo") or attach.get("serialNumber")
+            serial_number = attach.get("switchSerialNo") or attach.get("serialNumber") or attach.get("switchId")
             serial_number = str(serial_number).strip() if serial_number else ""
             switch_detail = switch_detail_map.get((vrf_name, serial_number), {})
 
@@ -326,7 +334,10 @@ def query_vrf_lite_state(
             ).upper()
             attached_value = attach.get(
                 "isLanAttached",
-                attach.get("isAttached", switch_detail.get("islanAttached", switch_detail.get("isLanAttached", False))),
+                attach.get(
+                    "isAttached",
+                    attach.get("attach", switch_detail.get("islanAttached", switch_detail.get("isLanAttached", False))),
+                ),
             )
             is_attached = attached_value is True or str(attached_value).strip().lower() in ("true", "1", "yes")
             extension_values = _value_from_attachment_or_detail(attach, switch_detail, "extensionValues")
@@ -351,8 +362,8 @@ def query_vrf_lite_state(
                 }
 
             instance_values = parse_instance_values(instance_values_raw)
-            import_evpn_rt = instance_values.get("switchRouteTargetImportEvpn")
-            export_evpn_rt = instance_values.get("switchRouteTargetExportEvpn")
+            import_evpn_rt = instance_values.get("switchRouteTargetImportEvpn") or instance_values.get("evpnRouteTargetImport")
+            export_evpn_rt = instance_values.get("switchRouteTargetExportEvpn") or instance_values.get("evpnRouteTargetExport")
 
             vrf_lite_list = parse_vrf_lite_extension_values(extension_values)
             managed_fields_present = bool(vrf_lite_list) or import_evpn_rt not in (None, "") or export_evpn_rt not in (None, "")

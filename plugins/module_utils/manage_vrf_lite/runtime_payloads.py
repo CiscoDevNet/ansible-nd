@@ -88,10 +88,45 @@ def build_vrf_lite_extension_values(
     return json.dumps(extension_values, separators=(",", ":"))
 
 
+def build_vrf_lite_extension_values_api(vrf_lite_items: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Build extensionValues list expected by /vrfAttachments."""
+    rows: list[dict[str, Any]] = []
+    for item in vrf_lite_items_to_config(vrf_lite_items):
+        row = {
+            "interfaceName": item.get("interface"),
+            "dot1qId": item.get("dot1q"),
+            "ipv4Address": item.get("ipv4_addr"),
+            "neighborIpv4Address": item.get("neighbor_ipv4"),
+            "ipv6Address": item.get("ipv6_addr"),
+            "neighborIpv6Address": item.get("neighbor_ipv6"),
+            "peerVrfName": item.get("peer_vrf"),
+        }
+        rows.append({key: value for key, value in row.items() if value not in (None, "")})
+    return rows
+
+
 def parse_vrf_lite_extension_values(extension_values: Any) -> list[dict[str, Any]]:
     """
     Parse controller extensionValues into playbook-style vrf_lite list.
     """
+    if isinstance(extension_values, list):
+        parsed_api_rows: list[dict[str, Any]] = []
+        for row in extension_values:
+            if not isinstance(row, dict):
+                continue
+            item = {
+                "interface": row.get("interfaceName"),
+                "dot1q": row.get("dot1qId"),
+                "ipv4_addr": row.get("ipv4Address"),
+                "neighbor_ipv4": row.get("neighborIpv4Address"),
+                "ipv6_addr": row.get("ipv6Address"),
+                "neighbor_ipv6": row.get("neighborIpv6Address"),
+                "peer_vrf": row.get("peerVrfName"),
+            }
+            if item.get("interface"):
+                parsed_api_rows.append({k: v for k, v in item.items() if v is not None and v != ""})
+        return vrf_lite_items_to_config(parsed_api_rows)
+
     outer = _json_value(extension_values)
     if not isinstance(outer, dict):
         return []
@@ -142,6 +177,26 @@ def build_instance_values(import_evpn_rt: Optional[str], export_evpn_rt: Optiona
         "switchRouteTargetExportEvpn": export_evpn_rt or "",
     }
     return json.dumps(values, separators=(",", ":"))
+
+
+def build_instance_values_api(
+    import_evpn_rt: Optional[str],
+    export_evpn_rt: Optional[str],
+    existing_instance_values: Any = None,
+) -> dict[str, Any]:
+    values = parse_instance_values(existing_instance_values)
+    if not values:
+        values = {
+            "loopbackId": "",
+            "loopbackIpAddress": "",
+            "loopbackIpV6Address": "",
+        }
+
+    values["evpnRouteTargetImport"] = import_evpn_rt or ""
+    values["evpnRouteTargetExport"] = export_evpn_rt or ""
+    values["switchRouteTargetImportEvpn"] = import_evpn_rt or ""
+    values["switchRouteTargetExportEvpn"] = export_evpn_rt or ""
+    return values
 
 
 def parse_instance_values(instance_values: Any) -> dict[str, Any]:

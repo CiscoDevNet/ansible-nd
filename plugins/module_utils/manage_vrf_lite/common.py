@@ -138,7 +138,10 @@ def request_with_verify_settings(module: Any, nd_v2: Any, path: str, verb: Any, 
         rest_send = nd_v2._get_rest_send()
         rest_send.save_settings()
         rest_send.timeout = timeout
+        rest_send.check_mode = False
         try:
+            if data is None:
+                return nd_v2.request(path, verb)
             return nd_v2.request(path, verb, data)
         except Exception as error:
             last_error = error
