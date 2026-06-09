@@ -10,7 +10,7 @@ See the [cisco.nd collection index](https://galaxy.ansible.com/ui/repo/published
 ## Requirements
 
 - Ansible v2.16 or newer
-- Python v3.11 or newer
+- Python v3.10 or newer
 
 Follow the [Installing Ansible](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html) guide for detailed instructions.
 
