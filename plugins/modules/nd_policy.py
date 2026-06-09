@@ -546,6 +546,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import (
     PlaybookPolicyConfig,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_policy_resources import (
     NDPolicyModule,
 )
@@ -555,6 +556,140 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     nd_argument_spec,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+
+
+# =============================================================================
+# Output helpers — mirror the helper pattern used by
+# plugins/modules/nd_manage_resource_manager.py (PR #274) so the error
+# paths in main() produce exactly the same output shape as the success
+# path (NDPolicyModule.exit_module()).  Keeping these as module-level
+# free functions (rather than methods on NDPolicyModule) means the
+# Exception branch can still produce a well-formed result even when the
+# NDPolicyModule constructor itself failed.
+# =============================================================================
+def _module_verbosity(module: AnsibleModule) -> int:
+    """Return the Ansible CLI verbosity for ``module`` (0 when unavailable).
+
+    AnsibleModule._verbosity is a documented-ish attribute on the
+    object but it has a leading underscore, so we guard the access.
+
+    Args:
+        module: The active :class:`AnsibleModule` instance.
+
+    Returns:
+        Integer 0..N matching ``-v`` / ``-vv`` / ``-vvv`` on the
+        ansible CLI.  ``0`` when the attribute is unavailable.
+    """
+    return module._verbosity if hasattr(module, "_verbosity") else 0
+
+
+def _format_module_result(
+    module: AnsibleModule,
+    output_level: str | None,
+    results: Results,
+    **kwargs,
+) -> dict:
+    """Format a final result dict using :class:`NDOutput`.
+
+    Same shape contract as :meth:`NDPolicyModule.exit_module`: the
+    helper exists so that the ``except NDModuleError`` and
+    ``except Exception`` branches in :func:`main` produce identical
+    top-level keys to the success path (``output_level``, ``changed``,
+    ``before``, ``after``, ``diff`` + verbosity-gated ``api_*`` keys).
+
+    Args:
+        module: The active :class:`AnsibleModule` instance.
+        output_level: ``output_level`` param value ("normal" / "info" /
+            "debug"); ``None`` is normalised to ``"normal"``.
+        results: The aggregated :class:`Results` instance.
+        **kwargs: Forwarded to :meth:`NDOutput.format_with_verbosity`
+            (e.g. ``before=[]``, ``after=[]``, ``error_details=...``).
+
+    Returns:
+        Dict ready to be ``**``-splatted into ``module.fail_json`` /
+        ``module.exit_json``.
+    """
+    output = NDOutput(output_level=output_level or "normal")
+    return output.format_with_verbosity(_module_verbosity(module), results, **kwargs)
+
+
+def _record_failed_result(
+    results: Results,
+    message: str,
+    return_code: int = -1,
+    data: dict | None = None,
+) -> None:
+    """Stamp a single synthetic failure row onto ``results``.
+
+    Used by :func:`main`'s ``except Exception`` branch when an
+    unexpected error happens *outside* of an NDModule REST call (so
+    there is no real response to capture).  Mirrors the synthetic
+    response shape used by the rest of the module.
+
+    Args:
+        results: The aggregated :class:`Results` instance.
+        message: Human-readable error message.
+        return_code: HTTP-ish return code (defaults to ``-1`` for
+            non-HTTP errors).
+        data: Optional payload dict to attach under ``DATA``.
+
+    Returns:
+        None.
+    """
+    results.response_current = {
+        "RETURN_CODE": return_code,
+        "MESSAGE": message,
+        "DATA": data if data is not None else {},
+    }
+    results.result_current = {"success": False, "found": False, "changed": False}
+    results.diff_current = {}
+    # Errors raised before any business operation has decided its type
+    # are treated as writes (verbosity_level=2) so they remain visible
+    # at -vv — same as a real failed write.
+    results.verbosity_level_current = 2
+    results.register_api_call()
+
+
+def _record_nd_module_error_result(
+    results: Results,
+    nd: NDModule,
+    error: NDModuleError,
+    log: logging.Logger,
+) -> None:
+    """Stamp a single failure row for an :class:`NDModuleError` onto ``results``.
+
+    Prefers the live response from ``nd.rest_send`` when available;
+    falls back to fields on the error object.
+
+    Args:
+        results: The aggregated :class:`Results` instance.
+        nd: The :class:`NDModule` REST client (may have a partial
+            ``rest_send`` attribute).
+        error: The :class:`NDModuleError` that bubbled out of
+            :meth:`NDPolicyModule.manage_state`.
+        log: Module-scoped logger.
+
+    Returns:
+        None.
+    """
+    try:
+        results.response_current = nd.rest_send.response_current
+        results.result_current = nd.rest_send.result_current
+    except (AttributeError, ValueError) as exc:
+        log.debug("rest_send.response_current unavailable: %s", exc)
+        results.response_current = {
+            "RETURN_CODE": error.status if error.status else -1,
+            "MESSAGE": error.msg,
+            "DATA": error.response_payload if error.response_payload else {},
+        }
+        results.result_current = {"success": False, "found": False}
+
+    results.diff_current = {}
+    # NDModuleErrors originate from a real REST call (a write or a
+    # failed read); flag as a write so it surfaces at -vv alongside
+    # other failed writes.
+    results.verbosity_level_current = 2
+    results.register_api_call()
 
 
 # =============================================================================
@@ -614,26 +749,18 @@ def main():
     except NDModuleError as error:
         log.error("NDModule error: %s", error.msg)
 
-        try:
-            results.response_current = nd.rest_send.response_current
-            results.result_current = nd.rest_send.result_current
-        except (AttributeError, ValueError):
-            results.response_current = {
-                "RETURN_CODE": error.status if error.status else -1,
-                "MESSAGE": error.msg,
-                "DATA": error.response_payload if error.response_payload else {},
-            }
-            results.result_current = {"success": False, "found": False}
+        _record_nd_module_error_result(results, nd, error, log)
 
-        results.diff_current = {}
-        results.register_api_call()
-        results.build_final_result()
-
+        # ``error_details`` is debug-only; everything else flows through
+        # the standard NDOutput shape so the failure looks like a normal
+        # failed task to downstream playbooks.
+        extra_kwargs: dict = {}
         if output_level == "debug":
-            results.final_result["error_details"] = error.to_dict()
+            extra_kwargs["error_details"] = error.to_dict()
 
-        log.error("Module failed: %s", results.final_result)
-        module.fail_json(msg=error.msg, **results.final_result)
+        final_result = _format_module_result(module, output_level, results, **extra_kwargs)
+        log.error("Module failed: %s", final_result)
+        module.fail_json(msg=error.msg, **final_result)
 
     except Exception as error:
         import traceback
@@ -644,22 +771,19 @@ def main():
         log.error("Error type: %s", error.__class__.__name__)
 
         try:
-            results.response_current = {
-                "RETURN_CODE": -1,
-                "MESSAGE": f"Unexpected error: {str(error)}",
-                "DATA": {},
-            }
-            results.result_current = {"success": False, "found": False}
-            results.diff_current = {}
-            results.register_api_call()
-            results.build_final_result()
-
-            fail_kwargs = results.final_result
-        except Exception:
+            _record_failed_result(
+                results,
+                message=f"Unexpected error: {str(error)}",
+            )
+            extra_kwargs: dict = {}
+            if output_level == "debug":
+                extra_kwargs["traceback"] = tb_str
+            fail_kwargs = _format_module_result(module, output_level, results, **extra_kwargs)
+        except Exception as fmt_error:  # pragma: no cover — last-resort safety net
+            log.error("Failed to format error result: %s", fmt_error)
             fail_kwargs = {}
-
-        if output_level == "debug":
-            fail_kwargs["traceback"] = tb_str
+            if output_level == "debug":
+                fail_kwargs["traceback"] = tb_str
 
         module.fail_json(msg=f"{error.__class__.__name__}: {str(error)}", **fail_kwargs)
 

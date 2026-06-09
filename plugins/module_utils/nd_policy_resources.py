@@ -85,6 +85,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.sw
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
     NDConfigCollection,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule,
     NDModuleError,
@@ -250,37 +251,79 @@ class NDPolicyModule:
         # Composite (switchId, templateName) index for O(1) Case B/C lookups.
         self._policies_by_switch_template_cache: dict[tuple[str, str], list[dict]] = {}
 
+        # NDOutput wrapper used by exit_module() to assemble the standard
+        # collection-wide output shape (changed/failed/before/after/diff/
+        # proposed/output_level + verbosity-gated api_* keys).  See
+        # exit_module() for the per-state kwargs forwarded into
+        # NDOutput.format_with_verbosity().
+        self.output: NDOutput = NDOutput(output_level=self.module.params.get("output_level", "normal") or "normal")
+
         self.log.info(f"Initialized NDPolicyModule for fabric: {self.fabric_name}, state: {self.state}")
 
-    def exit_json(self) -> None:
-        """Build final result from all registered tasks and exit.
+    def exit_module(self) -> None:
+        """Build final result via :class:`NDOutput` and exit.
 
-        Merges the ``Results`` aggregation and the before/after/proposed
-        snapshot lists, then delegates to ``exit_json`` or ``fail_json``.
+        Produces the standard collection-wide output shape
+        (``output_level`` / ``changed`` / ``before`` / ``after`` /
+        ``diff`` with verbosity-gated ``api_*`` keys) by delegating
+        to :meth:`NDOutput.format_with_verbosity`.
+
+        Output shape contract:
+
+        - ``changed`` is derived from :attr:`Results.changed` (same
+          semantics as the previous ``exit_json``).
+        - ``before`` / ``after`` are the policy snapshot lists this
+          module already maintains in ``self._before`` / ``self._after``.
+        - ``diff`` defaults to ``[]`` at all verbosities; the per-API-call
+          diff list moves to ``api_diff`` and is only surfaced at
+          ``-vvv`` via NDOutput's verbosity gating.
+        - ``gathered`` is added only when populated, matching the
+          previous "omit when empty" semantics so playbooks that read
+          ``result.gathered | length`` keep their shape.
+        - ``proposed`` is only attached at ``output_level``
+          ``info`` / ``debug``.
+        - ``warnings_nd`` is surfaced via ``module.warn()`` plus a
+          de-duplicated top-level key whenever any ND-side warnings
+          were captured.
+
+        Failure is decided by ``True in self.results.failed`` exactly
+        as before — we still route to ``module.fail_json`` so the
+        Ansible task is reported as failed.
 
         Returns:
             None.
         """
-        self.results.build_final_result()
-        final = self.results.final_result
+        verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
+        output_level = self.module.params.get("output_level", "normal") or "normal"
 
-        # Attach before/after snapshots
-        final["before"] = self._before
-        final["after"] = self._after
+        # Always-on keys.  ``changed`` is taken from Results so that the
+        # per-task ``_determine_if_changed()`` logic continues to drive
+        # the top-level value (same behaviour as the previous exit_json).
+        # We deliberately do NOT pass ``diff=`` — NDOutput.format()
+        # defaults it to [] and the per-call list is exposed via
+        # ``api_diff`` at -vvv.
+        kwargs: dict = {
+            "changed": True in self.results.changed,
+            "before": self._before,
+            "after": self._after,
+        }
 
-        # Attach gathered output when gathered state produces results
+        # Attach gathered output only when gathered state produced
+        # results, mirroring the previous "omit when empty" semantics.
         if self._gathered:
-            final["gathered"] = self._gathered
+            kwargs["gathered"] = self._gathered
 
-        # Only expose proposed at info/debug output levels
-        output_level = self.module.params.get("output_level", "normal")
+        # Only expose proposed at info/debug output levels (matches the
+        # previous gating; NDOutput's own gating for proposed only fires
+        # when assign() is used with an NDConfigCollection, so we gate
+        # here too to keep parity with the kwargs-based code path).
         if output_level in ("debug", "info"):
-            final["proposed"] = self._proposed
+            kwargs["proposed"] = self._proposed
 
         # Surface ND-side warnings (status="warning" entries from 207
         # responses) to the operator. Each message is emitted as an
-        # Ansible-visible warning (yellow ``[WARNING]:`` line in the CLI)
-        # and also attached to the result under ``warnings_nd`` so that
+        # Ansible-visible warning (yellow ``[WARNING]:`` line in the
+        # CLI) and also attached to the result under ``warnings_nd`` so
         # downstream tasks using ``register:`` can react programmatically.
         if self._warnings:
             # De-duplicate while preserving order so identical warnings
@@ -296,7 +339,9 @@ class NDPolicyModule:
                     self.module.warn(w)
                 except Exception:  # pragma: no cover — defensive only
                     pass
-            final["warnings_nd"] = unique_warnings
+            kwargs["warnings_nd"] = unique_warnings
+
+        final = self.output.format_with_verbosity(verbosity, self.results, **kwargs)
 
         if True in self.results.failed:
             self.module.fail_json(
@@ -304,6 +349,18 @@ class NDPolicyModule:
                 **final,
             )
         self.module.exit_json(**final)
+
+    def exit_json(self) -> None:
+        """Backward-compatible alias for :meth:`exit_module`.
+
+        Kept so existing call sites (``main()``, tests, any external
+        code that imports ``NDPolicyModule``) continue to work without
+        modification.  New code should call :meth:`exit_module` directly.
+
+        Returns:
+            None.
+        """
+        self.exit_module()
 
     # =========================================================================
     # Config Translation & Switch Resolution
@@ -2800,6 +2857,9 @@ class NDPolicyModule:
             self.results.path_current = ep.path
             self.results.verb_current = ep.verb
             self.results.payload_current = push_payload
+            # Write operation — expose api_path/api_verb at -vv (matches
+            # plugins/module_utils/orchestrators/base.py lines 75-77).
+            self.results.verbosity_level_current = 2
             self.results.register_api_call()
             return True
 
@@ -2848,6 +2908,8 @@ class NDPolicyModule:
             "warning_policies": [p.get("policyId") for p in warning_policies],
         }
         self._apply_stashed_call()
+        # Write operation — expose api_path/api_verb at -vv.
+        self.results.verbosity_level_current = 2
         self.results.register_api_call()
         return deploy_success
 
@@ -3711,8 +3773,9 @@ class NDPolicyModule:
     ) -> None:
         """Register a single task result into the Results aggregator.
 
-        Convenience wrapper to avoid repeating the same boilerplate
-        for every action/state combination.
+        Successful read (QUERY) operations are not registered — only
+        writes and failed reads flow into ``Results``.  Gathered data
+        is still surfaced via ``self._gathered`` / ``result.gathered``.
 
         Args:
             action: Action label (e.g., "policy_create", "policy_query").
@@ -3728,6 +3791,12 @@ class NDPolicyModule:
         Returns:
             None.
         """
+        # Skip successful reads — they would just duplicate the prefetch
+        # GET path in api_* arrays at -vvv.  Failed reads still register.
+        if operation_type == OperationType.QUERY and success:
+            self._clear_call()
+            return
+
         self.results.action = action
         self.results.state = state or self.state
         self.results.check_mode = self.check_mode
@@ -3743,4 +3812,6 @@ class NDPolicyModule:
         self.results.result_current = result_dict
         self.results.diff_current = diff
         self._apply_stashed_call()
+        # Writes surface at -vv, failed reads at -vv alongside them.
+        self.results.verbosity_level_current = 2
         self.results.register_api_call()
