@@ -559,13 +559,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Resul
 
 
 # =============================================================================
-# Output helpers — mirror the helper pattern used by
-# plugins/modules/nd_manage_resource_manager.py (PR #274) so the error
-# paths in main() produce exactly the same output shape as the success
-# path (NDPolicyModule.exit_module()).  Keeping these as module-level
-# free functions (rather than methods on NDPolicyModule) means the
-# Exception branch can still produce a well-formed result even when the
-# NDPolicyModule constructor itself failed.
+# Output helpers — ensure the error paths in main() produce exactly the same
+# output shape as the success path (NDPolicyModule.exit_module()).  Keeping
+# these as module-level free functions (rather than methods on
+# NDPolicyModule) means the Exception branch can still produce a well-formed
+# result even when the NDPolicyModule constructor itself failed.
 # =============================================================================
 def _module_verbosity(module: AnsibleModule) -> int:
     """Return the Ansible CLI verbosity for ``module`` (0 when unavailable).
