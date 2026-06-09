@@ -1,0 +1,110 @@
+---
+# Replaced state tests for nd_manage_prefix_list
+# Copyright: (c) 2026, Gaspard Micol (@gmicol)
+#
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# --- SETUP ---
+# At this point PL-IPV4-BORDERS (4 entries, updated description) and
+# PL-IPV6-DATACENTER (3 entries, updated description) exist from merged tests.
+
+# --- REPLACED: FULL REPLACE ---
+
+- name: "REPLACED: Replace PL-IPV4-BORDERS with a minimal config (check mode)"
+  cisco.nd.nd_manage_prefix_list: &replace_ipv4_borders
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - ip_version: ipv4
+        name: PL-IPV4-BORDERS
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "10.0.0.0/8"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_ipv4
+
+- name: "REPLACED: Replace PL-IPV4-BORDERS with a minimal config (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *replace_ipv4_borders
+  register: nm_replaced_ipv4
+
+- name: "REPLACED: Verify PL-IPV4-BORDERS was replaced"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_ipv4 is changed
+      - nm_replaced_ipv4 is changed
+
+- name: "REPLACED: Verify replaced values -- only 1 entry, no description"
+  vars:
+    ipv4_after: "{{ nm_replaced_ipv4.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | first }}"
+  ansible.builtin.assert:
+    that:
+      - ipv4_after.entries | length == 1
+      - ipv4_after.description is none or ipv4_after.description == ""
+
+# --- REPLACED: IDEMPOTENCY ---
+
+- name: "REPLACED IDEMPOTENT: Re-apply same replaced config (check mode)"
+  cisco.nd.nd_manage_prefix_list: *replace_ipv4_borders
+  check_mode: true
+  register: cm_replaced_ipv4_idem
+
+- name: "REPLACED IDEMPOTENT: Re-apply same replaced config (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *replace_ipv4_borders
+  register: nm_replaced_ipv4_idem
+
+- name: "REPLACED IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_ipv4_idem is not changed
+      - nm_replaced_ipv4_idem is not changed
+
+# --- REPLACED: MULTIPLE PREFIX LISTS ---
+
+- name: "REPLACED MULTI: Replace both PL-IPV4-BORDERS and PL-IPV6-DATACENTER (check mode)"
+  cisco.nd.nd_manage_prefix_list: &replace_multi
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - ip_version: ipv4
+        name: PL-IPV4-BORDERS
+        description: "Replaced IPv4 borders"
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "10.0.0.0/8"
+          - sequence_number: 20
+            action: deny
+            prefix: "0.0.0.0/0"
+      - ip_version: ipv6
+        name: PL-IPV6-DATACENTER
+        description: "Replaced IPv6 datacenter"
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "2001:db8::/32"
+    state: replaced
+  check_mode: true
+  register: cm_replaced_multi
+
+- name: "REPLACED MULTI: Replace both PL-IPV4-BORDERS and PL-IPV6-DATACENTER (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *replace_multi
+  register: nm_replaced_multi
+
+- name: "REPLACED MULTI: Verify both prefix lists were replaced"
+  ansible.builtin.assert:
+    that:
+      - cm_replaced_multi is changed
+      - nm_replaced_multi is changed
+
+- name: "REPLACED MULTI: Verify replaced values for both prefix lists"
+  vars:
+    ipv4_after: "{{ nm_replaced_multi.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | first }}"
+    ipv6_after: "{{ nm_replaced_multi.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | first }}"
+  ansible.builtin.assert:
+    that:
+      - ipv4_after.entries | length == 2
+      - ipv4_after.description == "Replaced IPv4 borders"
+      - ipv6_after.entries | length == 1
+      - ipv6_after.description == "Replaced IPv6 datacenter"

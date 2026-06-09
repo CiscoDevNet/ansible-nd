@@ -1,0 +1,44 @@
+---
+# Pre-test cleanup for nd_manage_prefix_list
+# Copyright: (c) 2026, Gaspard Micol (@gmicol)
+#
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
+# Called from main.yaml before the merged/replaced/overridden/deleted state blocks.
+# Ensures no test prefix lists exist on the target fabric before the state tests run.
+
+- name: "SETUP: Remove test IPv4 prefix lists before state tests"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - ip_version: ipv4
+        name: PL-IPV4-BORDERS
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "10.0.0.0/8"
+      - ip_version: ipv4
+        name: PL-IPV4-DATACENTER
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "192.168.0.0/16"
+    state: deleted
+  failed_when: false
+  tags: always
+
+- name: "SETUP: Remove test IPv6 prefix lists before state tests"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - ip_version: ipv6
+        name: PL-IPV6-DATACENTER
+        entries:
+          - sequence_number: 10
+            action: permit
+            prefix: "2001:db8::/32"
+    state: deleted
+  failed_when: false
+  tags: always
