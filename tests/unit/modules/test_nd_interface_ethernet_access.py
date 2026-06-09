@@ -15,7 +15,6 @@ Covers `validate_within_item_duplicates`, `validate_across_item_duplicates`, and
 from __future__ import absolute_import, division, print_function
 
 import pytest
-
 from ansible_collections.cisco.nd.plugins.modules.nd_interface_ethernet_access import (
     expand_config,
     validate_across_item_duplicates,
@@ -352,19 +351,21 @@ def test_validate_interface_names_00000_all_strings():
         (["Ethernet1/1", None], "null", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is null"),
         ([""], "empty", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is empty"),
         (["Ethernet1/1", ""], "empty", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is empty"),
+        ([5], "non_string", r"interface_names\[0\] for switch '1.1.1.1' \(config item 0\) is not a string \(got int\)"),
+        (["Ethernet1/1", 5], "non_string", r"interface_names\[1\] for switch '1.1.1.1' \(config item 0\) is not a string \(got int\)"),
     ],
-    ids=["null_only", "null_after_valid", "empty_only", "empty_after_valid"],
+    ids=["null_only", "null_after_valid", "empty_only", "empty_after_valid", "non_string_only", "non_string_after_valid"],
 )
-def test_validate_interface_names_00100_rejects_null_or_empty(interface_names, offender, expected_match):
+def test_validate_interface_names_00100_rejects_null_empty_or_non_string(interface_names, offender, expected_match):
     """
     # Summary
 
-    Verify `validate_interface_names` raises `ValueError` for any `None` or empty-string entry, naming the
-    offending index and switch so the user can locate it in their playbook.
+    Verify `validate_interface_names` raises `ValueError` for any `None`, empty-string, or non-string entry,
+    naming the offending index and switch so the user can locate it in their playbook.
 
     ## Test
 
-    - A null or empty-string entry raises ValueError before the duplicate-check or expansion paths run
+    - A null, empty-string, or non-string entry raises ValueError before the duplicate-check or expansion paths run
 
     ## Classes and Methods
 

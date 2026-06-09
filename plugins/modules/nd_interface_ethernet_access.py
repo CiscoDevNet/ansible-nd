@@ -397,25 +397,32 @@ def validate_interface_names(config_list: list[dict]) -> None:
     """
     # Summary
 
-    Raise `ValueError` if any element of any `interface_names` list is `None` or an empty string.
-    Ansible's `elements="str"` argspec does not reject these (a Jinja loop can easily produce a list
-    with null/empty entries), and downstream `name.lower()` would otherwise raise `AttributeError` /
-    silently insert a blank interface — neither of which is the friendly fail_json the user expects.
+    Raise `ValueError` if any element of any `interface_names` list is `None`, an empty string, or not a
+    string. Ansible's `elements="str"` argspec does not reject these (a Jinja loop can easily produce a list
+    with null/empty entries, and a templated value may arrive as a non-string), and downstream `name.lower()`
+    would otherwise raise `AttributeError` / silently insert a blank interface — neither of which is the
+    friendly fail_json the user expects.
 
     ## Raises
 
     ### ValueError
 
-    - If any element of `interface_names` is `None` or an empty string.
+    - If any element of `interface_names` is `None`, an empty string, or not a string.
     """
     for item_index, group in enumerate(config_list):
         switch_ip = group.get("switch_ip")
         interface_names = group.get("interface_names") or []
         for entry_index, name in enumerate(interface_names):
-            if name is None or (isinstance(name, str) and not name):
+            if not isinstance(name, str) or not name:
+                if name is None:
+                    reason = "null"
+                elif not isinstance(name, str):
+                    reason = f"not a string (got {type(name).__name__})"
+                else:
+                    reason = "empty"
                 raise ValueError(
                     f"interface_names[{entry_index}] for switch '{switch_ip}' (config item {item_index}) is "
-                    f"{'null' if name is None else 'empty'}. Every entry must be a non-empty interface name."
+                    f"{reason}. Every entry must be a non-empty interface name."
                 )
 
 
