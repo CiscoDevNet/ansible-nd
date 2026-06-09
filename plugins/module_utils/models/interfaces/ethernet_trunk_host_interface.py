@@ -313,11 +313,17 @@ class EthernetTrunkHostPolicyModel(NDNestedModel):
 
         ## Raises
 
-        None
+        ### AssertionError
+
+        - If the wrapped handler returns a non-`dict`. A model-level serializer always serializes to a `dict`,
+          so this is an invariant check that fails loudly rather than silently leaving `policy_type` in the
+          config output.
         """
         result = handler(self)
+        if not isinstance(result, dict):
+            raise AssertionError(f"Expected dict from model serialization, got {type(result).__name__}")
         mode = (info.context or {}).get("mode", "payload")
-        if mode == "config" and isinstance(result, dict):
+        if mode == "config":
             result.pop("policy_type", None)
             result.pop("policyType", None)
         return result
