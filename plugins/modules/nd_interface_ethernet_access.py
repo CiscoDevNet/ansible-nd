@@ -393,7 +393,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_ac
 # `validate_interface_names`, `validate_within_item_duplicates`,
 # `validate_across_item_duplicates`, and `expand_config` into a shared helper module
 # (e.g. `plugins/module_utils/interfaces/config_expansion.py`) and import from there.
-def validate_interface_names(config_list):
+def validate_interface_names(config_list: list[dict]) -> None:
     """
     # Summary
 
@@ -419,7 +419,7 @@ def validate_interface_names(config_list):
                 )
 
 
-def validate_within_item_duplicates(config_list):
+def validate_within_item_duplicates(config_list: list[dict]) -> None:
     """
     # Summary
 
@@ -435,7 +435,7 @@ def validate_within_item_duplicates(config_list):
     for item_index, group in enumerate(config_list):
         switch_ip = group.get("switch_ip")
         interface_names = group.get("interface_names") or []
-        seen = {}
+        seen: dict[str, bool] = {}
         for name in interface_names:
             key = name.lower()
             if key in seen:
@@ -447,7 +447,7 @@ def validate_within_item_duplicates(config_list):
 
 
 # TODO: See note above `validate_within_item_duplicates`.
-def validate_across_item_duplicates(config_list):
+def validate_across_item_duplicates(config_list: list[dict]) -> None:
     """
     # Summary
 
@@ -461,7 +461,7 @@ def validate_across_item_duplicates(config_list):
 
     - If the same `(switch_ip, interface_name)` pair appears in more than one config item
     """
-    seen = {}
+    seen: dict[tuple, int] = {}
     for item_index, group in enumerate(config_list):
         switch_ip = group.get("switch_ip")
         interface_names = group.get("interface_names") or []
@@ -475,7 +475,7 @@ def validate_across_item_duplicates(config_list):
             seen[key] = item_index
 
 
-def expand_config(config_list):
+def expand_config(config_list: list[dict]) -> list[dict]:
     """
     # Summary
 
@@ -508,7 +508,7 @@ def expand_config(config_list):
     return expanded
 
 
-def main():
+def main() -> None:
     """
     # Summary
 
