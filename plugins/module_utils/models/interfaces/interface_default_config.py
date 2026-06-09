@@ -143,8 +143,6 @@ class InterfaceDefaultConfig(NDNestedModel):
     interface_type: str = Field(default="ethernet", alias="interfaceType")
     config_data: InterfaceDefaultConfigDataModel = Field(default_factory=InterfaceDefaultConfigDataModel, alias="configData")
 
-    PAYLOAD_FIELDS: ClassVar[list[str]] = []
-
     # Trunk-host policy fields the `interfaceActions/normalize` endpoint cannot reset. ND's create/update validator
     # rejects 0 and null for each of these (HTTP 400), and omitting them leaves the prior wire value in place. Orchestrators
     # use this set to detect when `state: deleted` must fall back to the per-interface PUT-as-replace path via
