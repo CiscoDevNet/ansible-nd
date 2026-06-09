@@ -55,7 +55,7 @@ __metaclass__ = type
 
 import ipaddress
 import re
-from typing import Any, ClassVar, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, ClassVar, Dict, List, Literal, Optional, Set
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
@@ -165,8 +165,7 @@ class PrefixListModel(NDBaseModel):
 
     ip_version: IpVersionEnum = Field(
         alias="ipVersion",
-        description="IP version of this prefix list: 'ipv4' or 'ipv6'. "
-                    "This is an Ansible-only field and is not sent to the API.",
+        description="IP version of this prefix list: 'ipv4' or 'ipv6'. " "This is an Ansible-only field and is not sent to the API.",
     )
 
     name: str = Field(
@@ -208,10 +207,7 @@ class PrefixListModel(NDBaseModel):
     def validate_name(cls, value: str) -> str:
         """Enforce API name pattern: ^[a-zA-Z0-9~_-]+$."""
         if not _NAME_RE.match(value):
-            raise ValueError(
-                f"Prefix list name '{value}' is invalid. "
-                "Only alphanumeric characters and '~', '_', '-' are allowed."
-            )
+            raise ValueError(f"Prefix list name '{value}' is invalid. " "Only alphanumeric characters and '~', '_', '-' are allowed.")
         return value
 
     @field_validator("tenant_name")
@@ -219,10 +215,7 @@ class PrefixListModel(NDBaseModel):
     def validate_tenant_name(cls, value: Optional[str]) -> Optional[str]:
         """Enforce tenant name pattern: ^[A-Za-z0-9_-]+$."""
         if value is not None and not _TENANT_RE.match(value):
-            raise ValueError(
-                f"Tenant name '{value}' is invalid. "
-                "Only alphanumeric characters, '_', and '-' are allowed."
-            )
+            raise ValueError(f"Tenant name '{value}' is invalid. " "Only alphanumeric characters, '_', and '-' are allowed.")
         return value
 
     # --- Model Validators (cross-field) ---
@@ -242,34 +235,22 @@ class PrefixListModel(NDBaseModel):
             try:
                 network = ipaddress.ip_network(entry.prefix, strict=False)
             except ValueError:
-                raise ValueError(
-                    f"entries[{idx}].prefix '{entry.prefix}' is not a valid IP network in CIDR notation."
-                )
+                raise ValueError(f"entries[{idx}].prefix '{entry.prefix}' is not a valid IP network in CIDR notation.")
             if version == "ipv4" and not isinstance(network, ipaddress.IPv4Network):
-                raise ValueError(
-                    f"entries[{idx}].prefix '{entry.prefix}' must be an IPv4 CIDR (ip_version='ipv4')."
-                )
+                raise ValueError(f"entries[{idx}].prefix '{entry.prefix}' must be an IPv4 CIDR (ip_version='ipv4').")
             if version == "ipv6" and not isinstance(network, ipaddress.IPv6Network):
-                raise ValueError(
-                    f"entries[{idx}].prefix '{entry.prefix}' must be an IPv6 CIDR (ip_version='ipv6')."
-                )
+                raise ValueError(f"entries[{idx}].prefix '{entry.prefix}' must be an IPv6 CIDR (ip_version='ipv6').")
 
             # Validate mask (when present)
             if entry.mask is not None:
                 try:
                     addr = ipaddress.ip_address(entry.mask)
                 except ValueError:
-                    raise ValueError(
-                        f"entries[{idx}].mask '{entry.mask}' is not a valid IP address."
-                    )
+                    raise ValueError(f"entries[{idx}].mask '{entry.mask}' is not a valid IP address.")
                 if version == "ipv4" and not isinstance(addr, ipaddress.IPv4Address):
-                    raise ValueError(
-                        f"entries[{idx}].mask '{entry.mask}' must be an IPv4 address (ip_version='ipv4')."
-                    )
+                    raise ValueError(f"entries[{idx}].mask '{entry.mask}' must be an IPv4 address (ip_version='ipv4').")
                 if version == "ipv6" and not isinstance(addr, ipaddress.IPv6Address):
-                    raise ValueError(
-                        f"entries[{idx}].mask '{entry.mask}' must be an IPv6 address (ip_version='ipv6')."
-                    )
+                    raise ValueError(f"entries[{idx}].mask '{entry.mask}' must be an IPv6 address (ip_version='ipv6').")
 
             # Validate length constraints
             for field_name, label in [
@@ -279,10 +260,7 @@ class PrefixListModel(NDBaseModel):
             ]:
                 val = getattr(entry, field_name, None)
                 if val is not None and not (1 <= val <= max_len):
-                    raise ValueError(
-                        f"entries[{idx}].{label}={val} is out of range "
-                        f"(1-{max_len} for ip_version='{version}')."
-                    )
+                    raise ValueError(f"entries[{idx}].{label}={val} is out of range " f"(1-{max_len} for ip_version='{version}').")
 
         return self
 

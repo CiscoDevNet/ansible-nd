@@ -44,7 +44,7 @@ from __future__ import annotations
 
 __metaclass__ = type
 
-from typing import ClassVar, Literal, Optional, Tuple, Union
+from typing import ClassVar, Literal, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
@@ -179,7 +179,9 @@ class EpManageIpv4PrefixListsListGet(_EpManageIpv4PrefixListsBase):
 
     _require_prefix_list_name: ClassVar[bool] = False
 
-    class_name: Literal["EpManageIpv4PrefixListsListGet"] = Field(default="EpManageIpv4PrefixListsListGet", description="Class name for backward compatibility")
+    class_name: Literal["EpManageIpv4PrefixListsListGet"] = Field(
+        default="EpManageIpv4PrefixListsListGet", description="Class name for backward compatibility"
+    )
     endpoint_params: PrefixListsListEndpointParams = Field(default_factory=PrefixListsListEndpointParams)
 
     @property
@@ -244,7 +246,9 @@ class EpManageIpv4PrefixListsBulkDelete(FabricNameMixin, NDEndpointBaseModel):
     Request body: ``{"ipv4PrefixListNames": ["name1", ...]}``.
     """
 
-    class_name: Literal["EpManageIpv4PrefixListsBulkDelete"] = Field(default="EpManageIpv4PrefixListsBulkDelete", description="Class name for backward compatibility")
+    class_name: Literal["EpManageIpv4PrefixListsBulkDelete"] = Field(
+        default="EpManageIpv4PrefixListsBulkDelete", description="Class name for backward compatibility"
+    )
 
     @property
     def path(self) -> str:
@@ -324,7 +328,9 @@ class EpManageIpv6PrefixListsListGet(_EpManageIpv6PrefixListsBase):
 
     _require_prefix_list_name: ClassVar[bool] = False
 
-    class_name: Literal["EpManageIpv6PrefixListsListGet"] = Field(default="EpManageIpv6PrefixListsListGet", description="Class name for backward compatibility")
+    class_name: Literal["EpManageIpv6PrefixListsListGet"] = Field(
+        default="EpManageIpv6PrefixListsListGet", description="Class name for backward compatibility"
+    )
     endpoint_params: PrefixListsListEndpointParams = Field(default_factory=PrefixListsListEndpointParams)
 
     @property
@@ -389,7 +395,9 @@ class EpManageIpv6PrefixListsBulkDelete(FabricNameMixin, NDEndpointBaseModel):
     Request body: ``{"ipv6PrefixListNames": ["name1", ...]}``.
     """
 
-    class_name: Literal["EpManageIpv6PrefixListsBulkDelete"] = Field(default="EpManageIpv6PrefixListsBulkDelete", description="Class name for backward compatibility")
+    class_name: Literal["EpManageIpv6PrefixListsBulkDelete"] = Field(
+        default="EpManageIpv6PrefixListsBulkDelete", description="Class name for backward compatibility"
+    )
 
     @property
     def path(self) -> str:

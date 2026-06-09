@@ -119,6 +119,7 @@ class UpdateGroupNameMixin(BaseModel):
 
     update_group_name: str | None = Field(default=None, min_length=1, description="Update group name")
 
+
 class PrefixListNameMixin(BaseModel):
     """Mixin for endpoints that require prefix_list_name parameter."""
 
