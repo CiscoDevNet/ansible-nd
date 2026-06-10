@@ -28,7 +28,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query imp
     _flatten_to_entries,
 )
 
-
 # --- Identifier & basic serialization ------------------------------------
 
 
