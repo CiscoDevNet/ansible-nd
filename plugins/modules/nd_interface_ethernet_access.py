@@ -442,7 +442,7 @@ def validate_within_item_duplicates(config_list: list[dict]) -> None:
     for item_index, group in enumerate(config_list):
         switch_ip = group.get("switch_ip")
         interface_names = group.get("interface_names") or []
-        seen: dict[str, bool] = {}
+        seen: set[str] = set()
         for name in interface_names:
             key = name.lower()
             if key in seen:
@@ -450,7 +450,7 @@ def validate_within_item_duplicates(config_list: list[dict]) -> None:
                     f"Duplicate interface '{name}' in interface_names for switch '{switch_ip}' "
                     f"(config item {item_index}). Each interface may appear only once per config item."
                 )
-            seen[key] = True
+            seen.add(key)
 
 
 # TODO: See note above `validate_within_item_duplicates`.
