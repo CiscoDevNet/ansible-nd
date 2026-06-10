@@ -3086,7 +3086,7 @@ class NDSwitchResourceModule:
         # replaced state.
         if plan.to_delete_existing:
             ips = [sw.fabric_management_ip for sw in plan.to_delete_existing]
-            self.nd.module.fail_json( 
+            self.nd.module.fail_json(
                 msg=(
                     f"POAP/preprovision switches already in fabric have a "
                     f"field mismatch (serial, role, model, version, or hostname) "
