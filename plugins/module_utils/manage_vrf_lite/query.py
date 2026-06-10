@@ -4,10 +4,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
@@ -23,7 +23,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_p
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule as NDModuleV2
 
 
-def _parse_vrf_template_vlan(vrf_object: dict[str, Any]) -> Optional[int]:
+def _parse_vrf_template_vlan(vrf_object: dict[str, Any]) -> int | None:
     template_cfg = vrf_object.get("vrfTemplateConfig")
     if not template_cfg:
         return None
@@ -72,7 +72,7 @@ def _query_fabric_switches(module: Any, nd_v2: Any, fabric_name: str) -> dict[st
     for switch in switches:
         if not isinstance(switch, dict):
             continue
-        serial = switch.get("serialNumber")
+        serial = switch.get("serialNumber") or switch.get("switchId")
         mgmt_ip = switch.get("fabricManagementIp")
         if serial and mgmt_ip:
             sn_to_ip[str(serial).strip()] = str(mgmt_ip).strip()
@@ -205,7 +205,7 @@ def _flatten_to_entries(nested: list[dict[str, Any]], module: Any = None) -> lis
 def query_vrf_lite_state(
     module: Any,
     fabric_name: str,
-    filter_vrfs: Optional[set[str]] = None,
+    filter_vrfs: set[str] | None = None,
     flat: bool = False,
 ) -> list[dict[str, Any]]:
     """

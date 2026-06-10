@@ -6,7 +6,7 @@
 
 """Unit tests for nd_manage_vrf_lite merge/payload/config-actions behavior."""
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 import json
 

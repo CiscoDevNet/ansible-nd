@@ -4,10 +4,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
@@ -115,8 +115,7 @@ def _request_vrf_lite_payload(nd_v2: Any, path: str, verb: HttpVerbEnum, payload
             else:
                 response_payload = response_data
 
-        error_msg = "Unknown error"
-        error_msg = response_handler.error_message or error_msg
+        error_msg = response_handler.error_message or "Unknown error"
 
         _raise_vrf_lite_error(
             msg="{0}; request_payload={1}".format(error_msg, json.dumps(payload, sort_keys=True)),
@@ -135,7 +134,7 @@ def _ensure_vrf_exists(module: Any, vrf_name: str) -> None:
         return
 
     fabric_name = module.params.get("fabric_name")
-    refreshed = query_vrf_lite_state(module=module, fabric_name=fabric_name, filter_vrfs=set([vrf_name]))
+    refreshed = query_vrf_lite_state(module=module, fabric_name=fabric_name, filter_vrfs={vrf_name})
     if not refreshed:
         _raise_vrf_lite_error(
             msg="VRF '{0}' does not exist in fabric '{1}'.".format(vrf_name, fabric_name),
@@ -156,6 +155,7 @@ def _reserve_dot1q_if_needed(nd_v2: Any, fabric_name: str, vrf_name: str, serial
         "scopeType": "DeviceInterface",
         "usageType": "TOP_DOWN_L3_DOT1Q",
         "serialNumber": serial_number,
+        "switchId": serial_number,
         "ifName": interface,
         "allocatedTo": vrf_name,
     }
@@ -197,7 +197,7 @@ def _entry_extensions(entry: Any) -> list[dict[str, Any]]:
     return entry.to_config().get("extensions", []) if hasattr(entry, "to_config") else list(getattr(entry, "extensions", None) or [])
 
 
-def _entry_vlan_id(module: Any, entry: Any, raw_attach: Optional[dict[str, Any]] = None) -> int:
+def _entry_vlan_id(module: Any, entry: Any, raw_attach: dict[str, Any] | None = None) -> int:
     if getattr(entry, "vlan_id", None) is not None:
         return int(entry.vlan_id)
 
@@ -256,7 +256,6 @@ def _build_detach_payload(
     vrf_name: str,
     serial_number: str,
     vlan_id: Any,
-    extension_values: Any = None,
     instance_values: Any = None,
 ) -> dict[str, Any]:
     payload = {
@@ -287,7 +286,6 @@ def build_detach_payload_for_entry(module: Any, entry: Any) -> dict[str, Any]:
         vrf_name=entry.vrf_name,
         serial_number=serial_number,
         vlan_id=vlan_id,
-        extension_values=raw_attach.get("extension_values"),
         instance_values=raw_attach.get("instance_values"),
     )
 

@@ -5,7 +5,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
@@ -21,7 +21,7 @@ description:
 - Supports optional save/deploy controls through C(config_actions).
 
 author:
-- Cisco Nexus Dashboard Team
+- Sivakami Sivaraman (@sivakasi)
 
 options:
   state:
@@ -43,12 +43,18 @@ options:
     type: dict
     suboptions:
       save:
+        description:
+        - Trigger a config save after state reconciliation.
         type: bool
         default: true
       deploy:
+        description:
+        - Trigger a VRF deploy after save. Requires C(save=true).
         type: bool
         default: true
       type:
+        description:
+        - Scope of the config save operation.
         type: str
         default: switch
         choices: [ switch, global ]
@@ -59,12 +65,18 @@ options:
     type: dict
     suboptions:
       enabled:
+        description:
+        - Enable post-deploy verification polling.
         type: bool
         default: true
       retries:
+        description:
+        - Number of polling retries during verification.
         type: int
         default: 5
       timeout:
+        description:
+        - Seconds to wait between verification retries.
         type: int
         default: 10
 
@@ -110,8 +122,12 @@ options:
             - Per-attachment deploy intent used by deploy planning.
             type: bool
           import_evpn_rt:
+            description:
+            - EVPN route-target to import, in ASN:NN format.
             type: str
           export_evpn_rt:
+            description:
+            - EVPN route-target to export, in ASN:NN format.
             type: str
           vrf_lite:
             description:
@@ -120,19 +136,33 @@ options:
             elements: dict
             suboptions:
               interface:
+                description:
+                - Layer-3 interface used for the VRF Lite extension (e.g. C(Ethernet1/20)).
                 type: str
                 required: true
               dot1q:
+                description:
+                - 802.1Q VLAN tag for the sub-interface.
                 type: int
               ipv4_addr:
+                description:
+                - IPv4 address with prefix length for the extension interface (e.g. C(10.0.0.1/30)).
                 type: str
               neighbor_ipv4:
+                description:
+                - Peer IPv4 address for the VRF Lite BGP or static-route neighbour.
                 type: str
               ipv6_addr:
+                description:
+                - IPv6 address with prefix length for the extension interface.
                 type: str
               neighbor_ipv6:
+                description:
+                - Peer IPv6 address for the VRF Lite BGP or static-route neighbour.
                 type: str
               peer_vrf:
+                description:
+                - Name of the peer VRF for the VRF Lite extension.
                 type: str
 
 extends_documentation_fragment:

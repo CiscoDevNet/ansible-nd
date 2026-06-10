@@ -4,7 +4,7 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 import ipaddress
 from typing import Any, NoReturn
@@ -133,7 +133,6 @@ def request_with_verify_settings(module: Any, nd_v2: Any, path: str, verb: Any, 
     except (TypeError, ValueError):
         retries = DEFAULT_VERIFY_RETRIES
 
-    last_error = None
     for attempt in range(retries):
         rest_send = nd_v2._get_rest_send()
         rest_send.save_settings()
@@ -143,8 +142,7 @@ def request_with_verify_settings(module: Any, nd_v2: Any, path: str, verb: Any, 
             if data is None:
                 return nd_v2.request(path, verb)
             return nd_v2.request(path, verb, data)
-        except Exception as error:
-            last_error = error
+        except Exception:
             if attempt + 1 >= retries:
                 raise
         finally:

@@ -4,10 +4,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_model import (
@@ -15,7 +15,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vr
 )
 
 
-def vrf_lite_items_to_config(vrf_lite_items: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+def vrf_lite_items_to_config(vrf_lite_items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for item in vrf_lite_items or []:
         try:
@@ -39,7 +39,7 @@ def _json_value(value: Any) -> Any:
 
 
 def build_vrf_lite_extension_values(
-    vrf_lite_items: Optional[list[dict[str, Any]]],
+    vrf_lite_items: list[dict[str, Any]] | None,
     existing_extension_values: Any = None,
 ) -> str:
     """
@@ -88,7 +88,7 @@ def build_vrf_lite_extension_values(
     return json.dumps(extension_values, separators=(",", ":"))
 
 
-def build_vrf_lite_extension_values_api(vrf_lite_items: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+def build_vrf_lite_extension_values_api(vrf_lite_items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Build extensionValues list expected by /vrfAttachments."""
     rows: list[dict[str, Any]] = []
     for item in vrf_lite_items_to_config(vrf_lite_items):
@@ -168,7 +168,7 @@ def parse_vrf_lite_extension_values(extension_values: Any) -> list[dict[str, Any
     return vrf_lite_items_to_config(parsed)
 
 
-def build_instance_values(import_evpn_rt: Optional[str], export_evpn_rt: Optional[str]) -> str:
+def build_instance_values(import_evpn_rt: str | None, export_evpn_rt: str | None) -> str:
     values = {
         "loopbackId": "",
         "loopbackIpAddress": "",
@@ -180,8 +180,8 @@ def build_instance_values(import_evpn_rt: Optional[str], export_evpn_rt: Optiona
 
 
 def build_instance_values_api(
-    import_evpn_rt: Optional[str],
-    export_evpn_rt: Optional[str],
+    import_evpn_rt: str | None,
+    export_evpn_rt: str | None,
     existing_instance_values: Any = None,
 ) -> dict[str, Any]:
     values = parse_instance_values(existing_instance_values)

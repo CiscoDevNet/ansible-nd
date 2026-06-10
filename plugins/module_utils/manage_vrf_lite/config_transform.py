@@ -4,9 +4,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-from typing import Any, Optional, Union
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     _resolve_serial,
@@ -65,7 +65,7 @@ def explode_playbook_to_entries(
     config: list[dict[str, Any]],
     module: Any,
     state: str,
-    current_entries: Optional[list[dict[str, Any]]] = None,
+    current_entries: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Flatten nested playbook config into attachment-level payload DTO data."""
     entries: list[dict[str, Any]] = []
@@ -129,7 +129,7 @@ def replacement_scope_vrfs(config: list[dict[str, Any]]) -> list[str]:
 def group_attachment_entries_to_vrfs(
     entries: list[Any],
     module: Any = None,
-    include_vrfs: Optional[Union[list[str], set[str]]] = None,
+    include_vrfs: list[str] | set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert flat attachment DTOs back to the public nested VRF shape."""
     sn_to_ip = {}

@@ -4,10 +4,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 from copy import deepcopy
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
@@ -45,15 +45,15 @@ class VrfLiteAttachmentEntry(NDBaseModel):
 
     vrf_name: str = Field(alias="vrf_name", min_length=1, max_length=64)
     switch_ip: str = Field(alias="switch_ip", min_length=1, max_length=128)
-    vlan_id: Optional[int] = Field(default=None, alias="vlan_id", ge=1, le=4094)
-    deploy: Optional[bool] = Field(default=None, alias="deploy")
-    import_evpn_rt: Optional[str] = Field(default=None, alias="import_evpn_rt")
-    export_evpn_rt: Optional[str] = Field(default=None, alias="export_evpn_rt")
-    extensions: Optional[list[VrfLiteConnectionModel]] = Field(default=None, alias="extensions")
+    vlan_id: int | None = Field(default=None, alias="vlan_id", ge=1, le=4094)
+    deploy: bool | None = Field(default=None, alias="deploy")
+    import_evpn_rt: str | None = Field(default=None, alias="import_evpn_rt")
+    export_evpn_rt: str | None = Field(default=None, alias="export_evpn_rt")
+    extensions: list[VrfLiteConnectionModel] | None = Field(default=None, alias="extensions")
 
     @field_validator("import_evpn_rt", "export_evpn_rt")
     @classmethod
-    def _coerce_empty_string_to_none(cls, value: Optional[str]) -> Optional[str]:
+    def _coerce_empty_string_to_none(cls, value: str | None) -> str | None:
         """Normalize empty-string EVPN RT values to None.
 
         The query layer may return '' for absent EVPN RT fields on a switch.

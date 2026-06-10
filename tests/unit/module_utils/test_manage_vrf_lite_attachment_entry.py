@@ -11,7 +11,7 @@ the new flat per-(vrf_name, switch_ip) attachment model and the
 ``flat=True`` output mode of ``query_vrf_lite_state``.
 """
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 import pytest
 

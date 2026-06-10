@@ -4,10 +4,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, Optional
+from typing import Any, ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
@@ -34,12 +34,12 @@ class VrfLiteConnectionModel(NDNestedModel):
     )
 
     interface: str = Field(alias="interface", min_length=1, max_length=128)
-    dot1q: Optional[int] = Field(default=None, alias="dot1q", ge=1, le=4094)
-    ipv4_addr: Optional[str] = Field(default=None, alias="ipv4_addr")
-    neighbor_ipv4: Optional[str] = Field(default=None, alias="neighbor_ipv4")
-    ipv6_addr: Optional[str] = Field(default=None, alias="ipv6_addr")
-    neighbor_ipv6: Optional[str] = Field(default=None, alias="neighbor_ipv6")
-    peer_vrf: Optional[str] = Field(default=None, alias="peer_vrf")
+    dot1q: int | None = Field(default=None, alias="dot1q", ge=1, le=4094)
+    ipv4_addr: str | None = Field(default=None, alias="ipv4_addr")
+    neighbor_ipv4: str | None = Field(default=None, alias="neighbor_ipv4")
+    ipv6_addr: str | None = Field(default=None, alias="ipv6_addr")
+    neighbor_ipv6: str | None = Field(default=None, alias="neighbor_ipv6")
+    peer_vrf: str | None = Field(default=None, alias="peer_vrf")
 
 
 class VrfLiteAttachmentModel(NDNestedModel):
@@ -58,10 +58,10 @@ class VrfLiteAttachmentModel(NDNestedModel):
     )
 
     ip_address: str = Field(alias="ip_address", min_length=1, max_length=128)
-    deploy: Optional[bool] = Field(default=None, alias="deploy")
-    import_evpn_rt: Optional[str] = Field(default=None, alias="import_evpn_rt")
-    export_evpn_rt: Optional[str] = Field(default=None, alias="export_evpn_rt")
-    vrf_lite: Optional[list[VrfLiteConnectionModel]] = Field(default=None, alias="vrf_lite")
+    deploy: bool | None = Field(default=None, alias="deploy")
+    import_evpn_rt: str | None = Field(default=None, alias="import_evpn_rt")
+    export_evpn_rt: str | None = Field(default=None, alias="export_evpn_rt")
+    vrf_lite: list[VrfLiteConnectionModel] | None = Field(default=None, alias="vrf_lite")
 
     @field_validator("ip_address")
     @classmethod
@@ -138,9 +138,9 @@ class VrfLiteModel(NDBaseModel):
     )
 
     vrf_name: str = Field(alias="vrf_name", min_length=1, max_length=64)
-    vlan_id: Optional[int] = Field(default=None, alias="vlan_id", ge=1, le=4094)
-    deploy: Optional[bool] = Field(default=None, alias="deploy")
-    attach: Optional[list[VrfLiteAttachmentModel]] = Field(default=None, alias="attach")
+    vlan_id: int | None = Field(default=None, alias="vlan_id", ge=1, le=4094)
+    deploy: bool | None = Field(default=None, alias="deploy")
+    attach: list[VrfLiteAttachmentModel] | None = Field(default=None, alias="attach")
 
     @field_validator("vrf_name")
     @classmethod
@@ -232,9 +232,9 @@ class VrfLitePlaybookItemModel(BaseModel):
     )
 
     vrf_name: str = Field(alias="vrf_name", min_length=1, max_length=64)
-    vlan_id: Optional[int] = Field(default=None, alias="vlan_id", ge=1, le=4094)
-    deploy: Optional[bool] = Field(default=None, alias="deploy")
-    attach: Optional[list[VrfLiteAttachmentModel]] = Field(default=None, alias="attach")
+    vlan_id: int | None = Field(default=None, alias="vlan_id", ge=1, le=4094)
+    deploy: bool | None = Field(default=None, alias="deploy")
+    attach: list[VrfLiteAttachmentModel] | None = Field(default=None, alias="attach")
 
     @field_validator("vrf_name")
     @classmethod
@@ -298,9 +298,9 @@ class VrfLitePlaybookConfigModel(BaseModel):
     # TODO: Replace with the shared fabric_name Field once the collection adds it.
     fabric_name: str = Field(min_length=1)
     force: bool = Field(default=False)
-    verify: Optional[VerifyConfigModel] = Field(default=None)
-    config_actions: Optional[ConfigActionsModel] = Field(default=None)
-    config: Optional[list[VrfLitePlaybookItemModel]] = Field(default=None)
+    verify: VerifyConfigModel | None = Field(default=None)
+    config_actions: ConfigActionsModel | None = Field(default=None)
+    config: list[VrfLitePlaybookItemModel] | None = Field(default=None)
 
     @model_validator(mode="after")
     def validate_config_actions(self) -> "VrfLitePlaybookConfigModel":

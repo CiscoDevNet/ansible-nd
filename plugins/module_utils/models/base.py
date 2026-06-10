@@ -2,11 +2,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
 from abc import ABC
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict
-from typing import List, Dict, Any, ClassVar, Set, Tuple, Union, Literal, Optional
+from typing import Any, ClassVar, Literal
 from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 
@@ -39,23 +39,23 @@ class NDBaseModel(BaseModel, ABC):
 
     # --- Identifier Configuration ---
 
-    identifiers: ClassVar[Optional[List[str]]] = None
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "singleton"
+    identifiers: ClassVar[list[str] | None] = None
+    identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"
 
     # --- Serialization Configuration ---
 
-    exclude_from_diff: ClassVar[Set[str]] = set()
-    unwanted_keys: ClassVar[List] = []
+    exclude_from_diff: ClassVar[set[str]] = set()
+    unwanted_keys: ClassVar[list] = []
 
     # Declarative nested-field grouping for payload mode
     # e.g., {"passwordPolicy": ["reuse_limitation", "time_interval_limitation"]}
     # means: in payload mode, remove these fields from top level and nest them
     # under "passwordPolicy" with their alias names.
-    payload_nested_fields: ClassVar[Dict[str, List[str]]] = {}
+    payload_nested_fields: ClassVar[dict[str, list[str]]] = {}
 
     # Fields to explicitly exclude per mode
-    payload_exclude_fields: ClassVar[Set[str]] = set()
-    config_exclude_fields: ClassVar[Set[str]] = set()
+    payload_exclude_fields: ClassVar[set[str]] = set()
+    config_exclude_fields: ClassVar[set[str]] = set()
 
     # --- Subclass Validation ---
 
@@ -67,13 +67,13 @@ class NDBaseModel(BaseModel, ABC):
             return
 
         if not hasattr(cls, "identifiers") or cls.identifiers is None:
-            raise ValueError(f"Class {cls.__name__} must define 'identifiers'. " f"Example: identifiers: ClassVar[Optional[List[str]]] = ['login_id']")
+            raise ValueError(f"Class {cls.__name__} must define 'identifiers'. " f"Example: identifiers: ClassVar[list[str] | None] = ['login_id']")
         if not hasattr(cls, "identifier_strategy") or cls.identifier_strategy is None:
             raise ValueError(f"Class {cls.__name__} must define 'identifier_strategy'. " f"Example: identifier_strategy: ClassVar[...] = 'single'")
 
     # --- Core Serialization ---
 
-    def _build_payload_nested(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_payload_nested(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Apply payload_nested_fields: pull specified fields out of the top-level
         dict and group them under their declared parent key.
@@ -102,7 +102,7 @@ class NDBaseModel(BaseModel, ABC):
 
         return result
 
-    def to_payload(self, **kwargs) -> Dict[str, Any]:
+    def to_payload(self, **kwargs) -> dict[str, Any]:
         """Convert model to API payload format (aliased keys, nested structures)."""
         data = self.model_dump(
             by_alias=True,
@@ -114,7 +114,7 @@ class NDBaseModel(BaseModel, ABC):
         )
         return self._build_payload_nested(data)
 
-    def to_config(self, **kwargs) -> Dict[str, Any]:
+    def to_config(self, **kwargs) -> dict[str, Any]:
         """Convert model to Ansible config format (Python field names, flat structure)."""
         return self.model_dump(
             by_alias=False,
@@ -127,18 +127,18 @@ class NDBaseModel(BaseModel, ABC):
     # --- Core Deserialization ---
 
     @classmethod
-    def from_response(cls, response: Dict[str, Any], **kwargs) -> "NDBaseModel":
+    def from_response(cls, response: dict[str, Any], **kwargs) -> "NDBaseModel":
         """Create model instance from API response dict."""
         return cls.model_validate(response, by_alias=True, **kwargs)
 
     @classmethod
-    def from_config(cls, ansible_config: Dict[str, Any], **kwargs) -> "NDBaseModel":
+    def from_config(cls, ansible_config: dict[str, Any], **kwargs) -> "NDBaseModel":
         """Create model instance from Ansible config dict."""
         return cls.model_validate(ansible_config, by_name=True, **kwargs)
 
     # --- Identifier Access ---
 
-    def get_identifier_value(self) -> Optional[Union[str, int, Tuple[Any, ...]]]:
+    def get_identifier_value(self) -> str | int | tuple[Any, ...] | None:
         """
         Extract identifier value(s) based on the configured strategy.
 
@@ -186,7 +186,7 @@ class NDBaseModel(BaseModel, ABC):
 
     # --- Diff & Merge ---
 
-    def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
+    def to_diff_dict(self, **kwargs) -> dict[str, Any]:
         """Export for diff comparison, excluding sensitive fields."""
         return self.model_dump(
             by_alias=True,

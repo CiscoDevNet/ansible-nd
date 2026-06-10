@@ -4,9 +4,9 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
@@ -69,7 +69,7 @@ def _load_switch_inventory(module: Any, fabric_name: str) -> dict[str, dict[str,
 
     inventory: dict[str, dict[str, Any]] = {}
     for switch in _coerce_switch_list(response):
-        serial = switch.get("serialNumber")
+        serial = switch.get("serialNumber") or switch.get("switchId")
         if not serial:
             continue
 
@@ -88,7 +88,7 @@ def _load_switch_inventory(module: Any, fabric_name: str) -> dict[str, dict[str,
     return inventory
 
 
-def _extract_support_flag(value: Any) -> Optional[bool]:
+def _extract_support_flag(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
 
@@ -114,7 +114,7 @@ def _extract_support_flag(value: Any) -> Optional[bool]:
     return None
 
 
-def _query_vrf_lite_support(module: Any, fabric_name: str, vrf_name: str, serial_number: str) -> Optional[bool]:
+def _query_vrf_lite_support(module: Any, fabric_name: str, vrf_name: str, serial_number: str) -> bool | None:
     nd_v2 = NDModuleV2(module)
     response = request_with_verify_settings(
         module,

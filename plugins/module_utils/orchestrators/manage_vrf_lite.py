@@ -4,11 +4,11 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import annotations
 
 import json
 from collections import defaultdict
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
@@ -78,7 +78,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
     delete_bulk_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
 
     @staticmethod
-    def prepare_module_params(module: Any, module_config: Any, normalized_config: Optional[list[dict[str, Any]]] = None) -> None:
+    def prepare_module_params(module: Any, module_config: Any, normalized_config: list[dict[str, Any]] | None = None) -> None:
         """Normalize module params while preserving nested playbook config."""
         state = module_config.state
         if normalized_config is None:
@@ -188,13 +188,6 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         module = self._module()
         current = self._query_current_state(flat=True)
         self._prepare_state_machine_config(current)
-        if module.check_mode and module.params.get("state") == "deleted":
-            current_by_key = {(item.get("vrf_name"), item.get("switch_ip")) for item in current}
-            for planned in module.params.get("config") or []:
-                key = (planned.get("vrf_name"), planned.get("switch_ip")) if isinstance(planned, dict) else (None, None)
-                if key[0] and key[1] and key not in current_by_key:
-                    current.append(dict(planned))
-                    current_by_key.add(key)
         return current
 
     def create(self, model_instance: Any, **kwargs: Any) -> dict[str, Any]:
@@ -283,7 +276,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         }
         return self.inject_runtime_metadata(output)
 
-    def deploy_pending(self, result: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def deploy_pending(self, result: dict[str, Any]) -> dict[str, Any] | None:
         module = self._module()
         config_actions = get_config_actions(module.params)
 
@@ -314,7 +307,11 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             value = result.get(key)
             if not isinstance(value, list):
                 continue
-            has_flat_entries = any(isinstance(item, VrfLiteAttachmentEntry) for item in value)
+            has_flat_entries = any(
+                isinstance(item, VrfLiteAttachmentEntry)
+                or (isinstance(item, dict) and "switch_ip" in item)
+                for item in value
+            )
             should_preserve_empty_scope = not value and include_vrfs and key in scoped_empty_keys
             if has_flat_entries or should_preserve_empty_scope:
                 result[key] = group_attachment_entries_to_vrfs(value, module=module, include_vrfs=include_vrfs)
@@ -337,7 +334,9 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         else:
             config = module.params.get("_vrf_lite_nested_config") or module.params.get("config") or []
 
-        filter_vrfs = set(config_vrf_names(config))
+        # For overridden, query the full fabric so VRFs absent from config can be removed.
+        requested_state = module.params.get("_vrf_lite_requested_state") or state
+        filter_vrfs = None if requested_state == "overridden" else set(config_vrf_names(config))
         try:
             have = query_vrf_lite_state(
                 module=module,
