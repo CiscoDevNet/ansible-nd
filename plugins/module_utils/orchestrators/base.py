@@ -5,7 +5,7 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 from functools import wraps
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Dict, Generic, Optional, TypeVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import BaseModel, ConfigDict, model_validator
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
