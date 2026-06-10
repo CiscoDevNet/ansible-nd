@@ -1017,6 +1017,38 @@ def test_ethernet_access_interface_00830():
     assert instance.interface_name == "Ethernet1/1"
 
 
+def test_ethernet_access_interface_00840():
+    """
+    # Summary
+
+    Verify `from_response` tolerates the undocumented `ptp` field ND injects into the
+    policy object of every physical-ethernet interface GET response, and that the field
+    does not leak into payloads built from the model.
+
+    ND 4.2.1 returns `ptp: false` inside `configData.networkOS.policy` for accessHost
+    (and every other physical-ethernet policy) even though `intAccessHostTemplate`
+    defines no `ptp` property; it belongs to the IPFM template family.
+
+    # deviation: interface-get-undocumented-ptp-field
+
+    ## Test
+
+    - Response with `ptp` inside the policy object constructs a valid model
+    - `to_payload()` output does not contain `ptp`
+
+    ## Classes and Methods
+
+    - EthernetAccessInterfaceModel.from_response()
+    - EthernetAccessInterfaceModel.to_payload()
+    """
+    response = copy.deepcopy(SAMPLE_API_RESPONSE)
+    response["configData"]["networkOS"]["policy"]["ptp"] = False
+    with does_not_raise():
+        instance = EthernetAccessInterfaceModel.from_response(response)
+    assert instance.interface_name == "Ethernet1/1"
+    assert "ptp" not in instance.to_payload()["configData"]["networkOS"]["policy"]
+
+
 # =============================================================================
 # Test: EthernetAccessInterfaceModel — from_config
 # =============================================================================
