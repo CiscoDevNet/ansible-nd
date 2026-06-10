@@ -74,12 +74,15 @@ class NDStateMachine:
             self.existing = self.before.copy()
             # Ongoing collection of configuration objects that were changed
             self.sent = NDConfigCollection(model_class=self.model_class)
-            # Collection of configuration objects given by user.
+            # Collection of configuration objects given by user. Coalesce None to
+            # an empty list so read-only states (e.g. gathered) with no config work.
             # ``context={"state": ...}`` is threaded into pydantic validation so models can apply
             # state-aware validation (e.g. require certain fields for write states while accepting
             # identifier-only items for ``deleted``). Models that do not read the context ignore it.
+            raw_config = self.module.params.get("config") or []
+            raw_config = self.model_orchestrator.prepare_config_data(raw_config)
             self.proposed = NDConfigCollection.from_ansible_config(
-                data=self.module.params.get("config", []), model_class=self.model_class, context={"state": self.state}
+                data=raw_config, model_class=self.model_class, context={"state": self.state}
             )
 
             self.output.assign(after=self.existing, before=self.before, proposed=self.proposed)
@@ -130,6 +133,11 @@ class NDStateMachine:
             # Capability preflight intentionally NOT run for deletes: removing configuration does not
             # depend on a switch's capability to host the interface type (PR #275 scope decision).
             self._manage_delete_state()
+
+        elif self.state == "gathered":
+            # Read-only state: __init__ already queried the existing objects and
+            # assigned them as ``after`` in the output, so no changes are made.
+            pass
 
         else:
             raise NDStateMachineError(f"Invalid state: {self.state}")
