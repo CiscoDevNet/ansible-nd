@@ -1,0 +1,276 @@
+# Test code for the cisco.nd.nd_links module.
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Run nd_links discriminated-union (negative) tests
+  module_defaults:
+    cisco.nd.nd_links:
+      output_level: '{{ nd_output_level | default("debug") }}'
+      fabric_name: '{{ test_fabric_numbered }}'
+      link_scope: manage
+  block:
+    - name: Create a numbered link baseline for discriminated-union tests
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_numbered }}'
+            dst_fabric_name: '{{ test_fabric_numbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: numbered
+              template_inputs:
+                src_ip: 10.99.30.1
+                dst_ip: 10.99.30.2
+                mtu: 9216
+                interface_admin_state: true
+        state: merged
+
+    - name: Attempt to set ebgp_multihop on a numbered link (should fail)
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_numbered }}'
+            dst_fabric_name: '{{ test_fabric_numbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: numbered
+              template_inputs:
+                src_ip: 10.99.30.1
+                dst_ip: 10.99.30.2
+                ebgp_multihop: 5
+        state: merged
+      register: invalid_field_numbered
+      ignore_errors: true
+
+    - name: Verify invalid field on numbered was rejected by Pydantic
+      ansible.builtin.assert:
+        that:
+          - invalid_field_numbered is failed
+          - invalid_field_numbered.msg is search("ebgp_multihop")
+            or invalid_field_numbered.msg is search("[Ee]xtra")
+            or invalid_field_numbered.msg is search("not permitted")
+
+    - name: Attempt to set src_ip on an unnumbered link (should fail)
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_numbered }}'
+            dst_fabric_name: '{{ test_fabric_numbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/40
+            dst_interface_name: Ethernet1/40
+            config_data:
+              policy_type: unnumbered
+              template_inputs:
+                src_ip: 10.99.40.1
+                dst_ip: 10.99.40.2
+                mtu: 9216
+        state: merged
+      register: invalid_field_unnumbered
+      ignore_errors: true
+
+    - name: Verify invalid field on unnumbered was rejected by Pydantic
+      ansible.builtin.assert:
+        that:
+          - invalid_field_unnumbered is failed
+          - invalid_field_unnumbered.msg is search("src_ip")
+            or invalid_field_unnumbered.msg is search("[Ee]xtra")
+            or invalid_field_unnumbered.msg is search("not permitted")
+
+    - name: Attempt to set src_ebgp_asn on a preprovision link (should fail)
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_numbered }}'
+            dst_fabric_name: '{{ test_fabric_numbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/41
+            dst_interface_name: Ethernet1/41
+            config_data:
+              policy_type: preprovision
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+        state: merged
+      register: invalid_field_preprovision
+      ignore_errors: true
+
+    - name: Verify invalid field on preprovision was rejected by Pydantic
+      ansible.builtin.assert:
+        that:
+          - invalid_field_preprovision is failed
+          - invalid_field_preprovision.msg is search("src_ebgp_asn")
+            or invalid_field_preprovision.msg is search("[Ee]xtra")
+            or invalid_field_preprovision.msg is search("not permitted")
+
+    - name: Attempt to set trunk_allowed_vlans on a numbered link (should fail)
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_numbered }}'
+            dst_fabric_name: '{{ test_fabric_numbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/42
+            dst_interface_name: Ethernet1/42
+            config_data:
+              policy_type: numbered
+              template_inputs:
+                src_ip: 10.99.42.1
+                dst_ip: 10.99.42.2
+                trunk_allowed_vlans: "100,200"
+        state: merged
+      register: invalid_field_l2dci_on_numbered
+      ignore_errors: true
+
+    - name: Verify l2dci-only field on numbered was rejected by Pydantic
+      ansible.builtin.assert:
+        that:
+          - invalid_field_l2dci_on_numbered is failed
+          - invalid_field_l2dci_on_numbered.msg is search("trunk_allowed_vlans")
+            or invalid_field_l2dci_on_numbered.msg is search("[Ee]xtra")
+            or invalid_field_l2dci_on_numbered.msg is search("not permitted")
+
+    - name: Attempt to change policy_type from numbered to ebgpVrfLite in place (should fail)
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_numbered }}'
+            dst_fabric_name: '{{ test_fabric_numbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: ebgpVrfLite
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address_mask: 10.99.30.1/24
+                dst_ip_address: 10.99.30.2
+        state: merged
+      register: policy_change_to_vrflite
+      ignore_errors: true
+
+    - name: Verify numbered → ebgpVrfLite policy change rejected
+      ansible.builtin.assert:
+        that:
+          - policy_change_to_vrflite is failed
+          - policy_change_to_vrflite.msg is search("policy_type")
+
+    - name: Attempt to change policy_type from numbered to preprovision in place (should fail)
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_numbered }}'
+            dst_fabric_name: '{{ test_fabric_numbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: preprovision
+              template_inputs:
+                src_interface_description: should not switch policy in place
+        state: merged
+      register: policy_change_to_preprovision
+      ignore_errors: true
+
+    - name: Verify numbered → preprovision policy change rejected
+      ansible.builtin.assert:
+        that:
+          - policy_change_to_preprovision is failed
+          - policy_change_to_preprovision.msg is search("policy_type")
+
+    - name: Clean up baseline numbered link
+      cisco.nd.nd_links:
+        config:
+          - src_fabric_name: '{{ test_fabric_numbered }}'
+            dst_fabric_name: '{{ test_fabric_numbered }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+        state: deleted
+
+    - name: Exercise cross-policy delete+recreate (opt-in; requires compatible fabric)
+      when: nd_test_cross_policy_fabric is defined
+      block:
+        - name: Pre-clean any existing link on Eth1/30
+          cisco.nd.nd_links:
+            config:
+              - src_fabric_name: '{{ nd_test_cross_policy_fabric }}'
+                dst_fabric_name: '{{ nd_test_cross_policy_fabric }}'
+                src_switch_name: '{{ test_switch_a }}'
+                dst_switch_name: '{{ test_switch_b }}'
+                src_interface_name: Ethernet1/30
+                dst_interface_name: Ethernet1/30
+            state: deleted
+
+        - name: Create a numbered link first
+          cisco.nd.nd_links:
+            config:
+              - src_fabric_name: '{{ nd_test_cross_policy_fabric }}'
+                dst_fabric_name: '{{ nd_test_cross_policy_fabric }}'
+                src_switch_name: '{{ test_switch_a }}'
+                dst_switch_name: '{{ test_switch_b }}'
+                src_interface_name: Ethernet1/30
+                dst_interface_name: Ethernet1/30
+                config_data:
+                  policy_type: numbered
+                  template_inputs:
+                    src_ip: 10.99.30.1
+                    dst_ip: 10.99.30.2
+                    mtu: 9216
+                    interface_admin_state: true
+            state: merged
+
+        - name: Delete the numbered link
+          cisco.nd.nd_links:
+            config:
+              - src_fabric_name: '{{ nd_test_cross_policy_fabric }}'
+                dst_fabric_name: '{{ nd_test_cross_policy_fabric }}'
+                src_switch_name: '{{ test_switch_a }}'
+                dst_switch_name: '{{ test_switch_b }}'
+                src_interface_name: Ethernet1/30
+                dst_interface_name: Ethernet1/30
+            state: deleted
+
+        - name: Recreate on same interface with new policy type (ebgpVrfLite)
+          cisco.nd.nd_links:
+            config:
+              - src_fabric_name: '{{ nd_test_cross_policy_fabric }}'
+                dst_fabric_name: '{{ nd_test_cross_policy_fabric }}'
+                src_switch_name: '{{ test_switch_a }}'
+                dst_switch_name: '{{ test_switch_b }}'
+                src_interface_name: Ethernet1/30
+                dst_interface_name: Ethernet1/30
+                config_data:
+                  policy_type: ebgpVrfLite
+                  template_inputs:
+                    src_ebgp_asn: "65001"
+                    dst_ebgp_asn: "65002"
+                    src_ip_address_mask: 10.99.30.1/24
+                    dst_ip_address: 10.99.30.2
+                    link_mtu: 9216
+            state: merged
+          register: recreate_result
+
+        - name: Verify delete+recreate worked for policy type change
+          ansible.builtin.assert:
+            that:
+              - recreate_result is changed
+              - (recreate_result.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "ebgpVrfLite"
+              - (recreate_result.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.src_ebgp_asn == "65001"
+
+        - name: Final cleanup of cross-policy link
+          cisco.nd.nd_links:
+            config:
+              - src_fabric_name: '{{ nd_test_cross_policy_fabric }}'
+                dst_fabric_name: '{{ nd_test_cross_policy_fabric }}'
+                src_switch_name: '{{ test_switch_a }}'
+                dst_switch_name: '{{ test_switch_b }}'
+                src_interface_name: Ethernet1/30
+                dst_interface_name: Ethernet1/30
+            state: deleted

@@ -1,0 +1,238 @@
+# Test code for the cisco.nd.nd_links module.
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Run nd_links multisiteUnderlay policy lifecycle (inter-fabric)
+  module_defaults:
+    cisco.nd.nd_links:
+      output_level: '{{ nd_output_level | default("debug") }}'
+      fabric_name: '{{ test_fabric_msite_src }}'
+      link_scope: manage
+  block:
+    - name: Ensure multisiteUnderlay links do not exist before tests
+      cisco.nd.nd_links: &msite_underlay_cleanup
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/42
+            dst_interface_name: Ethernet1/42
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/43
+            dst_interface_name: Ethernet1/43
+        state: deleted
+
+    - name: Create two multisiteUnderlay links (merged - check mode)
+      cisco.nd.nd_links: &msite_underlay_create
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/42
+            dst_interface_name: Ethernet1/42
+            config_data:
+              policy_type: multisiteUnderlay
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address_mask: "10.99.42.1/30"
+                dst_ip_address: "10.99.42.2"
+                link_mtu: 9216
+                speed: auto
+                ebgp_bfd: false
+                ebgp_maximum_paths: 2
+                src_interface_description: ansible msite-underlay 42 source
+                dst_interface_description: ansible msite-underlay 42 destination
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/43
+            dst_interface_name: Ethernet1/43
+            config_data:
+              policy_type: multisiteUnderlay
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address_mask: "10.99.43.1/30"
+                dst_ip_address: "10.99.43.2"
+                link_mtu: 9216
+                speed: auto
+                ebgp_maximum_paths: 2
+        state: merged
+      check_mode: true
+      register: cm_msite_underlay_create
+
+    - name: Create two multisiteUnderlay links (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *msite_underlay_create
+      register: nm_msite_underlay_create
+
+    - name: Create two multisiteUnderlay links again (idempotency)
+      cisco.nd.nd_links:
+        <<: *msite_underlay_create
+      register: nm_msite_underlay_create_again
+
+    - name: Asserts for multisiteUnderlay create
+      ansible.builtin.assert:
+        that:
+          - cm_msite_underlay_create is changed
+          - cm_msite_underlay_create.proposed | length == 2
+          - cm_msite_underlay_create.proposed.0.config_data.policy_type == "multisiteUnderlay"
+          - cm_msite_underlay_create.proposed.0.config_data.template_inputs.src_ebgp_asn == "65001"
+
+          - nm_msite_underlay_create is changed
+          - (nm_msite_underlay_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/42') | first).config_data.policy_type == "multisiteUnderlay"
+          - (nm_msite_underlay_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/42') | first).config_data.template_inputs.link_mtu == 9216
+
+          - nm_msite_underlay_create_again is not changed
+
+    - name: Update multisiteUnderlay link Eth1/42 (merged - check mode)
+      cisco.nd.nd_links: &msite_underlay_update
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/42
+            dst_interface_name: Ethernet1/42
+            config_data:
+              policy_type: multisiteUnderlay
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address_mask: "10.99.42.1/30"
+                dst_ip_address: "10.99.42.2"
+                link_mtu: 1500
+                speed: auto
+                ebgp_bfd: true
+                ebgp_maximum_paths: 2
+                src_interface_description: updated msite-underlay source
+        state: merged
+      check_mode: true
+      register: cm_msite_underlay_update
+
+    - name: Update multisiteUnderlay link Eth1/42 (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *msite_underlay_update
+      register: nm_msite_underlay_update
+
+    - name: Update multisiteUnderlay link Eth1/42 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *msite_underlay_update
+      register: nm_msite_underlay_update_again
+
+    - name: Asserts for multisiteUnderlay update
+      ansible.builtin.assert:
+        that:
+          - cm_msite_underlay_update is changed
+          - cm_msite_underlay_update.proposed.0.config_data.template_inputs.link_mtu == 1500
+
+          - nm_msite_underlay_update is changed
+          - (nm_msite_underlay_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/42') | first).config_data.template_inputs.link_mtu == 1500
+          - (nm_msite_underlay_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/42') | first).config_data.template_inputs.ebgp_bfd == true
+
+          - nm_msite_underlay_update_again is not changed
+
+    - name: Replace multisiteUnderlay link Eth1/42 (replaced - check mode)
+      cisco.nd.nd_links: &msite_underlay_replace
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/42
+            dst_interface_name: Ethernet1/42
+            config_data:
+              policy_type: multisiteUnderlay
+              template_inputs:
+                src_ebgp_asn: "65001"
+                dst_ebgp_asn: "65002"
+                src_ip_address_mask: "10.99.42.1/30"
+                dst_ip_address: "10.99.42.2"
+                link_mtu: 9216
+                speed: auto
+                ebgp_maximum_paths: 2
+        state: replaced
+      check_mode: true
+      register: cm_msite_underlay_replace
+
+    - name: Replace multisiteUnderlay link Eth1/42 (replaced - normal mode)
+      cisco.nd.nd_links:
+        <<: *msite_underlay_replace
+      register: nm_msite_underlay_replace
+
+    - name: Replace multisiteUnderlay link Eth1/42 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *msite_underlay_replace
+      register: nm_msite_underlay_replace_again
+
+    - name: Asserts for multisiteUnderlay replace
+      ansible.builtin.assert:
+        that:
+          - cm_msite_underlay_replace is changed
+          - nm_msite_underlay_replace is changed
+          - (nm_msite_underlay_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/42') | first).config_data.template_inputs.link_mtu == 9216
+          - (nm_msite_underlay_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/43') | list) | length == 1
+          - nm_msite_underlay_replace_again is not changed
+
+    - name: Delete multisiteUnderlay link Eth1/42 (deleted - check mode)
+      cisco.nd.nd_links: &msite_underlay_delete_one
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/42
+            dst_interface_name: Ethernet1/42
+        state: deleted
+      check_mode: true
+      register: cm_msite_underlay_delete
+
+    - name: Delete multisiteUnderlay link Eth1/42 (deleted - normal mode)
+      cisco.nd.nd_links:
+        <<: *msite_underlay_delete_one
+      register: nm_msite_underlay_delete
+
+    - name: Delete multisiteUnderlay link Eth1/42 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *msite_underlay_delete_one
+      register: nm_msite_underlay_delete_again
+
+    - name: Bulk delete remaining multisiteUnderlay link
+      cisco.nd.nd_links: &msite_underlay_bulk_delete
+        config:
+          - src_fabric_name: '{{ test_fabric_msite_src }}'
+            dst_fabric_name: '{{ test_fabric_msite_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/43
+            dst_interface_name: Ethernet1/43
+        state: deleted
+      register: nm_msite_underlay_bulk_delete
+
+    - name: Bulk delete remaining multisiteUnderlay link again (idempotency)
+      cisco.nd.nd_links:
+        <<: *msite_underlay_bulk_delete
+      register: nm_msite_underlay_bulk_delete_again
+
+    - name: Asserts for multisiteUnderlay delete
+      ansible.builtin.assert:
+        that:
+          - cm_msite_underlay_delete is changed
+          - nm_msite_underlay_delete is changed
+          - (nm_msite_underlay_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/42') | list) | length == 0
+          - nm_msite_underlay_delete_again is not changed
+
+          - nm_msite_underlay_bulk_delete is changed
+          - (nm_msite_underlay_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/43') | list) | length == 0
+          - nm_msite_underlay_bulk_delete_again is not changed
+
+    - name: Final cleanup of multisiteUnderlay links
+      cisco.nd.nd_links:
+        <<: *msite_underlay_cleanup

@@ -1,0 +1,224 @@
+# Test code for the cisco.nd.nd_links module.
+# Copyright: (c) 2026, Shreyas Srish (@shrsr) <ssrish@cisco.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+- name: Run nd_links layer2Dci policy lifecycle (inter-fabric)
+  module_defaults:
+    cisco.nd.nd_links:
+      output_level: '{{ nd_output_level | default("debug") }}'
+      fabric_name: '{{ test_fabric_l2dci_src }}'
+      link_scope: manage
+  block:
+    - name: Ensure layer2Dci links do not exist before tests
+      cisco.nd.nd_links: &l2dci_cleanup
+        config:
+          - src_fabric_name: '{{ test_fabric_l2dci_src }}'
+            dst_fabric_name: '{{ test_fabric_l2dci_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+          - src_fabric_name: '{{ test_fabric_l2dci_src }}'
+            dst_fabric_name: '{{ test_fabric_l2dci_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+        state: deleted
+
+    - name: Create two layer2Dci links (merged - check mode)
+      cisco.nd.nd_links: &l2dci_create
+        config:
+          - src_fabric_name: '{{ test_fabric_l2dci_src }}'
+            dst_fabric_name: '{{ test_fabric_l2dci_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: layer2Dci
+              template_inputs:
+                trunk_allowed_vlans: "100,200,300"
+                native_vlan: 1
+                port_type_fast: true
+                mtu_type: jumbo
+                speed: auto
+                src_interface_description: ansible l2dci 30 source
+                dst_interface_description: ansible l2dci 30 destination
+          - src_fabric_name: '{{ test_fabric_l2dci_src }}'
+            dst_fabric_name: '{{ test_fabric_l2dci_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+            config_data:
+              policy_type: layer2Dci
+              template_inputs:
+                trunk_allowed_vlans: "all"
+                native_vlan: 1
+                mtu_type: jumbo
+                speed: auto
+        state: merged
+      check_mode: true
+      register: cm_l2dci_create
+
+    - name: Create two layer2Dci links (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *l2dci_create
+      register: nm_l2dci_create
+
+    - name: Create two layer2Dci links again (idempotency)
+      cisco.nd.nd_links:
+        <<: *l2dci_create
+      register: nm_l2dci_create_again
+
+    - name: Asserts for layer2Dci create
+      ansible.builtin.assert:
+        that:
+          - cm_l2dci_create is changed
+          - cm_l2dci_create.proposed | length == 2
+          - cm_l2dci_create.proposed.0.config_data.policy_type == "layer2Dci"
+          - cm_l2dci_create.proposed.0.config_data.template_inputs.trunk_allowed_vlans == "100,200,300"
+
+          - nm_l2dci_create is changed
+          - (nm_l2dci_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.policy_type == "layer2Dci"
+          - (nm_l2dci_create.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.trunk_allowed_vlans == "100,200,300"
+
+          - nm_l2dci_create_again is not changed
+
+    - name: Update layer2Dci link Eth1/30 (merged - check mode)
+      cisco.nd.nd_links: &l2dci_update
+        config:
+          - src_fabric_name: '{{ test_fabric_l2dci_src }}'
+            dst_fabric_name: '{{ test_fabric_l2dci_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: layer2Dci
+              template_inputs:
+                trunk_allowed_vlans: "100-150"
+                native_vlan: 10
+                src_interface_description: updated l2dci source
+                speed: auto
+        state: merged
+      check_mode: true
+      register: cm_l2dci_update
+
+    - name: Update layer2Dci link Eth1/30 (merged - normal mode)
+      cisco.nd.nd_links:
+        <<: *l2dci_update
+      register: nm_l2dci_update
+
+    - name: Update layer2Dci link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *l2dci_update
+      register: nm_l2dci_update_again
+
+    - name: Asserts for layer2Dci update
+      ansible.builtin.assert:
+        that:
+          - cm_l2dci_update is changed
+          - cm_l2dci_update.proposed.0.config_data.template_inputs.trunk_allowed_vlans == "100-150"
+
+          - nm_l2dci_update is changed
+          - (nm_l2dci_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.trunk_allowed_vlans == "100-150"
+          - (nm_l2dci_update.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.native_vlan == 10
+
+          - nm_l2dci_update_again is not changed
+
+    - name: Replace layer2Dci link Eth1/30 (replaced - check mode)
+      cisco.nd.nd_links: &l2dci_replace
+        config:
+          - src_fabric_name: '{{ test_fabric_l2dci_src }}'
+            dst_fabric_name: '{{ test_fabric_l2dci_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+            config_data:
+              policy_type: layer2Dci
+              template_inputs:
+                trunk_allowed_vlans: "all"
+                native_vlan: 1
+                mtu_type: jumbo
+                speed: auto
+        state: replaced
+      check_mode: true
+      register: cm_l2dci_replace
+
+    - name: Replace layer2Dci link Eth1/30 (replaced - normal mode)
+      cisco.nd.nd_links:
+        <<: *l2dci_replace
+      register: nm_l2dci_replace
+
+    - name: Replace layer2Dci link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *l2dci_replace
+      register: nm_l2dci_replace_again
+
+    - name: Asserts for layer2Dci replace
+      ansible.builtin.assert:
+        that:
+          - cm_l2dci_replace is changed
+          - nm_l2dci_replace is changed
+          - (nm_l2dci_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | first).config_data.template_inputs.trunk_allowed_vlans == "all"
+          - (nm_l2dci_replace.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 1
+          - nm_l2dci_replace_again is not changed
+
+    - name: Delete layer2Dci link Eth1/30 (deleted - check mode)
+      cisco.nd.nd_links: &l2dci_delete_one
+        config:
+          - src_fabric_name: '{{ test_fabric_l2dci_src }}'
+            dst_fabric_name: '{{ test_fabric_l2dci_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/30
+            dst_interface_name: Ethernet1/30
+        state: deleted
+      check_mode: true
+      register: cm_l2dci_delete
+
+    - name: Delete layer2Dci link Eth1/30 (deleted - normal mode)
+      cisco.nd.nd_links:
+        <<: *l2dci_delete_one
+      register: nm_l2dci_delete
+
+    - name: Delete layer2Dci link Eth1/30 again (idempotency)
+      cisco.nd.nd_links:
+        <<: *l2dci_delete_one
+      register: nm_l2dci_delete_again
+
+    - name: Bulk delete remaining layer2Dci link
+      cisco.nd.nd_links: &l2dci_bulk_delete
+        config:
+          - src_fabric_name: '{{ test_fabric_l2dci_src }}'
+            dst_fabric_name: '{{ test_fabric_l2dci_dst }}'
+            src_switch_name: '{{ test_switch_a }}'
+            dst_switch_name: '{{ test_switch_b }}'
+            src_interface_name: Ethernet1/31
+            dst_interface_name: Ethernet1/31
+        state: deleted
+      register: nm_l2dci_bulk_delete
+
+    - name: Bulk delete remaining layer2Dci link again (idempotency)
+      cisco.nd.nd_links:
+        <<: *l2dci_bulk_delete
+      register: nm_l2dci_bulk_delete_again
+
+    - name: Asserts for layer2Dci delete
+      ansible.builtin.assert:
+        that:
+          - cm_l2dci_delete is changed
+          - nm_l2dci_delete is changed
+          - (nm_l2dci_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/30') | list) | length == 0
+          - nm_l2dci_delete_again is not changed
+
+          - nm_l2dci_bulk_delete is changed
+          - (nm_l2dci_bulk_delete.after | selectattr('src_interface_name', 'eq', 'Ethernet1/31') | list) | length == 0
+          - nm_l2dci_bulk_delete_again is not changed
+
+    - name: Final cleanup of layer2Dci links
+      cisco.nd.nd_links:
+        <<: *l2dci_cleanup
