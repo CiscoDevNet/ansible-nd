@@ -11,6 +11,8 @@ fields to endpoint models without duplication.
 
 from __future__ import absolute_import, annotations, division, print_function
 
+from typing import Optional
+
 from ansible_collections.cisco.nd.plugins.module_utils.enums import BooleanStringEnum
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
