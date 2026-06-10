@@ -102,6 +102,8 @@ class TicketIdMixin(BaseModel):
     """Mixin for endpoints that require ticket_id parameter."""
 
     ticket_id: Optional[str] = Field(default=None, min_length=1, description="Change control ticket ID")
+
+
 class UpdateGroupNameMixin(BaseModel):
     """Mixin for endpoints that require update_group_name parameter."""
 
