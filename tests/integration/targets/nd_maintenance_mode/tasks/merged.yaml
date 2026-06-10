@@ -1,0 +1,243 @@
+---
+# Merged state tests for nd_maintenance_mode
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Convention: each scenario defines a YAML anchor on the first task and reuses
+# it via *alias for the normal-mode and idempotent re-runs. This is the YAML
+# anchor pattern requested by the reviewers (see feedback_integration_test_anchors).
+
+# ---------------------------------------------------------------------------
+# MERGED: single switch to maintenance, then idempotent, then restore, then idempotent
+# ---------------------------------------------------------------------------
+
+- name: "MERGED: Switch A to maintenance (check mode)"
+  cisco.nd.nd_maintenance_mode: &maint_a
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      mode: maintenance
+      switches:
+        - switch_ip: "{{ test_switch_ip_a }}"
+    state: merged
+  check_mode: true
+  register: cm_maint_a
+
+- name: "MERGED: Switch A to maintenance (normal mode)"
+  cisco.nd.nd_maintenance_mode: *maint_a
+  register: nm_maint_a
+
+- name: "MERGED: Verify Switch A maintenance applied"
+  ansible.builtin.assert:
+    that:
+      - cm_maint_a is changed
+      - nm_maint_a is changed
+
+- name: "MERGED IDEMP: Re-apply Switch A maintenance (check mode)"
+  cisco.nd.nd_maintenance_mode: *maint_a
+  check_mode: true
+  register: cm_idemp_maint_a
+
+- name: "MERGED IDEMP: Re-apply Switch A maintenance (normal mode)"
+  cisco.nd.nd_maintenance_mode: *maint_a
+  register: nm_idemp_maint_a
+
+- name: "MERGED IDEMP: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - cm_idemp_maint_a is not changed
+      - nm_idemp_maint_a is not changed
+
+- name: "MERGED: Restore Switch A to normal (check mode)"
+  cisco.nd.nd_maintenance_mode: &normal_a
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      mode: normal
+      switches:
+        - switch_ip: "{{ test_switch_ip_a }}"
+    state: merged
+  check_mode: true
+  register: cm_normal_a
+
+- name: "MERGED: Restore Switch A to normal (normal mode)"
+  cisco.nd.nd_maintenance_mode: *normal_a
+  register: nm_normal_a
+
+- name: "MERGED: Verify Switch A normal applied"
+  ansible.builtin.assert:
+    that:
+      - cm_normal_a is changed
+      - nm_normal_a is changed
+
+- name: "MERGED IDEMP: Re-apply Switch A normal (normal mode)"
+  cisco.nd.nd_maintenance_mode: *normal_a
+  register: nm_idemp_normal_a
+
+- name: "MERGED IDEMP: Verify no change for Switch A normal idempotent run"
+  ansible.builtin.assert:
+    that:
+      - nm_idemp_normal_a is not changed
+
+# ---------------------------------------------------------------------------
+# MERGED: multi-switch to maintenance with deploy + ticket_id
+# ---------------------------------------------------------------------------
+
+- name: "MERGED MULTI: Both switches to maintenance with ticket_id (check mode)"
+  cisco.nd.nd_maintenance_mode: &maint_ab
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      mode: maintenance
+      ticket_id: "CHG-NDMAINT-1"
+      switches:
+        - switch_ip: "{{ test_switch_ip_a }}"
+        - switch_ip: "{{ test_switch_ip_b }}"
+    state: merged
+  check_mode: true
+  register: cm_maint_ab
+
+- name: "MERGED MULTI: Both switches to maintenance (normal mode)"
+  cisco.nd.nd_maintenance_mode: *maint_ab
+  register: nm_maint_ab
+
+- name: "MERGED MULTI: Verify both moved to maintenance"
+  ansible.builtin.assert:
+    that:
+      - cm_maint_ab is changed
+      - nm_maint_ab is changed
+
+- name: "MERGED MULTI IDEMP: Re-apply (normal mode)"
+  cisco.nd.nd_maintenance_mode: *maint_ab
+  register: nm_idemp_maint_ab
+
+- name: "MERGED MULTI IDEMP: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_idemp_maint_ab is not changed
+
+- name: "MERGED MULTI: Restore both to normal (normal mode)"
+  cisco.nd.nd_maintenance_mode: &normal_ab
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      mode: normal
+      switches:
+        - switch_ip: "{{ test_switch_ip_a }}"
+        - switch_ip: "{{ test_switch_ip_b }}"
+    state: merged
+  register: nm_normal_ab
+
+- name: "MERGED MULTI: Verify both restored to normal"
+  ansible.builtin.assert:
+    that:
+      - nm_normal_ab is changed
+
+- name: "MERGED MULTI IDEMP: Re-apply normal (normal mode)"
+  cisco.nd.nd_maintenance_mode: *normal_ab
+  register: nm_idemp_normal_ab
+
+- name: "MERGED MULTI IDEMP: Verify no change"
+  ansible.builtin.assert:
+    that:
+      - nm_idemp_normal_ab is not changed
+
+# ---------------------------------------------------------------------------
+# MERGED: partial mismatch — A in maintenance, B in normal, request A=maintenance + B=maintenance
+# Only B should be touched, but the task as a whole still reports changed.
+# ---------------------------------------------------------------------------
+
+- name: "MERGED PARTIAL: Put A in maintenance first"
+  cisco.nd.nd_maintenance_mode: *maint_a
+  register: nm_partial_setup_a
+  failed_when: nm_partial_setup_a is not changed
+
+- name: "MERGED PARTIAL: Request both in maintenance (only B differs)"
+  cisco.nd.nd_maintenance_mode: *maint_ab
+  register: nm_partial_both
+
+- name: "MERGED PARTIAL: Verify changed=True (B was added)"
+  ansible.builtin.assert:
+    that:
+      - nm_partial_both is changed
+
+- name: "MERGED PARTIAL: Re-apply — now both are in maintenance, no change"
+  cisco.nd.nd_maintenance_mode: *maint_ab
+  register: nm_partial_both_idemp
+
+- name: "MERGED PARTIAL: Verify idempotent"
+  ansible.builtin.assert:
+    that:
+      - nm_partial_both_idemp is not changed
+
+# ---------------------------------------------------------------------------
+# NEGATIVE: unknown switch_ip — must fail with a clear message before any POST
+# ---------------------------------------------------------------------------
+
+- name: "NEGATIVE: Unknown switch_ip"
+  cisco.nd.nd_maintenance_mode:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      mode: maintenance
+      switches:
+        - switch_ip: "{{ bogus_switch_ip }}"
+    state: merged
+  register: nm_bad_ip
+  ignore_errors: true
+
+- name: "NEGATIVE: Verify bad switch_ip surfaced as a module failure"
+  ansible.builtin.assert:
+    that:
+      - nm_bad_ip is failed
+      - nm_bad_ip.msg is search("No switch found with fabricManagementIp")
+      - bogus_switch_ip in nm_bad_ip.msg
+
+# ---------------------------------------------------------------------------
+# NEGATIVE: unknown fabric_name — must fail at FabricContext pre-flight
+# ---------------------------------------------------------------------------
+
+- name: "NEGATIVE: Unknown fabric_name"
+  cisco.nd.nd_maintenance_mode:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: NOSUCHFABRIC
+    config:
+      mode: maintenance
+      switches:
+        - switch_ip: "{{ test_switch_ip_a }}"
+    state: merged
+  register: nm_bad_fabric
+  ignore_errors: true
+
+- name: "NEGATIVE: Verify bad fabric surfaced as a module failure"
+  ansible.builtin.assert:
+    that:
+      - nm_bad_fabric is failed
+      - nm_bad_fabric.msg is search("Fabric 'NOSUCHFABRIC' not found")
+
+# ---------------------------------------------------------------------------
+# CHECK_MODE: confirm a would-be change is reported but no mutation happens
+# ---------------------------------------------------------------------------
+
+- name: "CHECK_MODE: Reset A to normal so the next task would change it"
+  cisco.nd.nd_maintenance_mode: *normal_a
+
+- name: "CHECK_MODE: Request A to maintenance in check_mode"
+  cisco.nd.nd_maintenance_mode: *maint_a
+  check_mode: true
+  register: cm_check_only
+
+- name: "CHECK_MODE: Verify changed=True but no actual mutation"
+  ansible.builtin.assert:
+    that:
+      - cm_check_only is changed
+
+- name: "CHECK_MODE: Re-apply without check_mode — should still change (proves the previous task was a dry-run)"
+  cisco.nd.nd_maintenance_mode: *maint_a
+  register: nm_check_followup
+
+- name: "CHECK_MODE: Verify the followup actually changed (otherwise check_mode mutated the lab)"
+  ansible.builtin.assert:
+    that:
+      - nm_check_followup is changed
