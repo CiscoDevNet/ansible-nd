@@ -82,21 +82,25 @@ options:
                   bpdu_filter:
                     description:
                     - Spanning-tree BPDU filter setting for the interface.
+                    - It defaults to C(default) when unset during creation.
                     type: str
                     choices: [ enable, disable, default ]
                   bpdu_guard:
                     description:
                     - BPDU guard setting for the interface.
+                    - It defaults to C(enable) when unset during creation.
                     type: str
                     choices: [ enable, disable, default ]
                   cdp:
                     description:
                     - Whether Cisco Discovery Protocol is enabled on the interface.
+                    - It defaults to C(true) when unset during creation.
                     type: bool
                   debounce_timer:
                     description:
                     - Link debounce timer (in milliseconds).
                     - Valid range is 0-20000.
+                    - It defaults to C(100) when unset during creation.
                     type: int
                   debounce_linkup_timer:
                     description:
@@ -111,11 +115,13 @@ options:
                   duplex_mode:
                     description:
                     - The duplex mode of the interface.
+                    - It defaults to C(auto) when unset during creation.
                     type: str
                     choices: [ auto, full, half ]
                   error_detection_acl:
                     description:
                     - Whether error detection for access-list installation failures is enabled.
+                    - It defaults to C(true) when unset during creation.
                     type: bool
                   extra_config:
                     description:
@@ -124,6 +130,7 @@ options:
                   fec:
                     description:
                     - The forward error correction (FEC) mode for the interface.
+                    - It defaults to C(auto) when unset during creation.
                     type: str
                     choices: [ "auto", "fcFec", "off", "rsCons16", "rsFec", "rsIEEE" ]
                   inherit_bandwidth:
@@ -134,24 +141,29 @@ options:
                   link_type:
                     description:
                     - Spanning-tree link type.
+                    - It defaults to C(auto) when unset during creation.
                     type: str
                     choices: [ auto, pointToPoint, shared ]
                   monitor:
                     description:
                     - Whether switchport monitor for SPAN / ERSPAN is enabled.
+                    - It defaults to C(false) when unset during creation.
                     type: bool
                   mtu:
                     description:
                     - The MTU setting for the interface.
+                    - It defaults to C(jumbo) when unset during creation.
                     type: str
                     choices: [ default, jumbo ]
                   negotiate_auto:
                     description:
                     - Whether link auto-negotiation is enabled.
+                    - It defaults to C(true) when unset during creation.
                     type: bool
                   netflow:
                     description:
                     - Whether netflow is enabled on the interface.
+                    - It defaults to C(false) when unset during creation.
                     type: bool
                   netflow_monitor:
                     description:
@@ -165,18 +177,22 @@ options:
                   orphan_port:
                     description:
                     - Whether VPC orphan port suspension is enabled.
+                    - It defaults to C(false) when unset during creation.
                     type: bool
                   pfc:
                     description:
                     - Whether Priority Flow Control is enabled on the interface.
+                    - It defaults to C(false) when unset during creation.
                     type: bool
                   port_type_edge_trunk:
                     description:
                     - Whether spanning-tree edge port (PortFast) is enabled.
+                    - It defaults to C(true) when unset during creation.
                     type: bool
                   qos:
                     description:
                     - Whether a QoS policy is applied to the interface.
+                    - It defaults to C(false) when unset during creation.
                     type: bool
                   qos_policy:
                     description:
@@ -191,15 +207,18 @@ options:
                   speed:
                     description:
                     - The speed setting for the interface.
+                    - It defaults to C(auto) when unset during creation.
                     type: str
                     choices: [ auto, 10Mb, 100Mb, 1Gb, 2.5Gb, 5Gb, 10Gb, 25Gb, 40Gb, 50Gb, 100Gb, 200Gb, 400Gb, 800Gb ]
                   storm_control:
                     description:
                     - Whether traffic storm control is enabled on the interface.
+                    - It defaults to C(false) when unset during creation.
                     type: bool
                   storm_control_action:
                     description:
                     - Storm control action on threshold violation.
+                    - It defaults to C(default) when unset during creation.
                     type: str
                     choices: [ shutdown, trap, default ]
                   storm_control_broadcast_level:
