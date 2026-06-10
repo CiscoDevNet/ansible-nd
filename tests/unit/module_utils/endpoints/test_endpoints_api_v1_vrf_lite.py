@@ -14,10 +14,7 @@ def test_endpoints_api_v1_vrf_lite_00100_runtime_endpoints_use_develop_manage_pa
     assert VrfLiteEndpoints.vrf_attachments_query("Fab A") == "/api/v1/manage/fabrics/Fab%20A/vrfAttachments/query"
     assert VrfLiteEndpoints.vrf_attachments_post("Fab A") == "/api/v1/manage/fabrics/Fab%20A/vrfAttachments"
     assert VrfLiteEndpoints.vrf_deployments("Fab A") == "/api/v1/manage/fabrics/Fab%20A/vrfActions/deploy"
-    assert (
-        VrfLiteEndpoints.vrf_switch("Fab A", "BLUE", "SN1")
-        == "/api/v1/manage/fabrics/Fab%20A/vrfs/switches?vrf-names=BLUE&serial-numbers=SN1"
-    )
+    assert VrfLiteEndpoints.vrf_switch("Fab A", "BLUE", "SN1") == "/api/v1/manage/fabrics/Fab%20A/vrfs/switches?vrf-names=BLUE&serial-numbers=SN1"
     assert VrfLiteEndpoints.reserve_id("Fab A") == "/api/v1/manage/fabrics/Fab%20A/resource-manager/reserve-id"
     assert VrfLiteEndpoints.fabric_switches("Fab A") == "/api/v1/manage/fabrics/Fab%20A/switches"
     assert VrfLiteEndpoints.config_save("Fab A") == "/api/v1/manage/fabrics/Fab%20A/actions/configSave"

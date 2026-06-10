@@ -28,7 +28,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy im
     _target_vrfs_for_deploy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
-    _query_vrf_attachments,
     query_vrf_lite_state,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_payloads import (

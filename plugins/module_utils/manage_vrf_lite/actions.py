@@ -220,7 +220,6 @@ def _entry_vlan_id(module: Any, entry: Any, raw_attach: dict[str, Any] | None = 
         vrf_name=entry.vrf_name,
         switch_ip=entry.switch_ip,
     )
-    raise RuntimeError("unreachable")  # _raise_vrf_lite_error always raises
 
 
 def build_attach_payload_for_entry(module: Any, nd_v2: Any, entry: Any) -> dict[str, Any]:

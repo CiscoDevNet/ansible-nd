@@ -105,8 +105,7 @@ class VrfLiteAttachmentEntry(NDBaseModel):
                     merged_extensions[key] = existing_item.merge(item)
 
             merged_data["extensions"] = [
-                item.model_dump(by_alias=False, exclude_none=False)
-                for _key, item in sorted(merged_extensions.items(), key=lambda kv: kv[0])
+                item.model_dump(by_alias=False, exclude_none=False) for _key, item in sorted(merged_extensions.items(), key=lambda kv: kv[0])
             ]
 
         return type(self).model_validate(merged_data, by_name=True, by_alias=True)

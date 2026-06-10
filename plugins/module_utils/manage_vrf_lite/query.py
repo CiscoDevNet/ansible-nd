@@ -329,9 +329,7 @@ def query_vrf_lite_state(
             else:
                 continue
 
-            attach_state = str(
-                _value_from_attachment_or_detail(attach, switch_detail, "lanAttachState", "lanAttachedState") or ""
-            ).upper()
+            attach_state = str(_value_from_attachment_or_detail(attach, switch_detail, "lanAttachState", "lanAttachedState") or "").upper()
             attached_value = attach.get(
                 "isLanAttached",
                 attach.get(
@@ -343,10 +341,7 @@ def query_vrf_lite_state(
             extension_values = _value_from_attachment_or_detail(attach, switch_detail, "extensionValues")
             # For VRF Lite, include entries that have extension values even if
             # not yet lan-attached (pending save/deploy state).
-            has_extension_values = bool(
-                extension_values and str(extension_values).strip()
-                and str(extension_values).strip() != "[]"
-            )
+            has_extension_values = bool(extension_values and str(extension_values).strip() and str(extension_values).strip() != "[]")
             if not is_attached and not has_extension_values:
                 continue
 
@@ -405,9 +400,7 @@ def query_vrf_lite_state(
     module.params["_known_vrfs"] = sorted(known_vrfs)
     module.params["_raw_vrf_attachment_map"] = raw_vrf_attachment_map
     module.params["_vrf_lite_vrf_vlan_map"] = {
-        item.get("vrf_name"): item.get("vlan_id")
-        for item in result
-        if item.get("vrf_name") and item.get("vlan_id") is not None
+        item.get("vrf_name"): item.get("vlan_id") for item in result if item.get("vrf_name") and item.get("vlan_id") is not None
     }
 
     if flat:

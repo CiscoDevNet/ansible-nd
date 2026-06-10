@@ -100,17 +100,23 @@ def test_empty_string_evpn_rt_coerced_to_none():
 
 
 def test_merge_preserves_unmentioned_interfaces():
-    base = VrfLiteAttachmentEntry.from_config({
-        "vrf_name": "X", "switch_ip": "1.1.1.1",
-        "extensions": [
-            {"interface": "Eth1", "dot1q": 100},
-            {"interface": "Eth2", "dot1q": 200},
-        ],
-    })
-    incoming = VrfLiteAttachmentEntry.from_config({
-        "vrf_name": "X", "switch_ip": "1.1.1.1",
-        "extensions": [{"interface": "Eth1", "dot1q": 150}],
-    })
+    base = VrfLiteAttachmentEntry.from_config(
+        {
+            "vrf_name": "X",
+            "switch_ip": "1.1.1.1",
+            "extensions": [
+                {"interface": "Eth1", "dot1q": 100},
+                {"interface": "Eth2", "dot1q": 200},
+            ],
+        }
+    )
+    incoming = VrfLiteAttachmentEntry.from_config(
+        {
+            "vrf_name": "X",
+            "switch_ip": "1.1.1.1",
+            "extensions": [{"interface": "Eth1", "dot1q": 150}],
+        }
+    )
     merged = base.merge(incoming)
     by_iface = {e.interface: e.dot1q for e in merged.extensions}
     assert by_iface == {"Eth1": 150, "Eth2": 200}
@@ -130,14 +136,20 @@ def test_merge_empty_extensions_list_preserves_existing():
     extensions are preserved so that a playbook mentioning a VRF attachment
     without specifying extensions does not accidentally remove them.
     """
-    base = VrfLiteAttachmentEntry.from_config({
-        "vrf_name": "X", "switch_ip": "1.1.1.1",
-        "extensions": [{"interface": "Eth1", "dot1q": 100}],
-    })
-    incoming = VrfLiteAttachmentEntry.from_config({
-        "vrf_name": "X", "switch_ip": "1.1.1.1",
-        "extensions": [],
-    })
+    base = VrfLiteAttachmentEntry.from_config(
+        {
+            "vrf_name": "X",
+            "switch_ip": "1.1.1.1",
+            "extensions": [{"interface": "Eth1", "dot1q": 100}],
+        }
+    )
+    incoming = VrfLiteAttachmentEntry.from_config(
+        {
+            "vrf_name": "X",
+            "switch_ip": "1.1.1.1",
+            "extensions": [],
+        }
+    )
     merged = base.merge(incoming)
     assert merged.extensions is not None and len(merged.extensions) == 1
     assert merged.extensions[0].interface == "Eth1"
@@ -168,14 +180,16 @@ def test_collection_keys_use_tuples():
 
 
 def test_flatten_emits_one_entry_per_switch():
-    nested = [{
-        "vrf_name": "TENANT_A",
-        "vlan_id": 500,
-        "attach": [
-            {"ip_address": "10.10.10.11", "deploy": True, "vrf_lite": [{"interface": "Eth1"}]},
-            {"ip_address": "10.10.10.12", "deploy": True},
-        ],
-    }]
+    nested = [
+        {
+            "vrf_name": "TENANT_A",
+            "vlan_id": 500,
+            "attach": [
+                {"ip_address": "10.10.10.11", "deploy": True, "vrf_lite": [{"interface": "Eth1"}]},
+                {"ip_address": "10.10.10.12", "deploy": True},
+            ],
+        }
+    ]
     flat = _flatten_to_entries(nested)
     assert [e["switch_ip"] for e in flat] == ["10.10.10.11", "10.10.10.12"]
     assert all(e["vrf_name"] == "TENANT_A" for e in flat)
@@ -195,7 +209,9 @@ def test_flatten_sorts_by_vrf_then_switch():
     ]
     flat = _flatten_to_entries(nested)
     assert [(e["vrf_name"], e["switch_ip"]) for e in flat] == [
-        ("A", "3.3.3.3"), ("B", "1.1.1.1"), ("B", "2.2.2.2"),
+        ("A", "3.3.3.3"),
+        ("B", "1.1.1.1"),
+        ("B", "2.2.2.2"),
     ]
 
 

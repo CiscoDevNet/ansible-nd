@@ -95,8 +95,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                 deploy_requested = "deploy" in raw_config_actions and normalized_actions.get("deploy") is True
                 if save_requested or deploy_requested:
                     module.fail_json(
-                        msg="config_actions.save/config_actions.deploy are not allowed with 'gathered' state. "
-                        "Gathered workflows are strictly read-only."
+                        msg="config_actions.save/config_actions.deploy are not allowed with 'gathered' state. " "Gathered workflows are strictly read-only."
                     )
 
             config_actions = {
@@ -307,11 +306,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             value = result.get(key)
             if not isinstance(value, list):
                 continue
-            has_flat_entries = any(
-                isinstance(item, VrfLiteAttachmentEntry)
-                or (isinstance(item, dict) and "switch_ip" in item)
-                for item in value
-            )
+            has_flat_entries = any(isinstance(item, VrfLiteAttachmentEntry) or (isinstance(item, dict) and "switch_ip" in item) for item in value)
             should_preserve_empty_scope = not value and include_vrfs and key in scoped_empty_keys
             if has_flat_entries or should_preserve_empty_scope:
                 result[key] = group_attachment_entries_to_vrfs(value, module=module, include_vrfs=include_vrfs)

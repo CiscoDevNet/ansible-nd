@@ -60,10 +60,7 @@ def _resolve_serial(module: Any, switch_identifier: Any) -> str:
 
     if _is_ip_literal(text):
         _raise_vrf_lite_error(
-            msg=(
-                "Switch identifier '{0}' appears to be an IP, but it could not "
-                "be resolved to a fabric switch serial number."
-            ).format(text),
+            msg=("Switch identifier '{0}' appears to be an IP, but it could not " "be resolved to a fabric switch serial number.").format(text),
             switch_id=text,
         )
 
