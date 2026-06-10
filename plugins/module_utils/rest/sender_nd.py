@@ -129,7 +129,14 @@ class Sender:
         caller = self._get_caller_name()
 
         if self._connection is None:
-            self._connection = Connection(self.ansible_module._socket_path)  # pylint: disable=protected-access
+            nd_client = getattr(self.ansible_module, "_nd_client", None)
+            if nd_client is not None:
+                from ansible_collections.cisco.nd.plugins.module_utils.client.nd_client_connection import (
+                    NDClientConnection,
+                )
+                self._connection = NDClientConnection(nd_client)
+            else:
+                self._connection = Connection(self.ansible_module._socket_path)  # pylint: disable=protected-access
             self._connection.set_params(self.ansible_module.params)
 
         msg = f"{self.class_name}.{method_name}: "

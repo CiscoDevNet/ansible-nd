@@ -164,11 +164,14 @@ from ansible.module_utils.basic import AnsibleModule  # noqa: F401  (retained fo
 from ansible_collections.cisco.nd.plugins.module_utils.client.build_module import build_module
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.links.links import NDLinkModel
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule, nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.links import NDLinkOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.manage_link import ManageLinkStrategy
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.one_manage_link import OneManageLinkStrategy
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
 
 def determine_strategy(module):
@@ -228,8 +231,18 @@ def main():
         strategy = determine_strategy(module)
         NDLinkModel.identifiers = strategy.identifier_fields
 
-        nd_module = NDModule(module)
-        orchestrator = NDLinkOrchestrator(sender=nd_module, strategy=strategy)
+        sender = Sender()
+        sender.ansible_module = module
+        rest_send = RestSend(
+            {
+                "check_mode": module.check_mode,
+                "state": module.params.get("state"),
+            }
+        )
+        rest_send.sender = sender
+        rest_send.response_handler = ResponseHandler()
+
+        orchestrator = NDLinkOrchestrator(rest_send=rest_send, strategy=strategy)
 
         state_machine = NDStateMachine(module=module, model_orchestrator=orchestrator)
         state_machine.manage_state()

@@ -5,6 +5,8 @@
 
 from __future__ import absolute_import, division, print_function
 
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from typing import Any, ClassVar, Dict, Generic, List, Optional, Type, TypeVar
 
@@ -44,6 +46,14 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     model_class: ClassVar[Type[NDBaseModel]] = NDBaseModel
     supports_bulk_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = False
+
+    # Subclasses override to opt in to parallel chunked bulk POSTs.
+    # bulk_payload_key is the JSON wrapper key the bulk endpoint expects,
+    # e.g. "links" for /api/v1/manage/links POST.  bulk_max_workers caps
+    # concurrent in-flight chunks; 2 matches the per-fabric server-side
+    # ceiling measured against the manage/links endpoint.
+    bulk_payload_key: ClassVar[str] = "items"
+    bulk_max_workers: ClassVar[int] = 2
 
     # NOTE: if not defined by subclasses, return an error as they are required
     create_endpoint: Type[NDEndpointBaseModel]
@@ -140,6 +150,93 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
         if self.supports_bulk_delete and self.delete_bulk_endpoint is None:
             raise ValueError(f"'{self.__class__.__name__}' has 'supports_bulk_delete=True' but 'delete_bulk_endpoint' is not defined.")
         return self
+
+    def _post_bulk_parallel(self, endpoint: NDEndpointBaseModel, items: List[Any], op: str) -> Dict[str, Any]:
+        """Generic parallel chunked POST for bulk endpoints.
+
+        Splits ``items`` into ``bulk_max_workers`` chunks and POSTs them
+        concurrently via the underlying ``NDClient`` whose ``requests.Session``
+        is thread-safe.  Falls back to a single POST through the standard
+        RestSend path for one-item bulks, single-worker configs, or the
+        httpapi connection (whose Unix-domain socket is not thread-safe).
+
+        The merged response has the same shape as a single bulk response:
+        ``{bulk_payload_key: [<concatenated items in input order>]}``, so the
+        existing per-item failure surfacing (``_raise_on_bulk_failures``)
+        works unchanged on the merged value.
+
+        Raises ``Exception`` if any chunk fails at the HTTP level (non-207
+        4xx/5xx) and surfaces which chunks landed on the controller versus
+        which were lost — parallel chunking lowers the atomicity boundary
+        from "whole bulk call" to "per chunk".
+        """
+        if not items:
+            return {}
+
+        payload_key = self.bulk_payload_key
+        sender = self.rest_send.sender
+        ansible_module = getattr(sender, "_ansible_module", None)
+        nd_client = getattr(ansible_module, "_nd_client", None)
+        workers = min(self.bulk_max_workers, len(items))
+
+        # Single-POST fallback: N==1, capped at 1 worker, or httpapi path
+        # (no NDClient → can't parallelize safely).  Goes through the normal
+        # RestSend pipeline so response_handler / result aggregation still run.
+        if len(items) == 1 or workers <= 1 or nd_client is None:
+            return self._request(endpoint.path, endpoint.verb, data={payload_key: items}) or {}
+
+        chunk_size = (len(items) + workers - 1) // workers  # ceil(N/workers)
+        chunks = [items[i : i + chunk_size] for i in range(0, len(items), chunk_size)]
+
+        verb_str = endpoint.verb.value if hasattr(endpoint.verb, "value") else str(endpoint.verb)
+        path = endpoint.path
+
+        def _post_chunk(chunk: List[Any]) -> Dict[str, Any]:
+            info = nd_client.request(verb_str, path, data=json.dumps({payload_key: chunk}))
+            rc = info.get("RETURN_CODE") or info.get("status") or 0
+            # 200/201 success, 207 multi-status (per-item failures are caught by
+            # _raise_on_bulk_failures on the merged response).  Anything else fails.
+            if rc and rc >= 400 and rc != 207:
+                msg = info.get("MESSAGE") or info.get("msg") or "unknown error"
+                raise Exception("HTTP {0} on bulk {1}: {2}".format(rc, op, msg))
+            return info.get("DATA") or {}
+
+        results: Dict[int, Dict[str, Any]] = {}
+        errors: Dict[int, Any] = {}
+        futures = {}
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for idx, chunk in enumerate(chunks):
+                futures[ex.submit(_post_chunk, chunk)] = (idx, chunk)
+            # Wait for ALL chunks before deciding, never bail out early, or
+            # we lose visibility into what the other in-flight chunk did.
+            for fut in as_completed(futures):
+                idx, chunk = futures[fut]
+                try:
+                    results[idx] = fut.result()
+                except Exception as e:  # pragma: no cover - surfaced below
+                    errors[idx] = (chunk, e)
+
+        if errors:
+            success_count = sum(
+                len(((results.get(i) or {}).get(payload_key)) or []) for i in results
+            )
+            lines = [
+                "Parallel bulk {0} failed in {1}/{2} chunk(s).  Successful chunks "
+                "created/processed {3} item(s); these are now on the controller.".format(
+                    op, len(errors), len(chunks), success_count
+                ),
+            ]
+            for idx, (chunk, err) in sorted(errors.items()):
+                lines.append("  Chunk {0} ({1} items): {2}".format(idx, len(chunk), err))
+            raise Exception("\n".join(lines))
+
+        # Merge in input chunk order so callers see the same shape as a single POST.
+        merged: Dict[str, List[Any]] = {payload_key: []}
+        for idx in sorted(results):
+            chunk_items = (results[idx] or {}).get(payload_key)
+            if isinstance(chunk_items, list):
+                merged[payload_key].extend(chunk_items)
+        return merged
 
     @requires_bulk_support("supports_bulk_create")
     def create_bulk(self, model_instances: List[ModelType], **kwargs) -> ResponseType:

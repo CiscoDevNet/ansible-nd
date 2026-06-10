@@ -7,12 +7,17 @@ import logging
 from typing import ClassVar, Dict, List, Optional, Type
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import model_validator
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.links.links import NDLinkModel
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_link import BaseLinkStrategy
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.utils import FabricSwitchIndex
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import FabricSwitchInventory
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory_helpers import (
+    by_name as inventory_by_name,
+    inventory_for_fabric,
+)
 
 
 class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
@@ -27,6 +32,7 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
     model_class: ClassVar[Type[NDBaseModel]] = NDLinkModel
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    bulk_payload_key: ClassVar[str] = "links"
 
     strategy: Optional[BaseLinkStrategy] = None
 
@@ -57,9 +63,9 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         object.__setattr__(self, "_switch_index_by_fabric", {})
         object.__setattr__(self, "_log", logging.getLogger("nd.LinkOrchestrator"))
 
-    def _index_for_fabric(self, fabric_name: str) -> FabricSwitchIndex:
+    def _index_for_fabric(self, fabric_name: str) -> FabricSwitchInventory:
         if fabric_name not in self._switch_index_by_fabric:
-            self._switch_index_by_fabric[fabric_name] = FabricSwitchIndex.from_fabric(self.sender, fabric_name, self._log)
+            self._switch_index_by_fabric[fabric_name] = inventory_for_fabric(self.rest_send, fabric_name, self._log)
         return self._switch_index_by_fabric[fabric_name]
 
     def prepare_config_data(self, raw_config):
@@ -94,63 +100,42 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         index = self._index_for_fabric(fabric)
 
         if sid:
-            info = index.by_id.get(sid)
-            if not info:
+            sw = index.by_id().get(sid)
+            if not sw:
                 raise Exception(
                     "Could not find switch with {0}_switch_id='{1}' in fabric '{2}'.".format(side, sid, fabric)
                 )
-            if info.get("name"):
-                entry[name_key] = info["name"]
+            if sw.hostname:
+                entry[name_key] = sw.hostname
             return
 
         if ip:
-            resolved = index.by_ip.get(ip)
-            if not resolved:
+            sw = index.by_ip().get(ip)
+            if not sw:
                 raise Exception(
                     "Could not resolve {0}_switch_ip='{1}' in fabric '{2}'. "
                     "No switch with that management IP was found.".format(side, ip, fabric)
                 )
-            entry[id_key] = resolved
-            info = index.by_id.get(resolved)
-            if info and info.get("name"):
-                entry[name_key] = info["name"]
+            entry[id_key] = sw.switch_id
+            if sw.hostname:
+                entry[name_key] = sw.hostname
             return
 
-        matches = index.by_name.get(name, [])
+        matches = inventory_by_name(index).get(name, [])
         if len(matches) == 1:
-            entry[id_key] = matches[0]
+            entry[id_key] = matches[0].switch_id
             return
         if len(matches) > 1:
+            ids = [m.switch_id for m in matches]
             raise Exception(
                 "{0}_switch_name='{1}' is ambiguous in fabric '{2}' "
                 "(matches {3} switches: {4}). Use {0}_switch_ip or "
-                "{0}_switch_id to disambiguate.".format(side, name, fabric, len(matches), ", ".join(matches))
+                "{0}_switch_id to disambiguate.".format(side, name, fabric, len(matches), ", ".join(ids))
             )
         raise Exception(
             "Could not resolve {0}_switch_name='{1}' in fabric '{2}'. "
             "No switch with that hostname was found.".format(side, name, fabric)
         )
-
-    def _resolve_switch_ids(self, model_instances: List[NDLinkModel]) -> None:
-        for item in model_instances:
-            if not item.src_switch_id and item.src_fabric_name and (item.src_switch_ip or item.src_switch_name):
-                sid = self._index_for_fabric(item.src_fabric_name).resolve(
-                    switch_ip=item.src_switch_ip,
-                    switch_name=item.src_switch_name,
-                    fabric_name=item.src_fabric_name,
-                    side="src",
-                )
-                if sid:
-                    item.src_switch_id = sid
-            if not item.dst_switch_id and item.dst_fabric_name and (item.dst_switch_ip or item.dst_switch_name):
-                sid = self._index_for_fabric(item.dst_fabric_name).resolve(
-                    switch_ip=item.dst_switch_ip,
-                    switch_name=item.dst_switch_name,
-                    fabric_name=item.dst_fabric_name,
-                    side="dst",
-                )
-                if sid:
-                    item.dst_switch_id = sid
 
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
         """GET all links in scope and populate linkId / policy_type caches."""
@@ -163,7 +148,7 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
                 qs = "&".join("{0}={1}".format(k, v) for k, v in params.items())
                 path = "{0}?{1}".format(path, qs)
 
-            result = self.sender.query_obj(path)
+            result = self._request(path, HttpVerbEnum.GET, not_found_ok=True)
 
             if isinstance(result, dict):
                 links_list = result.get("items", result.get("links", []))
@@ -233,18 +218,18 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         return self.create_bulk([model_instance])
 
     def create_bulk(self, model_instances: List[NDLinkModel], **kwargs) -> ResponseType:
-        """Bulk POST with switch id resolution and 207 body failure surfacing."""
+        """Bulk POST with 207 body failure surfacing. Switch ids are backfilled in prepare_config_data.
+
+        Multi-item bulks are split across ``bulk_max_workers`` parallel POSTs
+        on the NDClient path (see ``NDBaseOrchestrator._post_bulk_parallel``);
+        single-item bulks and httpapi fall through to one POST.
+        """
         if not model_instances:
             return {}
         try:
-            self._resolve_switch_ids(model_instances)
             endpoint = self.strategy.links_post_cls()
-            payload = {"links": [inst.to_payload() for inst in model_instances]}
-            response = self.sender.request(
-                path=endpoint.path,
-                method=endpoint.verb,
-                data=payload,
-            )
+            items = [inst.to_payload() for inst in model_instances]
+            response = self._post_bulk_parallel(endpoint, items, op="create")
             self._raise_on_bulk_failures(response, op="create")
             return response
         except Exception as e:
@@ -264,16 +249,11 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
             )
 
         try:
-            self._resolve_switch_ids([model_instance])
             link_id = self._resolve_link_id(model_instance)
             endpoint = self.strategy.link_put_cls()
             path = "{0}/{1}".format(endpoint.path, link_id)
 
-            return self.sender.request(
-                path=path,
-                method=endpoint.verb,
-                data=model_instance.to_payload(),
-            )
+            return self._request(path, endpoint.verb, data=model_instance.to_payload())
         except Exception as e:
             raise Exception(
                 "Update failed for {0}: {1}".format(model_instance.get_identifier_value(), e)
@@ -284,18 +264,18 @@ class NDLinkOrchestrator(NDBaseOrchestrator["NDLinkModel"]):
         return self.delete_bulk([model_instance])
 
     def delete_bulk(self, model_instances: List[NDLinkModel], **kwargs) -> ResponseType:
-        """Bulk POST /linkActions/remove with 207 body failure surfacing."""
+        """Bulk POST /linkActions/remove with 207 body failure surfacing.
+
+        Multi-item bulks are split across ``bulk_max_workers`` parallel POSTs
+        on the NDClient path (see ``NDBaseOrchestrator._post_bulk_parallel``);
+        single-item bulks and httpapi fall through to one POST.
+        """
         if not model_instances:
             return {}
         try:
             link_ids = [self._resolve_link_id(inst) for inst in model_instances]
             endpoint = self.strategy.link_actions_remove_post_cls()
-            payload = {"links": link_ids}
-            response = self.sender.request(
-                path=endpoint.path,
-                method=endpoint.verb,
-                data=payload,
-            )
+            response = self._post_bulk_parallel(endpoint, link_ids, op="delete")
             self._raise_on_bulk_failures(response, op="delete")
             return response
         except Exception as e:
