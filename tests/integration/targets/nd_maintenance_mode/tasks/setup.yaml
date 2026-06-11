@@ -1,0 +1,24 @@
+---
+# Pre-test setup for nd_maintenance_mode
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+# Called from main.yaml before the merged-state tests. Restores both test
+# switches to mode 'normal' so the merged tests have a known baseline. The
+# teardown task does the same, so the lab returns to mode normal whether the
+# tests pass or fail.
+#
+# NOTE: this clobbers any operator-set maintenance mode on the test switches.
+
+- name: "SETUP: Force both test switches to mode normal"
+  cisco.nd.nd_maintenance_mode:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      mode: normal
+      switches:
+        - switch_ip: "{{ test_switch_ip_a }}"
+        - switch_ip: "{{ test_switch_ip_b }}"
+    state: merged
+  tags: always
