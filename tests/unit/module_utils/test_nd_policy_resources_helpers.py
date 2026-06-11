@@ -222,7 +222,7 @@ def test_nd_policy_resources_helpers_00220() -> None:
     # Summary
 
     Verify ``_strip_internal({})`` returns a fresh empty dict (not the
-    same object) — guards against accidental aliasing.
+    same object) -- guards against accidental aliasing.
 
     ## Test
 
@@ -261,7 +261,7 @@ def test_nd_policy_resources_helpers_00230() -> None:
         "description": "Enable LACP",
         "priority": 100,
         "template_inputs": {"featureName": "lacp"},
-        "create_additional_policy": True,  # internal — must be stripped
+        "create_additional_policy": True,  # internal -- must be stripped
     }
 
     out = NDPolicyModule._strip_internal(src)
@@ -492,7 +492,7 @@ def test_nd_policy_resources_helpers_00430() -> None:
     # Summary
 
     Verify ``_build_lucene_filter`` escapes value-side special characters
-    via ``_escape_lucene_value`` (keys are not escaped — they are always
+    via ``_escape_lucene_value`` (keys are not escaped -- they are always
     ND schema fields).
 
     ## Test
@@ -673,7 +673,7 @@ def test_nd_policy_resources_helpers_00550() -> None:
 
     Verify ``_policies_differ`` preserves case when comparing
     ``templateInputs`` (NX-OS commands and descriptions are
-    case-sensitive — a lower-case fold would hide genuine drift).
+    case-sensitive -- a lower-case fold would hide genuine drift).
 
     ## Test
 
@@ -1192,7 +1192,7 @@ def test_nd_policy_resources_helpers_00790() -> None:
     Verify the "mixed shape" guard: combining legacy two-level entries
     (named entries WITHOUT embedded ``switch:``) with self-contained
     entries (named entries WITH embedded ``switch:``) in the same
-    config raises ``NDModuleError`` — silently misinterpreting the
+    config raises ``NDModuleError`` -- silently misinterpreting the
     self-contained entry as the global switch entry would drop its
     policy fields on the floor.
 
