@@ -3,17 +3,20 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
-from typing import Type, Union, List, Any, Callable, Optional
+from typing import Any, Callable
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd import NDModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import NDConfigCollection
+from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
-from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
 
 class NDStateMachine:
@@ -21,22 +24,35 @@ class NDStateMachine:
     Generic State Machine for Nexus Dashboard (Bulk Support).
     """
 
-    def __init__(self, module: AnsibleModule, model_orchestrator: Union[Type[NDBaseOrchestrator], NDBaseOrchestrator]):
+    def __init__(self, module: AnsibleModule, model_orchestrator: type[NDBaseOrchestrator] | NDBaseOrchestrator):
         """
         Initialize the ND State Machine.
         """
         self.module = module
-        self.nd_module = NDModule(self.module)
+
+        # REST infrastructure
+        sender = Sender()
+        sender.ansible_module = self.module
+
+        rest_send_params = dict(self.module.params)
+        rest_send_params["check_mode"] = self.module.check_mode
+        self.rest_send = RestSend(rest_send_params)
+        self.rest_send.sender = sender
+        self.rest_send.response_handler = ResponseHandler()
 
         # Operation tracking
         self.output = NDOutput(output_level=module.params.get("output_level", "normal"))
+        self.results = Results()
+        self.results.state = self.module.params.get("state", "")
+        self.results.check_mode = self.module.check_mode
 
         # Configuration
         # Accept either an orchestrator instance or a class.
         if isinstance(model_orchestrator, type) and issubclass(model_orchestrator, NDBaseOrchestrator):
-            self.model_orchestrator = model_orchestrator(sender=self.nd_module)
+            self.model_orchestrator = model_orchestrator(rest_send=self.rest_send, results=self.results)
         elif isinstance(model_orchestrator, NDBaseOrchestrator):
             self.model_orchestrator = model_orchestrator
+            self.model_orchestrator.results = self.results
         else:
             raise NDStateMachineError(f"model_orchestrator must be an NDBaseOrchestrator class or instance. Got: {type(model_orchestrator)}")
 
@@ -89,7 +105,7 @@ class NDStateMachine:
         *args: Any,
         error_msg_prefix: str = "Operation failed",
         **kwargs: Any,
-    ) -> Optional[ResponseType]:
+    ) -> ResponseType | None:
         """Execute an API operation with standardized error handling."""
         try:
             if not self.check_mode:
@@ -105,8 +121,8 @@ class NDStateMachine:
         """
         Handle merged/replaced/overridden states.
         """
-        items_to_create: List[NDBaseModel] = []
-        items_to_update: List[NDBaseModel] = []
+        items_to_create: list[NDBaseModel] = []
+        items_to_update: list[NDBaseModel] = []
 
         for proposed_item in self.proposed:
             identifier = None
@@ -185,7 +201,7 @@ class NDStateMachine:
         ]
         self._delete_items(items_to_delete)
 
-    def _delete_items(self, items: List[NDBaseModel]) -> None:
+    def _delete_items(self, items: list[NDBaseModel]) -> None:
         """Delete a list of items individually or in bulk."""
         if not items:
             return

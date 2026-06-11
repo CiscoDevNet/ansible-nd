@@ -8,29 +8,28 @@ from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
 
-from typing import Type
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp import FabricIbgpModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
+    EpManageFabricsDelete,
     EpManageFabricsGet,
     EpManageFabricsListGet,
     EpManageFabricsPost,
     EpManageFabricsPut,
-    EpManageFabricsDelete,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ibgp_vxlan import FabricIbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import NDBaseOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.types import ResponseType
 
 
 class ManageIbgpFabricOrchestrator(NDBaseOrchestrator):
-    model_class: Type[NDBaseModel] = FabricIbgpModel
+    model_class: type[NDBaseModel] = FabricIbgpModel
 
-    create_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsPost
-    update_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsPut
-    delete_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsDelete
-    query_one_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsGet
-    query_all_endpoint: Type[NDEndpointBaseModel] = EpManageFabricsListGet
+    create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPost
+    update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsPut
+    delete_endpoint: type[NDEndpointBaseModel] = EpManageFabricsDelete
+    query_one_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
+    query_all_endpoint: type[NDEndpointBaseModel] = EpManageFabricsListGet
 
     def query_all(self) -> ResponseType:
         """
@@ -39,7 +38,7 @@ class ManageIbgpFabricOrchestrator(NDBaseOrchestrator):
         """
         try:
             api_endpoint = self.query_all_endpoint()
-            result = self.sender.query_obj(api_endpoint.path)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             fabrics = result.get("fabrics", []) or []
             return [f for f in fabrics if f.get("management", {}).get("type") == "vxlanIbgp"]
         except Exception as e:

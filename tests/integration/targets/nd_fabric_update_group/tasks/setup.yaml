@@ -1,0 +1,21 @@
+---
+# Pre-test cleanup: delete any update groups left over from prior failed runs.
+# Copyright: (c) 2026, Allen Robel (@allenrobel)
+
+- name: "SETUP: Remove ansible_leaf_group if present"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - update_group_name: ansible_leaf_group
+    state: deleted
+  failed_when: false
+
+- name: "SETUP: Remove ansible_spine_group if present"
+  cisco.nd.nd_fabric_update_group:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - update_group_name: ansible_spine_group
+    state: deleted
+  failed_when: false

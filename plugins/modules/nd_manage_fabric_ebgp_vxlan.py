@@ -13,14 +13,15 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 
 DOCUMENTATION = r"""
 ---
-module: nd_manage_fabric_ebgp
-version_added: "1.4.0"
+module: nd_manage_fabric_ebgp_vxlan
+version_added: "2.0.0"
 short_description: Manage eBGP VXLAN fabrics on Cisco Nexus Dashboard
 description:
 - Manage eBGP VXLAN fabrics on Cisco Nexus Dashboard (ND).
 - It supports creating, updating, replacing, and deleting eBGP VXLAN fabrics.
 author:
 - Mike Wiebe (@mwiebe)
+- Matt Tarkington (@mtarking)
 options:
   config:
     description:
@@ -59,7 +60,7 @@ options:
         description:
         - The license tier for the fabric.
         type: str
-        default: premier
+        default: essentials
         choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
@@ -76,7 +77,7 @@ options:
         description:
         - The telemetry collection type.
         type: str
-        default: outOfBand
+        default: inBand
       telemetry_streaming_protocol:
         description:
         - The telemetry streaming protocol.
@@ -86,12 +87,12 @@ options:
         description:
         - The telemetry source interface.
         type: str
-        default: ""
+        default: loopback0
       telemetry_source_vrf:
         description:
         - The telemetry source VRF.
         type: str
-        default: ""
+        default: default
       security_domain:
         description:
         - The security domain associated with the fabric.
@@ -161,11 +162,6 @@ options:
             description:
             - In an IPv6 routed fabric or VXLAN EVPN fabric with IPv6 underlay, assign IPv4 address
               used for BGP Router ID to the routing loopback interface.
-            type: bool
-            default: true
-          evpn:
-            description:
-            - Enable BGP EVPN as the control plane and VXLAN as the data plane for this fabric.
             type: bool
             default: true
           route_map_tag:
@@ -649,7 +645,7 @@ options:
             description:
             - Enable NX-API over HTTPS.
             type: bool
-            default: false
+            default: true
           nxapi_http:
             description:
             - Enable NX-API over HTTP.
@@ -1375,7 +1371,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only eBGP VXLAN fabric type (C(vxlanEbgp)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
 - The O(config.management.bgp_asn) field is optional when O(config.management.bgp_asn_auto_allocation) is C(true).
@@ -1386,7 +1382,7 @@ notes:
 
 EXAMPLES = r"""
 - name: Create an eBGP VXLAN fabric using state merged (with auto ASN allocation)
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: merged
     config:
       - fabric_name: my_ebgp_fabric
@@ -1467,7 +1463,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Create an eBGP VXLAN fabric with a static BGP ASN
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: merged
     config:
       - fabric_name: my_ebgp_fabric_static
@@ -1493,7 +1489,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Update specific fields on an existing eBGP fabric using state merged (partial update)
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: merged
     config:
       - fabric_name: my_ebgp_fabric
@@ -1505,7 +1501,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Create or fully replace an eBGP VXLAN fabric using state replaced
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: replaced
     config:
       - fabric_name: my_ebgp_fabric
@@ -1558,7 +1554,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Replace fabric with only required fields (all optional settings revert to defaults)
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: replaced
     config:
       - fabric_name: my_ebgp_fabric
@@ -1572,7 +1568,7 @@ EXAMPLES = r"""
   register: result
 
 - name: Enforce exact fabric inventory using state overridden (deletes unlisted fabrics)
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: overridden
     config:
       - fabric_name: fabric_east
@@ -1632,14 +1628,14 @@ EXAMPLES = r"""
   register: result
 
 - name: Delete a specific eBGP fabric using state deleted
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: deleted
     config:
       - fabric_name: my_ebgp_fabric
   register: result
 
 - name: Delete multiple eBGP fabrics in a single task
-  cisco.nd.nd_manage_fabric_ebgp:
+  cisco.nd.nd_manage_fabric_ebgp_vxlan:
     state: deleted
     config:
       - fabric_name: fabric_east
@@ -1654,8 +1650,8 @@ RETURN = r"""
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp import FabricEbgpModel
-from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp import ManageEbgpFabricOrchestrator
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import FabricEbgpModel
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ebgp_vxlan import ManageEbgpFabricOrchestrator
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
 
 
@@ -1668,6 +1664,7 @@ def main():
         supports_check_mode=True,
     )
 
+    nd_state_machine = None
     try:
         # Initialize StateMachine
         nd_state_machine = NDStateMachine(
@@ -1678,12 +1675,17 @@ def main():
         # Manage state
         nd_state_machine.manage_state()
 
-        module.exit_json(**nd_state_machine.output.format())
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except NDStateMachineError as e:
-        module.fail_json(msg=str(e))
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=str(e), **output)
     except Exception as e:
-        module.fail_json(msg=f"Module execution failed: {str(e)}")
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=f"Module execution failed: {str(e)}", **output)
 
 
 if __name__ == "__main__":

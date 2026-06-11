@@ -14,13 +14,14 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_manage_fabric_external
-version_added: "1.4.0"
+version_added: "2.0.0"
 short_description: Manage External Connectivity fabrics on Cisco Nexus Dashboard
 description:
 - Manage External Connectivity fabrics on Cisco Nexus Dashboard (ND).
 - It supports creating, updating, replacing, and deleting External Connectivity fabrics.
 author:
 - Mike Wiebe (@mwiebe)
+- Matt Tarkington (@mtarking)
 options:
   config:
     description:
@@ -59,7 +60,7 @@ options:
         description:
         - License Tier value of a fabric.
         type: str
-        default: premier
+        default: essentials
         choices: [ essentials, advantage, premier ]
       alert_suspend:
         description:
@@ -76,7 +77,7 @@ options:
         description:
         - Telemetry collection method.
         type: str
-        default: outOfBand
+        default: inBand
         choices: [ inBand, outOfBand ]
       telemetry_streaming_protocol:
         description:
@@ -88,12 +89,12 @@ options:
         description:
         - Telemetry Source Interface (VLAN id or Loopback id) only valid if Telemetry Collection is set to inBand.
         type: str
-        default: ""
+        default: loopback0
       telemetry_source_vrf:
         description:
         - VRF over which telemetry is streamed, valid only if telemetry collection is set to inband.
         type: str
-        default: ""
+        default: default
       security_domain:
         description:
         - Security Domain associated with the fabric.
@@ -616,7 +617,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only External Connectivity fabric type (C(externalConnectivity)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
 - The O(config.management.bgp_asn) field is required when creating a fabric.
@@ -758,6 +759,7 @@ def main():
         supports_check_mode=True,
     )
 
+    nd_state_machine = None
     try:
         # Initialize StateMachine
         nd_state_machine = NDStateMachine(
@@ -768,12 +770,17 @@ def main():
         # Manage state
         nd_state_machine.manage_state()
 
-        module.exit_json(**nd_state_machine.output.format())
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except NDStateMachineError as e:
-        module.fail_json(msg=str(e))
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=str(e), **output)
     except Exception as e:
-        module.fail_json(msg=f"Module execution failed: {str(e)}")
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=f"Module execution failed: {str(e)}", **output)
 
 
 if __name__ == "__main__":
