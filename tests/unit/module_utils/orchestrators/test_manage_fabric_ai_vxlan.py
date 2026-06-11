@@ -8,8 +8,6 @@ from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type
 
-from unittest.mock import MagicMock
-
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_fabric_ai_ebgp_vxlan import (
     ManageAiEbgpVxlanFabricOrchestrator,
