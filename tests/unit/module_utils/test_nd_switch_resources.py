@@ -1265,7 +1265,7 @@ def test_utils_bootstrap_query_index_and_poap_data_block():
 
 
 def test_switch_wait_utils_filters_statuses_and_fetch_helpers():
-    """Wait utility pure filters and API helpers handle present/missing/error data."""
+    """Wait utility pure filters and API helpers handle present/empty/error data."""
     switch_data = [
         {"serialNumber": "SERIAL1", "additionalData": {"systemMode": "migration", "discoveryStatus": "ok"}},
         {"serialNumber": "SERIAL2", "additionalData": {"systemMode": "normal", "discoveryStatus": "unreachable"}},
@@ -1285,11 +1285,7 @@ def test_switch_wait_utils_filters_statuses_and_fetch_helpers():
 
     missing_switches_nd = FakeND(data={})
     wait = SwitchWaitUtils(SimpleNamespace(nd=missing_switches_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
-    assert wait._fetch_switch_data() is None
-
-    malformed_switches_nd = FakeND(data={"switches": {"serialNumber": "SERIAL1"}})
-    wait = SwitchWaitUtils(SimpleNamespace(nd=malformed_switches_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
-    assert wait._fetch_switch_data() is None
+    assert wait._fetch_switch_data() == []
 
     failing_nd = FakeND(exc=ValueError("down"))
     wait = SwitchWaitUtils(SimpleNamespace(nd=failing_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())

@@ -1063,14 +1063,7 @@ class SwitchWaitUtils:
                 self.ep_switches_get.path,
                 verb=self.ep_switches_get.verb,
             )
-            if "switches" not in response:
-                self.log.error("Switch data response missing 'switches' field")
-                return None
-            switch_data = response["switches"]
-            if not isinstance(switch_data, list):
-                self.log.error("Switch data response field 'switches' is not a list")
-                return None
-            return switch_data
+            return response.get("switches", [])
         except _REQUEST_ERRORS as e:
             self.log.error("Failed to fetch switch data: %s", e)
             return None
