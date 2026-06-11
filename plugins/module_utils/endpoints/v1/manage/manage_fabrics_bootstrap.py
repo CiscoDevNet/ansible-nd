@@ -21,6 +21,7 @@ from typing import Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ClusterNameMixin,
     FabricNameMixin,
     FilterMixin,
     MaxMixin,
@@ -40,7 +41,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
 )
 
 
-class FabricsBootstrapEndpointParams(FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
+class FabricsBootstrapEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -48,8 +49,10 @@ class FabricsBootstrapEndpointParams(FilterMixin, MaxMixin, OffsetMixin, Endpoin
 
     ## Parameters
 
+    - cluster_name: Target cluster name for multi-cluster deployments (optional, from `ClusterNameMixin`)
     - max: Maximum number of results to return (optional, from `MaxMixin`)
     - offset: Pagination offset (optional, from `OffsetMixin`)
+    - sort: Sort field and direction (optional)
     - filter: Lucene filter expression (optional, from `FilterMixin`)
 
     ## Usage
@@ -60,6 +63,8 @@ class FabricsBootstrapEndpointParams(FilterMixin, MaxMixin, OffsetMixin, Endpoin
     # Returns: "max=50&offset=0"
     ```
     """
+
+    sort: str | None = Field(default=None, min_length=1, description="Sort field and direction (for example, 'serialNumber:asc')")
 
 
 class _EpManageFabricsBootstrapBase(FabricNameMixin, NDEndpointBaseModel):

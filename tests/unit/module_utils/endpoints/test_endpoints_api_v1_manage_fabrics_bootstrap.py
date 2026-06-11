@@ -50,6 +50,8 @@ def test_endpoints_api_v1_manage_fabrics_bootstrap_00010():
     assert params.max is None
     assert params.offset is None
     assert params.filter is None
+    assert params.cluster_name is None
+    assert params.sort is None
 
 
 def test_endpoints_api_v1_manage_fabrics_bootstrap_00020():
@@ -110,6 +112,24 @@ def test_endpoints_api_v1_manage_fabrics_bootstrap_00040():
         params = FabricsBootstrapEndpointParams()
         result = params.to_query_string()
     assert result == ""
+
+
+def test_endpoints_api_v1_manage_fabrics_bootstrap_00050():
+    """
+    # Summary
+
+    Verify FabricsBootstrapEndpointParams supports schema-backed query params
+    """
+    with does_not_raise():
+        params = FabricsBootstrapEndpointParams(cluster_name="cluster-a", filter="serialNumber:SN*", max=50, offset=0, sort="serialNumber:asc")
+        result = params.to_query_string()
+    assert set(result.split("&")) == {
+        "clusterName=cluster-a",
+        "filter=serialNumber:SN*",
+        "max=50",
+        "offset=0",
+        "sort=serialNumber:asc",
+    }
 
 
 # =============================================================================

@@ -24,6 +24,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     FabricSwitchesGetEndpointParams,
     SwitchActionsClusterEndpointParams,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_switches import (
+    EpManageSwitchesListGet,
+    ManageSwitchesListEndpointParams,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
     does_not_raise,
@@ -228,6 +232,56 @@ def test_endpoints_api_v1_manage_fabrics_switches_00130():
         instance.endpoint_params.hostname = "leaf1"
         result = instance.path
     assert result == "/api/v1/manage/fabrics/MyFabric/switches?hostname=leaf1"
+
+
+def test_endpoints_api_v1_manage_fabrics_switches_00140():
+    """
+    # Summary
+
+    Verify EpManageFabricsSwitchesGet supports schema-backed endpoint and Lucene query params
+    """
+    with does_not_raise():
+        instance = EpManageFabricsSwitchesGet()
+        instance.fabric_name = "MyFabric"
+        instance.endpoint_params.cluster_name = "cluster-a"
+        instance.endpoint_params.hostname = "leaf1"
+        instance.lucene_params.filter = "hostname:leaf*"
+        instance.lucene_params.sort = "hostname:asc"
+        result = instance.path
+    path, query = result.split("?", 1)
+    assert path == "/api/v1/manage/fabrics/MyFabric/switches"
+    assert set(query.split("&")) == {
+        "clusterName=cluster-a",
+        "hostname=leaf1",
+        "filter=hostname:leaf*",
+        "sort=hostname:asc",
+    }
+
+
+def test_endpoints_api_v1_manage_fabrics_switches_00150():
+    """
+    # Summary
+
+    Verify EpManageSwitchesListGet preserves Lucene params and adds schema-backed endpoint params
+    """
+    with does_not_raise():
+        params = ManageSwitchesListEndpointParams(cluster_name="cluster-a", hostname="leaf1")
+        instance = EpManageSwitchesListGet(fabric_name="MyFabric", endpoint_params=params)
+        instance.lucene_params.filter = "hostname:leaf*"
+        instance.lucene_params.max = 50
+        instance.lucene_params.offset = 0
+        instance.lucene_params.sort = "hostname:asc"
+        result = instance.path
+    path, query = result.split("?", 1)
+    assert path == "/api/v1/manage/fabrics/MyFabric/switches"
+    assert set(query.split("&")) == {
+        "clusterName=cluster-a",
+        "hostname=leaf1",
+        "filter=hostname:leaf%2A",
+        "max=50",
+        "offset=0",
+        "sort=hostname%3Aasc",
+    }
 
 
 # =============================================================================
