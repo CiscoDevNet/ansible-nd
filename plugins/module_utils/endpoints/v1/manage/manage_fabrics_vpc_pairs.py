@@ -13,7 +13,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     FabricNameMixin,
-    FromClusterMixin,
+    ClusterNameMixin,
     ViewMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
@@ -31,7 +31,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
 class VpcPairsListEndpointParams(
-    FromClusterMixin,
+    ClusterNameMixin,
     ViewMixin,
     EndpointQueryParams,
 ):

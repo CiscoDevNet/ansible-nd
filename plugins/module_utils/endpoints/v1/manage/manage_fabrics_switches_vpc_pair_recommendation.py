@@ -14,8 +14,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ClusterNameMixin,
     FabricNameMixin,
-    FromClusterMixin,
     SwitchIdMixin,
     UseVirtualPeerLinkMixin,
 )
@@ -32,7 +32,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
 
 class VpcPairRecommendationEndpointParams(
-    FromClusterMixin,
+    ClusterNameMixin,
     UseVirtualPeerLinkMixin,
     EndpointQueryParams,
 ):

@@ -31,13 +31,31 @@ from urllib.parse import quote
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ClusterNameMixin,
     FabricNameMixin,
+    FilterMixin,
     InterfaceNameMixin,
+    MaxMixin,
+    NetworkNameMixin,
+    OffsetMixin,
     SwitchSerialNumberMixin,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
+
+
+class ManageInterfacesListEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin, NetworkNameMixin, OffsetMixin, EndpointQueryParams):
+    """
+    Endpoint-specific query parameters for listing switch interfaces.
+
+    These match the query parameters exposed by
+    ``/fabrics/{fabricName}/switches/{switchId}/interfaces`` in manage.json.
+    """
+
+    sort: str | None = Field(default=None, min_length=1, description="Sort field and direction")
+    config_only: bool | None = Field(default=None, description="Return config-only interface data")
 
 
 class _EpManageInterfacesBase(FabricNameMixin, SwitchSerialNumberMixin, InterfaceNameMixin, NDEndpointBaseModel):
@@ -88,7 +106,15 @@ class _EpManageInterfacesBase(FabricNameMixin, SwitchSerialNumberMixin, Interfac
         segments = ["fabrics", quote(self.fabric_name, safe=""), "switches", quote(self.switch_sn, safe=""), "interfaces"]
         if self.interface_name is not None:
             segments.append(quote(self.interface_name, safe=""))
-        return BasePath.path(*segments)
+        base_path = BasePath.path(*segments)
+        query_string = self._query_string()
+        if query_string:
+            return f"{base_path}?{query_string}"
+        return base_path
+
+    def _query_string(self) -> str:
+        """Return optional query string for endpoint subclasses."""
+        return ""
 
     def set_identifiers(self, identifier: IdentifierKey = None):
         """
@@ -158,6 +184,14 @@ class EpManageInterfacesListGet(_EpManageInterfacesBase):
     class_name: Literal["EpManageInterfacesListGet"] = Field(
         default="EpManageInterfacesListGet", frozen=True, description="Class name for backward compatibility"
     )
+    endpoint_params: ManageInterfacesListEndpointParams = Field(
+        default_factory=ManageInterfacesListEndpointParams,
+        description="Endpoint-specific query parameters",
+    )
+
+    def _query_string(self) -> str:
+        """Return list endpoint query string."""
+        return self.endpoint_params.to_query_string()
 
     @property
     def verb(self) -> HttpVerbEnum:

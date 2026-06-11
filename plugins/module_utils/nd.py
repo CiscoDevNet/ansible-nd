@@ -18,6 +18,7 @@ from ansible.module_utils.six.moves.urllib.parse import urlencode
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import Connection
 from ansible_collections.cisco.nd.plugins.module_utils.constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
+from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
 
 def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remove_none_values=True):
@@ -65,43 +66,6 @@ if PY3:
 
     def cmp(a, b):
         return (a > b) - (a < b)
-
-
-def issubset(subset, superset):
-    """Recurse through a nested dictionary and check if it is a subset of another."""
-
-    if type(subset) is not type(superset):
-        return False
-
-    if not isinstance(subset, dict):
-        if isinstance(subset, list):
-            if len(subset) != len(superset):
-                return False
-
-            remaining = list(superset)
-            for item in subset:
-                for index, candidate in enumerate(remaining):
-                    if issubset(item, candidate) and issubset(candidate, item):
-                        del remaining[index]
-                        break
-                else:
-                    return False
-            return True
-        return subset == superset
-
-    for key, value in subset.items():
-        if value is None:
-            continue
-
-        if key not in superset:
-            return False
-
-        superset_value = superset.get(key)
-
-        if not issubset(value, superset_value):
-            return False
-
-    return True
 
 
 def update_qs(params):

@@ -26,6 +26,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageInterfacesPost,
     EpManageInterfacesPut,
     EpManageInterfacesRemove,
+    ManageInterfacesListEndpointParams,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 
@@ -224,6 +225,7 @@ def test_ep_manage_interfaces_00100():
         instance = EpManageInterfacesListGet()
     assert instance.class_name == "EpManageInterfacesListGet"
     assert instance.verb == HttpVerbEnum.GET
+    assert isinstance(instance.endpoint_params, ManageInterfacesListEndpointParams)
 
 
 def test_ep_manage_interfaces_00110():
@@ -292,6 +294,37 @@ def test_ep_manage_interfaces_00130():
     instance.switch_sn = "SN123"
     with pytest.raises(ValueError, match="fabric_name must be set"):
         result = instance.path  # pylint: disable=unused-variable
+
+
+def test_ep_manage_interfaces_00140():
+    """
+    # Summary
+
+    Verify EpManageInterfacesListGet supports schema-backed query params.
+    """
+    with does_not_raise():
+        instance = EpManageInterfacesListGet()
+        instance.fabric_name = "fab1"
+        instance.switch_sn = "SN123"
+        instance.endpoint_params.cluster_name = "cluster-a"
+        instance.endpoint_params.filter = "ifName:Ethernet1/1"
+        instance.endpoint_params.max = 50
+        instance.endpoint_params.offset = 0
+        instance.endpoint_params.sort = "ifName:asc"
+        instance.endpoint_params.network_name = "net1"
+        instance.endpoint_params.config_only = True
+        result = instance.path
+    path, query = result.split("?", 1)
+    assert path == "/api/v1/manage/fabrics/fab1/switches/SN123/interfaces"
+    assert set(query.split("&")) == {
+        "clusterName=cluster-a",
+        "filter=ifName:Ethernet1/1",
+        "max=50",
+        "networkName=net1",
+        "offset=0",
+        "sort=ifName:asc",
+        "configOnly=true",
+    }
 
 
 # =============================================================================

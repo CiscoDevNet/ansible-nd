@@ -12,8 +12,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ClusterNameMixin,
     FabricNameMixin,
-    FromClusterMixin,
     SwitchIdMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
@@ -28,7 +28,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 # /api/v1/manage/fabrics/{fabricName}/switches/{switchId}/vpcPairConsistency
 
 
-class VpcPairConsistencyEndpointParams(FromClusterMixin, EndpointQueryParams):
+class VpcPairConsistencyEndpointParams(ClusterNameMixin, EndpointQueryParams):
     """Endpoint-specific query parameters for vPC pair consistency endpoint."""
 
 
