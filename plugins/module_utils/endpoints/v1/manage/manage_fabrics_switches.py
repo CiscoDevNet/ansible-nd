@@ -31,6 +31,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
     TicketIdMixin,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import (
+    CompositeQueryParams,
     EndpointQueryParams,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import (
@@ -47,7 +48,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
 )
 
 
-class FabricSwitchesGetEndpointParams(FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
+class FabricSwitchesGetEndpointParams(ClusterNameMixin, FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
     """
     # Summary
 
@@ -55,6 +56,7 @@ class FabricSwitchesGetEndpointParams(FilterMixin, MaxMixin, OffsetMixin, Endpoi
 
     ## Parameters
 
+    - cluster_name: Source cluster name (optional, from `ClusterNameMixin`)
     - hostname: Filter by switch hostname (optional)
     - max: Maximum number of results (optional, from `MaxMixin`)
     - offset: Pagination offset (optional, from `OffsetMixin`)
@@ -70,6 +72,18 @@ class FabricSwitchesGetEndpointParams(FilterMixin, MaxMixin, OffsetMixin, Endpoi
     """
 
     hostname: str | None = Field(default=None, min_length=1, description="Filter by switch hostname")
+
+
+class FabricSwitchesGetLuceneParams(FilterMixin, MaxMixin, OffsetMixin, EndpointQueryParams):
+    """
+    Lucene-style query parameters for list fabric switches endpoint.
+
+    These mirror the schema-supported Lucene parameters on
+    ``/fabrics/{fabricName}/switches`` while preserving the older
+    ``lucene_params`` endpoint usage pattern.
+    """
+
+    sort: str | None = Field(default=None, min_length=1, description="Sort field and direction (for example, 'hostname:asc')")
 
 
 class FabricSwitchesAddEndpointParams(ClusterNameMixin, TicketIdMixin, EndpointQueryParams):
@@ -164,6 +178,10 @@ class EpManageFabricsSwitchesGet(_EpManageFabricsSwitchesBase):
         default_factory=FabricSwitchesGetEndpointParams,
         description="Endpoint-specific query parameters",
     )
+    lucene_params: FabricSwitchesGetLuceneParams = Field(
+        default_factory=FabricSwitchesGetLuceneParams,
+        description="Lucene-style query parameters",
+    )
 
     @property
     def path(self) -> str:
@@ -176,7 +194,7 @@ class EpManageFabricsSwitchesGet(_EpManageFabricsSwitchesBase):
 
         - Complete endpoint path string, optionally including query parameters
         """
-        query_string = self.endpoint_params.to_query_string()
+        query_string = CompositeQueryParams().add(self.endpoint_params).add(self.lucene_params).to_query_string()
         if query_string:
             return f"{self._base_path}?{query_string}"
         return self._base_path
