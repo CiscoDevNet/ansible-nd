@@ -16,7 +16,7 @@ description:
   - The implementation lives in the matching action plugin.
   - This plugin is not part of the public collection interface.
 author:
-  - Cisco Systems
+  - Akshayanat C S (@achengam)
 options:
   nd_data:
     description:
