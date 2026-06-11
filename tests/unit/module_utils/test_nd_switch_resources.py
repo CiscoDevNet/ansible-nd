@@ -19,6 +19,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationTyp
 from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     PayloadUtils,
     SwitchWaitUtils,
+    SwitchOperationError,
     build_bootstrap_index,
     build_poap_data_block,
     determine_operation_type,
@@ -49,7 +50,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.nd_output import NDOutput
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.config_models import SwitchConfigModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.switch_data_models import SwitchDataModel
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
-from ansible_collections.cisco.nd.plugins.module_utils.utils import SwitchOperationError
 
 
 class FailJsonError(RuntimeError):
@@ -814,6 +814,24 @@ def test_poap_handler_builds_and_submits_bootstrap_preprovision_and_swap():
     assert [entry["action"] for entry in swap_handler.ctx.results.metadata] == ["swap_serial", "bootstrap"]
 
 
+def test_poap_handler_requires_bootstrap_identity_fields():
+    """POAP bootstrap import fails clearly when call-home identity fields are missing."""
+    missing_public_key = _bootstrap_entry("POAP1")
+    missing_public_key.pop("publicKey")
+    nd = FakeND()
+    handler = POAPHandler(_ctx(nd=nd), RecordingFabricOps(), RecordingWait(), StaticBootstrapCache({"POAP1": missing_public_key}))
+    with pytest.raises(FailJsonError, match="POAP1.*publicKey.*finish calling home"):
+        handler.handle([_cfg("192.0.2.10", poap={"serial_number": "POAP1", "hostname": "poap1"})])
+    assert nd.calls == []
+
+    lowercase_fingerprint = _bootstrap_entry("POAP2")
+    lowercase_fingerprint["fingerprint"] = lowercase_fingerprint.pop("fingerPrint")
+    nd = FakeND()
+    handler = POAPHandler(_ctx(nd=nd), RecordingFabricOps(), RecordingWait(), StaticBootstrapCache({"POAP2": lowercase_fingerprint}))
+    handler.handle([_cfg("192.0.2.20", poap={"serial_number": "POAP2", "hostname": "poap2"})])
+    assert len(nd.calls) == 1
+
+
 def test_poap_swap_validates_old_and_new_serials():
     """Serial swap fails before API calls when inventory/bootstrap prerequisites are missing."""
     swap_cfg = _cfg(
@@ -863,6 +881,18 @@ def test_rma_handler_check_mode_empty_success_and_prerequisite_failures():
     old_switch = _sw("192.0.2.12", "OLD1", discovery_status="unreachable", system_mode="normal")
     with pytest.raises(FailJsonError, match="expected 'maintenance'"):
         handler.handle([_cfg("192.0.2.12", rma=[{"new_serial_number": "NEW1"}])], [old_switch])
+
+
+def test_rma_handler_requires_bootstrap_identity_fields():
+    """RMA provisioning fails clearly when call-home identity fields are missing."""
+    old_switch = _sw("192.0.2.12", "OLD1", discovery_status="unreachable", system_mode="maintenance", hostname="old-host")
+    missing_fingerprint = _bootstrap_entry("NEW1")
+    missing_fingerprint.pop("fingerPrint")
+    nd = FakeND()
+    handler = RMAHandler(_ctx(nd=nd), RecordingFabricOps(), RecordingWait(), StaticBootstrapCache({"NEW1": missing_fingerprint}))
+    with pytest.raises(FailJsonError, match="NEW1.*fingerPrint.*finish calling home"):
+        handler.handle([_cfg("192.0.2.12", rma=[{"new_serial_number": "NEW1"}])], [old_switch])
+    assert nd.calls == []
 
 
 def test_rma_handler_full_success_and_ready_finalize_failures():
@@ -1251,6 +1281,14 @@ def test_switch_wait_utils_filters_statuses_and_fetch_helpers():
 
     empty_nd = FakeND(data={"switches": []})
     wait = SwitchWaitUtils(SimpleNamespace(nd=empty_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    assert wait._fetch_switch_data() == []
+
+    missing_switches_nd = FakeND(data={})
+    wait = SwitchWaitUtils(SimpleNamespace(nd=missing_switches_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    assert wait._fetch_switch_data() is None
+
+    malformed_switches_nd = FakeND(data={"switches": {"serialNumber": "SERIAL1"}})
+    wait = SwitchWaitUtils(SimpleNamespace(nd=malformed_switches_nd), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
     assert wait._fetch_switch_data() is None
 
     failing_nd = FakeND(exc=ValueError("down"))
@@ -1305,6 +1343,12 @@ def test_switch_wait_utils_public_wait_shortcuts_and_polling(monkeypatch):
     wait._fetch_switch_data = lambda: [{"serialNumber": "OTHER", "additionalData": {"systemMode": "migration", "discoveryStatus": "unreachable"}}]
     assert wait._wait_for_switches_in_fabric(["SERIAL1"]) is False
     assert wait._wait_for_discovery_state(["SERIAL1"], "ok") is False
+
+    wait = SwitchWaitUtils(SimpleNamespace(nd=FakeND()), "FAB1", ListLogger(), max_attempts=1, wait_interval=1, fabric_utils=SimpleNamespace())
+    wait._fetch_switch_data = lambda: []
+    assert wait._wait_for_switches_in_fabric(["SERIAL1"]) is False
+    assert wait._wait_for_discovery_state(["SERIAL1"], "ok") is False
+    assert wait._poll_system_mode(["SERIAL1"], "normal", expect_match=False) is None
 
 
 def test_switch_wait_utils_wait_for_discovery_success_failure_and_timeout(monkeypatch):

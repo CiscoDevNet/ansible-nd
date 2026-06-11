@@ -35,7 +35,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.validators import 
     validate_cidr_optional,
     validate_ip_address,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import require_serial_number
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import require_bootstrap_identity_fields, require_serial_number
 
 
 class BootstrapBaseData(NDNestedModel):
@@ -173,6 +173,12 @@ class BootstrapImportSpecificModel(NDBaseModel):
     def validate_serial(cls, v: str) -> str:
         return require_serial_number(v)
 
+    @model_validator(mode="after")
+    def validate_bootstrap_identity_fields(self) -> "BootstrapImportSpecificModel":
+        """Ensure ND has reported call-home identity fields for this switch."""
+        require_bootstrap_identity_fields(self.serial_number, self.public_key, self.finger_print)
+        return self
+
 
 class BootstrapImportSwitchModel(NDBaseModel):
     """
@@ -250,6 +256,12 @@ class BootstrapImportSwitchModel(NDBaseModel):
     @classmethod
     def validate_serial(cls, v: str) -> str:
         return require_serial_number(v)
+
+    @model_validator(mode="after")
+    def validate_bootstrap_identity_fields(self) -> "BootstrapImportSwitchModel":
+        """Ensure ND has reported call-home identity fields before import."""
+        require_bootstrap_identity_fields(self.serial_number, self.public_key, self.fingerprint)
+        return self
 
     @computed_field(alias="useNewCredentials")
     @property

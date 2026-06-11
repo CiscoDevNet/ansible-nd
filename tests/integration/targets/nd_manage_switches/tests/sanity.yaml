@@ -30,7 +30,7 @@
   tags: sanity
 
 - name: Sanity TC1 - Merged - Validate ND Data
-  cisco.nd.nd_switches_validate:
+  cisco.nd._nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_base_conf }}"
     changed: "{{ create_result.changed }}"
@@ -134,7 +134,7 @@
   tags: sanity
 
 - name: Sanity TC3 - Replaced - Validate ND Data
-  cisco.nd.nd_switches_validate:
+  cisco.nd._nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_replaced_conf }}"
     changed: "{{ replaced_result.changed }}"
@@ -190,7 +190,7 @@
   tags: sanity
 
 - name: Sanity TC4 - Overridden - Validate ND Data
-  cisco.nd.nd_switches_validate:
+  cisco.nd._nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_sanity_conf }}"
     changed: "{{ overriden_result.changed }}"
@@ -236,7 +236,7 @@
   tags: sanity
 
 - name: Sanity TC5 - Deleted - Validate ND Data
-  cisco.nd.nd_switches_validate:
+  cisco.nd._nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_sanity_conf }}"
     changed: "{{ deleted_result.changed }}"

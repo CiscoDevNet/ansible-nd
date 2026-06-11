@@ -31,7 +31,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.validators import 
     validate_cidr_optional,
     validate_ip_address,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import require_serial_number
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.validators import require_bootstrap_identity_fields, require_serial_number
 
 
 class RMASwitchModel(NDBaseModel):
@@ -105,6 +105,12 @@ class RMASwitchModel(NDBaseModel):
     @classmethod
     def validate_old_serial(cls, v: str) -> str:
         return require_serial_number(v, "old_switch_id")
+
+    @model_validator(mode="after")
+    def validate_bootstrap_identity_fields(self) -> "RMASwitchModel":
+        """Ensure ND has reported call-home identity fields for the replacement."""
+        require_bootstrap_identity_fields(self.new_switch_id, self.public_key, self.finger_print)
+        return self
 
     @computed_field(alias="useNewCredentials")
     @property

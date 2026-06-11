@@ -14,7 +14,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
 from ansible_collections.cisco.nd.plugins.module_utils.nd_config_collection import (
     NDConfigCollection,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.utils import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     ApiDataChecker,
 )
 

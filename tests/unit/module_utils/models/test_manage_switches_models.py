@@ -11,7 +11,9 @@ from __future__ import annotations
 import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.bootstrap_models import BootstrapImportSwitchModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.config_models import SwitchConfigModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.rma_models import RMASwitchModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.switch_data_models import SwitchDataModel
 
 
@@ -40,6 +42,41 @@ def _inventory_response(**overrides):
             "systemMode": "normal",
             "platformType": "nx-os",
         },
+    }
+    data.update(overrides)
+    return data
+
+
+def _bootstrap_import_payload(**overrides):
+    data = {
+        "serialNumber": "POAP1",
+        "model": "N9K-C93180YC-EX",
+        "softwareVersion": "10.3(1)",
+        "hostname": "leaf-poap",
+        "ip": "192.0.2.10",
+        "password": "password",
+        "discoveryAuthProtocol": "md5",
+        "fingerPrint": "fingerprint",
+        "publicKey": "public-key",
+    }
+    data.update(overrides)
+    return data
+
+
+def _rma_payload(**overrides):
+    data = {
+        "gatewayIpMask": "192.0.2.1/24",
+        "model": "N9K-C93180YC-EX",
+        "softwareVersion": "10.3(1)",
+        "switchRole": "leaf",
+        "password": "password",
+        "discoveryAuthProtocol": "md5",
+        "hostname": "leaf-replacement",
+        "ip": "192.0.2.10",
+        "newSwitchId": "NEW1",
+        "oldSwitchId": "OLD1",
+        "publicKey": "public-key",
+        "fingerPrint": "fingerprint",
     }
     data.update(overrides)
     return data
@@ -116,6 +153,24 @@ def test_switch_config_rejects_invalid_special_operation_combinations():
             ),
             context={"state": "merged"},
         )
+
+
+def test_bootstrap_import_model_requires_call_home_identity_fields():
+    """Bootstrap import payload rejects missing call-home identity fields."""
+    with pytest.raises(ValidationError, match="POAP1.*publicKey.*finish calling home"):
+        BootstrapImportSwitchModel.model_validate(_bootstrap_import_payload(publicKey=""))
+
+    with pytest.raises(ValidationError, match="POAP1.*fingerPrint.*finish calling home"):
+        BootstrapImportSwitchModel.model_validate(_bootstrap_import_payload(fingerPrint=" "))
+
+
+def test_rma_model_requires_call_home_identity_fields():
+    """RMA payload rejects missing replacement-switch identity fields."""
+    with pytest.raises(ValidationError, match="NEW1.*publicKey.*finish calling home"):
+        RMASwitchModel.model_validate(_rma_payload(publicKey=""))
+
+    with pytest.raises(ValidationError, match="NEW1.*fingerPrint.*finish calling home"):
+        RMASwitchModel.model_validate(_rma_payload(fingerPrint=" "))
 
 
 def test_switch_data_from_inventory_response_and_to_config_dict():

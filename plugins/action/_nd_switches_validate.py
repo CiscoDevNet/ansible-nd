@@ -52,7 +52,7 @@ class ActionModule(ActionBase):
 
         if not HAS_PYDANTIC or not HAS_VALIDATOR:
             results["failed"] = True
-            results["msg"] = "pydantic and the ND collection validators are required for nd_switches_validate"
+            results["msg"] = "pydantic and the ND collection validators are required for _nd_switches_validate"
             return results
 
         args = self._task.args

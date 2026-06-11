@@ -21,6 +21,13 @@ from typing import Any
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import (
     NDModuleError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
+    EpManageFabricConfigDeployPost,
+    EpManageFabricsGet,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions import (
+    EpManageFabricsActionsConfigSavePost,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_bootstrap import (
     EpManageFabricsBootstrapGet,
 )
@@ -31,13 +38,272 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsSwitchesGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
+    EpManageFabricsSwitchActionsDeployPost,
     EpManageFabricsSwitchActionsRediscoverPost,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.utils import (
-    FabricUtils,
 )
 
 _REQUEST_ERRORS = (NDModuleError, TypeError, ValueError, AttributeError)
+
+
+# =========================================================================
+# Exceptions
+# =========================================================================
+
+
+class SwitchOperationError(Exception):
+    """Raised when a switch operation fails."""
+
+
+# =========================================================================
+# API Response Validation
+# =========================================================================
+
+
+class ApiDataChecker:
+    """Detect controller-embedded errors in API response DATA payloads.
+
+    The Nexus Dashboard API signals certain errors by embedding an error
+    object inside ``DATA`` as ``{"code": <N>, "message": "<reason>"}`` even
+    when the transport-level result is marked successful.  Any payload dict
+    that contains a ``"code"`` key is treated as an error; the absence of
+    ``"code"`` means the payload is a genuine data body.
+    """
+
+    @staticmethod
+    def check(
+        data: Any,
+        context: str,
+        log: logging.Logger,
+        fail_callback=None,
+    ) -> None:
+        """Fail or raise if the response DATA contains an embedded error code.
+
+        Args:
+            data: Value returned by ``nd.request()`` or extracted from
+                  ``response_current["DATA"]``.
+            context: Human-readable description of the operation.
+            log: Logger instance.
+            fail_callback: Optional callable (e.g. ``module.fail_json``) that
+                           accepts a ``msg`` keyword argument.  When provided
+                           it is called on error instead of raising
+                           ``SwitchOperationError``.
+        """
+        log.debug(f"ApiDataChecker.check: Checking response for context: {context}")
+        log.debug(f"ApiDataChecker.check: data type={type(data)}, has 'error'={'error' in data if isinstance(data, dict) else 'N/A'}")
+
+        # Check for error object in response (some APIs return this structure)
+        if isinstance(data, dict) and "error" in data:
+            error_obj = data.get("error", {})
+            log.debug(f"ApiDataChecker.check: Found error object: {error_obj}")
+            if isinstance(error_obj, dict) and "code" in error_obj:
+                # Extract message from nested structure
+                error_msg = error_obj.get("message", "Unknown error")
+                if isinstance(error_msg, dict):
+                    error_msg = error_msg.get("message") or error_msg.get("status") or str(error_msg)
+                msg = f"{context} failed — controller returned error: " f"{error_msg} (code={error_obj['code']})"
+                log.error(msg)
+                if fail_callback is not None:
+                    log.debug(f"ApiDataChecker.check: Calling fail_callback with msg: {msg}")
+                    fail_callback(msg=msg)
+                    return
+                raise SwitchOperationError(msg)
+
+        # Check for code in data payload (embedded error pattern)
+        if isinstance(data, dict) and "code" in data:
+            error_msg = data.get("message", "Unknown error")
+            msg = f"{context} failed — controller returned error: " f"{error_msg} (code={data['code']})"
+            log.error(msg)
+            if fail_callback is not None:
+                log.debug(f"ApiDataChecker.check: Calling fail_callback with msg: {msg}")
+                fail_callback(msg=msg)
+                return
+            raise SwitchOperationError(msg)
+
+        log.debug("ApiDataChecker.check: No errors detected in response")
+
+
+# =========================================================================
+# Fabric Utilities
+# =========================================================================
+
+
+class FabricUtils:
+    """Fabric-level operations: config save, deploy, and info retrieval."""
+
+    def __init__(
+        self,
+        nd_module,
+        fabric: str,
+        logger: logging.Logger | None = None,
+    ):
+        """Initialize FabricUtils.
+
+        Args:
+            nd_module: NDModule or NDNetworkResourceModule instance.
+            fabric:    Fabric name.
+            logger:    Optional logger; defaults to ``nd.FabricUtils``.
+        """
+        self.nd = nd_module
+        self.fabric = fabric
+        self.log = logger or logging.getLogger("nd.FabricUtils")
+
+        # Pre-configure endpoints
+        self.ep_config_save = EpManageFabricsActionsConfigSavePost()
+        self.ep_config_save.fabric_name = fabric
+
+        self.ep_config_deploy = EpManageFabricConfigDeployPost()
+        self.ep_config_deploy.fabric_name = fabric
+
+        self.ep_switch_deploy = EpManageFabricsSwitchActionsDeployPost()
+        self.ep_switch_deploy.fabric_name = fabric
+
+        self.ep_fabric_get = EpManageFabricsGet()
+        self.ep_fabric_get.fabric_name = fabric
+
+    # -----------------------------------------------------------------
+    # Public API
+    # -----------------------------------------------------------------
+
+    def save_config(
+        self,
+        max_retries: int = 3,
+        retry_delay: int = 600,
+    ) -> dict[str, Any]:
+        """Save (recalculate) fabric configuration.
+
+        Retries up to ``max_retries`` times with ``retry_delay`` seconds
+        between attempts.
+
+        Args:
+            max_retries:  Maximum number of attempts (default ``3``).
+            retry_delay:  Seconds to wait between failed attempts
+                          (default ``600``).
+
+        Returns:
+            API response dict from the first successful attempt.
+
+        Raises:
+            SwitchOperationError: If all attempts fail.
+        """
+        last_error: Exception = SwitchOperationError(f"Config save produced no attempts for fabric {self.fabric}")
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self._request_endpoint(self.ep_config_save, action="Config save")
+                self.log.info(
+                    "Config save succeeded on attempt %s/%s for fabric %s",
+                    attempt,
+                    max_retries,
+                    self.fabric,
+                )
+                return response
+            except SwitchOperationError as exc:
+                last_error = exc
+                self.log.warning(
+                    "Config save attempt %s/%s failed for fabric %s: %s",
+                    attempt,
+                    max_retries,
+                    self.fabric,
+                    exc,
+                )
+                if attempt < max_retries:
+                    self.log.info(
+                        "Retrying config save in %ss (attempt %s/%s)",
+                        retry_delay,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    time.sleep(retry_delay)
+        raise SwitchOperationError(f"Config save failed after {max_retries} attempt(s) " f"for fabric {self.fabric}: {last_error}")
+
+    def deploy_config(self) -> dict[str, Any]:
+        """Deploy pending configuration to all switches in the fabric.
+
+        The ``configDeploy`` endpoint requires no request body; it deploys
+        all pending changes for the fabric.
+
+        Returns:
+            API response dict.
+
+        Raises:
+            SwitchOperationError: If the deploy request fails.
+        """
+        return self._request_endpoint(self.ep_config_deploy, action="Config deploy")
+
+    def deploy_switches(self, serial_numbers: list[str]) -> dict[str, Any]:
+        """Deploy pending configuration for specific switches only.
+
+        Uses the switch-level deploy endpoint which targets only the supplied
+        switches rather than all pending changes for the entire fabric.
+
+        Args:
+            serial_numbers: Switch serial numbers (identifiers) to deploy.
+
+        Returns:
+            API response dict.
+
+        Raises:
+            SwitchOperationError: If the deploy request fails.
+        """
+        self.log.info(
+            "Switch-level deploy for %s switch(es) in fabric: %s",
+            len(serial_numbers),
+            self.fabric,
+        )
+        try:
+            response = self.nd.request(
+                self.ep_switch_deploy.path,
+                verb=self.ep_switch_deploy.verb,
+                data={"switchIds": serial_numbers},
+            )
+            ApiDataChecker.check(response, f"Switch-level deploy for fabric '{self.fabric}'", self.log)
+            self.log.info("Switch-level deploy completed for fabric: %s", self.fabric)
+            return response
+        except SwitchOperationError:
+            raise
+        except Exception as e:
+            self.log.error("Switch-level deploy failed for fabric %s: %s", self.fabric, e)
+            raise SwitchOperationError(f"Switch-level deploy failed for fabric {self.fabric}: {e}") from e
+
+    def get_fabric_info(self) -> dict[str, Any]:
+        """Retrieve fabric information.
+
+        Returns:
+            Fabric information dict.
+
+        Raises:
+            SwitchOperationError: If the request fails.
+        """
+        return self._request_endpoint(self.ep_fabric_get, action="Get fabric info")
+
+    # -----------------------------------------------------------------
+    # Internal helpers
+    # -----------------------------------------------------------------
+
+    def _request_endpoint(self, endpoint, action: str = "Request") -> dict[str, Any]:
+        """Execute a request against a pre-configured endpoint.
+
+        Args:
+            endpoint: Endpoint object with ``.path`` and ``.verb``.
+            action:   Human-readable label for log messages.
+
+        Returns:
+            API response dict.
+
+        Raises:
+            SwitchOperationError: On any request failure.
+        """
+        self.log.info("%s for fabric: %s", action, self.fabric)
+        try:
+            response = self.nd.request(endpoint.path, verb=endpoint.verb)
+            ApiDataChecker.check(response, f"{action} for fabric '{self.fabric}'", self.log)
+            self.log.info("%s completed for fabric: %s", action, self.fabric)
+            return response
+        except SwitchOperationError:
+            raise
+        except Exception as e:
+            self.log.error("%s failed for fabric %s: %s", action, self.fabric, e)
+            raise SwitchOperationError(f"{action} failed for fabric {self.fabric}: {e}") from e
+
 
 # =========================================================================
 # Payload Utilities
@@ -797,9 +1063,12 @@ class SwitchWaitUtils:
                 self.ep_switches_get.path,
                 verb=self.ep_switches_get.verb,
             )
-            switch_data = response.get("switches", [])
-            if not switch_data:
-                self.log.error("No switch data returned for fabric")
+            if "switches" not in response:
+                self.log.error("Switch data response missing 'switches' field")
+                return None
+            switch_data = response["switches"]
+            if not isinstance(switch_data, list):
+                self.log.error("Switch data response field 'switches' is not a list")
                 return None
             return switch_data
         except _REQUEST_ERRORS as e:

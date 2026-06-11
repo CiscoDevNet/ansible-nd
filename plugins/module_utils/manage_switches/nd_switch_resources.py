@@ -70,13 +70,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.co
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
     FabricSwitchInventory,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.utils import (
+from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     ApiDataChecker,
     FabricUtils,
-    SwitchOperationError,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.utils import (
     SwitchWaitUtils,
+    SwitchOperationError,
     mask_password,
     get_switch_field,
     group_switches_by_credentials,
@@ -1661,7 +1659,12 @@ class POAPHandler:
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
 
-            model = self._build_bootstrap_import_model(switch_cfg, poap_cfg, bootstrap_data)
+            try:
+                model = self._build_bootstrap_import_model(switch_cfg, poap_cfg, bootstrap_data)
+            except ValidationError as exc:
+                msg = f"Bootstrap import model validation failed for serial {serial}: {exc}"
+                log.error(msg)
+                nd.module.fail_json(msg=msg)
             import_models.append(model)
             log.info(
                 "Built bootstrap model for serial=%s, hostname=%s, ip=%s",
@@ -2227,12 +2230,17 @@ class RMAHandler:
                 log.error(msg)
                 nd.module.fail_json(msg=msg)
 
-            rma_model = self._build_rma_model(
-                switch_cfg,
-                rma_cfg,
-                bootstrap_data,
-                old_switch_info[switch_cfg.seed_ip],
-            )
+            try:
+                rma_model = self._build_rma_model(
+                    switch_cfg,
+                    rma_cfg,
+                    bootstrap_data,
+                    old_switch_info[switch_cfg.seed_ip],
+                )
+            except ValidationError as exc:
+                msg = f"RMA model validation failed for serial {new_serial}: {exc}"
+                log.error(msg)
+                nd.module.fail_json(msg=msg)
             log.info(
                 "Built RMA model: replacing %s with %s",
                 old_serial,

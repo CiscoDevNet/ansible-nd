@@ -1,1 +1,0 @@
-plugins/action/nd_switches_validate.py action-plugin-docs

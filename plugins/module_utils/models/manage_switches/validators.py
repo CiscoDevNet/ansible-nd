@@ -58,6 +58,29 @@ def require_serial_number(v: str, field_name: str = "serial_number") -> str:
     return _require_field(v, validate_serial_number, field_name)
 
 
+def require_bootstrap_identity_fields(serial_number: str, public_key: str | None, finger_print: str | None) -> None:
+    """Require call-home identity fields from a bootstrap API entry.
+
+    Args:
+        serial_number: Switch serial number used in the error message.
+        public_key: Bootstrap ``publicKey`` value.
+        finger_print: Bootstrap ``fingerPrint`` value.
+
+    Raises:
+        ValueError: When either identity field is missing or blank.
+    """
+    missing_fields = []
+    if public_key is None or not public_key.strip():
+        missing_fields.append("publicKey")
+    if finger_print is None or not finger_print.strip():
+        missing_fields.append("fingerPrint")
+    if missing_fields:
+        raise ValueError(
+            f"Bootstrap entry for serial '{serial_number}' is missing required field(s): {', '.join(missing_fields)}. "
+            f"Wait for the switch to finish calling home so ND reports publicKey and fingerPrint, then retry."
+        )
+
+
 def validate_vpc_domain(v: int | None) -> int | None:
     """Validate VPC domain ID (1-1000).
 
