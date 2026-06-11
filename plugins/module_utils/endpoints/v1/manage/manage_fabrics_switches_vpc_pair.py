@@ -12,8 +12,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import (
+    ClusterNameMixin,
     FabricNameMixin,
-    FromClusterMixin,
     SwitchIdMixin,
     TicketIdMixin,
 )
@@ -51,7 +51,7 @@ class _EpVpcPairBase(
         return base_path
 
 
-class VpcPairGetEndpointParams(FromClusterMixin, EndpointQueryParams):
+class VpcPairGetEndpointParams(ClusterNameMixin, EndpointQueryParams):
     """Endpoint-specific query parameters for vPC pair GET endpoint."""
 
 

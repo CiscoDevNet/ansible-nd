@@ -19,16 +19,27 @@ in the ND Manage API.
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import LuceneQueryParams
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import ClusterNameMixin, FabricNameMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import CompositeQueryParams, EndpointQueryParams, LuceneQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.types import IdentifierKey
+
+
+class ManageSwitchesListEndpointParams(ClusterNameMixin, EndpointQueryParams):
+    """
+    Endpoint-specific query parameters for listing fabric switches.
+
+    These match the non-Lucene query parameters exposed by
+    ``/fabrics/{fabricName}/switches`` in manage.json.
+    """
+
+    hostname: str | None = Field(default=None, min_length=1, description="Filter by switch hostname")
 
 
 class _EpManageSwitchesBase(FabricNameMixin, NDEndpointBaseModel):
@@ -78,7 +89,12 @@ class _EpManageSwitchesBase(FabricNameMixin, NDEndpointBaseModel):
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         segments = ["fabrics", quote(self.fabric_name, safe=""), "switches"]
         base_path = BasePath.path(*segments)
-        query_string = self.lucene_params.to_query_string()
+        query_params = CompositeQueryParams()
+        endpoint_params = getattr(self, "endpoint_params", None)
+        if endpoint_params is not None:
+            query_params.add(endpoint_params)
+        query_params.add(self.lucene_params)
+        query_string = query_params.to_query_string()
         if query_string:
             return f"{base_path}?{query_string}"
         return base_path
@@ -129,6 +145,10 @@ class EpManageSwitchesListGet(_EpManageSwitchesBase):
     """
 
     class_name: Literal["EpManageSwitchesListGet"] = Field(default="EpManageSwitchesListGet", frozen=True, description="Class name for backward compatibility")
+    endpoint_params: ManageSwitchesListEndpointParams = Field(
+        default_factory=ManageSwitchesListEndpointParams,
+        description="Endpoint-specific query parameters",
+    )
 
     @property
     def verb(self) -> HttpVerbEnum:
@@ -189,7 +209,7 @@ class EpManageSwitchesGet(FabricNameMixin, NDEndpointBaseModel):
 
     class_name: Literal["EpManageSwitchesGet"] = Field(default="EpManageSwitchesGet", frozen=True, description="Class name for backward compatibility")
 
-    switch_id: Optional[str] = Field(default=None, description="Switch identifier (NX-OS serial number or ACI node ID)")
+    switch_id: str | None = Field(default=None, description="Switch identifier (NX-OS serial number or ACI node ID)")
 
     def set_identifiers(self, identifier: IdentifierKey = None):
         """

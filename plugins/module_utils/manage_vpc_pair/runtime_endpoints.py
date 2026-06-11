@@ -20,7 +20,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpVpcPairPut,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
-    EpFabricSwitchesGet,
+    EpManageFabricsSwitchesGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair_consistency import (
     EpVpcPairConsistencyGet,
@@ -140,7 +140,7 @@ class VpcPairEndpoints:
         Returns:
             Path: /api/v1/manage/fabrics/{fabricName}/switches
         """
-        endpoint = EpFabricSwitchesGet(fabric_name=fabric_name)
+        endpoint = EpManageFabricsSwitchesGet(fabric_name=fabric_name)
         return endpoint.path
 
     @staticmethod

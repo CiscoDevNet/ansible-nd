@@ -10,8 +10,6 @@ Unit tests for vPC pair endpoint models under plugins/module_utils/endpoints/v1/
 from __future__ import annotations
 
 
-from urllib.parse import parse_qsl, urlsplit
-
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches_vpc_pair import (
     EpVpcPairGet,
@@ -33,7 +31,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpVpcPairSupportGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switches import (
-    EpFabricSwitchesGet,
+    EpManageFabricsSwitchesGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vpc_pairs import (
     EpVpcPairsListGet,
@@ -45,10 +43,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 
-def _assert_path_with_query(path: str, expected_base_path: str, expected_query: dict[str, str]) -> None:
-    parsed = urlsplit(path)
-    assert parsed.path == expected_base_path
-    assert dict(parse_qsl(parsed.query, keep_blank_values=True)) == expected_query
+def _assert_path_with_query(path: str, expected_base_path: str, expected_query: set[str]) -> None:
+    base_path, query_string = path.split("?", 1)
+    assert base_path == expected_base_path
+    assert set(query_string.split("&")) == expected_query
 
 
 # =============================================================================
@@ -59,18 +57,17 @@ def _assert_path_with_query(path: str, expected_base_path: str, expected_query: 
 def test_endpoints_api_v1_manage_vpc_pair_00010() -> None:
     """Verify VpcPairGetEndpointParams query serialization."""
     with does_not_raise():
-        params = VpcPairGetEndpointParams(from_cluster="cluster-a")
+        params = VpcPairGetEndpointParams(cluster_name="cluster-a")
         result = params.to_query_string()
-    assert result == "fromCluster=cluster-a"
+    assert result == "clusterName=cluster-a"
 
 
 def test_endpoints_api_v1_manage_vpc_pair_00020() -> None:
     """Verify VpcPairPutEndpointParams query serialization."""
     with does_not_raise():
-        params = VpcPairPutEndpointParams(from_cluster="cluster-a", ticket_id="CHG123")
+        params = VpcPairPutEndpointParams(cluster_name="cluster-a", ticket_id="CHG123")
         result = params.to_query_string()
-    parsed = dict(parse_qsl(result, keep_blank_values=True))
-    assert parsed == {"fromCluster": "cluster-a", "ticketId": "CHG123"}
+    assert set(result.split("&")) == {"clusterName=cluster-a", "ticketId=CHG123"}
 
 
 def test_endpoints_api_v1_manage_vpc_pair_00030() -> None:
@@ -100,12 +97,12 @@ def test_endpoints_api_v1_manage_vpc_pair_00060() -> None:
     """Verify EpVpcPairGet path with query params."""
     with does_not_raise():
         instance = EpVpcPairGet(fabric_name="fab1", switch_id="SN01")
-        instance.endpoint_params.from_cluster = "cluster-a"
+        instance.endpoint_params.cluster_name = "cluster-a"
         result = instance.path
     _assert_path_with_query(
         result,
         "/api/v1/manage/fabrics/fab1/switches/SN01/vpcPair",
-        {"fromCluster": "cluster-a"},
+        {"clusterName=cluster-a"},
     )
 
 
@@ -113,7 +110,7 @@ def test_endpoints_api_v1_manage_vpc_pair_00070() -> None:
     """Verify EpVpcPairPut basics and query path."""
     with does_not_raise():
         instance = EpVpcPairPut(fabric_name="fab1", switch_id="SN01")
-        instance.endpoint_params.from_cluster = "cluster-a"
+        instance.endpoint_params.cluster_name = "cluster-a"
         instance.endpoint_params.ticket_id = "CHG1"
         result = instance.path
     assert instance.class_name == "EpVpcPairPut"
@@ -121,7 +118,7 @@ def test_endpoints_api_v1_manage_vpc_pair_00070() -> None:
     _assert_path_with_query(
         result,
         "/api/v1/manage/fabrics/fab1/switches/SN01/vpcPair",
-        {"fromCluster": "cluster-a", "ticketId": "CHG1"},
+        {"clusterName=cluster-a", "ticketId=CHG1"},
     )
 
 
@@ -144,12 +141,12 @@ def test_endpoints_api_v1_manage_vpc_pair_00110() -> None:
     """Verify EpVpcPairConsistencyGet query params."""
     with does_not_raise():
         instance = EpVpcPairConsistencyGet(fabric_name="fab1", switch_id="SN01")
-        instance.endpoint_params.from_cluster = "cluster-a"
+        instance.endpoint_params.cluster_name = "cluster-a"
         result = instance.path
     _assert_path_with_query(
         result,
         "/api/v1/manage/fabrics/fab1/switches/SN01/vpcPairConsistency",
-        {"fromCluster": "cluster-a"},
+        {"clusterName=cluster-a"},
     )
 
 
@@ -162,7 +159,7 @@ def test_endpoints_api_v1_manage_vpc_pair_00200() -> None:
     """Verify EpVpcPairOverviewGet query params."""
     with does_not_raise():
         instance = EpVpcPairOverviewGet(fabric_name="fab1", switch_id="SN01")
-        instance.endpoint_params.from_cluster = "cluster-a"
+        instance.endpoint_params.cluster_name = "cluster-a"
         instance.endpoint_params.component_type = "health"
         result = instance.path
     assert instance.class_name == "EpVpcPairOverviewGet"
@@ -170,7 +167,7 @@ def test_endpoints_api_v1_manage_vpc_pair_00200() -> None:
     _assert_path_with_query(
         result,
         "/api/v1/manage/fabrics/fab1/switches/SN01/vpcPairOverview",
-        {"fromCluster": "cluster-a", "componentType": "health"},
+        {"clusterName=cluster-a", "componentType=health"},
     )
 
 
@@ -198,7 +195,7 @@ def test_endpoints_api_v1_manage_vpc_pair_00310() -> None:
     _assert_path_with_query(
         result,
         "/api/v1/manage/fabrics/fab1/switches/SN01/vpcPairRecommendation",
-        {"useVirtualPeerLink": "true"},
+        {"useVirtualPeerLink=true"},
     )
 
 
@@ -211,7 +208,7 @@ def test_endpoints_api_v1_manage_vpc_pair_00400() -> None:
     """Verify EpVpcPairSupportGet query params."""
     with does_not_raise():
         instance = EpVpcPairSupportGet(fabric_name="fab1", switch_id="SN01")
-        instance.endpoint_params.from_cluster = "cluster-a"
+        instance.endpoint_params.cluster_name = "cluster-a"
         instance.endpoint_params.component_type = "checkPairing"
         result = instance.path
     assert instance.class_name == "EpVpcPairSupportGet"
@@ -219,7 +216,7 @@ def test_endpoints_api_v1_manage_vpc_pair_00400() -> None:
     _assert_path_with_query(
         result,
         "/api/v1/manage/fabrics/fab1/switches/SN01/vpcPairSupport",
-        {"fromCluster": "cluster-a", "componentType": "checkPairing"},
+        {"clusterName=cluster-a", "componentType=checkPairing"},
     )
 
 
@@ -247,7 +244,7 @@ def test_endpoints_api_v1_manage_vpc_pair_00520() -> None:
     """Verify EpVpcPairsListGet full query serialization."""
     with does_not_raise():
         instance = EpVpcPairsListGet(fabric_name="fab1")
-        instance.endpoint_params.from_cluster = "cluster-a"
+        instance.endpoint_params.cluster_name = "cluster-a"
         instance.lucene_params.filter = "switchId:SN01"
         instance.lucene_params.max = 50
         instance.lucene_params.offset = 10
@@ -259,12 +256,12 @@ def test_endpoints_api_v1_manage_vpc_pair_00520() -> None:
         result,
         "/api/v1/manage/fabrics/fab1/vpcPairs",
         {
-            "fromCluster": "cluster-a",
-            "filter": "switchId:SN01",
-            "max": "50",
-            "offset": "10",
-            "sort": "switchId:asc",
-            "view": "discoveredPairs",
+            "clusterName=cluster-a",
+            "filter=switchId:SN01",
+            "max=50",
+            "offset=10",
+            "sort=switchId%3Aasc",
+            "view=discoveredPairs",
         },
     )
 
@@ -279,11 +276,12 @@ def test_endpoints_api_v1_manage_vpc_pair_00530() -> None:
 
 
 def test_endpoints_api_v1_manage_vpc_pair_00540() -> None:
-    """Verify EpFabricSwitchesGet query serialization via composite params."""
+    """Verify EpManageFabricsSwitchesGet query serialization via composite params."""
     with does_not_raise():
-        instance = EpFabricSwitchesGet(fabric_name="fab1")
-        instance.endpoint_params.from_cluster = "cluster-a"
-        instance.endpoint_params.view = "default"
+        instance = EpManageFabricsSwitchesGet(fabric_name="fab1")
+        instance.endpoint_params.cluster_name = "cluster-a"
+        instance.endpoint_params.hostname = "leaf1"
+        instance.endpoint_params.max = 100
         instance.lucene_params.filter = "name:leaf*"
         instance.lucene_params.sort = "name:asc"
         result = instance.path
@@ -292,9 +290,10 @@ def test_endpoints_api_v1_manage_vpc_pair_00540() -> None:
         result,
         "/api/v1/manage/fabrics/fab1/switches",
         {
-            "fromCluster": "cluster-a",
-            "view": "default",
-            "filter": "name:leaf*",
-            "sort": "name:asc",
+            "clusterName=cluster-a",
+            "hostname=leaf1",
+            "max=100",
+            "filter=name:leaf*",
+            "sort=name:asc",
         },
     )
