@@ -1,0 +1,1692 @@
+# -*- coding: utf-8 -*-
+
+# Copyright: (c) 2026, L Nikhil Sri Krishna (@nisaikri) <nisaikri@cisco.com>
+
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""
+Unit tests for ``PolicyGroupOrchestrator``.
+
+Verifies that the orchestrator drives ``RestSend`` correctly for policy-group
+CRUD/deploy operations: the ``_raw_cache`` query cache, source-artifact
+filtering, identifier deduplication, the bulk POST body shape, the markDelete-
+then-direct-DELETE fallback in ``delete_bulk``, the switch-level deploy union,
+and the ``deploy_unchanged_user_mentioned`` re-deploy of user-mentioned but
+unchanged groups.
+
+Scope: methods defined in ``orchestrators/manage_policy_group.py`` only.
+The shared infrastructure inherited from ``NDBaseOrchestrator`` (``_request``,
+``_register_api_call``, verbosity tagging) is covered separately by
+``test_base_orchestrator.py`` and is not re-exercised here.
+"""
+
+# pylint: disable=disallowed-name,protected-access,redefined-outer-name,too-many-lines
+# pylint: disable=use-implicit-booleaness-not-comparison
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policy_group_actions import (
+    EpManagePolicyGroupActionsMarkDeletePost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policy_groups import (
+    EpManagePolicyGroupsDelete,
+    EpManagePolicyGroupsGet,
+    EpManagePolicyGroupsPost,
+    EpManagePolicyGroupsPut,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switch_actions import (
+    EpManageSwitchActionsDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.policy_group_base import (
+    PolicyGroupCreate,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_policy_group import (
+    PolicyGroupOrchestrator,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import (
+    ResponseHandler,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
+    does_not_raise,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.mock_ansible_module import (
+    MockAnsibleModule,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.response_generator import (
+    ResponseGenerator,
+)
+from ansible_collections.cisco.nd.tests.unit.module_utils.sender_file import Sender
+
+# =============================================================================
+# Test harness
+# =============================================================================
+
+
+def _build_rest_send(response_dicts: list[dict]) -> RestSend:
+    """Build a real ``RestSend`` wired to a file-based ``Sender`` and a
+    ``ResponseHandler`` that yields ``response_dicts`` in order.
+
+    Each entry in ``response_dicts`` is a controller response of the shape
+    ``{"RETURN_CODE", "METHOD", "REQUEST_PATH", "MESSAGE", "DATA"}``.  The
+    helper ``_resp`` below builds these compactly.
+    """
+
+    def responses():
+        yield from response_dicts
+
+    sender = Sender()
+    sender.ansible_module = MockAnsibleModule()
+    sender.gen = ResponseGenerator(responses())
+
+    response_handler = ResponseHandler()
+    response_handler.response = {"RETURN_CODE": 200, "MESSAGE": "OK"}
+    response_handler.verb = HttpVerbEnum.GET
+    response_handler.commit()
+
+    rest_send = RestSend({"check_mode": False, "fabric_name": "fab1"})
+    rest_send.sender = sender
+    rest_send.response_handler = response_handler
+    rest_send.unit_test = True
+    rest_send.timeout = 1
+    return rest_send
+
+
+def _resp(data: Any = None, *, return_code: int = 200, method: str = "GET", path: str = "/api/v1", message: str = "OK") -> dict:
+    """Build one controller response dict for the ``Sender`` generator."""
+    return {
+        "RETURN_CODE": return_code,
+        "METHOD": method,
+        "REQUEST_PATH": path,
+        "MESSAGE": message,
+        "DATA": data if data is not None else {},
+    }
+
+
+def _make_results() -> Results:
+    """Build a ``Results`` instance pre-wired for orchestrator call capture."""
+    r = Results()
+    r.state = "merged"
+    r.check_mode = False
+    return r
+
+
+def _make_orchestrator(
+    rest_send: RestSend,
+    *,
+    fabric_name: str = "fab1",
+    deploy: bool = True,
+    results: Results | None = None,
+) -> PolicyGroupOrchestrator:
+    """Construct a ``PolicyGroupOrchestrator`` with the given wiring."""
+    return PolicyGroupOrchestrator(
+        rest_send=rest_send,
+        fabric_name=fabric_name,
+        deploy=deploy,
+        results=results,
+    )
+
+
+def _build_pg_model(
+    *,
+    template_name: str = "feature_enable",
+    description: str = "test pg",
+    switch_ids: list[str] | None = None,
+    template_inputs: dict | None = None,
+    policy_id: str | None = None,
+    priority: int = 500,
+    entity_type: str = "switch",
+    entity_name: str = "SWITCH",
+) -> PolicyGroupCreate:
+    """Build a minimal valid ``PolicyGroupCreate`` instance for tests.
+
+    Defaults reflect a single-switch ``feature_enable`` policy group with no
+    template inputs, which is the cheapest payload that satisfies the model's
+    invariants while still being routable to every orchestrator method.
+    """
+    kwargs: dict[str, Any] = {
+        "template_name": template_name,
+        "description": description,
+        "switch_ids": switch_ids if switch_ids is not None else ["SN1"],
+        "priority": priority,
+        "entity_type": entity_type,
+        "entity_name": entity_name,
+    }
+    if template_inputs is not None:
+        kwargs["template_inputs"] = template_inputs
+    if policy_id is not None:
+        kwargs["policy_id"] = policy_id
+    return PolicyGroupCreate(**kwargs)
+
+
+# =============================================================================
+# Test: initialisation / ClassVars
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_00010() -> None:
+    """
+    # Summary
+
+    ``PolicyGroupOrchestrator`` instantiates cleanly and exposes the documented
+    ClassVars and endpoint assignments.
+
+    ## Test
+
+    - ``model_class`` is ``PolicyGroupCreate``
+    - Bulk flags are both True
+    - All endpoint slots resolve to the expected ND endpoint classes
+    - ``fabric_name`` and ``deploy`` flow through from the constructor
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.__init__
+    """
+    rest_send = _build_rest_send([])
+    with does_not_raise():
+        instance = _make_orchestrator(rest_send)
+
+    assert instance.model_class is PolicyGroupCreate
+    assert instance.supports_bulk_create is True
+    assert instance.supports_bulk_delete is True
+    assert instance.create_endpoint is EpManagePolicyGroupsPost
+    assert instance.update_endpoint is EpManagePolicyGroupsPut
+    assert instance.delete_endpoint is EpManagePolicyGroupsDelete
+    assert instance.query_one_endpoint is EpManagePolicyGroupsGet
+    assert instance.query_all_endpoint is EpManagePolicyGroupsGet
+    assert instance.create_bulk_endpoint is EpManagePolicyGroupsPost
+    assert instance.delete_bulk_endpoint is EpManagePolicyGroupsDelete
+    assert instance.mark_delete_endpoint is EpManagePolicyGroupActionsMarkDeletePost
+    assert instance.switch_deploy_endpoint is EpManageSwitchActionsDeployPost
+    assert instance.fabric_name == "fab1"
+    assert instance.deploy is True
+    assert instance._raw_cache is None
+
+
+def test_manage_policy_group_orchestrator_00020() -> None:
+    """
+    # Summary
+
+    ``_invalidate_cache`` resets ``_raw_cache`` to ``None``.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._invalidate_cache
+    """
+    rest_send = _build_rest_send([])
+    instance = _make_orchestrator(rest_send)
+    instance._raw_cache = [{"policyId": "p1", "description": "x", "templateName": "t"}]
+    assert instance._raw_cache is not None
+
+    with does_not_raise():
+        instance._invalidate_cache()
+
+    assert instance._raw_cache is None
+
+
+# =============================================================================
+# Test: query_all
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_00100() -> None:
+    """
+    # Summary
+
+    First ``query_all`` call hits the API, populates ``_raw_cache``, and
+    returns the deduplicated, description-bearing groups.
+
+    ## Test
+
+    - ``_raw_cache`` is ``None`` going in
+    - One GET is issued against ``/policyGroups``
+    - Returned list contains the single matching policy group
+    - After the call, ``_raw_cache`` holds the source-filtered raw list
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_all
+    """
+    groups = [
+        {"policyId": "P1", "description": "desc1", "templateName": "t1"},
+    ]
+    rest_send = _build_rest_send([_resp({"policyGroups": groups})])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+    assert instance._raw_cache is None
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["policyId"] == "P1"
+    assert instance._raw_cache == groups
+    assert len(results._tasks) == 1
+    assert "/policyGroups" in results._tasks[0].path
+    assert results._tasks[0].verb == "GET"
+
+
+def test_manage_policy_group_orchestrator_00110() -> None:
+    """
+    # Summary
+
+    Subsequent ``query_all`` calls reuse ``_raw_cache`` without firing
+    another HTTP GET.
+
+    ## Test
+
+    - Pre-populate ``_raw_cache`` with two groups
+    - No responses queued in ``RestSend`` -- a real GET would StopIteration
+    - ``query_all`` returns the cached list filtered by description
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_all
+    """
+    cached = [
+        {"policyId": "P1", "description": "desc1", "templateName": "t1"},
+        {"policyId": "P2", "description": "desc2", "templateName": "t2"},
+    ]
+    rest_send = _build_rest_send([])  # no responses -> would explode if used
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+    instance._raw_cache = cached
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert {g["policyId"] for g in result} == {"P1", "P2"}
+    assert results._tasks == []  # no API call made
+
+
+def test_manage_policy_group_orchestrator_00120() -> None:
+    """
+    # Summary
+
+    ``query_all`` strips internal controller artifacts (records carrying a
+    non-empty ``source`` field) from the cached raw list.
+
+    ## Test
+
+    - Three groups in API response, one with a non-empty ``source``
+    - The source-bearing record is excluded from both the return value and
+      the cache
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_all
+    """
+    api_groups = [
+        {"policyId": "P1", "description": "user", "templateName": "t1", "source": ""},
+        {"policyId": "P2", "description": "user", "templateName": "t2"},
+        {"policyId": "P3", "description": "artifact", "templateName": "switch_freeform", "source": "P1"},
+    ]
+    rest_send = _build_rest_send([_resp({"policyGroups": api_groups})])
+    instance = _make_orchestrator(rest_send)
+
+    result = instance.query_all()
+
+    pids = {g["policyId"] for g in result}
+    assert "P3" not in pids
+    assert instance._raw_cache is not None
+    assert all(not g.get("source") for g in instance._raw_cache)
+
+
+def test_manage_policy_group_orchestrator_00130() -> None:
+    """
+    # Summary
+
+    ``include_no_description=False`` (the default) hides groups whose
+    description is missing / empty / null; ``True`` preserves them.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_all
+    """
+    cached = [
+        {"policyId": "P1", "description": "real", "templateName": "t"},
+        {"policyId": "P2", "description": "", "templateName": "t"},
+        {"policyId": "P3", "description": None, "templateName": "t"},
+        {"policyId": "P4", "templateName": "t"},  # description absent
+    ]
+    rest_send = _build_rest_send([])
+    instance = _make_orchestrator(rest_send)
+    instance._raw_cache = cached
+
+    default_view = instance.query_all()
+    full_view = instance.query_all(include_no_description=True, deduplicate=False)
+
+    assert {g["policyId"] for g in default_view} == {"P1"}
+    assert {g["policyId"] for g in full_view} == {"P1", "P2", "P3", "P4"}
+
+
+def test_manage_policy_group_orchestrator_00140() -> None:
+    """
+    # Summary
+
+    ``deduplicate=False`` returns every cached entry including duplicates,
+    even when the (description, templateName) composite identifier repeats.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_all
+    """
+    cached = [
+        {"policyId": "P1", "description": "same", "templateName": "t", "updateTimestamp": 100},
+        {"policyId": "P2", "description": "same", "templateName": "t", "updateTimestamp": 200},
+    ]
+    rest_send = _build_rest_send([])
+    instance = _make_orchestrator(rest_send)
+    instance._raw_cache = cached
+
+    with_dedup = instance.query_all()
+    without_dedup = instance.query_all(deduplicate=False)
+
+    assert len(with_dedup) == 1
+    assert with_dedup[0]["policyId"] == "P2"  # latest timestamp wins
+    assert len(without_dedup) == 2
+
+
+def test_manage_policy_group_orchestrator_00150() -> None:
+    """
+    # Summary
+
+    ``query_all`` wraps low-level exceptions in a self-describing
+    ``Exception`` that mentions the operation.
+
+    ## Test
+
+    - Controller returns HTTP 500 on the GET
+    - ``_request`` raises; wrapper re-raises with a friendly prefix
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_all
+    """
+    rest_send = _build_rest_send([_resp({}, return_code=500, message="boom")])
+    instance = _make_orchestrator(rest_send)
+
+    with pytest.raises(Exception, match="Query all policy groups failed"):
+        instance.query_all()
+
+
+def test_manage_policy_group_orchestrator_00160() -> None:
+    """
+    # Summary
+
+    An empty ``policyGroups`` payload yields an empty list and an empty
+    cache (not ``None``), so subsequent calls still skip the network.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_all
+    """
+    rest_send = _build_rest_send([_resp({"policyGroups": []})])
+    instance = _make_orchestrator(rest_send)
+
+    result = instance.query_all()
+
+    assert result == []
+    assert instance._raw_cache == []
+    # Second call should not need a response (cache is populated).
+    second = instance.query_all()
+    assert second == []
+
+
+# =============================================================================
+# Test: _deduplicate_groups
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_00200() -> None:
+    """
+    # Summary
+
+    Groups with distinct (description, templateName) identifiers pass through
+    unchanged.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._deduplicate_groups
+    """
+    groups = [
+        {"policyId": "P1", "description": "a", "templateName": "t1"},
+        {"policyId": "P2", "description": "b", "templateName": "t2"},
+    ]
+    result = PolicyGroupOrchestrator._deduplicate_groups(groups)
+    assert {g["policyId"] for g in result} == {"P1", "P2"}
+
+
+def test_manage_policy_group_orchestrator_00210() -> None:
+    """
+    # Summary
+
+    When duplicates share an identifier, the entry with the higher
+    ``updateTimestamp`` wins.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._deduplicate_groups
+    """
+    groups = [
+        {"policyId": "old", "description": "x", "templateName": "t", "updateTimestamp": 100},
+        {"policyId": "new", "description": "x", "templateName": "t", "updateTimestamp": 200},
+        {"policyId": "mid", "description": "x", "templateName": "t", "updateTimestamp": 150},
+    ]
+    result = PolicyGroupOrchestrator._deduplicate_groups(groups)
+    assert len(result) == 1
+    assert result[0]["policyId"] == "new"
+
+
+def test_manage_policy_group_orchestrator_00220() -> None:
+    """
+    # Summary
+
+    Falls back to ``createTimestamp`` when ``updateTimestamp`` is missing
+    on either side.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._deduplicate_groups
+    """
+    groups = [
+        {"policyId": "old", "description": "x", "templateName": "t", "createTimestamp": 50},
+        {"policyId": "new", "description": "x", "templateName": "t", "createTimestamp": 75},
+    ]
+    result = PolicyGroupOrchestrator._deduplicate_groups(groups)
+    assert len(result) == 1
+    assert result[0]["policyId"] == "new"
+
+
+def test_manage_policy_group_orchestrator_00230() -> None:
+    """
+    # Summary
+
+    With no timestamps on either entry, the first-seen group is kept
+    (since ``0 > 0`` is False the second cannot beat it).
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._deduplicate_groups
+    """
+    groups = [
+        {"policyId": "first", "description": "x", "templateName": "t"},
+        {"policyId": "second", "description": "x", "templateName": "t"},
+    ]
+    result = PolicyGroupOrchestrator._deduplicate_groups(groups)
+    assert len(result) == 1
+    assert result[0]["policyId"] == "first"
+
+
+# =============================================================================
+# Test: query_by_id
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_00300() -> None:
+    """
+    # Summary
+
+    A 200 response carrying ``policyId`` is returned as the dict body.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_by_id
+    """
+    rest_send = _build_rest_send([_resp({"policyId": "P1", "description": "x"})])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+
+    result = instance.query_by_id("P1")
+
+    assert isinstance(result, dict)
+    assert result["policyId"] == "P1"
+    assert results._tasks[0].path.endswith("/policyGroups/P1")
+    assert results._tasks[0].verb == "GET"
+
+
+def test_manage_policy_group_orchestrator_00310() -> None:
+    """
+    # Summary
+
+    A 404 / empty / non-dict response yields ``None``, signaling "not found"
+    to the caller.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_by_id
+    """
+    rest_send = _build_rest_send([_resp({}, return_code=404, message="Not Found")])
+    instance = _make_orchestrator(rest_send)
+
+    result = instance.query_by_id("missing")
+
+    assert result is None
+
+
+def test_manage_policy_group_orchestrator_00320() -> None:
+    """
+    # Summary
+
+    A success response *without* a ``policyId`` key is treated as "not
+    found" (a defensive guard against malformed controller bodies).
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_by_id
+    """
+    rest_send = _build_rest_send([_resp({"description": "x"})])
+    instance = _make_orchestrator(rest_send)
+
+    result = instance.query_by_id("P1")
+    assert result is None
+
+
+def test_manage_policy_group_orchestrator_00330() -> None:
+    """
+    # Summary
+
+    HTTP 500 from the controller is wrapped in a "Query policy group by ID
+    failed" exception.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_by_id
+    """
+    rest_send = _build_rest_send([_resp({}, return_code=500)])
+    instance = _make_orchestrator(rest_send)
+
+    with pytest.raises(Exception, match="Query policy group by ID failed"):
+        instance.query_by_id("P1")
+
+
+# =============================================================================
+# Test: query_filtered
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_00400() -> None:
+    """
+    # Summary
+
+    When ``_raw_cache`` is populated, ``query_filtered`` filters in memory and
+    never touches the network.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_filtered
+    """
+    cached = [
+        {"policyId": "P1", "description": "alpha", "templateName": "feat_a"},
+        {"policyId": "P2", "description": "beta", "templateName": "feat_b"},
+        {"policyId": "P3", "description": "alpha", "templateName": "feat_b"},
+    ]
+    rest_send = _build_rest_send([])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+    instance._raw_cache = cached
+
+    by_template = instance.query_filtered(template_name="feat_b")
+    by_description = instance.query_filtered(description="alpha")
+    by_both = instance.query_filtered(template_name="feat_b", description="alpha")
+
+    assert {g["policyId"] for g in by_template} == {"P2", "P3"}
+    assert {g["policyId"] for g in by_description} == {"P1", "P3"}
+    assert {g["policyId"] for g in by_both} == {"P3"}
+    assert results._tasks == []
+
+
+def test_manage_policy_group_orchestrator_00410() -> None:
+    """
+    # Summary
+
+    Cache-miss path builds a Lucene ``AND`` filter on both ``templateName``
+    and ``description`` then strips ``source``-bearing artifacts.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_filtered
+    """
+    api_groups = [
+        {"policyId": "P1", "description": "d", "templateName": "t1"},
+        {"policyId": "P2", "description": "d", "templateName": "t1", "source": "PX"},
+    ]
+    rest_send = _build_rest_send([_resp({"policyGroups": api_groups})])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+
+    result = instance.query_filtered(template_name="t1", description="d")
+
+    assert {g["policyId"] for g in result} == {"P1"}
+    # Verify the Lucene filter was actually built into the request path.
+    assert "templateName" in results._tasks[0].path
+    assert "description" in results._tasks[0].path
+
+
+def test_manage_policy_group_orchestrator_00420() -> None:
+    """
+    # Summary
+
+    With no filters the cache-miss path still strips source artifacts and
+    deduplicates the returned list.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_filtered
+    """
+    api_groups = [
+        {"policyId": "P1", "description": "d", "templateName": "t", "updateTimestamp": 100},
+        {"policyId": "P2", "description": "d", "templateName": "t", "updateTimestamp": 200},
+        {"policyId": "P3", "description": "other", "templateName": "t", "source": "PX"},
+    ]
+    rest_send = _build_rest_send([_resp({"policyGroups": api_groups})])
+    instance = _make_orchestrator(rest_send)
+
+    result = instance.query_filtered()
+    pids = {g["policyId"] for g in result}
+
+    assert "P3" not in pids  # source-artifact stripped
+    assert pids == {"P2"}  # P1 collapsed into P2 (later timestamp)
+
+
+def test_manage_policy_group_orchestrator_00430() -> None:
+    """
+    # Summary
+
+    ``deduplicate=False`` preserves duplicate (description, templateName)
+    groups so ``state: gathered`` sees every distinct ``policyId``.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_filtered
+    """
+    cached = [
+        {"policyId": "P1", "description": "d", "templateName": "t"},
+        {"policyId": "P2", "description": "d", "templateName": "t"},
+    ]
+    rest_send = _build_rest_send([])
+    instance = _make_orchestrator(rest_send)
+    instance._raw_cache = cached
+
+    result = instance.query_filtered(template_name="t", deduplicate=False)
+
+    assert {g["policyId"] for g in result} == {"P1", "P2"}
+
+
+def test_manage_policy_group_orchestrator_00440() -> None:
+    """
+    # Summary
+
+    Controller errors are wrapped with the "Query filtered policy groups
+    failed" prefix.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_filtered
+    """
+    rest_send = _build_rest_send([_resp({}, return_code=500)])
+    instance = _make_orchestrator(rest_send)
+
+    with pytest.raises(Exception, match="Query filtered policy groups failed"):
+        instance.query_filtered(template_name="t")
+
+
+# =============================================================================
+# Test: create / create_bulk
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_00500() -> None:
+    """
+    # Summary
+
+    ``create`` delegates to ``create_bulk`` with a single-element list and
+    returns the same response.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.create
+    """
+    response_body = {"policyGroups": [{"policyId": "NEW", "status": "success"}]}
+    rest_send = _build_rest_send([_resp(response_body, method="POST")])
+    instance = _make_orchestrator(rest_send, deploy=False)
+    model = _build_pg_model()
+
+    result = instance.create(model)
+
+    assert result == response_body
+    assert model.policy_id == "NEW"  # populated by create_bulk
+
+
+def test_manage_policy_group_orchestrator_00510() -> None:
+    """
+    # Summary
+
+    ``create_bulk`` posts a ``{"policyGroups": [...]}`` envelope, propagates
+    server-generated ``policyId`` values onto the model instances, and
+    invalidates the cache.
+
+    ## Test
+
+    - Two models posted in one call
+    - Response carries two ``policyGroups`` entries with distinct ``policyId``
+    - Each model receives its ``policy_id`` (positional match)
+    - ``_raw_cache`` reset to ``None`` afterwards
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.create_bulk
+    """
+    response_body = {
+        "policyGroups": [
+            {"policyId": "P1", "status": "success", "templateName": "feature_enable"},
+            {"policyId": "P2", "status": "success", "templateName": "feature_enable"},
+        ]
+    }
+    rest_send = _build_rest_send([_resp(response_body, method="POST")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=False, results=results)
+    instance._raw_cache = ["stale"]  # to confirm invalidation
+    models = [_build_pg_model(description="one"), _build_pg_model(description="two")]
+
+    result = instance.create_bulk(models)
+
+    assert result == response_body
+    assert models[0].policy_id == "P1"
+    assert models[1].policy_id == "P2"
+    assert instance._raw_cache is None
+    # Single POST issued; payload uses the policyGroups envelope.
+    assert len(results._tasks) == 1
+    assert results._tasks[0].verb == "POST"
+    assert results._tasks[0].payload == {"policyGroups": [m.to_payload() for m in models]}
+
+
+def test_manage_policy_group_orchestrator_00520() -> None:
+    """
+    # Summary
+
+    With ``deploy=True`` and switches assigned, ``create_bulk`` follows the
+    POST with a single ``switchActions/deploy`` against the union of all
+    referenced switches.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.create_bulk
+    """
+    create_body = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
+    deploy_body = {"switchIds": [{"switchId": "SN1", "status": "success", "message": "ok"}, {"switchId": "SN2", "status": "success", "message": "ok"}]}
+    rest_send = _build_rest_send(
+        [
+            _resp(create_body, method="POST"),
+            _resp(deploy_body, method="POST"),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=True, results=results)
+    model = _build_pg_model(switch_ids=["SN2", "SN1"])
+
+    instance.create_bulk([model])
+
+    assert len(results._tasks) == 2
+    deploy_task = results._tasks[1]
+    assert "switchActions/deploy" in deploy_task.path
+    assert deploy_task.payload == {"switchIds": ["SN1", "SN2"]}  # sorted
+
+
+def test_manage_policy_group_orchestrator_00530() -> None:
+    """
+    # Summary
+
+    With ``deploy=False`` no ``switchActions/deploy`` request follows the
+    create POST.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.create_bulk
+    """
+    create_body = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
+    rest_send = _build_rest_send([_resp(create_body, method="POST")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=False, results=results)
+    model = _build_pg_model(switch_ids=["SN1"])
+
+    instance.create_bulk([model])
+
+    assert len(results._tasks) == 1
+
+
+def test_manage_policy_group_orchestrator_00540() -> None:
+    """
+    # Summary
+
+    A 207 response carrying a ``status: failed`` entry raises an
+    ``Exception`` describing the failed item(s).
+
+    ## Test
+
+    - Two models posted; second item fails with a server message
+    - Wrapped error names the failed template + description and includes the
+      server message
+    - ``_raw_cache`` is *not* invalidated when the bulk-create flow fails
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.create_bulk
+    """
+    response_body = {
+        "policyGroups": [
+            {"policyId": "P1", "status": "success"},
+            {"policyId": "", "status": "failed", "message": "boom"},
+        ]
+    }
+    rest_send = _build_rest_send([_resp(response_body, method="POST")])
+    instance = _make_orchestrator(rest_send, deploy=False)
+    instance._raw_cache = ["preserved-on-error"]
+    models = [
+        _build_pg_model(description="one"),
+        _build_pg_model(description="bad"),
+    ]
+
+    with pytest.raises(Exception, match="Bulk create policy groups failed.*bad.*boom"):
+        instance.create_bulk(models)
+    assert instance._raw_cache == ["preserved-on-error"]
+
+
+def test_manage_policy_group_orchestrator_00550() -> None:
+    """
+    # Summary
+
+    When no models supply ``switch_ids`` and ``deploy=True``, the orchestrator
+    skips the ``switchActions/deploy`` call (nothing to deploy).
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.create_bulk
+    """
+    create_body = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
+    rest_send = _build_rest_send([_resp(create_body, method="POST")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=True, results=results)
+    model = _build_pg_model(switch_ids=[])
+
+    instance.create_bulk([model])
+
+    # Only the create POST was issued -- no deploy follow-up.
+    assert len(results._tasks) == 1
+
+
+# =============================================================================
+# Test: update
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_00600() -> None:
+    """
+    # Summary
+
+    Happy-path ``update`` issues a ``PUT /policyGroups/{policy_id}`` carrying
+    the model's payload and invalidates the cache.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.update
+    """
+    cached_raw = [{"policyId": "P1", "switchIds": ["SN1"]}]
+    update_body = {"policyId": "P1"}
+    rest_send = _build_rest_send([_resp(update_body, method="PUT")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=False, results=results)
+    instance._raw_cache = cached_raw  # provides current switch_ids -> no extra GET
+    model = _build_pg_model(policy_id="P1", switch_ids=["SN1"])
+
+    result = instance.update(model)
+
+    assert result == update_body
+    assert instance._raw_cache is None  # invalidated by the mutation
+    assert len(results._tasks) == 1
+    assert results._tasks[0].path.endswith("/policyGroups/P1")
+    assert results._tasks[0].verb == "PUT"
+    assert results._tasks[0].payload == model.to_payload()
+
+
+def test_manage_policy_group_orchestrator_00610() -> None:
+    """
+    # Summary
+
+    Missing ``policy_id`` raises a wrapped ``Exception`` whose message names
+    the offending description.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.update
+    """
+    rest_send = _build_rest_send([])
+    instance = _make_orchestrator(rest_send, deploy=False)
+    model = _build_pg_model(policy_id=None, description="needs id")
+
+    with pytest.raises(Exception, match="Update policy group failed.*needs id.*no policy_id"):
+        instance.update(model)
+
+
+def test_manage_policy_group_orchestrator_00620() -> None:
+    """
+    # Summary
+
+    When ``deploy=True`` and switches are *removed* from the group, the
+    follow-up ``switchActions/deploy`` covers the union of new + removed
+    switches so the controller pushes the negative config.
+
+    ## Test
+
+    - Old switch_ids (from cache): {SN1, SN2}
+    - New switch_ids (in model): {SN2, SN3}
+    - Expected deploy union (sorted): [SN1, SN2, SN3]
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.update
+    """
+    cached_raw = [{"policyId": "P1", "switchIds": ["SN1", "SN2"]}]
+    deploy_body = {"switchIds": [{"switchId": sn, "status": "success"} for sn in ["SN1", "SN2", "SN3"]]}
+    rest_send = _build_rest_send(
+        [
+            _resp({"policyId": "P1"}, method="PUT"),
+            _resp(deploy_body, method="POST"),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=True, results=results)
+    instance._raw_cache = cached_raw
+    model = _build_pg_model(policy_id="P1", switch_ids=["SN2", "SN3"])
+
+    instance.update(model)
+
+    assert len(results._tasks) == 2
+    deploy_task = results._tasks[1]
+    assert "switchActions/deploy" in deploy_task.path
+    assert deploy_task.payload == {"switchIds": ["SN1", "SN2", "SN3"]}
+
+
+def test_manage_policy_group_orchestrator_00630() -> None:
+    """
+    # Summary
+
+    With ``deploy=False`` no deploy request follows the ``PUT`` even when
+    switches change.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.update
+    """
+    cached_raw = [{"policyId": "P1", "switchIds": ["SN1"]}]
+    rest_send = _build_rest_send([_resp({"policyId": "P1"}, method="PUT")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=False, results=results)
+    instance._raw_cache = cached_raw
+    model = _build_pg_model(policy_id="P1", switch_ids=["SN2"])
+
+    instance.update(model)
+
+    assert len(results._tasks) == 1  # PUT only
+
+
+def test_manage_policy_group_orchestrator_00640() -> None:
+    """
+    # Summary
+
+    When ``deploy=True`` and the switches are unchanged (new == old), the
+    deploy call still fires on that switch set (so the existing intended
+    config is re-pushed).
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.update
+    """
+    cached_raw = [{"policyId": "P1", "switchIds": ["SN1"]}]
+    deploy_body = {"switchIds": [{"switchId": "SN1", "status": "success"}]}
+    rest_send = _build_rest_send(
+        [
+            _resp({"policyId": "P1"}, method="PUT"),
+            _resp(deploy_body, method="POST"),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=True, results=results)
+    instance._raw_cache = cached_raw
+    model = _build_pg_model(policy_id="P1", switch_ids=["SN1"])
+
+    instance.update(model)
+
+    assert len(results._tasks) == 2
+    assert results._tasks[1].payload == {"switchIds": ["SN1"]}
+
+
+# =============================================================================
+# Test: delete / delete_bulk
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_00700() -> None:
+    """
+    # Summary
+
+    ``delete`` delegates to ``delete_bulk`` with a single-element list.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.delete
+    """
+    mark_body = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
+    rest_send = _build_rest_send([_resp(mark_body, method="POST")])
+    instance = _make_orchestrator(rest_send, deploy=False)
+    model = _build_pg_model(policy_id="P1", switch_ids=["SN1"])
+
+    result = instance.delete(model)
+
+    assert result == {"policyIds": ["P1"], "status": "success"}
+
+
+def test_manage_policy_group_orchestrator_00710() -> None:
+    """
+    # Summary
+
+    Happy-path ``delete_bulk`` issues one ``markDelete`` and one
+    ``switchActions/deploy`` against the union of affected switches; the
+    cache is invalidated.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.delete_bulk
+    """
+    mark_body = {
+        "policyGroups": [
+            {"policyId": "P1", "status": "success"},
+            {"policyId": "P2", "status": "success"},
+        ]
+    }
+    deploy_body = {"switchIds": [{"switchId": sn, "status": "success"} for sn in ("SN1", "SN2", "SN3")]}
+    rest_send = _build_rest_send(
+        [
+            _resp(mark_body, method="POST"),
+            _resp(deploy_body, method="POST"),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=True, results=results)
+    instance._raw_cache = ["stale"]
+    models = [
+        _build_pg_model(policy_id="P1", description="one", switch_ids=["SN1", "SN2"]),
+        _build_pg_model(policy_id="P2", description="two", switch_ids=["SN2", "SN3"]),
+    ]
+
+    result = instance.delete_bulk(models)
+
+    assert result == {"policyIds": ["P1", "P2"], "status": "success"}
+    assert instance._raw_cache is None
+    assert len(results._tasks) == 2
+    assert results._tasks[0].path.endswith("/policyGroups/actions/markDelete")
+    assert results._tasks[0].payload == {"policyIds": ["P1", "P2"]}
+    assert "switchActions/deploy" in results._tasks[1].path
+    assert set(results._tasks[1].payload["switchIds"]) == {"SN1", "SN2", "SN3"}
+
+
+def test_manage_policy_group_orchestrator_00720() -> None:
+    """
+    # Summary
+
+    When ``markDelete`` reports a per-policy failure the orchestrator falls
+    back to a direct ``DELETE /policyGroups/{id}`` for the failed IDs, then
+    deploys against the union of switches from *both* succeeded and
+    direct-deleted groups.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.delete_bulk
+    """
+    mark_body = {
+        "policyGroups": [
+            {"policyId": "P1", "status": "success"},
+            {"policyId": "P2", "status": "failed", "message": "switch_freeform"},
+        ]
+    }
+    rest_send = _build_rest_send(
+        [
+            _resp(mark_body, method="POST"),
+            _resp({}, method="DELETE"),  # direct DELETE for P2
+            _resp({"switchIds": [{"switchId": "SN1", "status": "success"}, {"switchId": "SN2", "status": "success"}]}, method="POST"),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=True, results=results)
+    models = [
+        _build_pg_model(policy_id="P1", description="one", switch_ids=["SN1"]),
+        _build_pg_model(policy_id="P2", description="two", switch_ids=["SN2"]),
+    ]
+
+    result = instance.delete_bulk(models)
+
+    assert result == {"policyIds": ["P1", "P2"], "status": "success"}
+    assert len(results._tasks) == 3
+    assert results._tasks[1].path.endswith("/policyGroups/P2")
+    assert results._tasks[1].verb == "DELETE"
+    assert set(results._tasks[2].payload["switchIds"]) == {"SN1", "SN2"}
+
+
+def test_manage_policy_group_orchestrator_00730() -> None:
+    """
+    # Summary
+
+    With ``deploy=False`` ``delete_bulk`` performs ``markDelete`` (and any
+    direct ``DELETE`` fallbacks) but skips the trailing
+    ``switchActions/deploy``.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.delete_bulk
+    """
+    mark_body = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
+    rest_send = _build_rest_send([_resp(mark_body, method="POST")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=False, results=results)
+    models = [_build_pg_model(policy_id="P1", switch_ids=["SN1"])]
+
+    instance.delete_bulk(models)
+
+    assert len(results._tasks) == 1  # markDelete only
+
+
+def test_manage_policy_group_orchestrator_00740() -> None:
+    """
+    # Summary
+
+    A models list containing no ``policy_id`` values short-circuits to an
+    empty dict without issuing any HTTP call.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.delete_bulk
+    """
+    rest_send = _build_rest_send([])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+    models = [_build_pg_model(policy_id=None)]
+
+    result = instance.delete_bulk(models)
+
+    assert result == {}
+    assert results._tasks == []
+
+
+def test_manage_policy_group_orchestrator_00750() -> None:
+    """
+    # Summary
+
+    When ``markDelete`` returns an empty ``policyGroups`` list the
+    orchestrator treats every requested ID as succeeded (ambiguous response
+    is interpreted permissively).
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.delete_bulk
+    """
+    mark_body = {"policyGroups": []}
+    rest_send = _build_rest_send([_resp(mark_body, method="POST")])
+    instance = _make_orchestrator(rest_send, deploy=False)
+    models = [_build_pg_model(policy_id="P1", switch_ids=["SN1"])]
+
+    result = instance.delete_bulk(models)
+
+    assert result == {"policyIds": ["P1"], "status": "success"}
+
+
+# =============================================================================
+# Test: _switch_deploy
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_00800() -> None:
+    """
+    # Summary
+
+    ``_switch_deploy`` posts the ``{"switchIds": [...]}`` body to the deploy
+    endpoint and accepts an all-success response without raising.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._switch_deploy
+    """
+    body = {"switchIds": [{"switchId": "SN1", "status": "success", "message": "ok"}]}
+    rest_send = _build_rest_send([_resp(body, method="POST")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+
+    with does_not_raise():
+        instance._switch_deploy(["SN1"])
+
+    assert results._tasks[0].path.endswith("switchActions/deploy")
+    assert results._tasks[0].payload == {"switchIds": ["SN1"]}
+
+
+def test_manage_policy_group_orchestrator_00810() -> None:
+    """
+    # Summary
+
+    ``notExecuted`` per-switch entries are logged but do *not* raise -- the
+    controller considers those switches already in-sync.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._switch_deploy
+    """
+    body = {
+        "switchIds": [
+            {"switchId": "SN1", "status": "success", "message": "ok"},
+            {"switchId": "SN2", "status": "notExecuted", "message": "No Commands to execute"},
+        ]
+    }
+    rest_send = _build_rest_send([_resp(body, method="POST")])
+    instance = _make_orchestrator(rest_send)
+
+    with does_not_raise():
+        instance._switch_deploy(["SN1", "SN2"])
+
+
+def test_manage_policy_group_orchestrator_00820() -> None:
+    """
+    # Summary
+
+    Any per-switch ``failed`` status escalates to an ``Exception`` enumerating
+    the failed switches and their messages.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._switch_deploy
+    """
+    body = {
+        "switchIds": [
+            {"switchId": "SN1", "status": "success"},
+            {"switchId": "SN2", "status": "failed", "message": "deploy timeout"},
+        ]
+    }
+    rest_send = _build_rest_send([_resp(body, method="POST")])
+    instance = _make_orchestrator(rest_send)
+
+    with pytest.raises(Exception, match="switchActions/deploy reported 1 failed switch.*SN2.*deploy timeout"):
+        instance._switch_deploy(["SN1", "SN2"])
+
+
+def test_manage_policy_group_orchestrator_00830() -> None:
+    """
+    # Summary
+
+    A response shaped as a list (older / variant controllers) is still
+    parsed for per-switch status and a failure inside still raises.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._switch_deploy
+    """
+    list_body = [
+        {"switchId": "SN1", "status": "failed", "message": "x"},
+    ]
+    rest_send = _build_rest_send([_resp(list_body, method="POST")])
+    instance = _make_orchestrator(rest_send)
+
+    with pytest.raises(Exception, match="switchActions/deploy reported 1 failed switch.*SN1"):
+        instance._switch_deploy(["SN1"])
+
+
+# =============================================================================
+# Test: deploy_unchanged_user_mentioned
+# =============================================================================
+
+
+class _FakeStateMachine:
+    """Minimal duck-typed ``NDStateMachine`` substitute exposing only the
+    three collections ``deploy_unchanged_user_mentioned`` reads."""
+
+    def __init__(self, *, sent=None, proposed=None, existing=None) -> None:
+        self.sent = sent or []
+        self.proposed = proposed or []
+        self.existing = existing or []
+
+
+def test_manage_policy_group_orchestrator_00900() -> None:
+    """
+    # Summary
+
+    With ``deploy=False`` the helper is a true no-op even when there are
+    candidates to push.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.deploy_unchanged_user_mentioned
+    """
+    rest_send = _build_rest_send([])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=False, results=results)
+    pg = _build_pg_model(policy_id="P1", switch_ids=["SN1"])
+    sm = _FakeStateMachine(proposed=[pg], existing=[pg])
+
+    with does_not_raise():
+        instance.deploy_unchanged_user_mentioned(sm)
+
+    assert results._tasks == []
+
+
+def test_manage_policy_group_orchestrator_00910() -> None:
+    """
+    # Summary
+
+    When every user-mentioned policy was actually ``sent`` in this run, no
+    re-deploy is needed.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.deploy_unchanged_user_mentioned
+    """
+    rest_send = _build_rest_send([])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=True, results=results)
+    pg = _build_pg_model(policy_id="P1", switch_ids=["SN1"])
+    sm = _FakeStateMachine(sent=[pg], proposed=[pg], existing=[pg])
+
+    with does_not_raise():
+        instance.deploy_unchanged_user_mentioned(sm)
+
+    assert results._tasks == []
+
+
+def test_manage_policy_group_orchestrator_00920() -> None:
+    """
+    # Summary
+
+    A user-mentioned policy whose desired state matches the controller
+    (proposed AND existing AND NOT sent) triggers a ``switchActions/deploy`` over
+    that policy's switches.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.deploy_unchanged_user_mentioned
+    """
+    body = {"switchIds": [{"switchId": "SN1", "status": "success"}, {"switchId": "SN2", "status": "success"}]}
+    rest_send = _build_rest_send([_resp(body, method="POST")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=True, results=results)
+    pg = _build_pg_model(policy_id="P1", switch_ids=["SN1", "SN2"])
+    sm = _FakeStateMachine(proposed=[pg], existing=[pg])  # not in sent
+
+    instance.deploy_unchanged_user_mentioned(sm)
+
+    assert len(results._tasks) == 1
+    assert set(results._tasks[0].payload["switchIds"]) == {"SN1", "SN2"}
+
+
+def test_manage_policy_group_orchestrator_00930() -> None:
+    """
+    # Summary
+
+    Existing policies *not* mentioned by the user (i.e. absent from
+    ``proposed``) are ignored -- the helper never touches unrelated fabric
+    policies.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.deploy_unchanged_user_mentioned
+    """
+    rest_send = _build_rest_send([])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=True, results=results)
+    pg_unrelated = _build_pg_model(policy_id="P_OTHER", description="unrelated", switch_ids=["SN9"])
+    sm = _FakeStateMachine(proposed=[], existing=[pg_unrelated])
+
+    with does_not_raise():
+        instance.deploy_unchanged_user_mentioned(sm)
+
+    assert results._tasks == []
+
+
+# =============================================================================
+# Test: _get_current_switch_ids
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_01000() -> None:
+    """
+    # Summary
+
+    Cache hit returns the cached ``switchIds`` set without a network call.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._get_current_switch_ids
+    """
+    rest_send = _build_rest_send([])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+    instance._raw_cache = [{"policyId": "P1", "switchIds": ["SN1", "SN2"]}]
+
+    result = instance._get_current_switch_ids("P1")
+
+    assert result == {"SN1", "SN2"}
+    assert results._tasks == []
+
+
+def test_manage_policy_group_orchestrator_01010() -> None:
+    """
+    # Summary
+
+    Cache populated but ID not found returns the empty set (group was likely
+    just created in this run).
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._get_current_switch_ids
+    """
+    rest_send = _build_rest_send([])
+    instance = _make_orchestrator(rest_send)
+    instance._raw_cache = [{"policyId": "P2", "switchIds": ["SN1"]}]
+
+    result = instance._get_current_switch_ids("P1")
+
+    assert result == set()
+
+
+def test_manage_policy_group_orchestrator_01020() -> None:
+    """
+    # Summary
+
+    Cache miss falls back to a single ``GET /policyGroups/{id}`` and parses
+    ``switchIds`` from the response body.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._get_current_switch_ids
+    """
+    body = {"policyId": "P1", "switchIds": ["SN1", "SN2"]}
+    rest_send = _build_rest_send([_resp(body)])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, results=results)
+
+    result = instance._get_current_switch_ids("P1")
+
+    assert result == {"SN1", "SN2"}
+    assert results._tasks[0].path.endswith("/policyGroups/P1")
+
+
+def test_manage_policy_group_orchestrator_01030() -> None:
+    """
+    # Summary
+
+    A 404 from the GET (with ``not_found_ok=True``) is silently treated as
+    "no prior switches".
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._get_current_switch_ids
+    """
+    rest_send = _build_rest_send([_resp({}, return_code=404, message="Not Found")])
+    instance = _make_orchestrator(rest_send)
+
+    result = instance._get_current_switch_ids("missing")
+
+    assert result == set()
+
+
+def test_manage_policy_group_orchestrator_01040() -> None:
+    """
+    # Summary
+
+    Any non-404 GET exception is caught, logged, and treated as "no prior
+    switches" so the removal-deploy is simply skipped -- never escalates.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._get_current_switch_ids
+    """
+    rest_send = _build_rest_send([_resp({}, return_code=500, message="boom")])
+    instance = _make_orchestrator(rest_send)
+
+    with does_not_raise():
+        result = instance._get_current_switch_ids("P1")
+
+    assert result == set()
+
+
+# =============================================================================
+# Test: _populate_policy_ids
+# =============================================================================
+
+
+def test_manage_policy_group_orchestrator_01100() -> None:
+    """
+    # Summary
+
+    An empty ``response_groups`` argument is a no-op (no models touched).
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._populate_policy_ids
+    """
+    models = [_build_pg_model(policy_id=None), _build_pg_model(policy_id=None)]
+
+    PolicyGroupOrchestrator._populate_policy_ids(models, [])
+
+    assert all(m.policy_id is None for m in models)
+
+
+def test_manage_policy_group_orchestrator_01110() -> None:
+    """
+    # Summary
+
+    Successful response items propagate their ``policyId`` onto the
+    positionally-corresponding model.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._populate_policy_ids
+    """
+    models = [_build_pg_model(description="a"), _build_pg_model(description="b")]
+    response_groups = [
+        {"policyId": "P1", "status": "success"},
+        {"policyId": "P2", "status": "success"},
+    ]
+
+    PolicyGroupOrchestrator._populate_policy_ids(models, response_groups)
+
+    assert models[0].policy_id == "P1"
+    assert models[1].policy_id == "P2"
+
+
+def test_manage_policy_group_orchestrator_01120() -> None:
+    """
+    # Summary
+
+    Failed response items are skipped -- the corresponding model retains its
+    pre-existing ``policy_id`` (or stays ``None``).
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._populate_policy_ids
+    """
+    models = [_build_pg_model(description="ok"), _build_pg_model(description="bad")]
+    response_groups = [
+        {"policyId": "P1", "status": "success"},
+        {"policyId": "", "status": "failed", "message": "boom"},
+    ]
+
+    PolicyGroupOrchestrator._populate_policy_ids(models, response_groups)
+
+    assert models[0].policy_id == "P1"
+    assert models[1].policy_id is None
+
+
+def test_manage_policy_group_orchestrator_01130() -> None:
+    """
+    # Summary
+
+    When the top-level ``policyId`` is missing the helper falls back to
+    ``templateInputs.POLICY_ID`` (some templates embed the assigned ID
+    there).
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._populate_policy_ids
+    """
+    models = [_build_pg_model()]
+    response_groups = [{"status": "success", "templateInputs": {"POLICY_ID": "P_TI"}}]
+
+    PolicyGroupOrchestrator._populate_policy_ids(models, response_groups)
+
+    assert models[0].policy_id == "P_TI"
+
+
+def test_manage_policy_group_orchestrator_01140() -> None:
+    """
+    # Summary
+
+    When ``response_groups`` is longer than ``model_instances`` the helper
+    only consumes up to ``len(model_instances)`` (no IndexError).
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._populate_policy_ids
+    """
+    models = [_build_pg_model()]
+    response_groups = [
+        {"policyId": "P1", "status": "success"},
+        {"policyId": "P2", "status": "success"},
+    ]
+
+    with does_not_raise():
+        PolicyGroupOrchestrator._populate_policy_ids(models, response_groups)
+
+    assert models[0].policy_id == "P1"
+
+
+def test_manage_policy_group_orchestrator_01150() -> None:
+    """
+    # Summary
+
+    When ``response_groups`` is shorter than ``model_instances`` the helper
+    stops at the response length without raising; trailing models keep
+    their existing ``policy_id``.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._populate_policy_ids
+    """
+    models = [_build_pg_model(description="a"), _build_pg_model(description="b")]
+    response_groups = [{"policyId": "P1", "status": "success"}]
+
+    with does_not_raise():
+        PolicyGroupOrchestrator._populate_policy_ids(models, response_groups)
+
+    assert models[0].policy_id == "P1"
+    assert models[1].policy_id is None
