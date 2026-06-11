@@ -3,9 +3,9 @@
 # Copyright: (c) 2026, Cisco Systems
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""Pure-Python validator for ND switch inventory data.
+"""Pure-Python matcher for ND switch inventory data.
 
-Validates that every entry in a user-supplied config list has a matching
+Checks that every entry in a user-supplied config list has a matching
 switch in the ND API response. No Ansible dependencies — reusable from
 any Python context.
 
@@ -34,7 +34,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.sw
 )
 
 
-class SwitchesValidate(BaseModel):
+class SwitchInventoryMatcher(BaseModel):
     """Matches playbook config entries against live ND inventory.
 
     After construction, inspect:
@@ -62,7 +62,7 @@ class SwitchesValidate(BaseModel):
             try:
                 return [SwitchConfigModel.model_validate(item) if isinstance(item, dict) else item for item in value]
             except (ValidationError, ValueError) as e:
-                raise ValueError(f"Invalid format in Config Data: {e}")
+                raise ValueError(f"Invalid format in Config Data: {e}") from e
         raise ValueError("Config Data must be a dict, list of dicts, or None.")
 
     @field_validator("nd_data", mode="before")
@@ -75,7 +75,7 @@ class SwitchesValidate(BaseModel):
             try:
                 return [SwitchDataModel.from_response(item) if isinstance(item, dict) else item for item in value]
             except (ValidationError, ValueError) as e:
-                raise ValueError(f"Invalid format in ND Response: {e}")
+                raise ValueError(f"Invalid format in ND Response: {e}") from e
         raise ValueError("ND Response must be a list of dictionaries.")
 
     @field_validator("ignore_fields", mode="before")
@@ -87,7 +87,8 @@ class SwitchesValidate(BaseModel):
         return {"seed_ip": value.get("seed_ip", 0), "role": value.get("role", 0)}
 
     @model_validator(mode="after")
-    def validate_lists_equality(self) -> SwitchesValidate:
+    # pylint: disable=too-many-locals,too-many-boolean-expressions
+    def validate_lists_equality(self) -> SwitchInventoryMatcher:
         """Match every config entry against the live ND switch inventory."""
         config_data = self.config_data
         nd_data_list = self.nd_data
@@ -105,7 +106,7 @@ class SwitchesValidate(BaseModel):
 
         matched_indices: set[int] = set()
 
-        for config_item in config_data:
+        for config_item in config_data or []:
             seed_ip = config_item.seed_ip
             role_expected = config_item.role  # SwitchRole enum or None
             found_match = False

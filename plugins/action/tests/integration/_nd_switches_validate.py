@@ -7,6 +7,80 @@
 
 from __future__ import annotations
 
+DOCUMENTATION = r"""
+---
+module: _nd_switches_validate
+short_description: Validate ND switch inventory in integration tests
+version_added: "1.0.0"
+description:
+  - Integration-test helper for validating switch inventory returned by C(cisco.nd.nd_rest).
+  - This action plugin compares expected switch data with the live ND switch inventory payload.
+  - It is used by the C(nd_manage_switches) integration test target.
+author:
+  - Akshayanat C S (@achengam)
+options:
+  nd_data:
+    description:
+      - Registered result from a C(cisco.nd.nd_rest) task.
+      - The plugin reads switch inventory from C(nd_data.current.switches).
+    type: dict
+    required: true
+  test_data:
+    description:
+      - Expected switch entry or list of switch entries.
+      - Entries are matched against the ND inventory by seed IP, role, or both depending on C(mode).
+    type: raw
+    required: true
+  changed:
+    description:
+      - Optional assertion that the upstream task changed data.
+      - When provided as C(false), validation fails immediately.
+    type: bool
+    required: false
+  mode:
+    description:
+      - Match mode for inventory comparison.
+      - C(both) matches by seed IP and role.
+      - C(ip) matches by seed IP only.
+      - C(role) matches by role only.
+    type: str
+    choices:
+      - both
+      - ip
+      - role
+    default: both
+"""
+
+EXAMPLES = r"""
+- name: Validate switch inventory in integration tests
+  cisco.nd.tests.integration._nd_switches_validate:
+    nd_data: "{{ switch_inventory }}"
+    test_data:
+      - seed_ip: 192.0.2.10
+        role: leaf
+    mode: both
+"""
+
+RETURN = r"""
+failed:
+  description: Whether validation failed.
+  type: bool
+  returned: always
+msg:
+  description: Validation result message.
+  type: str
+  returned: always
+missing_ips:
+  description: Expected seed IP addresses not found in the ND response.
+  type: list
+  elements: str
+  returned: on validation failure
+role_mismatches:
+  description: Switches whose role did not match the expected role.
+  type: dict
+  returned: on validation failure
+"""
+
 import json
 from typing import Any
 
@@ -18,8 +92,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 
 try:
-    from ansible_collections.cisco.nd.plugins.module_utils.validators.switches_validator import (
-        SwitchesValidate,
+    from ansible_collections.cisco.nd.plugins.module_utils.manage_switches.switches_inventory_matcher import (
+        SwitchInventoryMatcher,
     )
 
     HAS_VALIDATOR = True
@@ -47,12 +121,13 @@ class ActionModule(ActionBase):
         tmp: Any = None,
         task_vars: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # pylint: disable=too-many-return-statements
         results = super().run(tmp, task_vars)
         results["failed"] = False
 
         if not HAS_PYDANTIC or not HAS_VALIDATOR:
             results["failed"] = True
-            results["msg"] = "pydantic and the ND collection validators are required for _nd_switches_validate"
+            results["msg"] = "pydantic and the ND switch inventory matcher are required for _nd_switches_validate"
             return results
 
         args = self._task.args
@@ -93,7 +168,7 @@ class ActionModule(ActionBase):
         elif mode == "role":
             ignore_fields["seed_ip"] = 1
 
-        validation = SwitchesValidate(
+        validation = SwitchInventoryMatcher(
             config_data=test_data,
             nd_data=switches,
             ignore_fields=ignore_fields,

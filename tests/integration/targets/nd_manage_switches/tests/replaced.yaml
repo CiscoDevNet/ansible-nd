@@ -25,7 +25,7 @@
   tags: replaced
 
 - name: Replaced TC1 - Validate ND Data
-  cisco.nd._nd_switches_validate:
+  cisco.nd.tests.integration._nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_base_conf }}"
     changed: " {{ merged_result.changed }}"
@@ -86,7 +86,7 @@
   tags: replaced
 
 - name: Replaced TC3 - Validate ND Data
-  cisco.nd._nd_switches_validate:
+  cisco.nd.tests.integration._nd_switches_validate:
     nd_data: "{{ query_result }}"
     test_data: "{{ nd_switches_replaced_conf }}"
     changed: "{{ replaced_result.changed }}"
