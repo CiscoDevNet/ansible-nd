@@ -39,7 +39,7 @@ class ManageAiIbgpVxlanFabricOrchestrator(NDBaseOrchestrator):
         """
         try:
             api_endpoint = self.query_all_endpoint()
-            result = self.sender.query_obj(api_endpoint.path)
+            result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
             fabrics = result.get("fabrics", []) or []
             return [f for f in fabrics if f.get("management", {}).get("type") == "aimlVxlanIbgp"]
         except Exception as e:

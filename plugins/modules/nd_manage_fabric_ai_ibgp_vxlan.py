@@ -74,7 +74,7 @@ options:
         description:
         - Enable telemetry collection.
         type: bool
-        default: true
+        default: false
       telemetry_collection_type:
         description:
         - The telemetry collection method.
@@ -105,6 +105,7 @@ options:
       management:
         description:
         - The AI/ML iBGP VXLAN management configuration for the fabric.
+        - AI QoS (aimlQos) is always enabled for AI/ML fabrics and is not user-configurable in this module.
         - Properties are grouped by template section for readability in the module documentation source.
         type: dict
         suboptions:
@@ -786,7 +787,7 @@ options:
             description:
             - Enable NX-API (HTTPS).
             type: bool
-            default: false
+            default: true
           nxapi_https_port:
             description:
             - The NX-API HTTPS port (1-65535).
@@ -822,12 +823,6 @@ options:
             - Queuing policy for all other switches in the fabric.
             type: str
             default: queuing_policy_default_other
-          aiml_qos:
-            description:
-            - Enable AI/ML QoS. Configures QoS and queuing policies specific to N9K Cloud Scale and Silicon One switch fabric
-              for AI network workloads.
-            type: bool
-            default: false
           aiml_qos_policy:
             description:
             - Queuing policy based on predominant fabric link speed.
@@ -1331,6 +1326,11 @@ options:
             - Enable onboarding of smart switches to Hypershield for firewall service.
             type: bool
             default: false
+          enable_dpu_pinning:
+            description:
+            - Enable pinning of VRFs and networks to specific DPUs on smart switches.
+            type: bool
+            default: false
           connectivity_domain_name:
             description:
             - Domain name to connect to Hypershield.
@@ -1580,7 +1580,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only AI/ML iBGP VXLAN fabric type (C(aimlVxlanIbgp)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
 - The O(config.management.bgp_asn) field is required when creating a fabric.
@@ -1695,12 +1695,17 @@ def main():
         # Manage state
         nd_state_machine.manage_state()
 
-        module.exit_json(**nd_state_machine.output.format())
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except NDStateMachineError as e:
-        module.fail_json(msg=str(e))
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=str(e), **output)
     except Exception as e:
-        module.fail_json(msg=f"Module execution failed: {str(e)}")
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=f"Module execution failed: {str(e)}", **output)
 
 
 if __name__ == "__main__":

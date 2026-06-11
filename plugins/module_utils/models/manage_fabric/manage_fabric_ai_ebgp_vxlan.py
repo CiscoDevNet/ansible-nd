@@ -4,34 +4,18 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, division, print_function, annotations
 
 __metaclass__ = type
 
 import re
-from typing import Any, List, Dict, Optional, ClassVar, Literal
+from typing import Any, Dict, Optional, ClassVar, Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
-    ConfigDict,
-    Field,
-    field_validator,
-    model_validator,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import (
-    AlertSuspendEnum,
-    FabricTypeEnum,
-    LicenseTierEnum,
-    TelemetryCollectionTypeEnum,
-    TelemetryStreamingProtocolEnum,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp import (
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field, field_validator
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.enums import FabricTypeEnum
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_ebgp_vxlan import (
+    FabricEbgpModel,
     VxlanEbgpManagementModel,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_fabric.manage_fabric_common import (
-    ExternalStreamingSettingsModel,
-    LocationModel,
-    TelemetrySettingsModel,
 )
 
 """
@@ -66,10 +50,15 @@ class AimlVxlanEbgpManagementModel(VxlanEbgpManagementModel):
     - `TypeError` - If required string fields are not provided
     """
 
-    type: Literal[FabricTypeEnum.AIML_VXLAN_EBGP] = Field(description="Type of the fabric", default=FabricTypeEnum.AIML_VXLAN_EBGP)
+    type: Literal["aimlVxlanEbgp"] = Field(description="Type of the fabric", default="aimlVxlanEbgp")
+    aiml_qos: bool = Field(
+        alias="aimlQos",
+        description="Always enabled for AI eBGP VXLAN fabrics.",
+        default=True,
+    )
 
 
-class FabricAiEbgpVxlanModel(NDBaseModel):
+class FabricAiEbgpVxlanModel(FabricEbgpModel):
     """
     # Summary
 
@@ -85,46 +74,30 @@ class FabricAiEbgpVxlanModel(NDBaseModel):
     - `TypeError` - If field types don't match expected types
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, populate_by_name=True, extra="allow")
-
-    identifiers: ClassVar[Optional[List[str]]] = ["fabric_name"]
-    identifier_strategy: ClassVar[Optional[Literal["single", "composite", "hierarchical", "singleton"]]] = "single"
-
-    # Basic Fabric Properties
-    category: Literal["fabric"] = Field(description="Resource category", default="fabric")
-    fabric_name: str = Field(alias="name", description="Fabric name", min_length=1, max_length=64)
-    location: Optional[LocationModel] = Field(description="Geographic location of the fabric", default=None)
-
-    # License, Telemetry, and Operations
-    license_tier: LicenseTierEnum = Field(alias="licenseTier", description="License Tier for fabric.", default=LicenseTierEnum.ESSENTIALS)
-    alert_suspend: AlertSuspendEnum = Field(
-        alias="alertSuspend", description="Alert Suspend state configured on the fabric.", default=AlertSuspendEnum.DISABLED
-    )
-    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection.", default=True)
-    telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
-        alias="telemetryCollectionType", description="Telemetry collection method.", default=TelemetryCollectionTypeEnum.IN_BAND
-    )
-    telemetry_streaming_protocol: TelemetryStreamingProtocolEnum = Field(
-        alias="telemetryStreamingProtocol", description="Telemetry Streaming Protocol.", default=TelemetryStreamingProtocolEnum.IPV4
-    )
-    telemetry_source_interface: str = Field(
-        alias="telemetrySourceInterface",
-        description="Telemetry Source Interface Loopback ID, only valid if Telemetry Collection is set to inBand.",
-        default="loopback0",
-    )
-    telemetry_source_vrf: str = Field(
-        alias="telemetrySourceVrf", description="VRF over which telemetry is streamed, valid only if Telemetry Collection is set to inBand.", default="default"
-    )
-    security_domain: str = Field(alias="securityDomain", description="Security Domain associated with the fabric.", default="all")
+    _fabric_type: ClassVar[FabricTypeEnum] = FabricTypeEnum.AIML_VXLAN_EBGP
 
     # Core Management Configuration
     management: Optional[AimlVxlanEbgpManagementModel] = Field(description="AI eBGP VXLAN management configuration", default=None)
 
-    # Optional Advanced Settings
-    telemetry_settings: Optional[TelemetrySettingsModel] = Field(alias="telemetrySettings", description="Telemetry configuration", default=None)
-    external_streaming_settings: ExternalStreamingSettingsModel = Field(
-        alias="externalStreamingSettings", description="External streaming settings", default_factory=ExternalStreamingSettingsModel
-    )
+    @classmethod
+    def get_argument_spec(cls) -> Dict:
+        spec = super().get_argument_spec()
+
+        def remove_option(node: Dict, key: str) -> None:
+            if not isinstance(node, dict):
+                return
+            options = node.get("options")
+            if isinstance(options, dict):
+                options.pop(key, None)
+                for child in options.values():
+                    if isinstance(child, dict):
+                        remove_option(child, key)
+            elements = node.get("elements")
+            if isinstance(elements, dict):
+                remove_option(elements, key)
+
+        remove_option(spec, "aiml_qos")
+        return spec
 
     @field_validator("fabric_name")
     @classmethod
@@ -142,40 +115,6 @@ class FabricAiEbgpVxlanModel(NDBaseModel):
             raise ValueError(f"Fabric name can only contain letters, numbers, underscores, and hyphens, got: {value}")
         return value
 
-    @model_validator(mode="after")
-    def validate_fabric_consistency(self) -> "FabricAiEbgpVxlanModel":
-        """
-        # Summary
-
-        Validate consistency between fabric settings and management configuration.
-
-        ## Raises
-
-        - `ValueError` - If fabric settings are inconsistent
-        """
-        # Ensure management type matches model type
-        if self.management is not None and self.management.type != FabricTypeEnum.AIML_VXLAN_EBGP:
-            raise ValueError(f"Management type must be {FabricTypeEnum.AIML_VXLAN_EBGP}")
-
-        # Propagate fabric name to management model
-        if self.management is not None:
-            self.management.name = self.fabric_name
-
-        # Propagate BGP ASN to site_id if both are set and site_id is empty
-        if self.management is not None and self.management.site_id == "" and self.management.bgp_asn is not None:
-            bgp_asn = self.management.bgp_asn
-            if "." in bgp_asn:
-                high, low = bgp_asn.split(".")
-                self.management.site_id = str(int(high) * 65536 + int(low))
-            else:
-                self.management.site_id = bgp_asn
-
-        # Auto-create default telemetry settings if collection is enabled
-        if self.telemetry_collection and self.telemetry_settings is None:
-            self.telemetry_settings = TelemetrySettingsModel()
-
-        return self
-
     def to_diff_dict(self, **kwargs) -> Dict[str, Any]:
         """Export for diff comparison, excluding fields that ND overrides for eBGP fabrics."""
         d = super().to_diff_dict(**kwargs)
@@ -184,17 +123,6 @@ class FabricAiEbgpVxlanModel(NDBaseModel):
         if "management" in d:
             d["management"].pop("nxapiHttp", None)
         return d
-
-    @classmethod
-    def get_argument_spec(cls) -> Dict:
-        return dict(
-            state={
-                "type": "str",
-                "default": "merged",
-                "choices": ["merged", "replaced", "deleted", "overridden"],
-            },
-            config={"required": False, "type": "list", "elements": "dict"},
-        )
 
 
 __all__ = [

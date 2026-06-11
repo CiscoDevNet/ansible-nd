@@ -74,7 +74,7 @@ options:
         description:
         - Enable telemetry collection.
         type: bool
-        default: true
+        default: false
       telemetry_collection_type:
         description:
         - The telemetry collection method.
@@ -105,6 +105,7 @@ options:
       management:
         description:
         - The AI/ML eBGP VXLAN management configuration for the fabric.
+        - AI QoS (aimlQos) is always enabled for AI/ML fabrics and is not user-configurable in this module.
         - Properties are grouped by template section for readability in the module documentation source.
         type: dict
         suboptions:
@@ -656,7 +657,7 @@ options:
             description:
             - Enable NX-API over HTTPS.
             type: bool
-            default: false
+            default: true
           nxapi_http:
             description:
             - Enable NX-API over HTTP.
@@ -1066,12 +1067,6 @@ options:
             - Queuing policy for all other switches in the fabric.
             type: str
             default: queuing_policy_default_other
-          aiml_qos:
-            description:
-            - Configures QoS and Queuing Policies specific to N9K Cloud Scale (CS) and
-              Silicon One (S1) switch fabric for AI network workloads.
-            type: bool
-            default: false
           aiml_qos_policy:
             description:
             - Queuing policy based on predominant fabric link speed.
@@ -1382,7 +1377,7 @@ extends_documentation_fragment:
 - cisco.nd.modules
 - cisco.nd.check_mode
 notes:
-- This module is only supported on Nexus Dashboard having version 4.1.0 or higher.
+- This module is only supported on Nexus Dashboard having version 4.2.0 or higher.
 - Only AI/ML eBGP VXLAN fabric type (C(aimlVxlanEbgp)) is supported by this module.
 - When using O(state=replaced) with only required fields, all optional management settings revert to their defaults.
 - The O(config.management.bgp_asn) field is optional when O(config.management.bgp_asn_auto_allocation) is C(true).
@@ -1685,12 +1680,17 @@ def main():
         # Manage state
         nd_state_machine.manage_state()
 
-        module.exit_json(**nd_state_machine.output.format())
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except NDStateMachineError as e:
-        module.fail_json(msg=str(e))
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=str(e), **output)
     except Exception as e:
-        module.fail_json(msg=f"Module execution failed: {str(e)}")
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=f"Module execution failed: {str(e)}", **output)
 
 
 if __name__ == "__main__":
