@@ -117,7 +117,7 @@
           fabric_mtu: 9216
           l2_host_interface_mtu: 9216
           tenant_dhcp: true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: false
           nxapi_http_port: 80
@@ -317,9 +317,9 @@
           fabric_mtu: 9000              # Different from default 9216
           l2_host_interface_mtu: 9000  # Different from default 9216
           tenant_dhcp: false            # Different from default true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
-          nxapi_http: true              # Different from default false
+          nxapi_http: true
           nxapi_http_port: 80
           snmp_trap: false              # Different from default true
           anycast_border_gateway_advertise_physical_ip: true  # Different from default false
@@ -418,7 +418,7 @@
           fabric_mtu: 9000
           l2_host_interface_mtu: 9000
           tenant_dhcp: false
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: true
           nxapi_http_port: 80
@@ -487,6 +487,7 @@
           bgp_asn_range: "65000-65100"
           site_id: "65004"
           banner: "^ Updated via replaced state ^"
+          nxapi: false
   register: ebgp_replaced_result_3
   tags: [test_replaced, test_replaced_update]
 
@@ -913,7 +914,7 @@
       - fabric_name: "{{ ebgp_test_fabric_deleted }}"
         category: fabric
         management:
-          bgp_asn: "65004"              # Different from default ASN
+          bgp_asn: "65004"
           # bgp_asn_auto_allocation: true
           bgp_asn_range: "65000-65100"
           fabric_mtu: 8000       # Only updating MTU
@@ -1047,7 +1048,7 @@
           fabric_mtu: 9216
           l2_host_interface_mtu: 9216
           tenant_dhcp: true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: false
           nxapi_http_port: 80
@@ -1126,7 +1127,7 @@
           fabric_mtu: 9216
           l2_host_interface_mtu: 9216
           tenant_dhcp: true
-          nxapi: false
+          nxapi: true
           nxapi_https_port: 443
           nxapi_http: false
           nxapi_http_port: 80

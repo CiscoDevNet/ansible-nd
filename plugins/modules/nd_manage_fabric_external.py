@@ -72,7 +72,7 @@ options:
         description:
         - Enable telemetry collection for the fabric.
         type: bool
-        default: true
+        default: false
       telemetry_collection_type:
         description:
         - Telemetry collection method.
@@ -759,6 +759,7 @@ def main():
         supports_check_mode=True,
     )
 
+    nd_state_machine = None
     try:
         # Initialize StateMachine
         nd_state_machine = NDStateMachine(
@@ -773,9 +774,13 @@ def main():
         module.exit_json(**nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results))
 
     except NDStateMachineError as e:
-        module.fail_json(msg=str(e))
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=str(e), **output)
     except Exception as e:
-        module.fail_json(msg=f"Module execution failed: {str(e)}")
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        output = nd_state_machine.output.format_with_verbosity(verbosity, nd_state_machine.results) if nd_state_machine else {}
+        module.fail_json(msg=f"Module execution failed: {str(e)}", **output)
 
 
 if __name__ == "__main__":

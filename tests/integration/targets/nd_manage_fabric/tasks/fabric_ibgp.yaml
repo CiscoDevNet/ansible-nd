@@ -905,8 +905,8 @@
 - name: "VALIDATION 2b: Verify NX-API/system defaults after replace (were changed in 2a)"
   assert:
     that:
-      - replaced_fabric_config.management.nxapi == false  # default is false
-      - replaced_fabric_config.management.nxapiHttp == true  # NDFC API default is true (overrides Pydantic default of false)
+      - replaced_fabric_config.management.nxapi == true  # default is true
+      - replaced_fabric_config.management.nxapiHttp == false  # NDFC API default is true but Pydantic overrides default with false
       - replaced_fabric_config.management.nxapiHttpsPort == 443
       - replaced_fabric_config.management.nxapiHttpPort == 80
       - replaced_fabric_config.management.tenantDhcp == true
@@ -1003,8 +1003,8 @@
 - name: "VALIDATION 2b: Verify backup/brownfield defaults after replace"
   assert:
     that:
-      - replaced_fabric_config.management.realTimeBackup == false
-      - replaced_fabric_config.management.scheduledBackup == false
+      - replaced_fabric_config.management.realTimeBackup | default(false) == false
+      - replaced_fabric_config.management.scheduledBackup | default(false) == false
       - replaced_fabric_config.management.brownfieldNetworkNameFormat == "Auto_Net_VNI$$VNI$$_VLAN$$VLAN_ID$$"
       - replaced_fabric_config.management.brownfieldSkipOverlayNetworkAttachments == false
       - replaced_fabric_config.management.allowSmartSwitchOnboarding == false

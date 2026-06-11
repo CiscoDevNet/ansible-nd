@@ -89,7 +89,7 @@ class FabricBaseModel(NDBaseModel):
     alert_suspend: AlertSuspendEnum = Field(
         alias="alertSuspend", description="Alert Suspend state configured on the fabric.", default=AlertSuspendEnum.DISABLED
     )
-    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection.", default=True)
+    telemetry_collection: bool = Field(alias="telemetryCollection", description="Enable telemetry collection.", default=False)
     telemetry_collection_type: TelemetryCollectionTypeEnum = Field(
         alias="telemetryCollectionType", description="Telemetry collection method.", default=TelemetryCollectionTypeEnum.IN_BAND
     )
