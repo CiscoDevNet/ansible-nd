@@ -159,6 +159,11 @@ notes:
 - O(config.entries.sequence_number) values must be unique within each
   prefix list.
 - O(config.description) is validated as ASCII-only.
+- O(config.tenant_name) (non-default tenant) prefix lists are not yet fully
+  supported for idempotency. Nexus Dashboard stores and returns these prefix
+  lists under the composite name C(<tenant_name>~<name>), which does not match
+  the configured O(config.name), so repeated runs may not be idempotent. Use
+  prefix lists in the default tenant until this is addressed.
 """
 
 EXAMPLES = r"""
