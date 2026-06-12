@@ -10,7 +10,6 @@ __metaclass__ = type
 
 from typing import ClassVar, Dict, List, Type
 
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_prefix_lists import (
     EpManageIpv4PrefixListsBulkDelete,
@@ -69,9 +68,6 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
 
-    # Fabric context
-    fabric_name: str = Field(description="Name of the fabric that owns these prefix lists.")
-
     # Required stubs -- the orchestrator overrides every operation, so these
     # just need to satisfy NDBaseOrchestrator's required fields.
     create_endpoint: Type[NDEndpointBaseModel] = EpManageIpv4PrefixListsPost
@@ -82,10 +78,6 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
 
     create_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageIpv4PrefixListsPost
     delete_bulk_endpoint: Type[NDEndpointBaseModel] = EpManageIpv4PrefixListsBulkDelete
-
-    # -------------------------------------------------------------------------
-    # Internal helpers
-    # -------------------------------------------------------------------------
 
     def _endpoint_classes_for_version(self, version: str) -> Dict[str, Type[NDEndpointBaseModel]]:
         """Return the correct endpoint class mapping for the given ip_version."""
@@ -98,7 +90,7 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
                 "delete": EpManageIpv4PrefixListsDelete,
                 "bulk_delete": EpManageIpv4PrefixListsBulkDelete,
             }
-        else:
+        if version == "ipv6":
             return {
                 "get": EpManageIpv6PrefixListsGet,
                 "list": EpManageIpv6PrefixListsListGet,
@@ -107,6 +99,23 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
                 "delete": EpManageIpv6PrefixListsDelete,
                 "bulk_delete": EpManageIpv6PrefixListsBulkDelete,
             }
+        raise ValueError(f"Unsupported ip_version '{version}'. Expected 'ipv4' or 'ipv6'.")
+
+    def _split_by_ip_version(self, model_instances: List[PrefixListModel]) -> Dict[str, List[PrefixListModel]]:
+        """Split model instances into ipv4/ipv6 buckets and fail fast on unsupported versions."""
+        grouped = {"ipv4": [], "ipv6": []}
+        for model in model_instances:
+            version = str(model.ip_version)
+            if version == "ipv4":
+                grouped["ipv4"].append(model)
+            elif version == "ipv6":
+                grouped["ipv6"].append(model)
+            else:
+                raise ValueError(
+                    f"Unsupported ip_version '{version}' for prefix list '{model.name}'. "
+                    "Expected 'ipv4' or 'ipv6'."
+                )
+        return grouped
 
     def _bulk_create_for_version(self, version: str, items: List[PrefixListModel]) -> ResponseType:
         """Send a single bulk-create request for all items of the given ip_version."""
@@ -125,48 +134,6 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         names_key = "ipv4PrefixListNames" if version == "ipv4" else "ipv6PrefixListNames"
         payload = {names_key: names}
         return self._request(path=api_endpoint.path, verb=api_endpoint.verb, data=payload)
-
-    # -------------------------------------------------------------------------
-    # Query helpers
-    # -------------------------------------------------------------------------
-
-    def query_all(self) -> ResponseType:
-        """
-        Fetch all IPv4 and IPv6 prefix lists and combine them into a single list.
-
-        The ``ipVersion`` key is injected into each raw response dict so that
-        ``PrefixListModel.from_response()`` can populate the ``ip_version`` field.
-        """
-        try:
-            results = []
-            for version in ("ipv4", "ipv6"):
-                eps = self._endpoint_classes_for_version(version)
-                api_endpoint = eps["list"]()
-                api_endpoint.fabric_name = self.fabric_name
-                raw = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
-                list_key = "ipv4PrefixLists" if version == "ipv4" else "ipv6PrefixLists"
-                for item in raw.get(list_key, []) or []:
-                    item["ipVersion"] = version
-                    results.append(item)
-            return results
-        except Exception as e:
-            raise Exception(f"Query all failed: {e}") from e
-
-    def query_one(self, model_instance: PrefixListModel, **kwargs) -> ResponseType:
-        """Retrieve a single prefix list by name and ip_version."""
-        try:
-            version = str(model_instance.ip_version)
-            eps = self._endpoint_classes_for_version(version)
-            api_endpoint = eps["get"]()
-            api_endpoint.fabric_name = self.fabric_name
-            api_endpoint.set_identifiers(model_instance.get_identifier_value())
-            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
-        except Exception as e:
-            raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
-
-    # -------------------------------------------------------------------------
-    # Write operations -- single item (delegate to bulk)
-    # -------------------------------------------------------------------------
 
     def create(self, model_instance: PrefixListModel, **kwargs) -> ResponseType:
         """Create a single prefix list via the bulk endpoint."""
@@ -193,10 +160,40 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
             return self.delete_bulk([model_instance])
         except Exception as e:
             raise Exception(f"Delete failed for {model_instance.get_identifier_value()}: {e}") from e
+    
+    def query_one(self, model_instance: PrefixListModel, **kwargs) -> ResponseType:
+        """Retrieve a single prefix list by name and ip_version."""
+        try:
+            version = str(model_instance.ip_version)
+            eps = self._endpoint_classes_for_version(version)
+            api_endpoint = eps["get"]()
+            api_endpoint.fabric_name = self.fabric_name
+            api_endpoint.set_identifiers(model_instance.get_identifier_value())
+            return self._request(path=api_endpoint.path, verb=api_endpoint.verb)
+        except Exception as e:
+            raise Exception(f"Query failed for {model_instance.get_identifier_value()}: {e}") from e
 
-    # -------------------------------------------------------------------------
-    # Write operations -- bulk
-    # -------------------------------------------------------------------------
+    def query_all(self) -> ResponseType:
+        """
+        Fetch all IPv4 and IPv6 prefix lists and combine them into a single list.
+
+        The ``ipVersion`` key is injected into each raw response dict so that
+        ``PrefixListModel.from_response()`` can populate the ``ip_version`` field.
+        """
+        try:
+            results = []
+            for version in ("ipv4", "ipv6"):
+                eps = self._endpoint_classes_for_version(version)
+                api_endpoint = eps["list"]()
+                api_endpoint.fabric_name = self.fabric_name
+                raw = self._request(path=api_endpoint.path, verb=api_endpoint.verb, not_found_ok=True)
+                list_key = "ipv4PrefixLists" if version == "ipv4" else "ipv6PrefixLists"
+                for item in raw.get(list_key, []) or []:
+                    item["ipVersion"] = version
+                    results.append(item)
+            return results
+        except Exception as e:
+            raise Exception(f"Query all failed: {e}") from e
 
     def create_bulk(self, model_instances: List[PrefixListModel], **kwargs) -> ResponseType:
         """
@@ -206,8 +203,9 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         separate API request.
         """
         try:
-            ipv4_items = [m for m in model_instances if str(m.ip_version) == "ipv4"]
-            ipv6_items = [m for m in model_instances if str(m.ip_version) == "ipv6"]
+            grouped = self._split_by_ip_version(model_instances)
+            ipv4_items = grouped["ipv4"]
+            ipv6_items = grouped["ipv6"]
             result = {}
             if ipv4_items:
                 result["ipv4"] = self._bulk_create_for_version("ipv4", ipv4_items)
@@ -225,8 +223,9 @@ class ManagePrefixListOrchestrator(NDBaseOrchestrator[PrefixListModel]):
         separate API request.
         """
         try:
-            ipv4_names = [m.name for m in model_instances if str(m.ip_version) == "ipv4"]
-            ipv6_names = [m.name for m in model_instances if str(m.ip_version) == "ipv6"]
+            grouped = self._split_by_ip_version(model_instances)
+            ipv4_names = [m.name for m in grouped["ipv4"]]
+            ipv6_names = [m.name for m in grouped["ipv6"]]
             result = {}
             if ipv4_names:
                 result["ipv4"] = self._bulk_delete_for_version("ipv4", ipv4_names)
