@@ -1,0 +1,217 @@
+{
+    "TEST_NOTES": [
+        "Fixture data for test_manage_prefix_list.py (orchestrator tests).",
+        "Keys follow the test_<module>_<NNNNN><a|b|c|...> convention.",
+        "Suffix order matches the order RestSend.commit() will consume responses within each test.",
+        "IPv4 and IPv6 prefix list fixtures with full semantic examples.",
+        "Each query_all() call fetches both IPv4 and IPv6 list endpoints separately."
+    ],
+
+    "ipv4_prefix_lists_ok": {
+        "TEST_NOTES": ["Reusable IPv4 prefix list response from list endpoint"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipv4PrefixLists": [
+                {
+                    "ipVersion": "ipv4",
+                    "name": "PL-IPV4-BORDERS",
+                    "description": "IPv4 Border Router Prefixes",
+                    "tenantName": "TENANT1",
+                    "prefixListEntries": [
+                        {"sequenceNumber": 10, "action": "permit", "prefix": "10.0.1.0/24"},
+                        {"sequenceNumber": 20, "action": "deny", "prefix": "192.168.0.0/16"}
+                    ],
+                    "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+                }
+            ]
+        }
+    },
+
+    "ipv6_prefix_lists_ok": {
+        "TEST_NOTES": ["Reusable IPv6 prefix list response from list endpoint"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv6PrefixLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipv6PrefixLists": [
+                {
+                    "ipVersion": "ipv6",
+                    "name": "PL-IPV6-DATACENTER",
+                    "description": "IPv6 Datacenter Prefixes",
+                    "tenantName": "TENANT1",
+                    "prefixListEntries": [
+                        {
+                            "sequenceNumber": 10,
+                            "action": "permit",
+                            "prefix": "2001:db8::/32",
+                            "minPrefixLength": 32,
+                            "maxPrefixLength": 48
+                        }
+                    ],
+                    "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+                }
+            ]
+        }
+    },
+
+    "ipv4_single_prefix_list": {
+        "TEST_NOTES": ["Single IPv4 prefix list via GET endpoint"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists/PL-IPV4-BORDERS",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipVersion": "ipv4",
+            "name": "PL-IPV4-BORDERS",
+            "description": "IPv4 Border Router Prefixes",
+            "tenantName": "TENANT1",
+            "prefixListEntries": [
+                {"sequenceNumber": 10, "action": "permit", "prefix": "10.0.1.0/24"},
+                {"sequenceNumber": 20, "action": "deny", "prefix": "192.168.0.0/16"}
+            ],
+            "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+        }
+    },
+
+    "ipv6_single_prefix_list": {
+        "TEST_NOTES": ["Single IPv6 prefix list via GET endpoint"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv6PrefixLists/PL-IPV6-DATACENTER",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipVersion": "ipv6",
+            "name": "PL-IPV6-DATACENTER",
+            "description": "IPv6 Datacenter Prefixes",
+            "tenantName": "TENANT1",
+            "prefixListEntries": [
+                {
+                    "sequenceNumber": 10,
+                    "action": "permit",
+                    "prefix": "2001:db8::/32",
+                    "minPrefixLength": 32,
+                    "maxPrefixLength": 48
+                }
+            ],
+            "lastUpdateTimestamp": "2026-06-12T10:00:00Z"
+        }
+    },
+
+    "create_ipv4_prefix_list": {
+        "TEST_NOTES": ["POST response for IPv4 prefix list creation"],
+        "RETURN_CODE": 201,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipVersion": "ipv4",
+            "name": "PL-IPV4-NEW",
+            "description": "New IPv4 Prefix List",
+            "tenantName": "TENANT1",
+            "prefixListEntries": [
+                {"sequenceNumber": 10, "action": "permit", "prefix": "10.0.0.0/8"}
+            ],
+            "lastUpdateTimestamp": "2026-06-12T11:00:00Z"
+        }
+    },
+
+    "create_ipv6_prefix_list": {
+        "TEST_NOTES": ["POST response for IPv6 prefix list creation"],
+        "RETURN_CODE": 201,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv6PrefixLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipVersion": "ipv6",
+            "name": "PL-IPV6-NEW",
+            "description": "New IPv6 Prefix List",
+            "tenantName": "TENANT1",
+            "prefixListEntries": [
+                {
+                    "sequenceNumber": 10,
+                    "action": "permit",
+                    "prefix": "2001:db8:1::/48"
+                }
+            ],
+            "lastUpdateTimestamp": "2026-06-12T11:00:00Z"
+        }
+    },
+
+    "update_ipv4_prefix_list": {
+        "TEST_NOTES": ["PUT response for IPv4 prefix list update"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists/PL-IPV4-BORDERS",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipVersion": "ipv4",
+            "name": "PL-IPV4-BORDERS",
+            "description": "Updated IPv4 Border Router Prefixes",
+            "tenantName": "TENANT1",
+            "prefixListEntries": [
+                {"sequenceNumber": 10, "action": "permit", "prefix": "10.0.1.0/24"},
+                {"sequenceNumber": 20, "action": "deny", "prefix": "192.168.0.0/16"},
+                {"sequenceNumber": 30, "action": "permit", "prefix": "172.16.0.0/12"}
+            ],
+            "lastUpdateTimestamp": "2026-06-12T12:00:00Z"
+        }
+    },
+
+    "delete_ipv4_success": {
+        "TEST_NOTES": ["DELETE response for successful IPv4 prefix list deletion"],
+        "RETURN_CODE": 204,
+        "METHOD": "DELETE",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists/PL-IPV4-BORDERS",
+        "MESSAGE": "No Content"
+    },
+
+    "delete_ipv6_success": {
+        "TEST_NOTES": ["DELETE response for successful IPv6 prefix list deletion"],
+        "RETURN_CODE": 204,
+        "METHOD": "DELETE",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv6PrefixLists/PL-IPV6-DATACENTER",
+        "MESSAGE": "No Content"
+    },
+
+    "bulk_delete_ipv4": {
+        "TEST_NOTES": ["Bulk DELETE response for IPv4 prefix lists"],
+        "RETURN_CODE": 204,
+        "METHOD": "DELETE",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists",
+        "MESSAGE": "No Content"
+    },
+
+    "bulk_delete_ipv6": {
+        "TEST_NOTES": ["Bulk DELETE response for IPv6 prefix lists"],
+        "RETURN_CODE": 204,
+        "METHOD": "DELETE",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv6PrefixLists",
+        "MESSAGE": "No Content"
+    },
+
+    "empty_ipv4_lists": {
+        "TEST_NOTES": ["Empty response from IPv4 prefix list query_all"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv4PrefixLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipv4PrefixLists": []
+        }
+    },
+
+    "empty_ipv6_lists": {
+        "TEST_NOTES": ["Empty response from IPv6 prefix list query_all"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/SITE1/ipv6PrefixLists",
+        "MESSAGE": "OK",
+        "DATA": {
+            "ipv6PrefixLists": []
+        }
+    }
+}
