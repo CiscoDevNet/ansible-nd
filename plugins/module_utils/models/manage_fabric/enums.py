@@ -30,12 +30,14 @@ class FabricTypeEnum(str, Enum):
     ## Values
 
     - `VXLAN_IBGP` - VXLAN fabric with iBGP overlay
+    - `CAMPUS_IBGP_VXLAN` - VXLAN Campus fabric (campus iBGP VXLAN)
     - `VXLAN_EBGP` - VXLAN fabric with eBGP overlay
     - `AIML_VXLAN_IBGP` - AI/ML VXLAN fabric with iBGP overlay
     - `AIML_VXLAN_EBGP` - AI/ML VXLAN fabric with eBGP overlay
     """
 
     VXLAN_IBGP = "vxlanIbgp"
+    CAMPUS_IBGP_VXLAN = "vxlanCampus"
     VXLAN_EBGP = "vxlanEbgp"
     EXTERNAL_CONNECTIVITY = "externalConnectivity"
     AIML_VXLAN_IBGP = "aimlVxlanIbgp"
