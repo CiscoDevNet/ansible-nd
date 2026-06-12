@@ -91,6 +91,54 @@
       - nm_deleted_multi.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length == 0
       - nm_deleted_multi.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 0
 
+# --- DELETED: IDENTIFIER-ONLY (NO ENTRIES) ---
+# New ergonomic feature: delete can now use identifier-only config (ip_version + name)
+# without requiring the full entries list.
+
+# Setup: recreate prefix lists for identifier-only delete test
+- name: "SETUP: Recreate PL-IPV4-BORDERS and PL-IPV6-DATACENTER for identifier-only delete test"
+  cisco.nd.nd_manage_prefix_list:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ prefix_list_ipv4_borders }}"
+      - "{{ prefix_list_ipv6_datacenter }}"
+    state: merged
+
+- name: "DELETED IDENTIFIER-ONLY: Delete using only ip_version and name (check mode)"
+  cisco.nd.nd_manage_prefix_list: &delete_identifier_only
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - ip_version: ipv4
+        name: PL-IPV4-BORDERS
+      - ip_version: ipv6
+        name: PL-IPV6-DATACENTER
+    state: deleted
+  check_mode: true
+  register: cm_deleted_id_only
+
+- name: "DELETED IDENTIFIER-ONLY: Delete using only ip_version and name (normal mode)"
+  cisco.nd.nd_manage_prefix_list: *delete_identifier_only
+  register: nm_deleted_id_only
+
+- name: "DELETED IDENTIFIER-ONLY: Verify deletion with identifier-only config"
+  ansible.builtin.assert:
+    that:
+      - cm_deleted_id_only is changed
+      - nm_deleted_id_only is changed
+      - nm_deleted_id_only.after | selectattr('name', 'equalto', 'PL-IPV4-BORDERS') | list | length == 0
+      - nm_deleted_id_only.after | selectattr('name', 'equalto', 'PL-IPV6-DATACENTER') | list | length == 0
+
+- name: "DELETED IDENTIFIER-ONLY IDEMPOTENT: Re-apply identifier-only delete"
+  cisco.nd.nd_manage_prefix_list: *delete_identifier_only
+  register: nm_deleted_id_only_idem
+
+- name: "DELETED IDENTIFIER-ONLY IDEMPOTENT: Verify no change on second run"
+  ansible.builtin.assert:
+    that:
+      - nm_deleted_id_only_idem is not changed
+
 # --- DELETED: NON-EXISTENT PREFIX LIST ---
 
 - name: "DELETED NON-EXISTENT: Delete a prefix list that does not exist"
