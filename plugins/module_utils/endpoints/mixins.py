@@ -123,7 +123,7 @@ class UpdateGroupNameMixin(BaseModel):
 class PrefixListNameMixin(BaseModel):
     """Mixin for endpoints that require prefix_list_name parameter."""
 
-    prefix_list_name: Optional[str] = Field(default=None, min_length=1, max_length=115, description="Prefix list name")
+    prefix_list_name: str | None = Field(default=None, min_length=1, max_length=115, description="Prefix list name")
 
 
 class RouteMapNameMixin(BaseModel):

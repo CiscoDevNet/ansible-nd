@@ -23,17 +23,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageIpv4PrefixListsListGet,
     EpManageIpv4PrefixListsPost,
     EpManageIpv4PrefixListsPut,
-    EpManageIpv6PrefixListsDelete,
     EpManageIpv6PrefixListsGet,
     EpManageIpv6PrefixListsListGet,
-    EpManageIpv6PrefixListsPost,
-    EpManageIpv6PrefixListsPut,
     EpManageIpv4PrefixListsBulkDelete,
     EpManageIpv6PrefixListsBulkDelete,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
-
 
 # =============================================================================
 # Test: IPv4 Endpoints
@@ -84,7 +80,7 @@ def test_endpoints_ipv4_prefix_lists_00020():
     """
     instance = EpManageIpv4PrefixListsGet()
     with pytest.raises(ValueError, match="fabric_name must be set"):
-        _ = instance.path
+        result = instance.path  # pylint: disable=unused-variable
 
 
 def test_endpoints_ipv4_prefix_lists_00030():
@@ -105,7 +101,7 @@ def test_endpoints_ipv4_prefix_lists_00030():
     instance = EpManageIpv4PrefixListsGet()
     instance.fabric_name = "SITE1"
     with pytest.raises(ValueError, match="prefix_list_name must be set"):
-        _ = instance.path
+        result = instance.path  # pylint: disable=unused-variable
 
 
 def test_endpoints_ipv4_prefix_lists_00040():
@@ -250,7 +246,7 @@ def test_endpoints_ipv4_prefix_lists_00090():
     """
     instance = EpManageIpv4PrefixListsBulkDelete()
     with pytest.raises(ValueError, match="fabric_name must be set"):
-        _ = instance.path
+        result = instance.path  # pylint: disable=unused-variable
 
     instance.fabric_name = "SITE1"
     path = instance.path

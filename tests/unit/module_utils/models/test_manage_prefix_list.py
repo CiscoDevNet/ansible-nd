@@ -27,7 +27,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list
 )
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
-
 SAMPLE_IPV4_CONFIG = {
     "ip_version": "ipv4",
     "name": "PL-IPV4-BORDERS",

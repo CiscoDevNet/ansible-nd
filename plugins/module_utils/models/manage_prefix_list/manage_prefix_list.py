@@ -49,9 +49,7 @@ payload = pl.to_payload()
 ```
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
+from __future__ import annotations
 
 import ipaddress
 import re
@@ -237,8 +235,7 @@ class PrefixListModel(NDBaseModel):
         for idx, entry in enumerate(entries):
             if entry.sequence_number in seen_sequence_numbers:
                 raise ValueError(
-                    f"entries[{idx}].sequenceNumber '{entry.sequence_number}' is duplicated. "
-                    "Sequence numbers must be unique within a prefix list."
+                    f"entries[{idx}].sequenceNumber '{entry.sequence_number}' is duplicated. Sequence numbers must be unique within a prefix list."
                 )
             seen_sequence_numbers.add(entry.sequence_number)
 
@@ -282,8 +279,7 @@ class PrefixListModel(NDBaseModel):
             if entry.min_prefix_length is not None and entry.max_prefix_length is not None:
                 if entry.min_prefix_length > entry.max_prefix_length:
                     raise ValueError(
-                        f"entries[{idx}].minLength={entry.min_prefix_length} cannot be greater than "
-                        f"entries[{idx}].maxLength={entry.max_prefix_length}."
+                        f"entries[{idx}].minLength={entry.min_prefix_length} cannot be greater than entries[{idx}].maxLength={entry.max_prefix_length}."
                     )
 
         return self

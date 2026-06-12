@@ -42,8 +42,6 @@ in the ND Manage API, covering both IPv4 and IPv6 prefix lists.
 
 from __future__ import annotations
 
-__metaclass__ = type
-
 from typing import ClassVar, Literal, Optional
 from urllib.parse import quote
 

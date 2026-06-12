@@ -13,7 +13,7 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_manage_prefix_list
-version_added: "1.6.0"
+version_added: "2.0.0"
 short_description: Manage IPv4 and IPv6 prefix lists on Cisco Nexus Dashboard fabrics
 description:
 - Manage IPv4 and IPv6 routing-policy prefix lists on a Cisco Nexus Dashboard (ND) fabric.
@@ -72,7 +72,7 @@ options:
         - Each entry defines a permit/deny action for a specific IP prefix.
         - Required for O(state=merged), O(state=replaced), and O(state=overridden).
         - Optional for O(state=deleted), where identifier-only items
-          (O(ip_version) + O(name)) are accepted.
+          (O(config.ip_version) + O(config.name)) are accepted.
         type: list
         elements: dict
         required: false

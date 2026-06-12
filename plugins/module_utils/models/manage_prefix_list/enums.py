@@ -7,7 +7,7 @@
 Enumerations for Prefix List management.
 """
 
-from __future__ import absolute_import, division, print_function
+from __future__ import annotations
 
 from enum import Enum
 

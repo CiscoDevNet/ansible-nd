@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-__metaclass__ = type
-
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
