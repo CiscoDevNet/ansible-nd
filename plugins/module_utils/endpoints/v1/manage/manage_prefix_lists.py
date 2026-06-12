@@ -45,6 +45,7 @@ from __future__ import annotations
 __metaclass__ = type
 
 from typing import ClassVar, Literal, Optional
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
@@ -109,11 +110,7 @@ class PrefixListsListEndpointParams(EndpointQueryParams):
     )
 
 
-# ---------------------------------------------------------------------------
 # IPv4 base class
-# ---------------------------------------------------------------------------
-
-
 class _EpManageIpv4PrefixListsBase(PrefixListNameMixin, FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for IPv4 prefix list endpoints.
@@ -140,16 +137,16 @@ class _EpManageIpv4PrefixListsBase(PrefixListNameMixin, FabricNameMixin, NDEndpo
 
     @property
     def path(self) -> str:
-        if self._require_prefix_list_name and self.fabric_name is None:
+        if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         if self._require_prefix_list_name and self.prefix_list_name is None:
             raise ValueError(f"{type(self).__name__}.path: prefix_list_name must be set before accessing path.")
         segments = ["fabrics"]
         if self.fabric_name is not None:
-            segments.append(self.fabric_name)
+            segments.append(quote(self.fabric_name, safe=""))
         segments.append("ipv4PrefixLists")
         if self.prefix_list_name is not None:
-            segments.append(self.prefix_list_name)
+            segments.append(quote(self.prefix_list_name, safe=""))
         base = BasePath.path(*segments)
         qs = self.endpoint_params.to_query_string()
         return f"{base}?{qs}" if qs else base
@@ -254,18 +251,14 @@ class EpManageIpv4PrefixListsBulkDelete(FabricNameMixin, NDEndpointBaseModel):
     def path(self) -> str:
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", self.fabric_name, "ipv4PrefixListActions", "remove")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "ipv4PrefixListActions", "remove")
 
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.POST
 
 
-# ---------------------------------------------------------------------------
 # IPv6 base class
-# ---------------------------------------------------------------------------
-
-
 class _EpManageIpv6PrefixListsBase(PrefixListNameMixin, FabricNameMixin, NDEndpointBaseModel):
     """
     Base class for IPv6 prefix list endpoints.
@@ -289,16 +282,16 @@ class _EpManageIpv6PrefixListsBase(PrefixListNameMixin, FabricNameMixin, NDEndpo
 
     @property
     def path(self) -> str:
-        if self._require_prefix_list_name and self.fabric_name is None:
+        if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         if self._require_prefix_list_name and self.prefix_list_name is None:
             raise ValueError(f"{type(self).__name__}.path: prefix_list_name must be set before accessing path.")
         segments = ["fabrics"]
         if self.fabric_name is not None:
-            segments.append(self.fabric_name)
+            segments.append(quote(self.fabric_name, safe=""))
         segments.append("ipv6PrefixLists")
         if self.prefix_list_name is not None:
-            segments.append(self.prefix_list_name)
+            segments.append(quote(self.prefix_list_name, safe=""))
         base = BasePath.path(*segments)
         qs = self.endpoint_params.to_query_string()
         return f"{base}?{qs}" if qs else base
@@ -403,7 +396,7 @@ class EpManageIpv6PrefixListsBulkDelete(FabricNameMixin, NDEndpointBaseModel):
     def path(self) -> str:
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", self.fabric_name, "ipv6PrefixListActions", "remove")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "ipv6PrefixListActions", "remove")
 
     @property
     def verb(self) -> HttpVerbEnum:
