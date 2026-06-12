@@ -6,6 +6,8 @@
 
 from __future__ import absolute_import, division, print_function
 
+__metaclass__ = type
+
 ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported_by": "community"}
 
 DOCUMENTATION = r"""
@@ -26,7 +28,6 @@ options:
   fabric_name:
     description:
     - The name of the fabric that owns the prefix lists.
-    - Required for all operations.
     type: str
     required: true
   config:
@@ -69,9 +70,12 @@ options:
         description:
         - The list of prefix list entries.
         - Each entry defines a permit/deny action for a specific IP prefix.
+        - Required for O(state=merged), O(state=replaced), and O(state=overridden).
+        - Optional for O(state=deleted), where identifier-only items
+          (O(ip_version) + O(name)) are accepted.
         type: list
         elements: dict
-        required: true
+        required: false
         suboptions:
           sequence_number:
             description:
@@ -146,6 +150,15 @@ notes:
 - O(config.entries.exact_length), O(config.entries.min_prefix_length), and
   O(config.entries.max_prefix_length) are validated to be within the
   address-family-appropriate range (1-32 for IPv4, 1-128 for IPv6).
+- O(config.entries.exact_length) cannot be combined with
+  O(config.entries.min_prefix_length) or O(config.entries.max_prefix_length)
+  in the same entry.
+- If both O(config.entries.min_prefix_length) and
+  O(config.entries.max_prefix_length) are set, the minimum must be less than
+  or equal to the maximum.
+- O(config.entries.sequence_number) values must be unique within each
+  prefix list.
+- O(config.description) is validated as ASCII-only.
 """
 
 EXAMPLES = r"""
@@ -200,16 +213,8 @@ EXAMPLES = r"""
     config:
       - ip_version: ipv4
         name: PL-IPV4-BORDERS
-        entries:
-          - sequence_number: 10
-            action: permit
-            prefix: 10.0.0.0/8
       - ip_version: ipv6
         name: PL-IPV6-DATACENTER
-        entries:
-          - sequence_number: 10
-            action: permit
-            prefix: 2001:db8::/32
     state: deleted
 
 - name: Override -- enforce exact set of prefix lists (delete all others)
@@ -228,18 +233,35 @@ EXAMPLES = r"""
 RETURN = r"""
 """
 
+import logging
+import traceback
+
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
-from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDStateMachineError
+from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.manage_prefix_list import PrefixListModel
+from ansible_collections.cisco.nd.plugins.module_utils.nd import nd_argument_spec
+from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_prefix_list import ManagePrefixListOrchestrator
-from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 
 
 def main():
+    """
+    # Summary
+
+    Entry point for the `nd_manage_prefix_list` Ansible module.
+
+    Builds the argument spec from `PrefixListModel.get_argument_spec()` (which contributes the
+    top-level `fabric_name` option plus the `config` list of prefix lists) and hands control to
+    `NDStateMachine`, passing the `ManagePrefixListOrchestrator` *class*. The state machine builds
+    `RestSend` from the validated module params, so the orchestrator reads `fabric_name` from
+    `rest_send.params` rather than a constructor argument.
+
+    ## Raises
+
+    None (catches all exceptions and calls `module.fail_json`).
+    """
     argument_spec = nd_argument_spec()
     argument_spec.update(PrefixListModel.get_argument_spec())
 
@@ -248,38 +270,37 @@ def main():
         supports_check_mode=True,
     )
     require_pydantic(module)
+    setup_logging(module)
+    module_log = logging.getLogger("nd.nd_manage_prefix_list")
 
     nd_state_machine = None
     try:
-        sender = Sender()
-        sender.ansible_module = module
-
-        rest_send = RestSend(
-            {
-                "check_mode": module.check_mode,
-                "state": module.params.get("state"),
-            }
-        )
-        rest_send.sender = sender
-        rest_send.response_handler = ResponseHandler()
-
-        orchestrator = ManagePrefixListOrchestrator(
-            rest_send=rest_send,
-            fabric_name=module.params["fabric_name"],
-        )
-
         nd_state_machine = NDStateMachine(
             module=module,
-            model_orchestrator=orchestrator,
+            model_orchestrator=ManagePrefixListOrchestrator,
         )
 
+        module_log.debug("manage_state begin state=%s check_mode=%s", module.params.get("state"), module.check_mode)
         nd_state_machine.manage_state()
+        module_log.debug("manage_state end")
 
         module.exit_json(**nd_state_machine.output.format())
 
-    except Exception as e:
-        output = nd_state_machine.output.format() if nd_state_machine is not None else {}
-        module.fail_json(msg=f"Module execution failed: {str(e)}", **output)
+    except NDStateMachineError as e:
+        module_log.exception("NDStateMachineError during module execution")
+        output = nd_state_machine.output.format() if nd_state_machine else {}
+        error_msg = f"Module execution failed: {str(e)}"
+        if module.params.get("output_level") == "debug":
+            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
+        module.fail_json(msg=error_msg, **output)
+
+    except Exception as e:  # pylint: disable=broad-except
+        module_log.exception("Unhandled exception during module execution")
+        output = nd_state_machine.output.format() if nd_state_machine else {}
+        error_msg = f"Module failed: {str(e)}"
+        if module.params.get("output_level") == "debug":
+            error_msg += f"\nTraceback:\n{traceback.format_exc()}"
+        module.fail_json(msg=error_msg, **output)
 
 
 if __name__ == "__main__":
