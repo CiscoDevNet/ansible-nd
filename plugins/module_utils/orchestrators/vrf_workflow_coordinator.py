@@ -33,10 +33,10 @@ from ansible.module_utils.basic import AnsibleModule
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrfactions import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_actions import (
     EpManageFabricsVrfActionsDeployPost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrfattachments import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_attachments import (
     EpManageFabricsVrfAttachmentsPost,
     EpManageFabricsVrfAttachmentsQueryPost,
 )
@@ -58,6 +58,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 )
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_fabric_resolver import (
     VrfFabricResolver,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_state_machine import (
+    VrfStateMachine,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
@@ -85,7 +88,7 @@ class VrfWorkflowCoordinator:
         self.module = module
         self.strategy = strategy
 
-    # ── Entry point ───────────────────────────────────────────────
+    # ── Entry point ────────────────────────────────────────────
 
     def run(self) -> dict[str, Any]:
         """
@@ -120,7 +123,7 @@ class VrfWorkflowCoordinator:
 
         if not self.strategy.is_parent:
             for idx, vrf in enumerate(config):
-                if "child_fabric_config" in vrf:
+                if vrf.get("child_fabric_config"):
                     self.module.fail_json(
                         msg=(
                             "config[{idx}].child_fabric_config is only valid "
@@ -133,7 +136,7 @@ class VrfWorkflowCoordinator:
 
         if self.strategy.is_child:
             for idx, vrf in enumerate(config):
-                if "attach" in vrf:
+                if vrf.get("attach"):
                     self.module.fail_json(
                         msg=(
                             "config[{idx}].attach is not valid when targeting "
@@ -142,7 +145,7 @@ class VrfWorkflowCoordinator:
                         ).format(idx=idx)
                     )
 
-    # ── Config parsing ────────────────────────────────────────────
+    # ── Config parsing ─────────────────────────────────────────
 
     def _parse_config(
         self,
@@ -357,11 +360,21 @@ class VrfWorkflowCoordinator:
         VRF-specific payload transformation is kept here so the shared state
         machine does not need to know about VRF playbook field aliases.
         """
+        return VrfStateMachine(self).run_basic(module_args, strategy=strategy)
+
+    def _new_state_machine(self, module_args: dict, strategy: BaseVrfStrategy | None = None) -> tuple[NDStateMachine, Any, Any]:
+        """
+        Build a VRF state machine after applying VRF config transformation.
+
+        NDStateMachine initialization performs the current-state query.  Callers
+        that need that current state directly, such as VRF delete-all, should
+        use this helper rather than issuing a second query.
+        """
         active_strategy = strategy or self.strategy
         state = module_args.get("state", "merged")
-
         original_config = self.module.params.get("config")
         original_state = self.module.params.get("state")
+        sm = None
         try:
             self.module.params["config"] = module_args.get("config") or []
             self.module.params["state"] = state
@@ -381,17 +394,22 @@ class VrfWorkflowCoordinator:
             self.module.params["config"] = orchestrator.prepare_config_data(module_args.get("config") or [])
             self.module.params["state"] = state
             sm = NDStateMachine(module=self.module, model_orchestrator=orchestrator)
-
-            if state != "gathered":
-                sm.manage_state()
-
-            verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
-            if self.module.params.get("output_level") == "debug":
-                verbosity = max(verbosity, 3)
-            return sm.output.format_with_verbosity(verbosity, sm.results)
+            return sm, original_config, original_state
         finally:
-            self.module.params["config"] = original_config
-            self.module.params["state"] = original_state
+            if sm is None:
+                self._restore_state_machine_params(original_config, original_state)
+
+    def _restore_state_machine_params(self, original_config: Any, original_state: Any) -> None:
+        """Restore module params saved by ``_new_state_machine``."""
+        self.module.params["config"] = original_config
+        self.module.params["state"] = original_state
+
+    def _format_state_machine_output(self, sm: NDStateMachine) -> dict[str, Any]:
+        """Format state-machine output using the module verbosity contract."""
+        verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
+        if self.module.params.get("output_level") == "debug":
+            verbosity = max(verbosity, 3)
+        return sm.output.format_with_verbosity(verbosity, sm.results)
 
     def _run_state_machine_with_attachments(
         self,
@@ -406,97 +424,23 @@ class VrfWorkflowCoordinator:
         separate endpoints.  Keep attach/deploy out of the VRF payload and
         apply them around the normal state machine.
         """
-        active_strategy = strategy or self.strategy
-        state = module_args.get("state", "merged")
-        config = module_args.get("config") or []
+        return VrfStateMachine(self).run(module_args, strategy=strategy, defer_deploy=defer_deploy)
 
-        if active_strategy.is_child or state == "gathered":
-            return self._run_state_machine(module_args, strategy=active_strategy)
+    def _run_overridden_state_machine_with_attachments(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        defer_deploy: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Run overridden using the state machine's initial current-state query.
 
-        if state == "deleted":
-            return self._run_deleted_state_machine_with_detach_deploy(
-                module_args,
-                active_strategy,
-            )
-
-        pre_delete_traces: list[dict[str, Any]] = []
-        if state == "overridden":
-            pre_delete_traces = self._prepare_overridden_deletions(
-                module_args,
-                active_strategy,
-            )
-
-        desired_attachments = None
-        desired_vrf_names = None
-        if state in ("replaced", "overridden"):
-            desired_attachments = self._desired_attachment_map(
-                module_args,
-                active_strategy,
-            )
-        if state == "overridden":
-            desired_vrf_names = self._configured_vrf_names(config)
-
-        pre_attach = self._apply_attachment_phase(
-            module_args,
-            active_strategy,
-            phase="pre",
-            desired=desired_attachments,
-            current_vrf_names=desired_vrf_names,
-        )
-        current_attachments = pre_attach.get("current")
-        if current_attachments is not None:
-            current_attachments = self._attachment_map_after_detach(
-                current_attachments,
-                pre_attach.get("payloads", []),
-            )
-        result = self._run_state_machine(module_args, strategy=active_strategy)
-
-        pre_traces = list(pre_delete_traces)
-        if pre_attach:
-            pre_traces.append(pre_attach)
-        for trace in reversed(pre_traces):
-            self._merge_api_trace(result, trace, prepend=True)
-
-        if result.get("failed", False):
-            return result
-
-        post_attach = self._apply_attachment_phase(
-            module_args,
-            active_strategy,
-            phase="post",
-            desired=desired_attachments,
-            current_vrf_names=desired_vrf_names,
-            current=current_attachments,
-        )
-        self._merge_api_trace(result, post_attach)
-
-        deploy_payloads = self._build_deploy_payloads(
-            config,
-            pre_attach.get("deploy_targets", {}),
-            post_attach.get("deploy_targets", {}),
-        )
-        if not deploy_payloads:
-            deploy_payloads = self._build_pending_vrf_deploy_payloads(
-                result,
-                config,
-                module_args,
-                active_strategy,
-            )
-        if not deploy_payloads:
-            return result
-
-        if defer_deploy:
-            result["_deferred_deploy_payloads"] = deploy_payloads
-            return result
-
-        for deploy_payload in deploy_payloads:
-            deploy_trace = self._deploy_vrf_attachments(
-                module_args,
-                active_strategy,
-                deploy_payload,
-            )
-            self._merge_api_trace(result, deploy_trace)
-        return result
+        The pre-delete and pre-attach phases need to know which VRFs currently
+        exist before ``manage_state`` deletes omitted items.  Use
+        ``sm.existing`` from NDStateMachine initialization instead of querying
+        current VRFs separately and then building a second state machine later.
+        """
+        return VrfStateMachine(self).run_overridden(module_args, strategy, defer_deploy=defer_deploy)
 
     def _run_deleted_state_machine_with_detach_deploy(
         self,
@@ -512,38 +456,27 @@ class VrfWorkflowCoordinator:
         ``deploy_type`` controls whether the pre-delete deployment is scoped to
         switches or to the VRF.
         """
-        traces: list[dict[str, Any]] = []
-        config = module_args.get("config") or []
+        return VrfStateMachine(self).run_deleted(module_args, strategy)
 
-        detach_trace = self._apply_deleted_attachment_phase(module_args, strategy)
-        if detach_trace:
-            traces.append(detach_trace)
+    def _delete_all_existing_vrfs(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+    ) -> dict[str, Any]:
+        """
+        Delete all VRFs currently present on the target fabric.
 
-        deploy_payloads = self._build_deploy_payloads(
-            config,
-            detach_trace.get("deploy_targets", {}) if detach_trace else {},
-        )
-        for deploy_payload in deploy_payloads:
-            deploy_trace = self._deploy_vrf_attachments(
-                module_args,
-                strategy,
-                deploy_payload,
-            )
-            traces.append(deploy_trace)
-
-        if deploy_payloads:
-            self._wait_for_vrfs_delete_ready(module_args, strategy)
-
-        result = self._run_state_machine(module_args, strategy=strategy)
-
-        for trace in reversed(traces):
-            self._merge_api_trace(result, trace, prepend=True)
-        return result
+        ``config=[]`` means "delete what exists".  The current VRFs come from
+        NDStateMachine initialization, which has already queried the fabric;
+        do not issue another current-state query or rewrite proposed config.
+        """
+        return VrfStateMachine(self).delete_all_existing_vrfs(module_args, strategy)
 
     def _prepare_overridden_deletions(
         self,
         module_args: dict,
         strategy: BaseVrfStrategy,
+        omitted_vrf_names: list[str],
     ) -> list[dict[str, Any]]:
         """
         Detach/deploy omitted VRFs before overridden deletes them.
@@ -552,7 +485,6 @@ class VrfWorkflowCoordinator:
         playbook.  Those omitted VRFs may still be attached, so they need the
         same pre-delete detach/deploy/wait sequence used by ``state=deleted``.
         """
-        omitted_vrf_names = self._overridden_vrf_names_to_delete(module_args, strategy)
         if not omitted_vrf_names:
             return []
 
@@ -856,23 +788,6 @@ class VrfWorkflowCoordinator:
             if status is not None and str(status).strip() in pending_statuses:
                 return True
         return False
-
-    def _overridden_vrf_names_to_delete(
-        self,
-        module_args: dict,
-        strategy: BaseVrfStrategy,
-    ) -> list[str]:
-        """Return current VRFs that are omitted from an overridden config."""
-        desired_names = set(self._configured_vrf_names(module_args.get("config") or []))
-        omitted_names: list[str] = []
-        seen: set[str] = set()
-
-        for vrf in self._query_current_vrfs(module_args, strategy):
-            name = vrf.get("vrf_name") or vrf.get("vrfName")
-            if name and name not in desired_names and name not in seen:
-                omitted_names.append(name)
-                seen.add(name)
-        return omitted_names
 
     def _configured_vrf_names(self, config: list[dict]) -> list[str]:
         """Return configured VRF names in stable order."""
@@ -1302,14 +1217,24 @@ class VrfWorkflowCoordinator:
         strategy: BaseVrfStrategy,
     ) -> list[dict[str, Any]]:
         """Gathered current VRF records for the target fabric."""
+        vrfs, _trace = self._query_current_vrfs_with_trace(module_args, strategy)
+        return vrfs
+
+    def _query_current_vrfs_with_trace(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Gather current VRF records and return the associated API trace."""
         orchestrator, results = self._new_vrf_orchestrator(module_args, strategy)
         data = orchestrator.query_all()
-        results.build_final_result()
         if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            return data.get("vrfs") or data.get("items") or []
-        return []
+            vrfs = data
+        elif isinstance(data, dict):
+            vrfs = data.get("vrfs") or data.get("items") or []
+        else:
+            vrfs = []
+        return vrfs, self._finalize_api_trace(results)
 
     def _wait_for_vrfs_delete_ready(
         self,

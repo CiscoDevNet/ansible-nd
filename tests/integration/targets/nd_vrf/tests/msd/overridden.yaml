@@ -1,0 +1,164 @@
+---
+- name: Test Entry Point - [nd_vrf - msd - overridden]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MSD Overridden Tests - [nd_vrf]                +"
+      - "----------------------------------------------------------------"
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden - Build Parent and Child Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    target_vrf_names:
+      - ansible-msd-over-keep
+      - ansible-msd-over-remove
+    nd_vrf_msd_over_seed:
+      - vrf_name: ansible-msd-over-keep
+        vrf_id: "{{ nd_vrf_base_id + 22 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 22 }}"
+        vrf_description: Ansible ND VRF MSD override keep seed
+        deploy: false
+        child_fabric_config:
+          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+            adv_host_routes: false
+      - vrf_name: ansible-msd-over-remove
+        vrf_id: "{{ nd_vrf_base_id + 23 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 23 }}"
+        vrf_description: Ansible ND VRF MSD override remove seed
+        deploy: false
+        child_fabric_config:
+          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+            adv_host_routes: false
+    nd_vrf_msd_over_config:
+      - vrf_name: ansible-msd-over-keep
+        vrf_id: "{{ nd_vrf_base_id + 22 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 22 }}"
+        vrf_description: Ansible ND VRF MSD override keep updated
+        loopback_route_tag: 12352
+        max_bgp_paths: 3
+        max_ibgp_paths: 3
+        ipv6_linklocal_enable: true
+        adv_host_routes: true
+        adv_default_routes: false
+        static_default_route: false
+        deploy: false
+        child_fabric_config:
+          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+            adv_host_routes: true
+            adv_default_routes: false
+            static_default_route: false
+  delegate_to: localhost
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden - Prepare Seed Configuration
+  vars:
+    file: msd_over_seed
+    vrf_conf: "{{ nd_vrf_msd_over_seed }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden - Prepare Override Configuration
+  vars:
+    file: msd_over
+    vrf_conf: "{{ nd_vrf_msd_over_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC1 - Seed VRFs
+  cisco.nd.nd_vrf:
+    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_msd_over_seed_conf }}"
+  register: msd_over_seed_result
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC2 - Override VRFs
+  cisco.nd.nd_vrf: &msd_over_conf
+    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    state: overridden
+    config: "{{ nd_vrf_msd_over_conf }}"
+    output_level: debug
+  register: msd_over_result
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC2 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - msd_over_result.changed == true
+      - msd_over_result.fabric_type == "multisite_parent"
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC2 - Gather Parent VRFs
+  cisco.nd.nd_vrf:
+    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    state: gathered
+    config: []
+  register: msd_over_gathered
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC2 - Validate Removed VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ msd_over_gathered }}"
+    test_data:
+      - vrf_name: ansible-msd-over-remove
+    present: false
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC2 - Validate Remaining VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ msd_over_gathered }}"
+    test_data: "{{ nd_vrf_msd_over_conf }}"
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC3 - Idempotence
+  cisco.nd.nd_vrf: *msd_over_conf
+  register: msd_over_idempotent
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - overridden
+
+- name: MSD Overridden TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - msd_over_idempotent.changed == false
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - overridden

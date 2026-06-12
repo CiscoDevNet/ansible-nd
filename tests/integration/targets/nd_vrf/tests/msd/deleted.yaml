@@ -1,0 +1,128 @@
+---
+- name: Test Entry Point - [nd_vrf - msd - deleted]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MSD Deleted Tests - [nd_vrf]                   +"
+      - "----------------------------------------------------------------"
+  tags:
+    - msd
+    - deleted
+
+- name: MSD Deleted - Build Parent and Child Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    target_vrf_names:
+      - ansible-msd-deleted
+      - ansible-msd-del-parent
+    nd_vrf_msd_delete_config:
+      - vrf_name: ansible-msd-deleted
+        vrf_id: "{{ nd_vrf_base_id + 24 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 24 }}"
+        vrf_description: Ansible ND VRF MSD deleted test
+        deploy: false
+        child_fabric_config:
+          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+            adv_host_routes: true
+            adv_default_routes: false
+            static_default_route: false
+      - vrf_name: ansible-msd-del-parent
+        vrf_id: "{{ nd_vrf_base_id + 25 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 25 }}"
+        vrf_description: Ansible ND VRF MSD deleted parent-only test
+        max_bgp_paths: 2
+        max_ibgp_paths: 2
+        deploy: false
+  delegate_to: localhost
+  tags:
+    - msd
+    - deleted
+
+- name: MSD Deleted - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - deleted
+
+- name: MSD Deleted - Prepare Configuration
+  vars:
+    file: msd_delete
+    vrf_conf: "{{ nd_vrf_msd_delete_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - deleted
+
+- name: MSD Deleted TC1 - Create VRF
+  cisco.nd.nd_vrf:
+    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_msd_delete_conf }}"
+  register: msd_delete_seed_result
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - deleted
+
+- name: MSD Deleted TC2 - Delete Parent VRF With Ignored Child Config
+  cisco.nd.nd_vrf: &msd_delete_conf
+    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    state: deleted
+    config: "{{ nd_vrf_msd_delete_conf }}"
+    output_level: debug
+  register: msd_delete_result
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - deleted
+
+- name: MSD Deleted TC2 - Assert Delete Does Not Execute Child Tasks
+  ansible.builtin.assert:
+    that:
+      - msd_delete_result.changed == true
+      - msd_delete_result.fabric_type == "multisite_parent"
+      - msd_delete_result.child_fabrics is not defined
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - deleted
+
+- name: MSD Deleted TC2 - Gather Parent VRFs
+  cisco.nd.nd_vrf:
+    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    state: gathered
+    config: []
+  register: msd_delete_gathered
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - deleted
+
+- name: MSD Deleted TC2 - Validate VRF Removed
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ msd_delete_gathered }}"
+    test_data: "{{ nd_vrf_msd_delete_conf }}"
+    present: false
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - deleted
+
+- name: MSD Deleted TC3 - Idempotence
+  cisco.nd.nd_vrf: *msd_delete_conf
+  register: msd_delete_idempotent
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - deleted
+
+- name: MSD Deleted TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - msd_delete_idempotent.changed == false
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - deleted

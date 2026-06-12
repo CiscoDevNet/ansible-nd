@@ -1,0 +1,343 @@
+---
+- name: Test Entry Point - [nd_vrf - standalone - sanity]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Standalone Sanity Tests - [nd_vrf]             +"
+      - "----------------------------------------------------------------"
+  tags: sanity
+
+- name: Standalone Sanity - Build Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_standalone_fabric }}"
+    target_vrf_names:
+      - ansible-nd-vrf-sanity-a
+      - ansible-nd-vrf-sanity-b
+      - ansible-nd-vrf-sanity-c
+    nd_vrf_sanity_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_vrf_standalone_switch,
+            'loopback_id': 111,
+            'loopback_ipv4_address': '10.255.111.1',
+            'loopback_ipv6_address': '2001:db8:111::1',
+            'import_vpn_rt': ['65000:51111'],
+            'export_vpn_rt': ['65000:51111'],
+            'import_evpn_rt': ['65000:51111'],
+            'export_evpn_rt': ['65000:51111']
+          }
+        ] if nd_vrf_standalone_switch | length > 0 else []
+      }}
+    nd_vrf_sanity_merge_config:
+      - vrf_name: ansible-nd-vrf-sanity-a
+        vrf_id: "{{ nd_vrf_base_id + 40 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 40 }}"
+        vrf_vlan_name: ansible_nd_vrf_sanity_a_vlan
+        vrf_intf_desc: Ansible ND VRF sanity A SVI
+        vrf_description: Ansible ND VRF sanity merged
+        loopback_route_tag: 12440
+        redist_direct_rmap: FABRIC-RMAP-REDIST-SUBNET
+        v6_redist_direct_rmap: FABRIC-RMAP-REDIST-SUBNET
+        max_bgp_paths: 2
+        max_ibgp_paths: 3
+        ipv6_linklocal_enable: true
+        disable_rt_auto: true
+        import_vpn_rt:
+          - "65000:50440"
+        export_vpn_rt:
+          - "65000:50440"
+        import_evpn_rt:
+          - "65000:50440"
+        export_evpn_rt:
+          - "65000:50440"
+        adv_host_routes: true
+        adv_default_routes: false
+        static_default_route: false
+        trm_enable: false
+        bgp_password: abcdef12
+        bgp_passwd_encrypt: 3
+        netflow_enable: false
+        attach: "{{ nd_vrf_sanity_attach_block }}"
+        deploy: "{{ nd_vrf_sanity_attach_block | length > 0 }}"
+        deploy_type: switch
+      - vrf_name: ansible-nd-vrf-sanity-b
+        vrf_id: "{{ nd_vrf_base_id + 41 }}"
+        l3vni_wo_vlan: true
+        vrf_description: Ansible ND VRF sanity L3VNI without VLAN
+        loopback_route_tag: 12441
+        max_bgp_paths: 1
+        max_ibgp_paths: 2
+        ipv6_linklocal_enable: true
+        disable_rt_auto: false
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
+        trm_enable: false
+        netflow_enable: false
+        deploy: false
+    nd_vrf_sanity_replace_config:
+      - vrf_name: ansible-nd-vrf-sanity-a
+        vrf_id: "{{ nd_vrf_base_id + 40 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 40 }}"
+        vrf_description: Ansible ND VRF sanity replaced
+        max_bgp_paths: 4
+        max_ibgp_paths: 4
+        disable_rt_auto: true
+        import_vpn_rt:
+          - "65000:51440"
+        export_vpn_rt:
+          - "65000:51440"
+        import_evpn_rt:
+          - "65000:51440"
+        export_evpn_rt:
+          - "65000:51440"
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+    nd_vrf_sanity_override_config:
+      - vrf_name: ansible-nd-vrf-sanity-c
+        vrf_id: "{{ nd_vrf_base_id + 42 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 42 }}"
+        vrf_description: Ansible ND VRF sanity overridden create
+        max_bgp_paths: 2
+        max_ibgp_paths: 2
+        adv_host_routes: true
+        adv_default_routes: false
+        static_default_route: false
+        deploy: false
+    nd_vrf_sanity_delete_config:
+      - vrf_name: ansible-nd-vrf-sanity-c
+  delegate_to: localhost
+  tags: sanity
+
+- name: Standalone Sanity - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity - Prepare Merge Configuration
+  vars:
+    file: standalone_sanity_merge
+    vrf_conf: "{{ nd_vrf_sanity_merge_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity - Prepare Replace Configuration
+  vars:
+    file: standalone_sanity_replace
+    vrf_conf: "{{ nd_vrf_sanity_replace_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity - Prepare Override Configuration
+  vars:
+    file: standalone_sanity_override
+    vrf_conf: "{{ nd_vrf_sanity_override_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity - Prepare Delete Configuration
+  vars:
+    file: standalone_sanity_delete
+    vrf_conf: "{{ nd_vrf_sanity_delete_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC1 - Merged
+  cisco.nd.nd_vrf: &standalone_sanity_merge
+    fabric: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_standalone_sanity_merge_conf }}"
+    output_level: debug
+  register: standalone_sanity_merged
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC1 - Gather After Merged
+  cisco.nd.nd_vrf:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: []
+  register: standalone_sanity_gathered
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC1 - Validate Merged
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ standalone_sanity_gathered }}"
+    test_data: "{{ nd_vrf_standalone_sanity_merge_conf }}"
+    changed: "{{ standalone_sanity_merged.changed }}"
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC1 - Merged Idempotence
+  cisco.nd.nd_vrf: *standalone_sanity_merge
+  register: standalone_sanity_merged_idempotent
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC1 - Assert Merged Idempotence
+  ansible.builtin.assert:
+    that:
+      - standalone_sanity_merged_idempotent.changed == false
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC2 - Replaced
+  cisco.nd.nd_vrf: &standalone_sanity_replace
+    fabric: "{{ target_fabric }}"
+    state: replaced
+    config: "{{ nd_vrf_standalone_sanity_replace_conf }}"
+    output_level: debug
+  register: standalone_sanity_replaced
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC2 - Gather After Replaced
+  cisco.nd.nd_vrf:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: []
+  register: standalone_sanity_replaced_gathered
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC2 - Validate Replaced
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ standalone_sanity_replaced_gathered }}"
+    test_data: "{{ nd_vrf_standalone_sanity_replace_conf }}"
+    changed: "{{ standalone_sanity_replaced.changed }}"
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC2 - Replaced Idempotence
+  cisco.nd.nd_vrf: *standalone_sanity_replace
+  register: standalone_sanity_replaced_idempotent
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC2 - Assert Replaced Idempotence
+  ansible.builtin.assert:
+    that:
+      - standalone_sanity_replaced_idempotent.changed == false
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC3 - Overridden
+  cisco.nd.nd_vrf: &standalone_sanity_override
+    fabric: "{{ target_fabric }}"
+    state: overridden
+    config: "{{ nd_vrf_standalone_sanity_override_conf }}"
+    output_level: debug
+  register: standalone_sanity_overridden
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC3 - Gather After Overridden
+  cisco.nd.nd_vrf:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: []
+  register: standalone_sanity_overridden_gathered
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC3 - Validate Override Created VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ standalone_sanity_overridden_gathered }}"
+    test_data: "{{ nd_vrf_standalone_sanity_override_conf }}"
+    changed: "{{ standalone_sanity_overridden.changed }}"
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC3 - Validate Override Removed Old VRFs
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ standalone_sanity_overridden_gathered }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-sanity-a
+      - vrf_name: ansible-nd-vrf-sanity-b
+    present: false
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC3 - Overridden Idempotence
+  cisco.nd.nd_vrf: *standalone_sanity_override
+  register: standalone_sanity_overridden_idempotent
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC3 - Assert Overridden Idempotence
+  ansible.builtin.assert:
+    that:
+      - standalone_sanity_overridden_idempotent.changed == false
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC4 - Deleted
+  cisco.nd.nd_vrf: &standalone_sanity_delete
+    fabric: "{{ target_fabric }}"
+    state: deleted
+    config: "{{ nd_vrf_standalone_sanity_delete_conf }}"
+    output_level: debug
+  register: standalone_sanity_deleted
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC4 - Gather After Deleted
+  cisco.nd.nd_vrf:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: []
+  register: standalone_sanity_deleted_gathered
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC4 - Validate Deleted
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ standalone_sanity_deleted_gathered }}"
+    test_data: "{{ nd_vrf_standalone_sanity_delete_conf }}"
+    present: false
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC4 - Deleted Idempotence
+  cisco.nd.nd_vrf: *standalone_sanity_delete
+  register: standalone_sanity_deleted_idempotent
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC4 - Assert Deleted Idempotence
+  ansible.builtin.assert:
+    that:
+      - standalone_sanity_deleted_idempotent.changed == false
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC5 - Reject child_fabric_config on Standalone Fabric
+  cisco.nd.nd_vrf:
+    fabric: "{{ nd_vrf_standalone_fabric }}"
+    state: merged
+    config:
+      - vrf_name: ansible-std-sanity-child-cfg
+        vrf_id: "{{ nd_vrf_base_id + 43 }}"
+        child_fabric_config:
+          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+            adv_host_routes: true
+  register: standalone_child_config_result
+  ignore_errors: true
+  when: nd_vrf_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC5 - Assert Standalone Scope Rejection
+  ansible.builtin.assert:
+    that:
+      - standalone_child_config_result.failed == true
+      - "'child_fabric_config is only valid' in standalone_child_config_result.msg"
+  when: nd_vrf_run_standalone | bool
+  tags: sanity

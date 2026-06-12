@@ -1,0 +1,128 @@
+---
+- name: Test Entry Point - [nd_vrf - msd - gathered]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MSD Gathered Tests - [nd_vrf]                  +"
+      - "----------------------------------------------------------------"
+  tags:
+    - msd
+    - gathered
+
+- name: MSD Gathered - Build Parent and Child Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    target_vrf_names:
+      - ansible-msd-gathered
+      - ansible-msd-gath-parent
+    nd_vrf_msd_gathered_config:
+      - vrf_name: ansible-msd-gathered
+        vrf_id: "{{ nd_vrf_base_id + 36 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 36 }}"
+        vrf_description: Ansible ND VRF MSD gathered test
+        max_bgp_paths: 2
+        max_ibgp_paths: 2
+        adv_host_routes: true
+        adv_default_routes: false
+        static_default_route: false
+        deploy: false
+        child_fabric_config:
+          - fabric: "{{ nd_vrf_msd_child_fabric }}"
+            adv_host_routes: true
+            adv_default_routes: false
+            static_default_route: false
+      - vrf_name: ansible-msd-gath-parent
+        vrf_id: "{{ nd_vrf_base_id + 37 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 37 }}"
+        vrf_description: Ansible ND VRF MSD gathered parent-only test
+        ipv6_linklocal_enable: true
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+  delegate_to: localhost
+  tags:
+    - msd
+    - gathered
+
+- name: MSD Gathered - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - gathered
+
+- name: MSD Gathered - Prepare Configuration
+  vars:
+    file: msd_gathered
+    vrf_conf: "{{ nd_vrf_msd_gathered_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - gathered
+
+- name: MSD Gathered TC1 - Seed VRF
+  cisco.nd.nd_vrf:
+    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_msd_gathered_conf }}"
+  register: msd_gathered_seed_result
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - gathered
+
+- name: MSD Gathered TC2 - Gather Parent VRFs
+  cisco.nd.nd_vrf:
+    fabric: "{{ nd_vrf_msd_parent_fabric }}"
+    state: gathered
+    config: []
+  register: msd_parent_gathered
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - gathered
+
+- name: MSD Gathered TC2 - Validate Parent VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ msd_parent_gathered }}"
+    test_data: "{{ nd_vrf_msd_gathered_conf }}"
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - gathered
+
+- name: MSD Gathered TC3 - Gather Child VRFs Directly
+  cisco.nd.nd_vrf:
+    fabric: "{{ nd_vrf_msd_child_fabric }}"
+    state: gathered
+    config: []
+  register: msd_child_gathered
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - gathered
+
+- name: MSD Gathered TC3 - Validate Child VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ msd_child_gathered }}"
+    test_data:
+      - vrf_name: ansible-msd-gathered
+        adv_host_routes: true
+        adv_default_routes: false
+        static_default_route: false
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - gathered
+
+- name: MSD Gathered TC3 - Validate Parent-Only VRF On Child
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ msd_child_gathered }}"
+    test_data:
+      - vrf_name: ansible-msd-gath-parent
+  when: nd_vrf_run_msd | bool
+  tags:
+    - msd
+    - gathered

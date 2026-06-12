@@ -1,0 +1,83 @@
+---
+- name: Test Entry Point - [nd_vrf - gathered]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Gathered Tests - [nd_vrf]                       +"
+      - "----------------------------------------------------------------"
+  tags: gathered
+
+- name: Gathered - Build Standalone Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_standalone_fabric }}"
+    target_vrf_names:
+      - ansible-nd-vrf-gathered
+      - ansible-nd-vrf-gathered-l3vni
+    nd_vrf_gathered_config:
+      - vrf_name: ansible-nd-vrf-gathered
+        vrf_id: "{{ nd_vrf_base_id + 6 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 6 }}"
+        vrf_description: Ansible ND VRF gathered test
+        max_bgp_paths: 2
+        max_ibgp_paths: 2
+        ipv6_linklocal_enable: true
+        adv_host_routes: true
+        adv_default_routes: false
+        static_default_route: false
+        deploy: false
+      - vrf_name: ansible-nd-vrf-gathered-l3vni
+        vrf_id: "{{ nd_vrf_base_id + 16 }}"
+        l3vni_wo_vlan: true
+        vrf_description: Ansible ND VRF gathered L3VNI test
+        import_vpn_rt:
+          - "65000:50016"
+        export_vpn_rt:
+          - "65000:50016"
+        import_evpn_rt:
+          - "65000:50016"
+        export_evpn_rt:
+          - "65000:50016"
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+  delegate_to: localhost
+  tags: gathered
+
+- name: Gathered - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when: nd_vrf_run_standalone | bool
+  tags: gathered
+
+- name: Gathered - Prepare Configuration
+  vars:
+    file: standalone_gathered
+    vrf_conf: "{{ nd_vrf_gathered_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_standalone | bool
+  tags: gathered
+
+- name: Gathered TC1 - Seed VRF
+  cisco.nd.nd_vrf:
+    fabric: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_standalone_gathered_conf }}"
+  register: gathered_seed_result
+  when: nd_vrf_run_standalone | bool
+  tags: gathered
+
+- name: Gathered TC2 - Gather Standalone VRFs
+  cisco.nd.nd_vrf:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: []
+  register: gathered_result
+  when: nd_vrf_run_standalone | bool
+  tags: gathered
+
+- name: Gathered TC2 - Validate Gathered Data
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ gathered_result }}"
+    test_data: "{{ nd_vrf_standalone_gathered_conf }}"
+  when: nd_vrf_run_standalone | bool
+  tags: gathered

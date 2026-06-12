@@ -1,0 +1,29 @@
+---
+- name: VRF Setup - Verify Fabric is Reachable
+  cisco.nd.nd_rest:
+    path: "/api/v1/manage/fabrics/{{ target_fabric }}"
+    method: get
+  register: nd_vrf_fabric_query
+  when:
+    - target_fabric is defined
+    - target_fabric | length > 0
+
+- name: VRF Setup - Assert Fabric Exists
+  ansible.builtin.assert:
+    that:
+      - nd_vrf_fabric_query.status | int == 200
+    fail_msg: "Fabric '{{ target_fabric }}' not found (HTTP {{ nd_vrf_fabric_query.status | default('unknown') }})."
+    success_msg: "Fabric '{{ target_fabric }}' found."
+  when:
+    - target_fabric is defined
+    - target_fabric | length > 0
+
+- name: VRF Setup - Delete All VRFs
+  cisco.nd.nd_vrf:
+    fabric: "{{ target_fabric }}"
+    state: deleted
+    config: []
+  register: nd_vrf_cleanup_result
+  when:
+    - target_fabric is defined
+    - target_fabric | length > 0

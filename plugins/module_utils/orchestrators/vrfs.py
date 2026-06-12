@@ -56,7 +56,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrfs import (
     EpManageFabricsVrfsPost,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrfactions import (
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_actions import (
     EpManageFabricsVrfActionsRemovePost,
 )
 
@@ -436,9 +436,9 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         """POST to vrfActions/remove to delete multiple VRFs in a single call."""
         if not model_instances:
             return {}
+        # Composite identifier is (vrf_name, fabric_name); vrf_name is index 0.
+        vrf_names = [m.get_identifier_value()[0] for m in model_instances]
         try:
-            # Composite identifier is (vrf_name, fabric_name); vrf_name is index 0.
-            vrf_names = [m.get_identifier_value()[0] for m in model_instances]
             endpoint = self._make_endpoint(self.strategy.vrf_actions_remove_post_cls())
             return self._request(
                 path=endpoint.path,
@@ -447,4 +447,29 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 operation_type=OperationType.DELETE,
             )
         except Exception as e:
+            if self._delete_error_is_absent_vrf(e) and self._vrfs_absent(vrf_names):
+                return {
+                    "results": [
+                        {
+                            "vrfName": vrf_name,
+                            "status": "success",
+                        }
+                        for vrf_name in vrf_names
+                    ]
+                }
             raise Exception(f"Bulk delete VRFs failed: {e}") from e
+
+    @staticmethod
+    def _delete_error_is_absent_vrf(error: Exception) -> bool:
+        """Return True for ND's remove response when the requested VRF is gone."""
+        message = str(error)
+        return "Invalid VRF" in message
+
+    def _vrfs_absent(self, vrf_names: list[str]) -> bool:
+        """Re-query the fabric and confirm all requested VRFs are absent."""
+        remaining = set()
+        for vrf in self.query_all() or []:
+            vrf_name = vrf.get("vrf_name") or vrf.get("vrfName")
+            if vrf_name:
+                remaining.add(vrf_name)
+        return not set(vrf_names).intersection(remaining)

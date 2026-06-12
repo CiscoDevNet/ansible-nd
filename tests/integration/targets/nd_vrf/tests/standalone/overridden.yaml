@@ -1,0 +1,164 @@
+---
+- name: Test Entry Point - [nd_vrf - overridden]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Overridden Tests - [nd_vrf]                     +"
+      - "----------------------------------------------------------------"
+  tags: overridden
+
+- name: Overridden - Build Standalone Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_standalone_fabric }}"
+    target_vrf_names:
+      - ansible-nd-vrf-over-keep
+      - ansible-nd-vrf-over-remove
+    nd_vrf_overridden_seed:
+      - vrf_name: ansible-nd-vrf-over-keep
+        vrf_id: "{{ nd_vrf_base_id + 4 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 4 }}"
+        vrf_description: Ansible ND VRF overridden keep seed
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+      - vrf_name: ansible-nd-vrf-over-remove
+        vrf_id: "{{ nd_vrf_base_id + 5 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 5 }}"
+        vrf_description: Ansible ND VRF overridden remove seed
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+    nd_vrf_overridden_config:
+      - vrf_name: ansible-nd-vrf-over-keep
+        vrf_id: "{{ nd_vrf_base_id + 4 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 4 }}"
+        vrf_description: Ansible ND VRF overridden keep updated
+        max_bgp_paths: 5
+        max_ibgp_paths: 5
+        ipv6_linklocal_enable: true
+        disable_rt_auto: true
+        import_vpn_rt:
+          - "65000:50004"
+        export_vpn_rt:
+          - "65000:50004"
+        import_evpn_rt:
+          - "65000:50004"
+        export_evpn_rt:
+          - "65000:50004"
+        adv_host_routes: true
+        adv_default_routes: false
+        static_default_route: false
+        trm_enable: false
+        netflow_enable: false
+        deploy: false
+  delegate_to: localhost
+  tags: overridden
+
+- name: Overridden - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_overridden | bool
+  tags: overridden
+
+- name: Overridden - Prepare Seed Configuration
+  vars:
+    file: standalone_over_seed
+    vrf_conf: "{{ nd_vrf_overridden_seed }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_overridden | bool
+  tags: overridden
+
+- name: Overridden - Prepare Override Configuration
+  vars:
+    file: standalone_over
+    vrf_conf: "{{ nd_vrf_overridden_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC1 - Seed VRFs
+  cisco.nd.nd_vrf:
+    fabric: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_standalone_over_seed_conf }}"
+  register: overridden_seed_result
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC2 - Override VRFs
+  cisco.nd.nd_vrf: &override_conf
+    fabric: "{{ target_fabric }}"
+    state: overridden
+    config: "{{ nd_vrf_standalone_over_conf }}"
+    output_level: debug
+  register: override_result
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC2 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - override_result.changed == true
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC2 - Gather VRFs
+  cisco.nd.nd_vrf:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: []
+  register: gathered_result
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC2 - Validate Remaining VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ gathered_result }}"
+    test_data: "{{ nd_vrf_standalone_over_conf }}"
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC2 - Validate Removed VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ gathered_result }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-over-remove
+    present: false
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC3 - Idempotence
+  cisco.nd.nd_vrf: *override_conf
+  register: override_idempotent
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_overridden | bool
+  tags: overridden
+
+- name: Overridden TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - override_idempotent.changed == false
+  when:
+    - nd_vrf_run_standalone | bool
+    - nd_vrf_run_overridden | bool
+  tags: overridden

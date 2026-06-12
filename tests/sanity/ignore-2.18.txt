@@ -1,0 +1,1 @@
+plugins/action/tests/integration/_nd_vrf_validate.py action-plugin-docs

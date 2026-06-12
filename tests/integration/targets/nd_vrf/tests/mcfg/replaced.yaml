@@ -1,0 +1,195 @@
+---
+- name: Test Entry Point - [nd_vrf - mcfg - replaced]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MCFG Replaced Tests - [nd_vrf]                 +"
+      - "----------------------------------------------------------------"
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced - Build Parent and Child Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    target_vrf_names:
+      - ansible-nd-vrf-mcfg-replaced
+      - ansible-mcfg-repl-parent
+    nd_vrf_mcfg_replace_base:
+      - vrf_name: ansible-nd-vrf-mcfg-replaced
+        vrf_id: "{{ nd_vrf_base_id + 31 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 31 }}"
+        vrf_description: Ansible ND VRF MCFG replaced base
+        deploy: false
+        child_fabric_config:
+          - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: false
+      - vrf_name: ansible-mcfg-repl-parent
+        vrf_id: "{{ nd_vrf_base_id + 39 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 39 }}"
+        vrf_description: Ansible ND VRF MCFG replaced parent-only base
+        adv_host_routes: false
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+    nd_vrf_mcfg_replace_config:
+      - vrf_name: ansible-nd-vrf-mcfg-replaced
+        vrf_id: "{{ nd_vrf_base_id + 31 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 31 }}"
+        vrf_description: Ansible ND VRF MCFG replaced updated
+        max_bgp_paths: 4
+        max_ibgp_paths: 4
+        deploy: false
+        child_fabric_config:
+          - fabric: "{{ nd_vrf_mcfg_child_fabric }}"
+            adv_host_routes: true
+            adv_default_routes: false
+            static_default_route: false
+      - vrf_name: ansible-mcfg-repl-parent
+        vrf_id: "{{ nd_vrf_base_id + 39 }}"
+        vlan_id: "{{ nd_vrf_base_vlan + 39 }}"
+        vrf_description: Ansible ND VRF MCFG replaced parent-only updated
+        loopback_route_tag: 12354
+        max_bgp_paths: 2
+        max_ibgp_paths: 2
+        ipv6_linklocal_enable: true
+        adv_host_routes: true
+        adv_default_routes: true
+        static_default_route: true
+        deploy: false
+  delegate_to: localhost
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced - Import Setup
+  ansible.builtin.import_tasks: ../../../tasks/setup.yaml
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced - Prepare Base Configuration
+  vars:
+    file: mcfg_replace_base
+    vrf_conf: "{{ nd_vrf_mcfg_replace_base }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced - Prepare Replacement Configuration
+  vars:
+    file: mcfg_replace
+    vrf_conf: "{{ nd_vrf_mcfg_replace_config }}"
+  ansible.builtin.import_tasks: ../../../tasks/conf_prep_tasks.yaml
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC1 - Create Base VRF
+  cisco.nd.nd_vrf:
+    fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    state: merged
+    config: "{{ nd_vrf_mcfg_replace_base_conf }}"
+  register: mcfg_replace_base_result
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Replace Parent and Child VRF
+  cisco.nd.nd_vrf: &mcfg_replace_conf
+    fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    state: replaced
+    config: "{{ nd_vrf_mcfg_replace_conf }}"
+    output_level: debug
+  register: mcfg_replace_result
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - mcfg_replace_result.changed == true
+      - mcfg_replace_result.fabric_type == "multicluster_parent"
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Gather Parent VRFs
+  cisco.nd.nd_vrf:
+    fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
+    state: gathered
+    config: []
+  register: mcfg_replace_parent_gathered
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Validate Parent VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ mcfg_replace_parent_gathered }}"
+    test_data: "{{ nd_vrf_mcfg_replace_conf }}"
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Gather Child VRFs
+  cisco.nd.nd_vrf:
+    fabric: "{{ nd_vrf_mcfg_child_fabric }}"
+    state: gathered
+    config: []
+  register: mcfg_replace_child_gathered
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Validate Child VRF
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ mcfg_replace_child_gathered }}"
+    test_data:
+      - vrf_name: ansible-nd-vrf-mcfg-replaced
+        adv_host_routes: true
+        adv_default_routes: false
+        static_default_route: false
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC2 - Validate Parent-Only VRF Not On Child
+  cisco.nd.tests.integration._nd_vrf_validate:
+    nd_data: "{{ mcfg_replace_child_gathered }}"
+    test_data:
+      - vrf_name: ansible-mcfg-repl-parent
+    present: false
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC3 - Idempotence
+  cisco.nd.nd_vrf: *mcfg_replace_conf
+  register: mcfg_replace_idempotent
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced
+
+- name: MCFG Replaced TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - mcfg_replace_idempotent.changed == false
+  when: nd_vrf_run_mcfg | bool
+  tags:
+    - mcfg
+    - replaced

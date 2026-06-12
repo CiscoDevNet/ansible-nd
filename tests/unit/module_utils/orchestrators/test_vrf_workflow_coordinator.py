@@ -43,12 +43,20 @@ class _ParentStrategy:
     fabric_name = "msd_p"
 
     @property
+    def fabric_type(self):
+        return "multisite_parent"
+
+    @property
     def is_child(self):
         return False
 
     @property
     def is_parent(self):
         return True
+
+    @property
+    def is_multicluster(self):
+        return False
 
     def child_fabric_members(self):
         return ["AK-VXLAN"]
@@ -164,6 +172,40 @@ def test_vrf_workflow_coordinator_00003_child_rejects_direct_attach():
         assert "attach is not valid" in exc.args[0]["msg"]
     else:
         raise AssertionError("child attach was not rejected")
+
+
+def test_vrf_workflow_coordinator_00004_child_write_ignores_null_parser_defaults():
+    """
+    # Summary
+
+    Verify parser-added null values for parent-scoped fields do not mask the
+    direct-child write rejection message.
+    """
+    module_args = {
+        "fabric": "AK-VXLAN",
+        "state": "merged",
+        "config": [
+            {
+                "vrf_name": "ansible-vrf",
+                "vrf_id": 9008053,
+                "child_fabric_config": None,
+                "attach": None,
+            }
+        ],
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_ChildStrategy(),
+    )
+
+    try:
+        coordinator.run()
+    except AssertionError as exc:
+        msg = exc.args[0]["msg"]
+        assert "Only state='gathered' is allowed on child fabrics" in msg
+        assert "child_fabric_config is only valid" not in msg
+    else:
+        raise AssertionError("child write was not rejected")
 
 
 def test_vrf_workflow_coordinator_00010_parent_child_results_keep_state_machine_shape():
@@ -646,6 +688,103 @@ def test_vrf_workflow_coordinator_00070_deleted_deploys_before_delete(monkeypatc
     assert "_deferred_deploy_payloads" not in result
 
 
+def test_vrf_workflow_coordinator_00075_deleted_empty_config_deletes_state_machine_existing(monkeypatch):
+    """
+    # Summary
+
+    Verify state=deleted with config=[] uses the current VRFs already gathered
+    by NDStateMachine initialization without running another current-state
+    query or rewriting proposed config.
+    """
+    module_args = {
+        "fabric": "msd_p",
+        "state": "deleted",
+        "output_level": "debug",
+        "config": [],
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_ParentStrategy(),
+    )
+    call_order = []
+
+    class FakeVrf:
+        def __init__(self, vrf_name):
+            self.vrf_name = vrf_name
+
+        def get_identifier_value(self):
+            return self.vrf_name, "msd_p"
+
+    class FakeStateMachine:
+        def __init__(self):
+            self.existing = [
+                FakeVrf("ansible-msd-a"),
+                FakeVrf("ansible-msd-b"),
+            ]
+            self.deleted = []
+
+        def _delete_items(self, items):
+            call_order.append("delete_items")
+            self.deleted = items
+
+    def detach(args, _strategy, vrf_names=None):
+        call_order.append("detach")
+        assert args["config"] == [
+            {"vrf_name": "ansible-msd-a"},
+            {"vrf_name": "ansible-msd-b"},
+        ]
+        assert module_args["config"] == []
+        assert vrf_names == ["ansible-msd-a", "ansible-msd-b"]
+        return {"deploy_targets": {}}
+
+    def new_state_machine(args, _strategy):
+        call_order.append("state_machine_init")
+        assert args["config"] == []
+        return FakeStateMachine(), "original-config", "original-state"
+
+    def query_current(*_args, **_kwargs):
+        raise AssertionError("delete-all must use state-machine existing data, not another query")
+
+    def format_output(sm):
+        call_order.append("format")
+        assert [item.vrf_name for item in sm.deleted] == ["ansible-msd-a", "ansible-msd-b"]
+        return {
+            "changed": True,
+            "before": [
+                {"vrf_name": "ansible-msd-a"},
+                {"vrf_name": "ansible-msd-b"},
+            ],
+            "after": [],
+            "invocation": {"module_args": dict(module_args)},
+        }
+
+    def restore(original_config, original_state):
+        call_order.append("restore")
+        assert original_config == "original-config"
+        assert original_state == "original-state"
+
+    monkeypatch.setattr(coordinator, "_new_state_machine", new_state_machine)
+    monkeypatch.setattr(coordinator, "_query_current_vrfs", query_current)
+    monkeypatch.setattr(coordinator, "_query_current_vrfs_with_trace", query_current)
+    monkeypatch.setattr(coordinator, "_apply_deleted_attachment_phase", detach)
+    monkeypatch.setattr(coordinator, "_format_state_machine_output", format_output)
+    monkeypatch.setattr(coordinator, "_restore_state_machine_params", restore)
+
+    result = coordinator._run_deleted_state_machine_with_detach_deploy(
+        dict(module_args),
+        _ParentStrategy(),
+    )
+
+    assert call_order == ["state_machine_init", "detach", "delete_items", "format", "restore"]
+    assert result["changed"] is True
+    assert result["before"] == [
+        {"vrf_name": "ansible-msd-a"},
+        {"vrf_name": "ansible-msd-b"},
+    ]
+    assert result["after"] == []
+    assert result["invocation"]["module_args"]["config"] == []
+
+
 def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before_delete(monkeypatch):
     """
     # Summary
@@ -670,11 +809,22 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
     )
     call_order = []
 
-    def query_current(_args, _strategy):
-        return [
-            {"vrfName": "ansible-keep-vrf"},
-            {"vrfName": "ansible-delete-vrf"},
-        ]
+    class FakeVrf:
+        def __init__(self, vrf_name):
+            self.vrf_name = vrf_name
+
+        def get_identifier_value(self):
+            return self.vrf_name, "msd_p"
+
+    class FakeStateMachine:
+        def __init__(self):
+            self.existing = [
+                FakeVrf("ansible-keep-vrf"),
+                FakeVrf("ansible-delete-vrf"),
+            ]
+
+        def manage_state(self):
+            call_order.append("state_machine")
 
     def detach(_args, _strategy, vrf_names=None):
         call_order.append("detach")
@@ -698,9 +848,12 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
         assert kwargs["current_vrf_names"] == ["ansible-keep-vrf"]
         return {}
 
-    def run_state_machine(_args, strategy=None):
-        call_order.append("state_machine")
+    def new_state_machine(args, strategy=None):
+        assert args["config"] == module_args["config"]
         assert strategy is not None
+        return FakeStateMachine(), "original-config", "original-state"
+
+    def format_output(_sm):
         return {
             "changed": True,
             "output_level": "debug",
@@ -709,13 +862,20 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
             "diff": [],
         }
 
-    monkeypatch.setattr(coordinator, "_query_current_vrfs", query_current)
+    monkeypatch.setattr(
+        coordinator,
+        "_query_current_vrfs",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("overridden must use state-machine existing data")),
+    )
+    monkeypatch.setattr(coordinator, "_new_state_machine", new_state_machine)
     monkeypatch.setattr(coordinator, "_apply_deleted_attachment_phase", detach)
     monkeypatch.setattr(coordinator, "_deploy_vrf_attachments", deploy)
     monkeypatch.setattr(coordinator, "_wait_for_vrfs_delete_ready", wait)
     monkeypatch.setattr(coordinator, "_apply_attachment_phase", attachment_phase)
     monkeypatch.setattr(coordinator, "_desired_attachment_map", lambda *_args: {})
-    monkeypatch.setattr(coordinator, "_run_state_machine", run_state_machine)
+    monkeypatch.setattr(coordinator, "_format_state_machine_output", format_output)
+    monkeypatch.setattr(coordinator, "_restore_state_machine_params", lambda *_args: None)
+    monkeypatch.setattr(coordinator, "_build_pending_vrf_deploy_payloads", lambda *_args: [])
 
     result = coordinator._run_state_machine_with_attachments(dict(module_args))
 
@@ -727,4 +887,111 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
         "state_machine",
         "post_attach",
     ]
+    assert result["changed"] is True
+
+
+def test_vrf_workflow_coordinator_00085_overridden_new_vrf_does_not_query_missing_attachments(monkeypatch):
+    """
+    # Summary
+
+    Verify overridden can replace old VRFs with a brand-new attached VRF
+    without querying attachments for the new VRF before it exists on ND.
+    """
+    module_args = {
+        "fabric": "msd_p",
+        "state": "overridden",
+        "output_level": "debug",
+        "config": [
+            {
+                "vrf_name": "ansible-new-vrf",
+                "deploy": False,
+                "attach": [{"ip_address": "192.0.2.10"}],
+            }
+        ],
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_ParentStrategy(),
+    )
+    call_order = []
+    posted = {}
+
+    class FakeVrf:
+        def __init__(self, vrf_name):
+            self.vrf_name = vrf_name
+
+        def get_identifier_value(self):
+            return self.vrf_name, "msd_p"
+
+    class FakeStateMachine:
+        def __init__(self):
+            self.existing = [FakeVrf("ansible-old-vrf")]
+
+        def manage_state(self):
+            call_order.append("state_machine")
+
+    def detach(_args, _strategy, vrf_names=None):
+        call_order.append("detach")
+        assert vrf_names == ["ansible-old-vrf"]
+        return {"deploy_targets": {}}
+
+    def fail_current_attachment_query(*_args, **_kwargs):
+        raise AssertionError("new overridden VRF attachments must not be queried before create")
+
+    def post_attachments(_args, _strategy, payloads, deploy_targets, operation_type):
+        call_order.append("post_attach")
+        posted["payloads"] = payloads
+        posted["deploy_targets"] = deploy_targets
+        posted["operation_type"] = operation_type
+        return {"changed": True, "deploy_targets": deploy_targets}
+
+    def new_state_machine(args, strategy=None):
+        assert args["config"] == module_args["config"]
+        assert strategy is not None
+        return FakeStateMachine(), "original-config", "original-state"
+
+    def format_output(_sm):
+        return {
+            "changed": True,
+            "output_level": "debug",
+            "before": [],
+            "after": [{"vrf_name": "ansible-new-vrf"}],
+            "diff": [],
+        }
+
+    monkeypatch.setattr(
+        coordinator,
+        "_query_current_vrfs",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("overridden must use state-machine existing data")),
+    )
+    monkeypatch.setattr(coordinator, "_new_state_machine", new_state_machine)
+    monkeypatch.setattr(coordinator, "_apply_deleted_attachment_phase", detach)
+    monkeypatch.setattr(coordinator, "_current_attachment_map", fail_current_attachment_query)
+    monkeypatch.setattr(
+        coordinator,
+        "_desired_attachment_map",
+        lambda *_args: {
+            ("ansible-new-vrf", "SERIAL1"): {
+                "vrfName": "ansible-new-vrf",
+                "switchId": "SERIAL1",
+                "attach": True,
+            }
+        },
+    )
+    monkeypatch.setattr(coordinator, "_post_vrf_attachments", post_attachments)
+    monkeypatch.setattr(coordinator, "_format_state_machine_output", format_output)
+    monkeypatch.setattr(coordinator, "_restore_state_machine_params", lambda *_args: None)
+    monkeypatch.setattr(coordinator, "_build_pending_vrf_deploy_payloads", lambda *_args: [])
+
+    result = coordinator._run_state_machine_with_attachments(dict(module_args))
+
+    assert call_order == ["detach", "state_machine", "post_attach"]
+    assert posted["payloads"] == [
+        {
+            "vrfName": "ansible-new-vrf",
+            "switchId": "SERIAL1",
+            "attach": True,
+        }
+    ]
+    assert posted["deploy_targets"] == {}
     assert result["changed"] is True
