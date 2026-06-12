@@ -64,6 +64,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNestedModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.types import AsciiDescription
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.enums import (
     IpVersionEnum,
     PrefixListActionEnum,
@@ -175,7 +176,7 @@ class PrefixListModel(NDBaseModel):
         description="Name of the prefix list (pattern: ^[a-zA-Z0-9~_-]+$).",
     )
 
-    description: Optional[str] = Field(
+    description: AsciiDescription = Field(
         default=None,
         alias="description",
         max_length=90,
@@ -195,7 +196,8 @@ class PrefixListModel(NDBaseModel):
         description="Name of the tenant (pattern: ^[A-Za-z0-9_-]+$).",
     )
 
-    entries: List[PrefixListEntryModel] = Field(
+    entries: Optional[List[PrefixListEntryModel]] = Field(
+        default=None,
         alias="entries",
         description="List of prefix list entries.",
     )
@@ -229,8 +231,17 @@ class PrefixListModel(NDBaseModel):
         """
         version = str(self.ip_version)
         max_len = 32 if version == "ipv4" else 128
+        entries = self.entries or []
+        seen_sequence_numbers = set()
 
-        for idx, entry in enumerate(self.entries):
+        for idx, entry in enumerate(entries):
+            if entry.sequence_number in seen_sequence_numbers:
+                raise ValueError(
+                    f"entries[{idx}].sequenceNumber '{entry.sequence_number}' is duplicated. "
+                    "Sequence numbers must be unique within a prefix list."
+                )
+            seen_sequence_numbers.add(entry.sequence_number)
+
             # Validate prefix CIDR
             try:
                 network = ipaddress.ip_network(entry.prefix, strict=False)
@@ -261,6 +272,19 @@ class PrefixListModel(NDBaseModel):
                 val = getattr(entry, field_name, None)
                 if val is not None and not (1 <= val <= max_len):
                     raise ValueError(f"entries[{idx}].{label}={val} is out of range " f"(1-{max_len} for ip_version='{version}').")
+
+            if entry.exact_length is not None and (entry.min_prefix_length is not None or entry.max_prefix_length is not None):
+                raise ValueError(
+                    f"entries[{idx}] cannot define exactLength together with minLength/maxLength. "
+                    "Use exactLength alone, or use minLength/maxLength without exactLength."
+                )
+
+            if entry.min_prefix_length is not None and entry.max_prefix_length is not None:
+                if entry.min_prefix_length > entry.max_prefix_length:
+                    raise ValueError(
+                        f"entries[{idx}].minLength={entry.min_prefix_length} cannot be greater than "
+                        f"entries[{idx}].maxLength={entry.max_prefix_length}."
+                    )
 
         return self
 
@@ -298,7 +322,7 @@ class PrefixListModel(NDBaseModel):
                     entries=dict(
                         type="list",
                         elements="dict",
-                        required=True,
+                        required=False,
                         options=dict(
                             sequence_number=dict(
                                 type="int",
