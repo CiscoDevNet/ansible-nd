@@ -17,6 +17,10 @@ applied consistently across model files (e.g. all `description` fields share the
   UTF-8 input. Catching this client-side gives users a clear error instead of a confusing server fault.
 - `IPv4CIDR` — `str | None` validated as an IPv4 interface address in CIDR notation (e.g. `10.1.1.1/32`).
 - `IPv6CIDR` — `str | None` validated as an IPv6 interface address in CIDR notation (e.g. `2001:db8::1/128`).
+- `IPv4NetworkCIDR` — `str | None` validated as an IPv4 network prefix in CIDR notation (e.g. `10.1.0.0/16`).
+- `IPv6NetworkCIDR` — `str | None` validated as an IPv6 network prefix in CIDR notation (e.g. `2001:db8::/32`).
+- `IPv4AddressType` — `str | None` validated as an IPv4 address (e.g. `255.255.255.0`).
+- `IPv6AddressType` — `str | None` validated as an IPv6 address (e.g. `ffff:ffff::`).
 """
 
 from __future__ import annotations
@@ -109,12 +113,116 @@ def validate_ipv6_cidr(value: str | None) -> str | None:
     return value
 
 
+def validate_ipv4_network_cidr(value: str | None) -> str | None:
+    """
+    # Summary
+
+    Validate that `value` is an IPv4 network prefix in CIDR notation. Returns the value unchanged on success.
+
+    Used as the `BeforeValidator` payload for the `IPv4NetworkCIDR` Annotated type.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `value` is not a valid IPv4 network prefix in CIDR notation.
+    """
+    if value is None:
+        return value
+    try:
+        ipaddress.IPv4Network(value, strict=False)
+    except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError) as err:
+        raise ValueError(f"Invalid IPv4 network: {value!r}. Expected CIDR notation (e.g. '10.1.0.0/16').") from err
+    return value
+
+
+def validate_ipv6_network_cidr(value: str | None) -> str | None:
+    """
+    # Summary
+
+    Validate that `value` is an IPv6 network prefix in CIDR notation. Returns the value unchanged on success.
+
+    Used as the `BeforeValidator` payload for the `IPv6NetworkCIDR` Annotated type.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `value` is not a valid IPv6 network prefix in CIDR notation.
+    """
+    if value is None:
+        return value
+    try:
+        ipaddress.IPv6Network(value, strict=False)
+    except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError) as err:
+        raise ValueError(f"Invalid IPv6 network: {value!r}. Expected CIDR notation (e.g. '2001:db8::/32').") from err
+    return value
+
+
+def validate_ipv4_address(value: str | None) -> str | None:
+    """
+    # Summary
+
+    Validate that `value` is a valid IPv4 address. Returns the value unchanged on success.
+
+    Used as the `BeforeValidator` payload for the `IPv4AddressType` Annotated type.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `value` is not a valid IPv4 address.
+    """
+    if value is None:
+        return value
+    try:
+        ipaddress.IPv4Address(value)
+    except (ipaddress.AddressValueError, ValueError) as err:
+        raise ValueError(f"Invalid IPv4 address: {value!r}.") from err
+    return value
+
+
+def validate_ipv6_address(value: str | None) -> str | None:
+    """
+    # Summary
+
+    Validate that `value` is a valid IPv6 address. Returns the value unchanged on success.
+
+    Used as the `BeforeValidator` payload for the `IPv6AddressType` Annotated type.
+
+    ## Raises
+
+    ### ValueError
+
+    - If `value` is not a valid IPv6 address.
+    """
+    if value is None:
+        return value
+    try:
+        ipaddress.IPv6Address(value)
+    except (ipaddress.AddressValueError, ValueError) as err:
+        raise ValueError(f"Invalid IPv6 address: {value!r}.") from err
+    return value
+
+
 # See AsciiDescription comment above for why Optional[str] is used at runtime instead of `str | None`.
 IPv4CIDR = Annotated[Optional[str], BeforeValidator(validate_ipv4_cidr)]
 """IPv4 interface address in CIDR notation (`str | None`). Layer with `Field(...)` for alias/description as usual."""
 
 IPv6CIDR = Annotated[Optional[str], BeforeValidator(validate_ipv6_cidr)]
 """IPv6 interface address in CIDR notation (`str | None`). Layer with `Field(...)` for alias/description as usual."""
+
+IPv4NetworkCIDR = Annotated[Optional[str], BeforeValidator(validate_ipv4_network_cidr)]
+"""IPv4 network prefix in CIDR notation (`str | None`). Layer with `Field(...)` for alias/description as usual."""
+
+IPv6NetworkCIDR = Annotated[Optional[str], BeforeValidator(validate_ipv6_network_cidr)]
+"""IPv6 network prefix in CIDR notation (`str | None`). Layer with `Field(...)` for alias/description as usual."""
+
+IPv4AddressType = Annotated[Optional[str], BeforeValidator(validate_ipv4_address)]
+"""IPv4 address (`str | None`). Layer with `Field(...)` for alias/description as usual."""
+
+IPv6AddressType = Annotated[Optional[str], BeforeValidator(validate_ipv6_address)]
+"""IPv6 address (`str | None`). Layer with `Field(...)` for alias/description as usual."""
 
 # Fabric name rules (verified against ND 4.2.x GUI):
 #   - Allowed chars: a-z, A-Z, 0-9, _, -
