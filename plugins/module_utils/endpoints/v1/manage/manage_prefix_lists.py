@@ -110,24 +110,29 @@ class PrefixListsListEndpointParams(EndpointQueryParams):
     )
 
 
-# IPv4 base class
-class _EpManageIpv4PrefixListsBase(PrefixListNameMixin, FabricNameMixin, NDEndpointBaseModel):
+# Shared base for IPv4/IPv6 prefix list item + collection endpoints
+class _EpManagePrefixListsBase(PrefixListNameMixin, FabricNameMixin, NDEndpointBaseModel):
     """
-    Base class for IPv4 prefix list endpoints.
+    Shared base for IPv4 and IPv6 prefix list endpoints.
 
-    Path: ``/api/v1/manage/fabrics/{fabricName}/ipv4PrefixLists[/{name}]``
+    Path: ``/api/v1/manage/fabrics/{fabricName}/<collection>[/{name}]`` where
+    ``<collection>`` is set per address family by ``_collection_segment``
+    (``ipv4PrefixLists`` / ``ipv6PrefixLists``).
 
     Subclasses set ``_require_prefix_list_name = False`` for collection-level
-    operations (list, bulk-create).
+    operations (list, bulk-create). ``verb`` is intentionally left abstract so this
+    base (and the thin per-family bases) stay abstract and require no ``class_name``.
     """
 
+    # Address-family collection segment, set by the per-family bases below.
+    _collection_segment: ClassVar[str] = ""
     _require_prefix_list_name: ClassVar[bool] = True
 
     endpoint_params: EndpointQueryParams = Field(default_factory=EndpointQueryParams, description="Endpoint-specific query parameters")
 
     def set_identifiers(self, identifier: IdentifierKey = None) -> None:
         """
-        Accept either a plain name or a composite tuple ``("ipv4", name)``
+        Accept either a plain name or a composite tuple ``(ip_version, name)``
         and assign the prefix list name.
         """
         if isinstance(identifier, tuple):
@@ -141,15 +146,18 @@ class _EpManageIpv4PrefixListsBase(PrefixListNameMixin, FabricNameMixin, NDEndpo
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
         if self._require_prefix_list_name and self.prefix_list_name is None:
             raise ValueError(f"{type(self).__name__}.path: prefix_list_name must be set before accessing path.")
-        segments = ["fabrics"]
-        if self.fabric_name is not None:
-            segments.append(quote(self.fabric_name, safe=""))
-        segments.append("ipv4PrefixLists")
+        segments = ["fabrics", quote(self.fabric_name, safe=""), self._collection_segment]
         if self.prefix_list_name is not None:
             segments.append(quote(self.prefix_list_name, safe=""))
         base = BasePath.path(*segments)
         qs = self.endpoint_params.to_query_string()
         return f"{base}?{qs}" if qs else base
+
+
+class _EpManageIpv4PrefixListsBase(_EpManagePrefixListsBase):
+    """IPv4 prefix list base -- path segment ``ipv4PrefixLists``."""
+
+    _collection_segment: ClassVar[str] = "ipv4PrefixLists"
 
 
 class EpManageIpv4PrefixListsGet(_EpManageIpv4PrefixListsBase):
@@ -235,7 +243,29 @@ class EpManageIpv4PrefixListsDelete(_EpManageIpv4PrefixListsBase):
         return HttpVerbEnum.DELETE
 
 
-class EpManageIpv4PrefixListsBulkDelete(FabricNameMixin, NDEndpointBaseModel):
+class _EpManagePrefixListsBulkDeleteBase(FabricNameMixin, NDEndpointBaseModel):
+    """
+    Shared base for IPv4/IPv6 prefix list bulk-delete action endpoints.
+
+    Path: ``/api/v1/manage/fabrics/{fabricName}/<action>/remove`` where ``<action>``
+    is set per address family by ``_action_segment`` (``ipv4PrefixListActions`` /
+    ``ipv6PrefixListActions``). ``verb`` is intentionally left abstract so this base
+    stays abstract and requires no ``class_name``.
+
+    Request body: ``{"<family>PrefixListNames": ["name1", ...]}``.
+    """
+
+    # Address-family action segment, set by the per-family subclasses below.
+    _action_segment: ClassVar[str] = ""
+
+    @property
+    def path(self) -> str:
+        if self.fabric_name is None:
+            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), self._action_segment, "remove")
+
+
+class EpManageIpv4PrefixListsBulkDelete(_EpManagePrefixListsBulkDeleteBase):
     """
     POST /api/v1/manage/fabrics/{fabricName}/ipv4PrefixListActions/remove
 
@@ -243,58 +273,21 @@ class EpManageIpv4PrefixListsBulkDelete(FabricNameMixin, NDEndpointBaseModel):
     Request body: ``{"ipv4PrefixListNames": ["name1", ...]}``.
     """
 
+    _action_segment: ClassVar[str] = "ipv4PrefixListActions"
+
     class_name: Literal["EpManageIpv4PrefixListsBulkDelete"] = Field(
         default="EpManageIpv4PrefixListsBulkDelete", description="Class name for backward compatibility"
     )
-
-    @property
-    def path(self) -> str:
-        if self.fabric_name is None:
-            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "ipv4PrefixListActions", "remove")
 
     @property
     def verb(self) -> HttpVerbEnum:
         return HttpVerbEnum.POST
 
 
-# IPv6 base class
-class _EpManageIpv6PrefixListsBase(PrefixListNameMixin, FabricNameMixin, NDEndpointBaseModel):
-    """
-    Base class for IPv6 prefix list endpoints.
+class _EpManageIpv6PrefixListsBase(_EpManagePrefixListsBase):
+    """IPv6 prefix list base -- path segment ``ipv6PrefixLists``."""
 
-    Path: ``/api/v1/manage/fabrics/{fabricName}/ipv6PrefixLists[/{name}]``
-    """
-
-    _require_prefix_list_name: ClassVar[bool] = True
-
-    endpoint_params: EndpointQueryParams = Field(default_factory=EndpointQueryParams, description="Endpoint-specific query parameters")
-
-    def set_identifiers(self, identifier: IdentifierKey = None) -> None:
-        """
-        Accept either a plain name or a composite tuple ``("ipv6", name)``
-        and assign the prefix list name.
-        """
-        if isinstance(identifier, tuple):
-            self.prefix_list_name = identifier[1]
-        else:
-            self.prefix_list_name = identifier
-
-    @property
-    def path(self) -> str:
-        if self.fabric_name is None:
-            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        if self._require_prefix_list_name and self.prefix_list_name is None:
-            raise ValueError(f"{type(self).__name__}.path: prefix_list_name must be set before accessing path.")
-        segments = ["fabrics"]
-        if self.fabric_name is not None:
-            segments.append(quote(self.fabric_name, safe=""))
-        segments.append("ipv6PrefixLists")
-        if self.prefix_list_name is not None:
-            segments.append(quote(self.prefix_list_name, safe=""))
-        base = BasePath.path(*segments)
-        qs = self.endpoint_params.to_query_string()
-        return f"{base}?{qs}" if qs else base
+    _collection_segment: ClassVar[str] = "ipv6PrefixLists"
 
 
 class EpManageIpv6PrefixListsGet(_EpManageIpv6PrefixListsBase):
@@ -380,7 +373,7 @@ class EpManageIpv6PrefixListsDelete(_EpManageIpv6PrefixListsBase):
         return HttpVerbEnum.DELETE
 
 
-class EpManageIpv6PrefixListsBulkDelete(FabricNameMixin, NDEndpointBaseModel):
+class EpManageIpv6PrefixListsBulkDelete(_EpManagePrefixListsBulkDeleteBase):
     """
     POST /api/v1/manage/fabrics/{fabricName}/ipv6PrefixListActions/remove
 
@@ -388,15 +381,11 @@ class EpManageIpv6PrefixListsBulkDelete(FabricNameMixin, NDEndpointBaseModel):
     Request body: ``{"ipv6PrefixListNames": ["name1", ...]}``.
     """
 
+    _action_segment: ClassVar[str] = "ipv6PrefixListActions"
+
     class_name: Literal["EpManageIpv6PrefixListsBulkDelete"] = Field(
         default="EpManageIpv6PrefixListsBulkDelete", description="Class name for backward compatibility"
     )
-
-    @property
-    def path(self) -> str:
-        if self.fabric_name is None:
-            raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "ipv6PrefixListActions", "remove")
 
     @property
     def verb(self) -> HttpVerbEnum:
