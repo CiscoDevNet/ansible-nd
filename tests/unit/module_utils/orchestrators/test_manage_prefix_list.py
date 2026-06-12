@@ -414,3 +414,388 @@ def test_manage_prefix_list_00100() -> None:
     assert ipv4_classes["get"] is not ipv6_classes["get"]
     assert ipv4_classes["list"] is not ipv6_classes["list"]
     assert ipv4_classes["post"] is not ipv6_classes["post"]
+
+
+# =============================================================================
+# Test: fabric_name resolution
+# =============================================================================
+
+
+def test_manage_prefix_list_00110() -> None:
+    """
+    # Summary
+
+    Verify the orchestrator exposes ``fabric_name`` from ``rest_send.params``.
+
+    ## Test
+
+    - ``fabric_name`` resolves to the value supplied in the module params (regression guard: the
+      generic ``NDBaseOrchestrator`` does not define it, so the orchestrator must surface it itself).
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.fabric_name
+    """
+
+    def responses():
+        yield {}
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+
+    assert instance.fabric_name == "SITE1"
+
+
+# =============================================================================
+# Test: query_all (RestSend-driven)
+# =============================================================================
+
+
+def test_manage_prefix_list_00120() -> None:
+    """
+    # Summary
+
+    Verify ``query_all`` fetches IPv4 then IPv6, injects ``ipVersion`` into each raw row, and that
+    the rows carry the ``entries`` key so ``PrefixListModel.from_response`` can parse them.
+
+    ## Test
+
+    - IPv4 list GET is consumed first, then the IPv6 list GET (``_VERSION_CONFIG`` insertion order).
+    - The combined result has one IPv4 and one IPv6 row, each tagged with ``ipVersion``.
+    - A model built from the IPv4 row exposes its entries (validates the response ``entries`` key).
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.query_all
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("ipv4_prefix_lists_ok")
+        yield responses_manage_prefix_list("ipv6_prefix_lists_ok")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    by_version = {row["ipVersion"]: row for row in result}
+    assert by_version["ipv4"]["name"] == "PL-IPV4-BORDERS"
+    assert by_version["ipv6"]["name"] == "PL-IPV6-DATACENTER"
+
+    # The raw rows must carry the 'entries' key so the model deserialises correctly.
+    ipv4_model = PrefixListModel.from_response(by_version["ipv4"])
+    assert str(ipv4_model.ip_version) == "ipv4"
+    assert ipv4_model.entries is not None
+    assert len(ipv4_model.entries) == 2
+
+
+def test_manage_prefix_list_00130() -> None:
+    """
+    # Summary
+
+    Verify ``query_all`` returns an empty list when both address families are empty.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.query_all
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("empty_ipv4_lists")
+        yield responses_manage_prefix_list("empty_ipv6_lists")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        result = instance.query_all()
+
+    assert result == []
+
+
+# =============================================================================
+# Test: create / create_bulk (207 Multi-Status)
+# =============================================================================
+
+
+def test_manage_prefix_list_00140() -> None:
+    """
+    # Summary
+
+    Verify ``create_bulk`` (IPv4 only) POSTs to the IPv4 collection endpoint with the
+    ``ipv4PrefixLists`` wrapper key and succeeds on a 207 with all-success results.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.create_bulk
+    - ManagePrefixListOrchestrator._bulk_create_for_version
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("create_ipv4_207_success")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS", "entries": [{"sequence_number": 10, "action": "permit", "prefix": "10.0.0.0/8"}]}
+    rest_send = _build_rest_send(gen_responses, config=[config])
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with does_not_raise():
+        result = instance.create_bulk([model])
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/ipv4PrefixLists")
+    body = rest_send.committed_payload
+    assert "ipv4PrefixLists" in body
+    assert body["ipv4PrefixLists"][0]["name"] == "PL-IPV4-BORDERS"
+    assert body["ipv4PrefixLists"][0]["entries"][0]["sequenceNumber"] == 10
+    assert "ipv4" in result
+
+
+def test_manage_prefix_list_00150() -> None:
+    """
+    # Summary
+
+    Verify ``create_bulk`` with a mixed IPv4/IPv6 batch issues two POSTs (IPv4 first, then IPv6),
+    each with its own wrapper key.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.create_bulk
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("create_ipv4_207_success")
+        yield responses_manage_prefix_list("create_ipv6_207_success")
+
+    gen_responses = ResponseGenerator(responses())
+    configs = [
+        {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS", "entries": [{"sequence_number": 10, "action": "permit", "prefix": "10.0.0.0/8"}]},
+        {"ip_version": "ipv6", "name": "PL-IPV6-DATACENTER", "entries": [{"sequence_number": 10, "action": "permit", "prefix": "2001:db8::/32"}]},
+    ]
+    rest_send = _build_rest_send(gen_responses, config=configs)
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    models = [PrefixListModel.from_config(c) for c in configs]
+
+    with does_not_raise():
+        result = instance.create_bulk(models)
+
+    # The last request is the IPv6 POST.
+    assert rest_send.path.endswith("/ipv6PrefixLists")
+    assert rest_send.committed_payload["ipv6PrefixLists"][0]["name"] == "PL-IPV6-DATACENTER"
+    assert set(result.keys()) == {"ipv4", "ipv6"}
+
+
+def test_manage_prefix_list_00160() -> None:
+    """
+    # Summary
+
+    Verify ``create_bulk`` raises when the 207 body reports a per-item failure (the controller
+    returns 207 -- transport success -- even when some items fail).
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.create_bulk
+    - ManagePrefixListOrchestrator._raise_on_207_failures
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("create_ipv4_207_partial_failure")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-OK", "entries": [{"sequence_number": 10, "action": "permit", "prefix": "10.0.0.0/8"}]}
+    rest_send = _build_rest_send(gen_responses, config=[config])
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with pytest.raises(Exception, match="per-item failures.*PL-IPV4-BAD"):
+        instance.create_bulk([model])
+
+
+def test_manage_prefix_list_00170() -> None:
+    """
+    # Summary
+
+    Verify ``create`` (single) routes through the bulk create endpoint.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.create
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("create_ipv4_207_success")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS", "entries": [{"sequence_number": 10, "action": "permit", "prefix": "10.0.0.0/8"}]}
+    rest_send = _build_rest_send(gen_responses, config=[config])
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with does_not_raise():
+        instance.create(model)
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/ipv4PrefixLists")
+    assert rest_send.committed_payload["ipv4PrefixLists"][0]["name"] == "PL-IPV4-BORDERS"
+
+
+# =============================================================================
+# Test: update (PUT)
+# =============================================================================
+
+
+def test_manage_prefix_list_00180() -> None:
+    """
+    # Summary
+
+    Verify ``update`` PUTs to the IPv4 item endpoint using the composite identifier name and the
+    model payload.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.update
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("update_ipv4_prefix_list")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS", "entries": [{"sequence_number": 10, "action": "permit", "prefix": "10.0.1.0/24"}]}
+    rest_send = _build_rest_send(gen_responses, config=[config])
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with does_not_raise():
+        instance.update(model)
+
+    assert rest_send.verb == HttpVerbEnum.PUT.value
+    assert rest_send.path.endswith("/ipv4PrefixLists/PL-IPV4-BORDERS")
+    assert rest_send.committed_payload["name"] == "PL-IPV4-BORDERS"
+
+
+# =============================================================================
+# Test: delete / delete_bulk (207 Multi-Status)
+# =============================================================================
+
+
+def test_manage_prefix_list_00190() -> None:
+    """
+    # Summary
+
+    Verify ``delete_bulk`` POSTs the names to the IPv4 bulk-delete action endpoint with the
+    ``ipv4PrefixListNames`` wrapper key and succeeds on a 207 with all-success results.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.delete_bulk
+    - ManagePrefixListOrchestrator._bulk_delete_for_version
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("bulk_delete_ipv4_207_success")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS"}
+    rest_send = _build_rest_send(gen_responses, config=[config])
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with does_not_raise():
+        result = instance.delete_bulk([model])
+
+    assert rest_send.verb == HttpVerbEnum.POST.value
+    assert rest_send.path.endswith("/ipv4PrefixListActions/remove")
+    assert rest_send.committed_payload == {"ipv4PrefixListNames": ["PL-IPV4-BORDERS"]}
+    assert "ipv4" in result
+
+
+def test_manage_prefix_list_00200() -> None:
+    """
+    # Summary
+
+    Verify ``delete_bulk`` raises when the 207 body reports a per-item failure.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.delete_bulk
+    - ManagePrefixListOrchestrator._raise_on_207_failures
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("bulk_delete_ipv4_207_partial_failure")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-OK"}
+    rest_send = _build_rest_send(gen_responses, config=[config])
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with pytest.raises(Exception, match="per-item failures.*PL-IPV4-BAD"):
+        instance.delete_bulk([model])
+
+
+def test_manage_prefix_list_00210() -> None:
+    """
+    # Summary
+
+    Verify ``delete`` (single) routes through the bulk-delete endpoint.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.delete
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("bulk_delete_ipv4_207_success")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS"}
+    rest_send = _build_rest_send(gen_responses, config=[config])
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with does_not_raise():
+        instance.delete(model)
+
+    assert rest_send.path.endswith("/ipv4PrefixListActions/remove")
+    assert rest_send.committed_payload == {"ipv4PrefixListNames": ["PL-IPV4-BORDERS"]}
+
+
+# =============================================================================
+# Test: query_one (GET item)
+# =============================================================================
+
+
+def test_manage_prefix_list_00220() -> None:
+    """
+    # Summary
+
+    Verify ``query_one`` GETs the IPv4 item endpoint using the composite identifier name.
+
+    ## Classes and Methods
+
+    - ManagePrefixListOrchestrator.query_one
+    """
+
+    def responses():
+        yield responses_manage_prefix_list("ipv4_single_prefix_list")
+
+    gen_responses = ResponseGenerator(responses())
+    config = {"ip_version": "ipv4", "name": "PL-IPV4-BORDERS"}
+    rest_send = _build_rest_send(gen_responses, config=[config])
+    instance = ManagePrefixListOrchestrator(rest_send=rest_send)
+    model = PrefixListModel.from_config(config)
+
+    with does_not_raise():
+        result = instance.query_one(model)
+
+    assert rest_send.verb == HttpVerbEnum.GET.value
+    assert rest_send.path.endswith("/ipv4PrefixLists/PL-IPV4-BORDERS")
+    assert result["name"] == "PL-IPV4-BORDERS"
