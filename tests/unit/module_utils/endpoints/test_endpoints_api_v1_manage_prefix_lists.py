@@ -16,8 +16,6 @@ from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 
-from contextlib import contextmanager
-
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_prefix_lists import (
     EpManageIpv4PrefixListsDelete,
@@ -34,12 +32,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageIpv6PrefixListsBulkDelete,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-
-
-@contextmanager
-def does_not_raise():
-    """A context manager that does not raise an exception."""
-    yield
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 
 
 # =============================================================================
@@ -357,7 +350,7 @@ def test_endpoints_ipv6_prefix_lists_00040():
     instance = EpManageIpv6PrefixListsBulkDelete()
     assert instance.verb == HttpVerbEnum.POST
     assert instance.class_name == "EpManageIpv6PrefixListsBulkDelete"
-    
+
     instance.fabric_name = "SITE1"
     path = instance.path
     assert "ipv6PrefixListActions/remove" in path

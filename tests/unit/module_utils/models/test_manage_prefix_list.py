@@ -18,15 +18,14 @@ from __future__ import absolute_import, annotations, division, print_function
 __metaclass__ = type  # pylint: disable=invalid-name
 
 import copy
-from contextlib import contextmanager
 
 import pytest
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import ValidationError
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_prefix_list.manage_prefix_list import (
     PrefixListEntryModel,
     PrefixListModel,
 )
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
-from pydantic import ValidationError
 
 
 SAMPLE_IPV4_CONFIG = {
@@ -534,7 +533,7 @@ def test_manage_prefix_list_00170() -> None:
     assert opts["ip_version"]["required"] is True
     assert opts["ip_version"]["choices"] == ["ipv4", "ipv6"]
     assert "aliases" in opts["ip_version"]  # Has aliases key
-    
+
     assert opts["name"]["type"] == "str"
     assert opts["name"]["required"] is True
     assert opts["description"]["type"] == "str"
