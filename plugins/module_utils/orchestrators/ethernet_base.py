@@ -85,6 +85,10 @@ class EthernetBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
     query_one_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesGet
     query_all_endpoint: type[NDEndpointBaseModel] = EpManageInterfacesListGet
     create_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesPost
+    # TODO(4.2.1) physical-interface-delete-unsupported
+    # Physical ethernet interfaces cannot be deleted: interfaceActions/remove silently no-ops and the per-interface
+    # DELETE returns HTTP 500, so delete is implemented as interfaceActions/normalize with the full int_trunk_host
+    # template body (InterfaceDefaultConfig), which resets the interface and drops it from type-specific query filters.
     delete_bulk_endpoint: type[NDEndpointBaseModel] | None = EpManageInterfacesNormalize
 
     PORT_CHANNEL_MODIFIABLE_FIELDS: ClassVar[set[str]] = {"description", "admin_state", "extra_config"}
