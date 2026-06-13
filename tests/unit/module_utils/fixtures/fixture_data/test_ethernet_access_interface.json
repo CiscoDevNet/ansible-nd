@@ -17,19 +17,8 @@
         "MESSAGE": "OK",
         "DATA": {
             "name": "fabric_1",
-            "ownerCluster": "cluster_a"
-        }
-    },
-    "test_query_all_happy_path_00400_freeze": {
-        "TEST_NOTES": [
-            "Deployment freeze: disabled (for validate_prerequisites)"
-        ],
-        "RETURN_CODE": 200,
-        "METHOD": "GET",
-        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/deploymentFreeze",
-        "MESSAGE": "OK",
-        "DATA": {
-            "deploymentFreeze": false
+            "ownerCluster": "cluster_a",
+            "fabricStatus": "default"
         }
     },
     "test_query_all_happy_path_00400b": {
@@ -142,6 +131,21 @@
         "MESSAGE": "Not Found",
         "DATA": {}
     },
+    "test_query_all_deployment_frozen_00430a": {
+        "TEST_NOTES": [
+            "Fabric summary reports fabricStatus=frozen; validate_prerequisites should raise RuntimeError.",
+            "Only the summary response is seeded: query_all must raise before any switch/interface fetch."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "name": "fabric_1",
+            "ownerCluster": "cluster_a",
+            "fabricStatus": "frozen"
+        }
+    },
     "test_query_all_config_scoped_00410a": {
         "TEST_NOTES": [
             "Fabric summary: fabric exists (for validate_prerequisites)"
@@ -152,7 +156,8 @@
         "MESSAGE": "OK",
         "DATA": {
             "name": "fabric_1",
-            "ownerCluster": "cluster_a"
+            "ownerCluster": "cluster_a",
+            "fabricStatus": "default"
         }
     },
     "test_query_all_config_scoped_00410b": {
@@ -217,7 +222,8 @@
         "MESSAGE": "OK",
         "DATA": {
             "name": "fabric_1",
-            "ownerCluster": "cluster_a"
+            "ownerCluster": "cluster_a",
+            "fabricStatus": "default"
         }
     },
     "test_query_all_overridden_fabric_wide_00415b": {

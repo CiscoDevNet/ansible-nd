@@ -354,6 +354,38 @@ def test_ethernet_access_orchestrator_00420() -> None:
         orchestrator.query_all()
 
 
+def test_ethernet_access_orchestrator_00430() -> None:
+    """
+    # Summary
+
+    Verify `query_all` raises `RuntimeError` when the fabric is in deployment freeze mode.
+
+    ## Test
+
+    - Fabric summary returns 200 with `fabricStatus: frozen`
+    - query_all raises RuntimeError with "Query all failed" (wrapping the inner "deployment freeze mode")
+    - Only the summary response is seeded, so the raise must occur before any switch/interface fetch
+
+    ## Classes and Methods
+
+    - EthernetBaseOrchestrator.query_all()
+    - FabricContext.validate_for_mutation()
+    - FabricContext.fabric_is_deployment_frozen()
+    """
+
+    def responses():
+        yield responses_access("test_query_all_deployment_frozen_00430a")
+
+    gen_responses = ResponseGenerator(responses())
+    orchestrator = _build_orchestrator(
+        gen_responses,
+        params={"state": "merged", "config": [{"switch_ip": "192.168.1.1"}]},
+    )
+
+    with pytest.raises(RuntimeError, match=r"Query all failed.*deployment freeze"):
+        orchestrator.query_all()
+
+
 # =============================================================================
 # Test: port-channel membership enforcement (create / update / create_bulk)
 # =============================================================================
