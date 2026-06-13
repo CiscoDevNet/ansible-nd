@@ -152,6 +152,9 @@ options:
                   mtu:
                     description:
                     - The MTU setting for the interface.
+                    - C(default) renders the NX-OS system default MTU (1500) on the switch.
+                    - C(jumbo) renders C(mtu 9216). Lab-verified on ND 4.2.1; the rendered value is fixed and is
+                      not affected by the fabric settings C(fabricMtu) or C(l2HostInterfaceMtu) options.
                     - It defaults to C(jumbo) when unset during creation.
                     type: str
                     choices: [ default, jumbo ]
