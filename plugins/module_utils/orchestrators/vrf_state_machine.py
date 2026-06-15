@@ -20,7 +20,7 @@ coordinator helpers instead of changing the shared state-machine contract.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_vrf import (
     BaseVrfStrategy,
@@ -40,7 +40,7 @@ class VrfStateMachine:
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
 
-    def run_basic(self, module_args: dict, strategy: BaseVrfStrategy | None = None) -> dict[str, Any]:
+    def run_basic(self, module_args: dict, strategy: Optional[BaseVrfStrategy] = None) -> dict[str, Any]:
         """
         Run only the generic NDStateMachine-backed VRF CRUD/gathered flow.
         """
@@ -57,7 +57,7 @@ class VrfStateMachine:
     def run(
         self,
         module_args: dict,
-        strategy: BaseVrfStrategy | None = None,
+        strategy: Optional[BaseVrfStrategy] = None,
         defer_deploy: bool = False,
     ) -> dict[str, Any]:
         """
@@ -207,7 +207,7 @@ class VrfStateMachine:
         self,
         pre_attach: dict[str, Any],
         empty_when_absent: bool = False,
-    ) -> dict[tuple[str, str], dict[str, Any]] | None:
+    ) -> Optional[dict[tuple[str, str], dict[str, Any]]]:
         """Return cached attachments after applying pre-detach payloads."""
         current = pre_attach.get("current")
         if current is None:
@@ -261,7 +261,7 @@ class VrfStateMachine:
         module_args: dict,
         strategy: BaseVrfStrategy,
         omitted_vrf_names: list[str],
-        current_attachment_details: list[dict[str, Any]] | None = None,
+        current_attachment_details: Optional[list[dict[str, Any]]] = None,
     ) -> list[dict[str, Any]]:
         """Detach/deploy omitted VRFs before overridden deletes them."""
         if not omitted_vrf_names:
@@ -366,7 +366,7 @@ class VrfStateMachine:
         strategy: BaseVrfStrategy,
         config: list[dict],
         detach_trace: dict[str, Any],
-        wait_vrf_names: list[str] | None = None,
+        wait_vrf_names: Optional[list[str]] = None,
     ) -> list[dict[str, Any]]:
         """Return detach trace plus deploy traces, waiting when deploy occurs."""
         traces = [detach_trace] if detach_trace else []
