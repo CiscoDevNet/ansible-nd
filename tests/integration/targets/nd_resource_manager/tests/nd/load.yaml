@@ -89,10 +89,10 @@
             that:
               - 'rm_load_create_result.changed == true'
               - '(rm_load_create_result["diff"][0]["merged"] | length) == (rm_load_expected_resources | int)'
-              - 'rm_load_create_result["api_response"] is not defined or (rm_load_create_result["api_response"] | length) == 1'
-              - 'rm_load_create_result["api_result"] is not defined or rm_load_create_result["api_result"][0]["success"] == true'
-              - 'rm_load_create_result["api_diff"] is not defined or (rm_load_create_result["api_diff"][0]["merged"] | length) == (rm_load_create_result["diff"][0]["merged"] | length)'
-              - 'rm_load_create_result["api_payload"] is not defined or (rm_load_create_result["api_payload"][0]["resources"] | length) == (rm_load_create_result["diff"][0]["merged"] | length)'
+              - '(rm_load_create_result["api_response"] | length) == 1'
+              - 'rm_load_create_result["api_result"][0]["success"] == true'
+              - '(rm_load_create_result["api_diff"][0]["merged"] | length) == (rm_load_create_result["diff"][0]["merged"] | length)'
+              - '(rm_load_create_result["api_payload"][0]["resources"] | length) == (rm_load_create_result["diff"][0]["merged"] | length)'
 
         - name: LOAD - Assert bulk create response codes
           ansible.builtin.assert:
@@ -122,9 +122,9 @@
             that:
               - '(rm_load_idempotent_result["diff"][0]["merged"] | length) <= 1'
               - '(rm_load_idempotent_result["diff"][0]["deleted"] | length) == 0'
-              - 'rm_load_idempotent_result["api_response"] is not defined or (rm_load_idempotent_result["api_response"] | length) == 1'
-              - 'rm_load_idempotent_result["api_result"] is not defined or rm_load_idempotent_result["api_result"][0]["success"] == true'
-              - 'rm_load_idempotent_result["api_diff"] is not defined or (rm_load_idempotent_result["api_diff"][0].get("merged", []) | length) == (rm_load_idempotent_result["diff"][0]["merged"] | length)'
+              - '(rm_load_idempotent_result["api_response"] | length) == 1'
+              - 'rm_load_idempotent_result["api_result"][0]["success"] == true'
+              - '(rm_load_idempotent_result["api_diff"][0].get("merged", []) | length) == (rm_load_idempotent_result["diff"][0]["merged"] | length)'
 
         - name: LOAD - Assert bulk create idempotency response codes
           ansible.builtin.assert:
@@ -159,10 +159,10 @@
             that:
               - 'rm_load_delete_result.changed == true'
               - '(rm_load_delete_result["diff"][0]["deleted"] | length) == (rm_load_expected_resources | int)'
-              - 'rm_load_delete_result["api_response"] is not defined or (rm_load_delete_result["api_response"] | length) == 1'
-              - 'rm_load_delete_result["api_result"] is not defined or rm_load_delete_result["api_result"][0]["success"] == true'
-              - 'rm_load_delete_result["api_diff"] is not defined or (rm_load_delete_result["api_diff"][0]["deleted"] | length) == (rm_load_delete_result["diff"][0]["deleted"] | length)'
-              - 'rm_load_delete_result["api_payload"] is not defined or (rm_load_delete_result["api_payload"][0]["resourceIds"] | length) == (rm_load_delete_result["diff"][0]["deleted"] | length)'
+              - '(rm_load_delete_result["api_response"] | length) == 1'
+              - 'rm_load_delete_result["api_result"][0]["success"] == true'
+              - '(rm_load_delete_result["api_diff"][0]["deleted"] | length) == (rm_load_delete_result["diff"][0]["deleted"] | length)'
+              - '(rm_load_delete_result["api_payload"][0]["resourceIds"] | length) == (rm_load_delete_result["diff"][0]["deleted"] | length)'
 
         - name: LOAD - Assert bulk delete response codes
           ansible.builtin.assert:

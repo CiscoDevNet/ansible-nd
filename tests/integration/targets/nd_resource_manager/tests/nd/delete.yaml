@@ -3,7 +3,7 @@
 ##############################################
 
 - name: Delete Resources
-  cisco.nd.nd_manage_resource_manager: &rm_delete
+  cisco.nd.nd_manage_resource_manager:
     state: deleted                                 # choose form [merged, deleted, gathered]
     fabric: "{{ ansible_it_fabric }}"
     config:
@@ -56,10 +56,10 @@
 - name: Assert
   ansible.builtin.assert:
     that:
-      - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+      - 'item["RETURN_CODE"] == 200'
+  loop: "{{ result.api_response | default([]) }}"
 
 - block:
-
     ##############################################
     ##                MERGE                     ##
     ##############################################
@@ -128,15 +128,16 @@
           - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == 8'
           - '(result["diff"][0]["deleted"] | length) == 0'
-          - 'result["api_response"] is not defined or (result["api_response"] | length) == 1'
-          - 'result["api_result"] is not defined or result["api_result"][0]["success"] == true'
-          - 'result["api_diff"] is not defined or (result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
-          - 'result["api_payload"] is not defined or (result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
+          - '(result["api_response"] | length) == 1'
+          - 'result["api_result"][0]["success"] == true'
+          - '(result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
+          - '(result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
 
     - name: ASSERT - Check condition
       ansible.builtin.assert:
         that:
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - 'item["RETURN_CODE"] == 200'
+      loop: "{{ result.api_response | default([]) }}"
 
     ##############################################
     ##          IDEMPOTENCE                     ##
@@ -149,19 +150,19 @@
     - name: ASSERT - Check condition
       ansible.builtin.assert:
         that:
-        # TODO(Jeet): result.changed should be false and merged should be 0 but due to controller api is not creating a resources, hence accepting 1 for now. This needs to be changed in future.
-          - 'result.changed == true'
-          - '(result["diff"][0]["merged"] | length) == 1'
+          - 'result.changed == false'
+          - '(result["diff"][0]["merged"] | length) == 0'
           - '(result["diff"][0]["deleted"] | length) == 0'
-          - 'result["api_response"] is not defined or (result["api_response"] | length) == 1'
-          - 'result["api_result"] is not defined or result["api_result"][0]["success"] == true'
-          - 'result["api_diff"] is not defined or (result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
-          - 'result["api_payload"] is not defined or (result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
+          - '(result["api_response"] | length) == 1'
+          - 'result["api_result"][0]["success"] == true'
+          - 'result["api_diff"][0]["merged"] is not defined'
+          - 'result["api_payload"][0] is none'
 
     - name: ASSERT - Check condition
       ansible.builtin.assert:
         that:
-          - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
+          - 'item["RETURN_CODE"] == 200'
+      loop: "{{ result.api_response | default([]) }}"
 
     ##############################################
     ##        MISSING PARAMS IN DELETE          ##

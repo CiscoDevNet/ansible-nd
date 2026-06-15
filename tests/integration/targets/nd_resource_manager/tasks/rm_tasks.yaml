@@ -18,6 +18,11 @@
     test_items: "{{ test_cases.files | map(attribute='path') | list }}"
   tags: sanity
 
+- name: Ensure vPC pair exists once for nd_resource_manager tests
+  ansible.builtin.include_tasks: vpc_pair_once.yaml
+  run_once: true
+  tags: sanity
+
 - name: Run test cases (connection=httpapi)
   ansible.builtin.include_tasks: "{{ test_case_to_run }}"
   with_items: "{{ test_items }}"

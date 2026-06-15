@@ -59,7 +59,6 @@
       - result.api_response | default([]) | rejectattr('RETURN_CODE', 'equalto', 200) | list | length == 0
 
 - block:
-
     ##############################################
     ##                MERGE                     ##
     ##############################################
@@ -128,10 +127,10 @@
           - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == 8'
           - '(result["diff"][0]["deleted"] | length) == 0'
-          - 'result["api_response"] is not defined or (result["api_response"] | length) == 1'
-          - 'result["api_result"] is not defined or result["api_result"][0]["success"] == true'
-          - 'result["api_diff"] is not defined or (result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
-          - 'result["api_payload"] is not defined or (result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
+          - '(result["api_response"] | length) == 1'
+          - 'result["api_result"][0]["success"] == true'
+          - '(result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
+          - '(result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
 
     - name: Assert conditions
       ansible.builtin.assert:
@@ -151,14 +150,13 @@
     - name: Assert conditions
       ansible.builtin.assert:
         that:
-          # TODO(Jeet): result.changed should be false and merged should be 0 but due to controller api is not creating a resources, hence accepting 1 for now. This needs to be changed in future.
-          - 'result.changed == true'
-          - '(result["diff"][0]["merged"] | length) == 1'
+          - 'result.changed == false'
+          - '(result["diff"][0]["merged"] | length) == 0'
           - '(result["diff"][0]["deleted"] | length) == 0'
-          - 'result["api_response"] is not defined or (result["api_response"] | length) == 1'
-          - 'result["api_result"] is not defined or result["api_result"][0]["success"] == true'
-          - 'result["api_diff"] is not defined or (result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
-          - 'result["api_payload"] is not defined or (result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
+          - '(result["api_response"] | length) == 1'
+          - 'result["api_result"][0]["success"] == true'
+          - 'result["api_diff"][0]["merged"] is not defined'
+          - 'result["api_payload"][0] is none'
 
     - name: Assert conditions
       ansible.builtin.assert:
@@ -234,10 +232,10 @@
           - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == 8'
           - '(result["diff"][0]["deleted"] | length) == 0'
-          - 'result["api_response"] is not defined or (result["api_response"] | length) == 1'
-          - 'result["api_result"] is not defined or result["api_result"][0]["success"] == true'
-          - 'result["api_diff"] is not defined or (result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
-          - 'result["api_payload"] is not defined or (result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
+          - '(result["api_response"] | length) == 1'
+          - 'result["api_result"][0]["success"] == true'
+          - '(result["api_diff"][0]["merged"] | length) == (result["diff"][0]["merged"] | length)'
+          - '(result["api_payload"][0]["resources"] | length) == (result["diff"][0]["merged"] | length)'
 
     - name: Assert conditions
       ansible.builtin.assert:
@@ -383,11 +381,11 @@
         that:
           - 'result.changed == true'
           - '(result["diff"][0]["merged"] | length) == 0'
-          - '(result["diff"][0]["deleted"] | length) == 7'
-          - 'result["api_response"] is not defined or (result["api_response"] | length) == 1'
-          - 'result["api_result"] is not defined or result["api_result"][0]["success"] == true'
-          - 'result["api_diff"] is not defined or (result["api_diff"][0]["deleted"] | length) == (result["diff"][0]["deleted"] | length)'
-          - 'result["api_payload"] is not defined or (result["api_payload"][0]["resourceIds"] | length) == (result["diff"][0]["deleted"] | length)'
+          - '(result["diff"][0]["deleted"] | length) == 8'
+          - '(result["api_response"] | length) == 1'
+          - 'result["api_result"][0]["success"] == true'
+          - '(result["api_diff"][0]["deleted"] | length) == (result["diff"][0]["deleted"] | length)'
+          - '(result["api_payload"][0]["resourceIds"] | length) == (result["diff"][0]["deleted"] | length)'
       when: IT_CONTEXT is not defined
 
     - name: Assert conditions
