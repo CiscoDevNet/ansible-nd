@@ -5,7 +5,7 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 from copy import deepcopy
-from typing import Any
+from typing import Any, Dict, List, Set
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_actions_config_save import (
     EpFabricConfigSavePost,
@@ -37,8 +37,42 @@ def sanitize_dict(dict_to_sanitize, keys=None, values=None, recursive=True, remo
     return result
 
 
+def _has_perfect_matching(adjacency: List[List[int]]) -> bool:
+    """Return True if every subset item can be matched to a distinct candidate.
+
+    ``adjacency[i]`` holds the indices of the candidates that subset item ``i``
+    can match. This solves the maximum bipartite matching problem with Kuhn's
+    augmenting-path algorithm so that a less-specific item never greedily
+    consumes a candidate that a more-specific item needs.
+    """
+    # candidate index -> subset item index it is currently assigned to
+    match_to_item: Dict[int, int] = {}
+
+    def _try_assign(item_index: int, visited: Set[int]) -> bool:
+        for candidate_index in adjacency[item_index]:
+            if candidate_index in visited:
+                continue
+            visited.add(candidate_index)
+            assigned_item = match_to_item.get(candidate_index)
+            # Candidate is free, or its current owner can be reassigned elsewhere.
+            if assigned_item is None or _try_assign(assigned_item, visited):
+                match_to_item[candidate_index] = item_index
+                return True
+        return False
+
+    for item_index in range(len(adjacency)):
+        if not _try_assign(item_index, set()):
+            return False
+    return True
+
+
 def issubset(subset: Any, superset: Any, allow_superset: bool = False) -> bool:
     """Check if subset is contained in superset.
+
+    For dicts, only the non-``None`` keys of ``subset`` are compared; keys whose
+    value is ``None`` are ignored, and keys present only in ``superset`` are
+    allowed. For lists, both must be the same length and a one-to-one pairing of
+    elements must exist (matching is order-independent).
 
     Args:
         subset: The value to check.
@@ -46,8 +80,10 @@ def issubset(subset: Any, superset: Any, allow_superset: bool = False) -> bool:
         allow_superset: When True, list element matching is one-directional:
             an element in ``subset`` is considered matched when it is a subset
             of a candidate in ``superset``, even if the candidate has
-            additional keys.  When False (default) both directions are
-            required, which is equivalent to equality for lists of dicts.
+            additional keys.  When False (default) matching is bidirectional.
+            For lists of dicts this is equivalent to equality *after* ``None``
+            -valued keys are dropped from both sides (it is not strict ``==``
+            equality, because such keys are ignored).
     """
     if type(subset) is not type(superset):
         return False
@@ -57,19 +93,25 @@ def issubset(subset: Any, superset: Any, allow_superset: bool = False) -> bool:
             if len(subset) != len(superset):
                 return False
 
-            remaining = list(superset)
+            # Build the bipartite adjacency: for each subset item, which
+            # candidates it can match. A full matching is then required so a
+            # less-specific item cannot greedily consume a candidate that a
+            # more-specific item needs (relevant under allow_superset=True).
+            adjacency: List[List[int]] = []
             for item in subset:
-                for index, candidate in enumerate(remaining):
+                matches = []
+                for index, candidate in enumerate(superset):
                     if allow_superset:
                         match = issubset(item, candidate, allow_superset=True)
                     else:
                         match = issubset(item, candidate) and issubset(candidate, item)
                     if match:
-                        del remaining[index]
-                        break
-                else:
+                        matches.append(index)
+                if not matches:
                     return False
-            return True
+                adjacency.append(matches)
+
+            return _has_perfect_matching(adjacency)
         return subset == superset
 
     for key, value in subset.items():

@@ -167,19 +167,25 @@ class NDStateMachine:
                     raise NDStateMachineError(error_msg) from e
 
         # Execute updates (always individual)
+        successfully_sent: List[NDBaseModel] = []
         for item in items_to_update:
-            self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}")
+            if self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}"):
+                successfully_sent.append(item)
 
         # Execute creates (bulk or individual)
         if items_to_create:
             if self.supports_bulk_create:
-                self._execute_operation(self.model_orchestrator.create_bulk, items_to_create, error_msg_prefix="Failed to create in bulk")
+                if self._execute_operation(self.model_orchestrator.create_bulk, items_to_create, error_msg_prefix="Failed to create in bulk"):
+                    successfully_sent.extend(items_to_create)
             else:
                 for item in items_to_create:
-                    self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}")
+                    if self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}"):
+                        successfully_sent.append(item)
 
-        # Mark as sent only after successful API operations
-        successfully_sent = items_to_update + items_to_create
+        # Mark as sent only after successful API operations. In check mode no
+        # API call is made, so nothing is marked as sent (consistent with
+        # _delete_items); the preview 'after' state is still reflected in
+        # self.existing, which is what drives 'changed'.
         if successfully_sent:
             self.sent.add_many(successfully_sent)
 
@@ -207,16 +213,22 @@ class NDStateMachine:
             return
 
         # Execute deletes (bulk or individual)
+        successfully_deleted: List[NDBaseModel] = []
         if self.supports_bulk_delete:
-            self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk")
+            if self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk"):
+                successfully_deleted.extend(items)
         else:
             for item in items:
-                self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}")
+                if self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}"):
+                    successfully_deleted.append(item)
 
         # Batch remove from collection (single index rebuild)
-        keys_to_delete = [item.get_identifier_value() for item in items]
+        # In check mode, update the preview state without marking anything as sent.
+        items_to_remove = items if self.check_mode else successfully_deleted
+        keys_to_delete = [item.get_identifier_value() for item in items_to_remove]
         self.existing.delete_many(keys_to_delete)
-        self.sent.add_many(items)
+        if successfully_deleted:
+            self.sent.add_many(successfully_deleted)
 
         # Log deletion
         self.output.assign(after=self.existing)
