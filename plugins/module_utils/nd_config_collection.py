@@ -149,7 +149,7 @@ class NDConfigCollection:
 
     # Diff Operations
 
-    def get_diff_config(self, new_item: NDBaseModel, exclude_unset: bool = False) -> Literal["new", "no_diff", "changed"]:
+    def get_diff_config(self, new_item: NDBaseModel, exclude_unset: bool = False, allow_superset: bool = False) -> Literal["new", "no_diff", "changed"]:
         """
         Compare single item against collection.
 
@@ -158,6 +158,9 @@ class NDConfigCollection:
             exclude_unset: When True, only compare fields explicitly set in
                 ``new_item``. Useful for merge operations where unspecified
                 fields should not trigger a diff.
+            allow_superset: When True, list elements are matched
+                one-directionally so an existing item carrying extra list
+                elements (or extra dict keys) is not flagged as changed.
         """
         try:
             key = self._extract_key(new_item)
@@ -169,7 +172,7 @@ class NDConfigCollection:
         if existing is None:
             return "new"
 
-        is_subset = existing.get_diff(new_item, exclude_unset=exclude_unset)
+        is_subset = existing.get_diff(new_item, exclude_unset=exclude_unset, allow_superset=allow_superset)
 
         return "no_diff" if is_subset else "changed"
 

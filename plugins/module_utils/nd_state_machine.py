@@ -142,9 +142,11 @@ class NDStateMachine:
                 # Determine diff status
                 # For merged state, only compare fields explicitly provided by
                 # the user so that Pydantic default values do not trigger false
-                # diffs or overwrite existing configuration.
+                # diffs or overwrite existing configuration. Merged also matches
+                # list elements one-directionally (allow_superset) so an
+                # existing item with extra list entries is not seen as changed.
                 exclude_unset = self.state == "merged"
-                diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset)
+                diff_status = self.existing.get_diff_config(proposed_item, exclude_unset=exclude_unset, allow_superset=exclude_unset)
 
                 # No changes needed
                 if diff_status == "no_diff":
