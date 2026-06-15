@@ -11,9 +11,9 @@
 #   ansible-test integration nd_interface_vpc_trunk_host
 #
 # Lab pre-conditions (verified in reference_nd_lab.md):
-#   - SITE1 fabric with peer1 (192.168.12.151) and peer2 (192.168.12.155) reachable
+#   - SITE1 fabric with peer1 (192.168.12.151) and peer2 (192.168.12.152) reachable
 #   - Ethernet1/8, Ethernet1/9, Ethernet1/10 free on both peers for vPC member testing
-#   - Peer-link cable: peer1 Ethernet1/3 <-> peer2 Ethernet1/2
+#   - Peer-link cable: peer1 Ethernet1/2 <-> peer2 Ethernet1/2
 #
 # Setup creates the vPC pair if missing; teardown unpairs it (which cascades and removes all
 # member vPC interfaces, so we don't need an explicit vPC-interface teardown).
