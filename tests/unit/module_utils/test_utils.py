@@ -242,15 +242,40 @@ class _ListFieldModel(NDBaseModel):
 
 def test_get_diff_list_field_subset_with_extra_keys_no_diff():
     """
-    With exclude_unset=True, an existing element carrying extra keys (e.g. a
+    With allow_superset=True, an existing element carrying extra keys (e.g. a
     controller-populated ``deploy`` flag) does not trigger a spurious diff when
     the proposed element omits those keys.
     """
     existing = _ListFieldModel(name="vrf1", members=[{"id": 1, "deploy": True}])
     proposed = _ListFieldModel(name="vrf1", members=[{"id": 1}])
 
-    # exclude_unset=True -> one-directional list match -> proposed is a subset.
-    assert existing.get_diff(proposed, exclude_unset=True) is True
+    # allow_superset=True -> one-directional list match -> proposed is a subset.
+    assert existing.get_diff(proposed, exclude_unset=True, allow_superset=True) is True
+
+
+def test_get_diff_exclude_unset_without_allow_superset_flags_extra_keys():
+    """
+    exclude_unset and allow_superset are independent: comparing only the
+    proposed model's set fields (exclude_unset=True) while keeping strict
+    bidirectional list matching (allow_superset=False) still flags an existing
+    element that carries extra keys.
+    """
+    existing = _ListFieldModel(name="vrf1", members=[{"id": 1, "deploy": True}])
+    proposed = _ListFieldModel(name="vrf1", members=[{"id": 1}])
+
+    assert existing.get_diff(proposed, exclude_unset=True, allow_superset=False) is False
+
+
+def test_get_diff_allow_superset_without_exclude_unset():
+    """
+    allow_superset can be requested on its own: with exclude_unset=False the
+    proposed model's defaults are compared, but list elements are still matched
+    one-directionally so the extra ``deploy`` key is tolerated.
+    """
+    existing = _ListFieldModel(name="vrf1", members=[{"id": 1, "deploy": True}])
+    proposed = _ListFieldModel(name="vrf1", members=[{"id": 1}])
+
+    assert existing.get_diff(proposed, allow_superset=True) is True
 
 
 def test_get_diff_list_field_extra_keys_triggers_diff_without_exclude_unset():

@@ -196,7 +196,7 @@ class NDBaseModel(BaseModel, ABC):
             **kwargs,
         )
 
-    def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False) -> bool:
+    def get_diff(self, other: "NDBaseModel", exclude_unset: bool = False, allow_superset: bool = False) -> bool:
         """Diff comparison.
 
         Args:
@@ -204,14 +204,18 @@ class NDBaseModel(BaseModel, ABC):
             exclude_unset: When True, only compare fields explicitly set in
                 ``other`` (via Pydantic's ``exclude_unset``). This prevents
                 default values from triggering false diffs during merge
-                operations. List elements are matched one-directionally so
-                that an existing item with extra fields (e.g. ``deploy``) does
-                not trigger a spurious diff when the proposed item omits those
-                fields.
+                operations.
+            allow_superset: When True, list elements are matched
+                one-directionally so that an existing item with extra fields
+                (e.g. ``deploy``) does not trigger a spurious diff when the
+                proposed item omits those fields. This is independent of
+                ``exclude_unset``: the former controls which of ``other``'s
+                fields are compared, while this controls how list elements are
+                matched.
         """
         self_data = self.to_diff_dict()
         other_data = other.to_diff_dict(exclude_unset=exclude_unset)
-        return issubset(other_data, self_data, allow_superset=exclude_unset)
+        return issubset(other_data, self_data, allow_superset=allow_superset)
 
     def merge(self, other: "NDBaseModel") -> "NDBaseModel":
         """
