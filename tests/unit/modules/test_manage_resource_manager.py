@@ -2191,7 +2191,7 @@ def test_exit_module_requeries_when_changed_and_not_check_mode():
         module._all_resources = [_response(entityName="loopback9")]
 
     module._get_all_resources = MagicMock(
-        side_effect=_fake_refresh
+        side_effect=fake_refresh
     )  # pylint: disable=protected-access
     module.exit_module()
 
