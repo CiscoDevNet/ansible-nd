@@ -150,9 +150,7 @@ def test_resource_manager_config_rejects_unknown_id_pool_name():
 
 def test_resource_manager_config_allows_partial_gathered_filter():
     """Gathered filters may provide partial criteria without switches."""
-    model = ResourceManagerConfigModel.model_validate(
-        {"scope_type": "device"}, context={"state": "gathered"}
-    )
+    model = ResourceManagerConfigModel.model_validate({"scope_type": "device"}, context={"state": "gathered"})
     assert model.scope_type == "device"
     assert model.switches is None
 
@@ -192,9 +190,7 @@ def test_resource_manager_config_allows_partial_gathered_filter():
         ),
     ],
 )
-def test_resource_manager_validate_input_preserves_legacy_missing_param_messages(
-    config, expected_message
-):
+def test_resource_manager_validate_input_preserves_legacy_missing_param_messages(config, expected_message):
     """Missing-field validation keeps integration-compatible error messages."""
     module = _resource_manager()
     module.state = "deleted"
@@ -220,9 +216,7 @@ def test_resource_manager_validate_configs_rejects_duplicate_entries():
 
 def test_resource_manager_diff_detects_idempotent_resource():
     """Diffing matches existing resources by normalized identity and switch ID."""
-    changes = ResourceManagerDiffEngine.compute_changes(
-        [_config()], [_response()], log=LOG
-    )
+    changes = ResourceManagerDiffEngine.compute_changes([_config()], [_response()], log=LOG)
 
     assert len(changes["idempotent"]) == 1
     assert changes["to_add"] == []
@@ -242,9 +236,7 @@ def test_resource_manager_diff_accepts_raw_dict_existing_resource():
         },
     }
 
-    changes = ResourceManagerDiffEngine.compute_changes(
-        [_config()], [raw_resource], log=LOG
-    )
+    changes = ResourceManagerDiffEngine.compute_changes([_config()], [raw_resource], log=LOG)
 
     assert len(changes["idempotent"]) == 1
     assert changes["to_add"] == []
@@ -261,9 +253,7 @@ def test_resource_manager_builds_link_create_payload():
         resource="10.0.0.0/30",
     )
 
-    payload = module._build_create_payload(
-        cfg, switch_ip="SER1"
-    )  # pylint: disable=protected-access
+    payload = module._build_create_payload(cfg, switch_ip="SER1")  # pylint: disable=protected-access
 
     assert payload["entityName"] == "SER1~Ethernet1/1~SER2~Ethernet1/2"
     assert payload["resourceValue"] == "10.0.0.0/30"
@@ -313,10 +303,7 @@ def test_manage_fabric_resources_get_endpoint_path_and_class_name():
 
     assert endpoint.class_name == "EpManageFabricResourcesGet"
     assert endpoint.verb == HttpVerbEnum.GET
-    assert (
-        endpoint.path
-        == "/api/v1/manage/fabrics/fabric-1/resources?poolName=LOOPBACK_ID"
-    )
+    assert endpoint.path == "/api/v1/manage/fabrics/fabric-1/resources?poolName=LOOPBACK_ID"
 
 
 def test_resource_manager_exit_module_normal_output_omits_raw_results_keys():
@@ -345,9 +332,7 @@ def test_resource_manager_exit_module_verbosity_2_omits_api_keys():
 
     module.exit_module()
 
-    assert ansible_module.exit_payload["api_paths"] == [
-        "/api/v1/manage/fabrics/fabric-1/resources"
-    ]
+    assert ansible_module.exit_payload["api_paths"] == ["/api/v1/manage/fabrics/fabric-1/resources"]
     assert ansible_module.exit_payload["api_verbs"] == ["POST"]
     for key in (
         "api_payload",
@@ -375,9 +360,7 @@ def test_resource_manager_exit_module_verbose_output_uses_api_keys_only():
         "verbosity_level",
     ):
         assert key not in ansible_module.exit_payload
-    assert ansible_module.exit_payload["api_paths"] == [
-        "/api/v1/manage/fabrics/fabric-1/resources"
-    ]
+    assert ansible_module.exit_payload["api_paths"] == ["/api/v1/manage/fabrics/fabric-1/resources"]
     assert ansible_module.exit_payload["api_verbs"] == ["POST"]
     assert ansible_module.exit_payload["api_payload"] == [{"entityName": "loopback0"}]
 
@@ -408,18 +391,12 @@ def _mock_fabric_inventory(ip_to_id_map=None):
         ip_to_id_map = {"192.0.2.10": "SER1", "192.0.2.11": "SER2"}
 
     inventory = MagicMock()
-    inventory.by_ip.return_value = {
-        ip: MagicMock(id=serial) for ip, serial in ip_to_id_map.items()
-    }
-    inventory.by_id.return_value = {
-        serial: MagicMock(ip=ip) for ip, serial in ip_to_id_map.items()
-    }
+    inventory.by_ip.return_value = {ip: MagicMock(id=serial) for ip, serial in ip_to_id_map.items()}
+    inventory.by_id.return_value = {serial: MagicMock(ip=ip) for ip, serial in ip_to_id_map.items()}
     return inventory
 
 
-def _resource_manager_with_nd(
-    fabric="fabric-1", state="merged", config=None, check_mode=False, all_resources=None
-):
+def _resource_manager_with_nd(fabric="fabric-1", state="merged", config=None, check_mode=False, all_resources=None):
     """Create NDResourceManagerModule with mocked ND and pre-set resources."""
     nd = _mock_nd_module(fabric, state, config, check_mode)
     results = Results()
@@ -459,9 +436,7 @@ def test_manage_merged_new_resource_creates_post():
     module = _resource_manager()
     module.fabric = "fabric-1"
 
-    payload = module._build_create_payload(
-        cfg, switch_ip="SER1"
-    )  # pylint: disable=protected-access
+    payload = module._build_create_payload(cfg, switch_ip="SER1")  # pylint: disable=protected-access
 
     assert payload["entityName"] == "loopback1"
     assert payload["resourceValue"] == "11"
@@ -521,9 +496,7 @@ def test_manage_gathered_single_filter_entity_name():
     module.config = [{"entity_name": "loopback0"}]
     module._all_resources = [resp1, resp2]  # pylint: disable=protected-access
 
-    result = module._resource_matches_filter(
-        resp1, {"entity_name": "loopback0"}
-    )  # pylint: disable=protected-access
+    result = module._resource_matches_filter(resp1, {"entity_name": "loopback0"})  # pylint: disable=protected-access
     assert result is True
 
 
@@ -624,7 +597,11 @@ def test_get_all_resources_caches_on_second_call():
 def test_get_all_resources_preserves_raw_dict_on_parse_failure():
     """_get_all_resources keeps raw dict when ResourceManagerResponse parsing fails."""
     nd = _mock_nd_module()
-    raw_dict = {"resourceId": 101, "entityName": "loopback0", "scopeDetails": {"scopeType": "unknown_type"}}  # Invalid scope type
+    raw_dict = {
+        "resourceId": 101,
+        "entityName": "loopback0",
+        "scopeDetails": {"scopeType": "unknown_type"},
+    }  # Invalid scope type
 
     nd.request.return_value = [raw_dict]
 
@@ -687,8 +664,27 @@ def test_compute_changes_detects_to_delete_bucket():
 
 def test_compute_changes_multi_switch_device_pair():
     """compute_changes handles device_pair scope with two endpoints."""
-    proposed = [_config(entity_name="SER1~SER2", scope_type="device_pair", pool_name="VPC_ID", pool_type="ID", switches=["SER1", "SER2"], resource="10")]
-    existing = [_response(entityName="SER1~SER2", poolName="VPC_ID", scopeDetails={"scopeType": "devicePair", "srcSwitchId": "SER1", "dstSwitchId": "SER2"})]
+    proposed = [
+        _config(
+            entity_name="SER1~SER2",
+            scope_type="device_pair",
+            pool_name="VPC_ID",
+            pool_type="ID",
+            switches=["SER1", "SER2"],
+            resource="10",
+        )
+    ]
+    existing = [
+        _response(
+            entityName="SER1~SER2",
+            poolName="VPC_ID",
+            scopeDetails={
+                "scopeType": "devicePair",
+                "srcSwitchId": "SER1",
+                "dstSwitchId": "SER2",
+            },
+        )
+    ]
 
     changes = ResourceManagerDiffEngine.compute_changes(proposed, existing, log=LOG)
     assert len(changes["idempotent"]) == 1
@@ -704,9 +700,7 @@ def test_build_fabric_scope_payload():
     module = _resource_manager()
     cfg = _config(scope_type="fabric", pool_name="L3_VNI", switches=None)
 
-    payload = module._build_create_payload(
-        cfg, switch_ip=None
-    )  # pylint: disable=protected-access
+    payload = module._build_create_payload(cfg, switch_ip=None)  # pylint: disable=protected-access
 
     assert payload["scopeDetails"]["fabricName"] == "fabric-1"
     assert "switchId" not in payload["scopeDetails"]
@@ -717,9 +711,7 @@ def test_build_device_scope_payload():
     module = _resource_manager()
     cfg = _config(scope_type="device", switches=["SER1"])
 
-    payload = module._build_create_payload(
-        cfg, switch_ip="SER1"
-    )  # pylint: disable=protected-access
+    payload = module._build_create_payload(cfg, switch_ip="SER1")  # pylint: disable=protected-access
 
     assert payload["scopeDetails"]["switchId"] == "SER1"
     assert payload["scopeDetails"]["scopeType"] == "device"
@@ -728,11 +720,14 @@ def test_build_device_scope_payload():
 def test_build_device_interface_scope_payload():
     """_build_create_payload for device_interface extracts interface from entity_name."""
     module = _resource_manager()
-    cfg = _config(entity_name="SER1~Ethernet1/13", scope_type="device_interface", pool_name="IP_POOL", switches=["SER1"])
+    cfg = _config(
+        entity_name="SER1~Ethernet1/13",
+        scope_type="device_interface",
+        pool_name="IP_POOL",
+        switches=["SER1"],
+    )
 
-    payload = module._build_create_payload(
-        cfg, switch_ip="SER1"
-    )  # pylint: disable=protected-access
+    payload = module._build_create_payload(cfg, switch_ip="SER1")  # pylint: disable=protected-access
 
     assert payload["scopeDetails"]["switchId"] == "SER1"
     assert payload["scopeDetails"]["interfaceName"] == "Ethernet1/13"
@@ -742,11 +737,14 @@ def test_build_device_interface_scope_payload():
 def test_build_device_pair_scope_payload():
     """_build_create_payload for device_pair extracts both endpoints."""
     module = _resource_manager()
-    cfg = _config(entity_name="SER1~SER2", scope_type="device_pair", pool_name="VPC_ID", switches=["SER1", "SER2"])
+    cfg = _config(
+        entity_name="SER1~SER2",
+        scope_type="device_pair",
+        pool_name="VPC_ID",
+        switches=["SER1", "SER2"],
+    )
 
-    payload = module._build_create_payload(
-        cfg, switch_ip="SER1"
-    )  # pylint: disable=protected-access
+    payload = module._build_create_payload(cfg, switch_ip="SER1")  # pylint: disable=protected-access
 
     assert payload["scopeDetails"]["srcSwitchId"] == "SER1"
     assert payload["scopeDetails"]["dstSwitchId"] == "SER2"
@@ -756,11 +754,15 @@ def test_build_device_pair_scope_payload():
 def test_build_link_scope_payload_all_endpoints():
     """_build_create_payload for link extracts all four tilde-separated fields."""
     module = _resource_manager()
-    cfg = _config(entity_name="SER1~Ethernet1/1~SER2~Ethernet1/2", scope_type="link", pool_type="SUBNET", pool_name="SUBNET", resource="10.0.0.0/30")
+    cfg = _config(
+        entity_name="SER1~Ethernet1/1~SER2~Ethernet1/2",
+        scope_type="link",
+        pool_type="SUBNET",
+        pool_name="SUBNET",
+        resource="10.0.0.0/30",
+    )
 
-    payload = module._build_create_payload(
-        cfg, switch_ip="SER1"
-    )  # pylint: disable=protected-access
+    payload = module._build_create_payload(cfg, switch_ip="SER1")  # pylint: disable=protected-access
 
     assert payload["scopeDetails"]["srcSwitchId"] == "SER1"
     assert payload["scopeDetails"]["srcInterfaceName"] == "Ethernet1/1"
@@ -772,11 +774,15 @@ def test_build_link_scope_payload_all_endpoints():
 def test_build_create_payload_with_subnet_resource():
     """_build_create_payload sets resourceValue for SUBNET pool type with link scope."""
     module = _resource_manager()
-    cfg = _config(entity_name="SER1~Ethernet1/1~SER2~Ethernet1/2", scope_type="link", pool_type="SUBNET", pool_name="SUBNET", resource="10.0.0.0/24")
+    cfg = _config(
+        entity_name="SER1~Ethernet1/1~SER2~Ethernet1/2",
+        scope_type="link",
+        pool_type="SUBNET",
+        pool_name="SUBNET",
+        resource="10.0.0.0/24",
+    )
 
-    payload = module._build_create_payload(
-        cfg, switch_ip="SER1"
-    )  # pylint: disable=protected-access
+    payload = module._build_create_payload(cfg, switch_ip="SER1")  # pylint: disable=protected-access
 
     assert payload["resourceValue"] == "10.0.0.0/24"
     assert payload["poolType"] == "SUBNET"
@@ -785,11 +791,15 @@ def test_build_create_payload_with_subnet_resource():
 def test_build_create_payload_with_ip_resource():
     """_build_create_payload sets resourceValue for IP pool type."""
     module = _resource_manager()
-    cfg = _config(entity_name="SER1~Ethernet1/13", scope_type="device_interface", pool_type="IP", pool_name="IP_POOL", resource="192.168.1.1")
+    cfg = _config(
+        entity_name="SER1~Ethernet1/13",
+        scope_type="device_interface",
+        pool_type="IP",
+        pool_name="IP_POOL",
+        resource="192.168.1.1",
+    )
 
-    payload = module._build_create_payload(
-        cfg, switch_ip="SER1"
-    )  # pylint: disable=protected-access
+    payload = module._build_create_payload(cfg, switch_ip="SER1")  # pylint: disable=protected-access
 
     assert payload["resourceValue"] == "192.168.1.1"
     assert payload["poolType"] == "IP"
@@ -823,12 +833,8 @@ def test_resource_matches_filter_by_entity_name():
     module = _resource_manager()
     resource = _response(entityName="loopback0")
 
-    assert (
-        module._resource_matches_filter(resource, {"entity_name": "loopback0"}) is True
-    )  # pylint: disable=protected-access
-    assert (
-        module._resource_matches_filter(resource, {"entity_name": "loopback1"}) is False
-    )  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, {"entity_name": "loopback0"}) is True  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, {"entity_name": "loopback1"}) is False  # pylint: disable=protected-access
 
 
 def test_resource_matches_filter_by_pool_name():
@@ -836,33 +842,35 @@ def test_resource_matches_filter_by_pool_name():
     module = _resource_manager()
     resource = _response(poolName="LOOPBACK_ID")
 
-    assert (
-        module._resource_matches_filter(resource, {"pool_name": "LOOPBACK_ID"}) is True
-    )  # pylint: disable=protected-access
-    assert (
-        module._resource_matches_filter(resource, {"pool_name": "VPC_ID"}) is False
-    )  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, {"pool_name": "LOOPBACK_ID"}) is True  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, {"pool_name": "VPC_ID"}) is False  # pylint: disable=protected-access
 
 
 def test_resource_matches_filter_by_switches():
     """_resource_matches_filter checks if switch ID is in filter list."""
     module = _resource_manager()
-    resource = _response(scopeDetails={"scopeType": "device", "switchId": "SER1", "switchIp": "192.0.2.10"})
+    resource = _response(
+        scopeDetails={
+            "scopeType": "device",
+            "switchId": "SER1",
+            "switchIp": "192.0.2.10",
+        }
+    )
 
     # Filter matches when switch is in list
-    assert (
-        module._resource_matches_filter(resource, {"switches": ["SER1"]}) is True
-    )  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, {"switches": ["SER1"]}) is True  # pylint: disable=protected-access
     # Filter does not match when switch not in list
-    assert (
-        module._resource_matches_filter(resource, {"switches": ["SER2"]}) is False
-    )  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, {"switches": ["SER2"]}) is False  # pylint: disable=protected-access
 
 
 def test_resource_matches_filter_combined_criteria():
     """_resource_matches_filter combines multiple filter criteria."""
     module = _resource_manager()
-    resource = _response(entityName="loopback0", poolName="LOOPBACK_ID", scopeDetails={"scopeType": "device", "switchId": "SER1"})
+    resource = _response(
+        entityName="loopback0",
+        poolName="LOOPBACK_ID",
+        scopeDetails={"scopeType": "device", "switchId": "SER1"},
+    )
 
     # All criteria match
     filter_item = {
@@ -870,9 +878,7 @@ def test_resource_matches_filter_combined_criteria():
         "pool_name": "LOOPBACK_ID",
         "switches": ["SER1"],
     }
-    assert (
-        module._resource_matches_filter(resource, filter_item) is True
-    )  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, filter_item) is True  # pylint: disable=protected-access
 
     # One criterion fails
     filter_item = {
@@ -880,9 +886,7 @@ def test_resource_matches_filter_combined_criteria():
         "pool_name": "VPC_ID",
         "switches": ["SER1"],
     }
-    assert (
-        module._resource_matches_filter(resource, filter_item) is False
-    )  # pylint: disable=protected-access
+    assert module._resource_matches_filter(resource, filter_item) is False  # pylint: disable=protected-access
 
 
 def test_apply_gathered_filters_empty_filters():
@@ -921,9 +925,7 @@ def test_apply_gathered_filters_multiple_filters_with_dedup():
         {"pool_name": "LOOPBACK_ID"},
         {"entity_name": "loopback0"},
     ]
-    module._all_resources = [
-        _response(resourceId=101, entityName="loopback0", poolName="LOOPBACK_ID")
-    ]  # pylint: disable=protected-access
+    module._all_resources = [_response(resourceId=101, entityName="loopback0", poolName="LOOPBACK_ID")]  # pylint: disable=protected-access
 
     gathered = module._apply_gathered_filters()  # pylint: disable=protected-access
     # Both filters match same resource; dedup should return only one
@@ -944,9 +946,7 @@ def test_apply_gathered_filters_multiple_filters_with_dedup():
 def test_determine_pool_type_inference(resource_value, expected_pool_type):
     """_determine_pool_type infers pool type from resource value format."""
     module = _resource_manager()
-    pool_type = module._determine_pool_type(
-        resource_value
-    )  # pylint: disable=protected-access
+    pool_type = module._determine_pool_type(resource_value)  # pylint: disable=protected-access
     assert pool_type == expected_pool_type
 
 
@@ -998,7 +998,13 @@ def test_get_scope_type_from_model():
 def test_get_switch_ip_from_device_scope():
     """_get_switch_ip extracts switchIp for device scope."""
     module = _resource_manager()
-    resource = _response(scopeDetails={"scopeType": "device", "switchId": "SER1", "switchIp": "192.0.2.10"})
+    resource = _response(
+        scopeDetails={
+            "scopeType": "device",
+            "switchId": "SER1",
+            "switchIp": "192.0.2.10",
+        }
+    )
 
     switch_ip = module._get_switch_ip(resource)
     assert switch_ip == "192.0.2.10"
@@ -1036,7 +1042,13 @@ def test_extract_scope_type_maps_api_to_playbook():
 
 def test_make_resource_key_builds_dedup_key():
     """_make_resource_key constructs normalized tuple for matching."""
-    key = ResourceManagerDiffEngine._make_resource_key(entity_name="loopback0", pool_name="LOOPBACK_ID", scope_type="device", switch_ip="SER1", log=LOG)
+    key = ResourceManagerDiffEngine._make_resource_key(
+        entity_name="loopback0",
+        pool_name="LOOPBACK_ID",
+        scope_type="device",
+        switch_ip="SER1",
+        log=LOG,
+    )
     assert isinstance(key, tuple)
     assert len(key) == 4  # (entity, pool, scope, switch)
 
@@ -1132,9 +1144,7 @@ def test_validate_required_fields_compat_missing_entity_name():
     """_validate_required_fields_compat raises for missing entity_name."""
     module = _resource_manager()
     module.state = "deleted"
-    module.config = [
-        {"scope_type": "device", "pool_type": "ID", "pool_name": "LOOPBACK_ID"}
-    ]  # No entity_name
+    module.config = [{"scope_type": "device", "pool_type": "ID", "pool_name": "LOOPBACK_ID"}]  # No entity_name
 
     with pytest.raises(ValueError, match="entity_name.*missing"):
         module._validate_required_fields_compat()  # pylint: disable=protected-access
@@ -1184,7 +1194,11 @@ def test_register_result_includes_diff():
     # _register_result implementation doesn't store diff directly
     # Test that the call succeeds without error
     module._register_result(  # pylint: disable=protected-access
-        action="create", operation_type=OperationType.CREATE, message="Created", changed=True, diff={"before": {}, "after": {"entity_name": "loopback0"}},
+        action="create",
+        operation_type=OperationType.CREATE,
+        message="Created",
+        changed=True,
+        diff={"before": {}, "after": {"entity_name": "loopback0"}},
     )
 
     # Verify results object still exists
@@ -1197,9 +1211,7 @@ def test_resolve_switch_ids_fabric_scope_no_switches():
     # Fabric scope doesn't require switches
     original_config = [{"entity_name": "l3_vni", "scope_type": "fabric"}]
 
-    result = module._resolve_switch_ids_in_config(
-        original_config
-    )  # pylint: disable=protected-access
+    result = module._resolve_switch_ids_in_config(original_config)  # pylint: disable=protected-access
 
     # Should return list without modification
     assert isinstance(result, list)
@@ -1211,14 +1223,10 @@ def test_resolve_switch_ids_skips_inventory_when_no_switches():
     module = _resource_manager()
     module.log = LOG
 
-    config = [
-        {"entity_name": "l3_vni", "scope_type": "fabric"}
-    ]  # Fabric scope, no switches
+    config = [{"entity_name": "l3_vni", "scope_type": "fabric"}]  # Fabric scope, no switches
 
     # Should return immediately without inventory lookup
-    result = module._resolve_switch_ids_in_config(
-        config
-    )  # pylint: disable=protected-access
+    result = module._resolve_switch_ids_in_config(config)  # pylint: disable=protected-access
     assert len(result) == 1
 
 
@@ -1251,10 +1259,7 @@ def test_exit_module_normal_output_structure():
     module.exit_module()
 
     assert "changed" in ansible_module.exit_payload
-    assert (
-        "gathering_info" in ansible_module.exit_payload
-        or "changed" in ansible_module.exit_payload
-    )
+    assert "gathering_info" in ansible_module.exit_payload or "changed" in ansible_module.exit_payload
 
 
 def test_exit_module_verbosity_0_minimal_output():
@@ -1361,9 +1366,7 @@ def test_translate_gathered_results_with_single_switch():
     module = _resource_manager()
     resource = _response()
 
-    result = module.translate_gathered_results(
-        [resource]
-    )  # pylint: disable=protected-access
+    result = module.translate_gathered_results([resource])  # pylint: disable=protected-access
 
     assert len(result) == 1
     assert result[0]["entity_name"] == "loopback0"
@@ -1376,27 +1379,21 @@ def test_translate_gathered_results_with_missing_fields():
     # Raw dict without all fields
     raw_resource = {"resourceId": 101, "entityName": "loopback0"}
 
-    results = module.translate_gathered_results(
-        [raw_resource]
-    )  # pylint: disable=protected-access
+    results = module.translate_gathered_results([raw_resource])  # pylint: disable=protected-access
     assert len(results) >= 0  # Should handle gracefully
 
 
 def test_determine_pool_type_ipv4_address():
     """_determine_pool_type identifies single IPv4 address as IP."""
     module = _resource_manager()
-    pool_type = module._determine_pool_type(
-        "192.168.1.1"
-    )  # pylint: disable=protected-access
+    pool_type = module._determine_pool_type("192.168.1.1")  # pylint: disable=protected-access
     assert pool_type == "IP"
 
 
 def test_determine_pool_type_ipv4_network():
     """_determine_pool_type identifies IPv4 network as SUBNET."""
     module = _resource_manager()
-    pool_type = module._determine_pool_type(
-        "192.168.1.0/24"
-    )  # pylint: disable=protected-access
+    pool_type = module._determine_pool_type("192.168.1.0/24")  # pylint: disable=protected-access
     assert pool_type == "SUBNET"
 
 
@@ -1410,9 +1407,7 @@ def test_determine_pool_type_integer():
 def test_determine_pool_type_alphanumeric():
     """_determine_pool_type identifies alphanumeric as ID."""
     module = _resource_manager()
-    pool_type = module._determine_pool_type(
-        "vlan_100"
-    )  # pylint: disable=protected-access
+    pool_type = module._determine_pool_type("vlan_100")  # pylint: disable=protected-access
     assert pool_type == "ID"
 
 
@@ -1420,15 +1415,9 @@ def test_entity_names_match_with_none_values():
     """_entity_names_match handles None values."""
     module = _resource_manager()
 
-    assert (
-        module._entity_names_match(None, "loopback0") is False
-    )  # pylint: disable=protected-access
-    assert (
-        module._entity_names_match("loopback0", None) is False
-    )  # pylint: disable=protected-access
-    assert (
-        module._entity_names_match(None, None) is False
-    )  # pylint: disable=protected-access
+    assert module._entity_names_match(None, "loopback0") is False  # pylint: disable=protected-access
+    assert module._entity_names_match("loopback0", None) is False  # pylint: disable=protected-access
+    assert module._entity_names_match(None, None) is False  # pylint: disable=protected-access
 
 
 def test_resource_matches_filter_with_no_criteria():
@@ -1436,9 +1425,7 @@ def test_resource_matches_filter_with_no_criteria():
     module = _resource_manager()
     resource = _response()
 
-    result = module._resource_matches_filter(
-        resource, {}
-    )  # pylint: disable=protected-access
+    result = module._resource_matches_filter(resource, {})  # pylint: disable=protected-access
     assert result is True
 
 
@@ -1463,18 +1450,29 @@ def test_normalize_entity_key_single_element():
 def test_extract_scope_switch_key_val_fabric_scope():
     """_extract_scope_switch_key_val returns None for fabric scope."""
     scope_dict = {"scopeType": "fabric"}
-    result = ResourceManagerDiffEngine._extract_scope_switch_key_val(
-        scope_dict, "switch_id", "src_switch_id", LOG
-    )
+    result = ResourceManagerDiffEngine._extract_scope_switch_key_val(scope_dict, "switch_id", "src_switch_id", LOG)
     assert result is None
 
 
 def test_compute_changes_device_pair_endpoint_normalization():
     """compute_changes normalizes device_pair endpoints regardless of order."""
-    proposed = [_config(entity_name="SER2~SER1", scope_type="device_pair", pool_name="VPC_ID", switches=["SER1", "SER2"])]  # Reversed order
+    proposed = [
+        _config(
+            entity_name="SER2~SER1",
+            scope_type="device_pair",
+            pool_name="VPC_ID",
+            switches=["SER1", "SER2"],
+        )
+    ]  # Reversed order
     existing = [
         _response(
-            entityName="SER1~SER2", poolName="VPC_ID", scopeDetails={"scopeType": "devicePair", "srcSwitchId": "SER1", "dstSwitchId": "SER2"}  # Normal order
+            entityName="SER1~SER2",
+            poolName="VPC_ID",
+            scopeDetails={
+                "scopeType": "devicePair",
+                "srcSwitchId": "SER1",
+                "dstSwitchId": "SER2",
+            },  # Normal order
         )
     ]
 
@@ -1518,37 +1516,27 @@ def test_validate_configs_multiple_valid_configs():
         "resource": "11",
     }
 
-    result = ResourceManagerDiffEngine.validate_configs(
-        [data1, data2], "merged", log=LOG
-    )
+    result = ResourceManagerDiffEngine.validate_configs([data1, data2], "merged", log=LOG)
     assert len(result) == 2
     assert all(isinstance(cfg, ResourceManagerConfigModel) for cfg in result)
 
 
 def test_compare_resource_values_ipv6_addresses():
     """_compare_resource_values compares IPv6 addresses."""
-    result = ResourceManagerDiffEngine._compare_resource_values(
-        "2001:db8::1", "2001:db8::1", log=LOG
-    )
+    result = ResourceManagerDiffEngine._compare_resource_values("2001:db8::1", "2001:db8::1", log=LOG)
     assert result is True
 
-    result = ResourceManagerDiffEngine._compare_resource_values(
-        "2001:db8::1", "2001:db8::2", log=LOG
-    )
+    result = ResourceManagerDiffEngine._compare_resource_values("2001:db8::1", "2001:db8::2", log=LOG)
     assert result is False
 
 
 def test_compare_resource_values_ipv6_networks():
     """_compare_resource_values compares IPv6 networks as strings."""
-    result = ResourceManagerDiffEngine._compare_resource_values(
-        "2001:db8::/32", "2001:db8::/32", log=LOG
-    )
+    result = ResourceManagerDiffEngine._compare_resource_values("2001:db8::/32", "2001:db8::/32", log=LOG)
     assert result is True
 
     # Different networks should still compare as False
-    result = ResourceManagerDiffEngine._compare_resource_values(
-        "2001:db8::/32", "2001:db8:1::/32", log=LOG
-    )
+    result = ResourceManagerDiffEngine._compare_resource_values("2001:db8::/32", "2001:db8:1::/32", log=LOG)
     # Note: may compare as string-equal or may use IPv6 logic
     assert isinstance(result, bool)
 
@@ -1625,7 +1613,11 @@ def test_manage_gathered_with_empty_filter():
 
 def test_manage_gathered_with_pool_name_filter():
     """manage_gathered filters by pool_name."""
-    module, unused_nd = _resource_manager_with_nd(state="gathered", config=[{"pool_name": "LOOPBACK_ID"}], all_resources=[_response()])
+    module, unused_nd = _resource_manager_with_nd(
+        state="gathered",
+        config=[{"pool_name": "LOOPBACK_ID"}],
+        all_resources=[_response()],
+    )
 
     # Run manage_gathered
     module.manage_gathered()  # pylint: disable=protected-access
@@ -1636,7 +1628,11 @@ def test_manage_gathered_with_pool_name_filter():
 
 def test_manage_gathered_with_entity_name_filter():
     """manage_gathered filters by entity_name."""
-    module, unused_nd = _resource_manager_with_nd(state="gathered", config=[{"entity_name": "loopback0"}], all_resources=[_response()])
+    module, unused_nd = _resource_manager_with_nd(
+        state="gathered",
+        config=[{"entity_name": "loopback0"}],
+        all_resources=[_response()],
+    )
 
     # Run manage_gathered
     module.manage_gathered()  # pylint: disable=protected-access
@@ -1746,9 +1742,7 @@ def test_get_resource_value_from_response_model():
     module = _resource_manager()
     resource = _response()
 
-    resource_value = module._get_resource_value(
-        resource
-    )  # pylint: disable=protected-access
+    resource_value = module._get_resource_value(resource)  # pylint: disable=protected-access
     assert resource_value == "10"
 
 
@@ -1757,9 +1751,7 @@ def test_entity_names_match_case_insensitive():
     module = _resource_manager()
 
     # Should match different cases
-    result = module._entity_names_match(
-        "Loopback0", "loopback0"
-    )  # pylint: disable=protected-access
+    result = module._entity_names_match("Loopback0", "loopback0")  # pylint: disable=protected-access
     # Depending on implementation, may match
     assert isinstance(result, bool)
 
@@ -1785,9 +1777,7 @@ def test_resource_matches_filter_with_multiple_criteria():
 
     # Filter with multiple matching criteria
     criteria = {"pool_name": "LOOPBACK_ID", "entity_name": "loopback0"}
-    result = module._resource_matches_filter(
-        resource, criteria
-    )  # pylint: disable=protected-access
+    result = module._resource_matches_filter(resource, criteria)  # pylint: disable=protected-access
 
     # Should match only if all criteria match
     assert result is True
@@ -1803,9 +1793,7 @@ def test_resource_matches_filter_with_one_nonmatching_criterion():
         "pool_name": "LOOPBACK_ID",
         "entity_name": "loopback1",
     }  # Wrong entity_name
-    result = module._resource_matches_filter(
-        resource, criteria
-    )  # pylint: disable=protected-access
+    result = module._resource_matches_filter(resource, criteria)  # pylint: disable=protected-access
 
     # Should not match
     assert result is False
@@ -1815,7 +1803,11 @@ def test_apply_gathered_filters_matches_multiple_resources():
     """_apply_gathered_filters matches all resources meeting criteria."""
     module, unused_nd = _resource_manager_with_nd(
         config=[{"pool_name": "LOOPBACK_ID"}],
-        all_resources=[_response(entityName="loopback0"), _response(entityName="loopback1"), _response(entityName="loopback0")],  # Duplicate entity
+        all_resources=[
+            _response(entityName="loopback0"),
+            _response(entityName="loopback1"),
+            _response(entityName="loopback0"),
+        ],  # Duplicate entity
     )
 
     # Apply filter
@@ -1837,11 +1829,13 @@ def test_translate_gathered_results_empty_list():
 def test_translate_gathered_results_multiple_resources():
     """translate_gathered_results converts multiple resources to dict list."""
     module = _resource_manager()
-    resources = [_response(entityName="loopback0"), _response(entityName="loopback1"), _response(entityName="vlan_100")]
+    resources = [
+        _response(entityName="loopback0"),
+        _response(entityName="loopback1"),
+        _response(entityName="vlan_100"),
+    ]
 
-    result = module.translate_gathered_results(
-        resources
-    )  # pylint: disable=protected-access
+    result = module.translate_gathered_results(resources)  # pylint: disable=protected-access
 
     assert len(result) == 3
     assert all(isinstance(r, dict) for r in result)
@@ -1851,9 +1845,7 @@ def test_determine_pool_type_ipv4_multicast():
     """_determine_pool_type identifies multicast IPv4 as IP."""
     module = _resource_manager()
 
-    pool_type = module._determine_pool_type(
-        "224.0.0.0"
-    )  # pylint: disable=protected-access
+    pool_type = module._determine_pool_type("224.0.0.0")  # pylint: disable=protected-access
     # Should identify as IP (not SUBNET)
     assert pool_type in ["IP", "SUBNET"]
 
@@ -1863,9 +1855,7 @@ def test_determine_pool_type_ipv6_address_short():
     module = _resource_manager()
 
     # Short IPv6 notation like 2001:db8::1
-    pool_type = module._determine_pool_type(
-        "2001:db8::1"
-    )  # pylint: disable=protected-access
+    pool_type = module._determine_pool_type("2001:db8::1")  # pylint: disable=protected-access
     assert pool_type is not None
 
 
@@ -1873,9 +1863,7 @@ def test_determine_pool_type_mac_address():
     """_determine_pool_type identifies MAC address format."""
     module = _resource_manager()
 
-    pool_type = module._determine_pool_type(
-        "00:11:22:33:44:55"
-    )  # pylint: disable=protected-access
+    pool_type = module._determine_pool_type("00:11:22:33:44:55")  # pylint: disable=protected-access
     # Should identify as some type (likely ID)
     assert pool_type in ["ID", "IP", "SUBNET"]
 
@@ -1961,7 +1949,10 @@ def test_validate_input_gathered_generic_exception_raises():
     module.config = [{"scope_type": "device"}]
 
     with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.ResourceManagerConfigModel.model_validate",
+        (
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+            "nd_manage_resource_manager_resources.ResourceManagerConfigModel.model_validate"
+        ),
         side_effect=RuntimeError("boom"),
     ):
         with pytest.raises(ValueError, match="Gathered filter validation failed"):
@@ -2054,10 +2045,16 @@ def test_manage_merged_validates_response_fields_for_matching_entity():
     fake_batch_response = MagicMock(resources=[resp_item])
 
     with patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response",
+        (
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+            "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+        ),
         return_value=fake_batch_response,
     ), patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.ResourceManagerDiffEngine.validate_resource_api_fields",
+        (
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+            "nd_manage_resource_manager_resources.ResourceManagerDiffEngine.validate_resource_api_fields"
+        ),
     ) as validate_fields:
         module.manage_merged()
 
@@ -2084,9 +2081,7 @@ def test_manage_deleted_deduplicates_ids_and_skips_missing_id_in_check_mode():
         "debugs": [],
     }
 
-    with patch.object(
-        ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes
-    ):
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes):
         module.manage_deleted()
 
     assert module.changed_dict[0]["deleted"] == ["101"]
@@ -2110,9 +2105,7 @@ def test_manage_deleted_api_exception_is_wrapped_with_value_error():
 
     nd.request.side_effect = Exception("delete failed")
 
-    with patch.object(
-        ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes
-    ):
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes):
         with pytest.raises(ValueError, match="Delete API call failed"):
             module.manage_deleted()
 
@@ -2137,17 +2130,16 @@ def test_manage_deleted_success_parses_remove_response_items():
     remove_item.model_dump.return_value = {"resourceId": 101}
     fake_remove_response = MagicMock(resources=[remove_item])
 
-    with patch.object(
-        ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes
-    ), patch(
-        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response",
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
+        (
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+            "nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response"
+        ),
         return_value=fake_remove_response,
     ):
         module.manage_deleted()
 
-    assert any(
-        entry.get("DATA", {}).get("resourceId") == 101 for entry in module.api_responses
-    )
+    assert any(entry.get("DATA", {}).get("resourceId") == 101 for entry in module.api_responses)
 
 
 def test_manage_state_unsupported_state_raises():
@@ -2190,16 +2182,11 @@ def test_exit_module_requeries_when_changed_and_not_check_mode():
     def fake_refresh():
         module._all_resources = [_response(entityName="loopback9")]
 
-    module._get_all_resources = MagicMock(
-        side_effect=fake_refresh
-    )  # pylint: disable=protected-access
+    module._get_all_resources = MagicMock(side_effect=fake_refresh)  # pylint: disable=protected-access
     module.exit_module()
 
     assert module._get_all_resources.call_count == 1  # pylint: disable=protected-access
-    assert any(
-        item.get("entity_name") == "loopback9"
-        for item in ansible_module.exit_payload.get("after", [])
-    )
+    assert any(item.get("entity_name") == "loopback9" for item in ansible_module.exit_payload.get("after", []))
 
 
 def test_exit_module_info_output_level_includes_proposed():
