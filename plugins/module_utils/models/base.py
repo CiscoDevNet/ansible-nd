@@ -204,7 +204,7 @@ class NDBaseModel(BaseModel, ABC):
             exclude_unset: When True, only compare fields explicitly set in
                 ``other`` (via Pydantic's ``exclude_unset``). This prevents
                 default values from triggering false diffs during merge
-                operations.  List elements are matched one-directionally so
+                operations. List elements are matched one-directionally so
                 that an existing item with extra fields (e.g. ``deploy``) does
                 not trigger a spurious diff when the proposed item omits those
                 fields.
