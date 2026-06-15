@@ -105,17 +105,27 @@ class NDStateMachine:
         *args: Any,
         error_msg_prefix: str = "Operation failed",
         **kwargs: Any,
-    ) -> ResponseType | None:
-        """Execute an API operation with standardized error handling."""
+    ) -> bool:
+        """Execute an API operation with standardized error handling.
+
+        Returns True if the operation completed without raising. In check mode
+        the API call is skipped but still reported as completed (True) so that
+        the previewed 'after' state can be built. Returns False only when the
+        operation raised and the error was suppressed via ``ignore_errors``.
+
+        The orchestrator's return value is deliberately not used as the success
+        signal: some orchestrators defer the actual API call (queue-and-deploy)
+        and legitimately return None on success.
+        """
         try:
             if not self.check_mode:
-                return operation(*args, **kwargs)
-            return None
+                operation(*args, **kwargs)
+            return True
         except Exception as e:
             error_msg = f"{error_msg_prefix}: {e}"
             if not self.ignore_errors:
                 raise NDStateMachineError(error_msg) from e
-        return None
+        return False
 
     def _manage_create_update_state(self) -> None:
         """
@@ -166,8 +176,9 @@ class NDStateMachine:
                 if not self.ignore_errors:
                     raise NDStateMachineError(error_msg) from e
 
-        # Execute updates (always individual)
-        successfully_sent: List[NDBaseModel] = []
+        # Execute updates (always individual). An operation that does not fail
+        # is counted as sent; check mode skips the API call but returns True.
+        successfully_sent: list[NDBaseModel] = []
         for item in items_to_update:
             if self._execute_operation(self.model_orchestrator.update, item, error_msg_prefix=f"Failed to update {item.get_identifier_value()}"):
                 successfully_sent.append(item)
@@ -182,11 +193,11 @@ class NDStateMachine:
                     if self._execute_operation(self.model_orchestrator.create, item, error_msg_prefix=f"Failed to create {item.get_identifier_value()}"):
                         successfully_sent.append(item)
 
-        # Mark as sent only after successful API operations. In check mode no
-        # API call is made, so nothing is marked as sent (consistent with
-        # _delete_items); the preview 'after' state is still reflected in
-        # self.existing, which is what drives 'changed'.
-        if successfully_sent:
+        # Mark as sent only for items actually pushed to the controller. In
+        # check mode no API call is made, so nothing is marked as sent (avoids
+        # false deploy triggers); the previewed 'after' state is still reflected
+        # in self.existing (mutated above), which is what drives 'changed'.
+        if not self.check_mode and successfully_sent:
             self.sent.add_many(successfully_sent)
 
         # Log operation
@@ -212,23 +223,28 @@ class NDStateMachine:
         if not items:
             return
 
-        # Execute deletes (bulk or individual)
-        successfully_deleted: List[NDBaseModel] = []
+        # Execute deletes (bulk or individual). An item is counted as deleted
+        # when the operation does not fail; check mode skips the API call but
+        # returns True so the deletion is still previewed. Items whose delete
+        # failed under ignore_errors are left in 'existing' so the reported
+        # 'after' state stays accurate.
+        deleted: list[NDBaseModel] = []
         if self.supports_bulk_delete:
             if self._execute_operation(self.model_orchestrator.delete_bulk, items, error_msg_prefix="Failed to delete in bulk"):
-                successfully_deleted.extend(items)
+                deleted.extend(items)
         else:
             for item in items:
                 if self._execute_operation(self.model_orchestrator.delete, item, error_msg_prefix=f"Failed to delete {item.get_identifier_value()}"):
-                    successfully_deleted.append(item)
+                    deleted.append(item)
 
-        # Batch remove from collection (single index rebuild)
-        # In check mode, update the preview state without marking anything as sent.
-        items_to_remove = items if self.check_mode else successfully_deleted
-        keys_to_delete = [item.get_identifier_value() for item in items_to_remove]
-        self.existing.delete_many(keys_to_delete)
-        if successfully_deleted:
-            self.sent.add_many(successfully_deleted)
+        # Batch remove from collection (single index rebuild).
+        self.existing.delete_many([item.get_identifier_value() for item in deleted])
+
+        # Mark as sent only for items actually pushed to the controller. In
+        # check mode no API call is made, so nothing is marked as sent (avoids
+        # false deploy triggers).
+        if not self.check_mode and deleted:
+            self.sent.add_many(deleted)
 
         # Log deletion
         self.output.assign(after=self.existing)
