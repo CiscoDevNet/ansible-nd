@@ -6,7 +6,7 @@
 
 test_fabric_name: "{{ nd_test_vpc_access_fabric_name | default(nd_test_fabric_name | default('SITE1')) }}"
 test_switch_ip_peer1: "{{ nd_test_vpc_peer1_ip | default('192.168.12.151') }}"
-test_switch_ip_peer2: "{{ nd_test_vpc_peer2_ip | default('192.168.12.155') }}"
+test_switch_ip_peer2: "{{ nd_test_vpc_peer2_ip | default('192.168.12.152') }}"
 
 # vPC pair substrate created by setup via M(cisco.nd.nd_manage_vpc_pair) (from PR #197 on develop).
 # The previous nd_vpc_pair module was closed (PR #278); the shared vPC interface infrastructure was
@@ -16,7 +16,7 @@ test_switch_ip_peer2: "{{ nd_test_vpc_peer2_ip | default('192.168.12.155') }}"
 # peer-link (use_virtual_peer_link: false) because the Nexus 9000v testbed does not support virtual/
 # fabric peering. The peer-link members (switch_member_interfaces / peer_switch_member_interfaces) and
 # po ids live under nd_manage_vpc_pair's vpc_pair_details (VpcPairDetailsDefault) template. Values mirror
-# the known-good SITE1 physical pair (S1_LE1 Eth1/3 <-> S1_LE2 Eth1/2, mgmt-VRF keepalive, domain 1).
+# the known-good SITE1 physical pair (S1_LE1 Eth1/2 <-> S1_LE2 Eth1/2, mgmt-VRF keepalive, domain 1).
 # Keep-alive local IPs are set explicitly (nd_manage_vpc_pair does not auto-fill them from the mgmt IP).
 vpc_pair_setup:
   peer1_switch_id: "{{ test_switch_ip_peer1 }}"
@@ -31,7 +31,7 @@ vpc_pair_setup:
     switch_po_id: 1
     peer_switch_po_id: 1
     switch_member_interfaces:
-      - Ethernet1/3
+      - Ethernet1/2
     peer_switch_member_interfaces:
       - Ethernet1/2
 
