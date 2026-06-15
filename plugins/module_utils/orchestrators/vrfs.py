@@ -35,7 +35,10 @@ Architecture overview
 
 from __future__ import annotations
 
+import time
+
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.vrf_data_models import (
@@ -97,6 +100,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     # Strategy is injected at construction time by nd_vrf.py / VrfFabricResolver.
     strategy: BaseVrfStrategy | None = None
+    delete_retry_attempts: ClassVar[int] = 3
+    delete_retry_delay: ClassVar[int] = 30
 
     def model_post_init(self, __context) -> None:
         if self.strategy is None:
@@ -368,8 +373,13 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     def query_all(self, model_instance=None, **kwargs) -> ResponseType:
         """GET all VRFs for the fabric."""
+        scoped_vrf_names = self._query_scope_vrf_names()
         try:
+            if len(scoped_vrf_names) > 1:
+                return self._query_all_scoped(scoped_vrf_names)
             endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
+            if scoped_vrf_names and hasattr(endpoint, "endpoint_params"):
+                endpoint.endpoint_params.filter = self._vrf_name_filter(scoped_vrf_names)
             result = self._request(
                 path=endpoint.path,
                 verb=endpoint.verb,
@@ -380,7 +390,72 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 return result.get("vrfs") or result.get("items") or []
             return result or []
         except Exception as e:
+            if scoped_vrf_names:
+                return self._query_all_unfiltered()
             raise Exception(f"Query all VRFs failed: {e}") from e
+
+    def _query_all_scoped(self, vrf_names: list[str]) -> ResponseType:
+        """GET selected VRFs one at a time to avoid controller OR-filter quirks."""
+        vrfs: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for vrf_name in vrf_names:
+            endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
+            if hasattr(endpoint, "endpoint_params"):
+                endpoint.endpoint_params.filter = self._vrf_name_filter([vrf_name])
+            result = self._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                not_found_ok=True,
+                operation_type=OperationType.QUERY,
+            )
+            if isinstance(result, dict):
+                result_items = result.get("vrfs") or result.get("items") or []
+            else:
+                result_items = result or []
+            for item in result_items:
+                item_name = item.get("vrfName") or item.get("vrf_name") if isinstance(item, dict) else None
+                if item_name and item_name not in seen:
+                    vrfs.append(item)
+                    seen.add(item_name)
+        return vrfs
+
+    def _query_all_unfiltered(self) -> ResponseType:
+        """GET all VRFs without a filter fallback."""
+        endpoint = self._make_endpoint(self.strategy.vrfs_get_cls())
+        result = self._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            not_found_ok=True,
+            operation_type=OperationType.QUERY,
+        )
+        if isinstance(result, dict):
+            return result.get("vrfs") or result.get("items") or []
+        return result or []
+
+    def _query_scope_vrf_names(self) -> list[str]:
+        """Return VRF names safe to use for targeted current-state discovery."""
+        state = self.rest_send.params.get("state")
+        if state not in ("merged", "replaced", "deleted"):
+            return []
+        config = self.rest_send.params.get("config") or []
+        if not config:
+            return []
+        names: list[str] = []
+        seen: set[str] = set()
+        for item in config:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("vrf_name") or item.get("vrfName")
+            if name and name not in seen:
+                names.append(name)
+                seen.add(name)
+        return names
+
+    def _vrf_name_filter(self, vrf_names: list[str]) -> str:
+        """Build a URL-safe Lucene filter for VRF names."""
+        terms = [f"vrfName:{vrf_name}" for vrf_name in sorted(set(vrf_names))]
+        expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
+        return quote(expression, safe="")
 
     # ── Create ────────────────────────────────────────────────────
 
@@ -392,6 +467,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         """POST a list of VRFs in a single request."""
         if not model_instances:
             return {}
+        if self.strategy.is_child:
+            return [self.update(model_instance) for model_instance in model_instances]
         try:
             endpoint = self._make_endpoint(self.strategy.vrfs_post_cls())
             return self._request(
@@ -439,13 +516,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         # Composite identifier is (vrf_name, fabric_name); vrf_name is index 0.
         vrf_names = [m.get_identifier_value()[0] for m in model_instances]
         try:
-            endpoint = self._make_endpoint(self.strategy.vrf_actions_remove_post_cls())
-            return self._request(
-                path=endpoint.path,
-                verb=endpoint.verb,
-                data={"vrfNames": vrf_names},
-                operation_type=OperationType.DELETE,
-            )
+            return self._delete_bulk_with_retry(vrf_names)
         except Exception as e:
             if self._delete_error_is_absent_vrf(e) and self._vrfs_absent(vrf_names):
                 return {
@@ -458,6 +529,106 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                     ]
                 }
             raise Exception(f"Bulk delete VRFs failed: {e}") from e
+
+    def _delete_bulk_with_retry(self, vrf_names: list[str]) -> ResponseType:
+        """Delete VRFs, retrying controller sync failures for only failed VRFs."""
+        pending_vrf_names = list(vrf_names)
+        successful_results: list[dict[str, Any]] = []
+        last_error: Exception | None = None
+
+        for attempt in range(1, self.delete_retry_attempts + 1):
+            endpoint = self._make_endpoint(self.strategy.vrf_actions_remove_post_cls())
+            try:
+                response = self._request(
+                    path=endpoint.path,
+                    verb=endpoint.verb,
+                    data={"vrfNames": pending_vrf_names},
+                    operation_type=OperationType.DELETE,
+                )
+            except Exception as exc:
+                last_error = exc
+                response = self.rest_send.response_current.get("DATA", {})
+                if not self._delete_response_has_sync_retry_failure(response):
+                    raise
+
+            successful, retryable, terminal_failed = self._parse_delete_results(response, pending_vrf_names)
+            successful_results.extend(successful)
+
+            if terminal_failed:
+                failed_vrfs = ", ".join(item.get("vrfName", "") for item in terminal_failed)
+                raise Exception(f"Bulk delete VRFs failed for non-retryable result(s): {failed_vrfs}; response: {response}")
+
+            if not retryable:
+                return self._combined_delete_response(response, successful_results)
+
+            pending_vrf_names = [item["vrfName"] for item in retryable if item.get("vrfName")]
+            if attempt == self.delete_retry_attempts:
+                raise Exception(f"Bulk delete VRFs failed after {self.delete_retry_attempts} attempts: {response}") from last_error
+            time.sleep(self.delete_retry_delay)
+
+        raise Exception(f"Bulk delete VRFs failed after {self.delete_retry_attempts} attempts") from last_error
+
+    def _parse_delete_results(
+        self,
+        response: ResponseType,
+        requested_vrf_names: list[str],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        """Split delete results into successful, retryable, and terminal failures."""
+        results = response.get("results") if isinstance(response, dict) else None
+        if not isinstance(results, list):
+            return (
+                [{"vrfName": vrf_name, "status": "success"} for vrf_name in requested_vrf_names],
+                [],
+                [],
+            )
+
+        successful: list[dict[str, Any]] = []
+        retryable: list[dict[str, Any]] = []
+        terminal_failed: list[dict[str, Any]] = []
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status", "")).lower()
+            if status == "success":
+                successful.append(item)
+                continue
+            if self._delete_result_is_sync_retry_failure(item):
+                retryable.append(item)
+                continue
+            terminal_failed.append(item)
+        return successful, retryable, terminal_failed
+
+    def _combined_delete_response(
+        self,
+        response: ResponseType,
+        successful_results: list[dict[str, Any]],
+    ) -> ResponseType:
+        """Return the final delete response with accumulated successes."""
+        if isinstance(response, dict) and isinstance(response.get("results"), list):
+            known = {(item.get("vrfName"), item.get("status"), item.get("message")) for item in response.get("results", []) if isinstance(item, dict)}
+            combined = list(response.get("results", []))
+            for item in successful_results:
+                key = (item.get("vrfName"), item.get("status"), item.get("message"))
+                if key not in known:
+                    combined.append(item)
+            response["results"] = combined
+        return response
+
+    @staticmethod
+    def _delete_response_has_sync_retry_failure(response: ResponseType) -> bool:
+        """Return True when a delete response contains a controller sync retry error."""
+        if not isinstance(response, dict):
+            return False
+        results = response.get("results")
+        if isinstance(results, list):
+            return any(NDVrfOrchestrator._delete_result_is_sync_retry_failure(item) for item in results if isinstance(item, dict))
+        return "fabric re-sync" in str(response).lower() or "fabric resync" in str(response).lower()
+
+    @staticmethod
+    def _delete_result_is_sync_retry_failure(result: dict[str, Any]) -> bool:
+        """Return True for controller sync failures that are worth retrying."""
+        message = str(result.get("message") or result.get("error") or result).lower()
+        return "fabric re-sync" in message or "fabric resync" in message
 
     @staticmethod
     def _delete_error_is_absent_vrf(error: Exception) -> bool:

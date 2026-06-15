@@ -60,6 +60,56 @@ def _transform(
     return instance._transform_config_to_payload_model_data(config, fabric_name)
 
 
+class _EndpointStrategy:
+    fabric_name = "AK-VXLAN"
+    fabric_data = {}
+    is_parent = False
+
+    def __init__(self, is_child=False):
+        self.is_child = is_child
+
+    @staticmethod
+    def configure_endpoint(_endpoint):
+        return None
+
+    @staticmethod
+    def vrfs_get_cls():
+        from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrfs import (
+            EpManageFabricsVrfsGet,
+        )
+
+        return EpManageFabricsVrfsGet
+
+    @staticmethod
+    def vrf_actions_remove_post_cls():
+        from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_actions import (
+            EpManageFabricsVrfActionsRemovePost,
+        )
+
+        return EpManageFabricsVrfActionsRemovePost
+
+    @staticmethod
+    def vrf_put_cls():
+        from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrfs import (
+            EpManageFabricsVrfsVrfNamePut,
+        )
+
+        return EpManageFabricsVrfsVrfNamePut
+
+
+class _RestSend:
+    def __init__(self, params):
+        self.params = params
+        self.response_current = {}
+
+
+def _orchestrator_for_request_tests(params, is_child=False):
+    instance = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(instance, "strategy", _EndpointStrategy(is_child=is_child))
+    object.__setattr__(instance, "rest_send", _RestSend(params))
+    return instance
+
+
 def test_vrfs_00010_transform_standalone_config_to_schema_payload():
     """
     # Summary
@@ -431,3 +481,162 @@ def test_vrfs_00070_transform_child_config_to_fabric_data_only():
     assert fabric["netflow"] is False
     assert fabric["trmData"]["ipv4Trm"] is False
     assert fabric["trmData"]["trmOnBgw"] is False
+
+
+def test_vrfs_00080_query_all_scopes_targeted_state_reads():
+    """
+    # Summary
+
+    Verify targeted states only query current VRFs named in config instead of
+    reading every VRF in the fabric.
+    """
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "replaced",
+            "config": [
+                {"vrf_name": "ansible-vrf-b"},
+                {"vrf_name": "ansible-vrf-a"},
+                {"vrf_name": "ansible-vrf-a"},
+            ],
+        }
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {"vrfs": []}
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    assert orchestrator.query_all() == []
+    assert requested_paths == [
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3Aansible-vrf-b",
+        "/api/v1/manage/fabrics/AK-VXLAN/vrfs?filter=vrfName%3Aansible-vrf-a",
+    ]
+
+
+def test_vrfs_00085_query_all_does_not_scope_overridden_reads():
+    """
+    # Summary
+
+    Verify overridden keeps a full current-state read because it must compare
+    desired config against all existing VRFs.
+    """
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "overridden",
+            "config": [{"vrf_name": "ansible-vrf-a"}],
+        }
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {"vrfs": []}
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    assert orchestrator.query_all() == []
+    assert len(requested_paths) == 1
+    assert "filter=" not in requested_paths[0]
+
+
+def test_vrfs_00090_bulk_delete_retries_only_sync_failed_vrfs():
+    """
+    # Summary
+
+    Verify bulk delete retries fabric re-sync failures and only sends the VRFs
+    that failed with retryable controller sync errors on the next attempt.
+    """
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "deleted",
+            "config": [
+                {"vrf_name": "ansible-vrf-a"},
+                {"vrf_name": "ansible-vrf-b"},
+            ],
+        }
+    )
+    requested_payloads = []
+
+    def request(**kwargs):
+        requested_payloads.append(list(kwargs["data"]["vrfNames"]))
+        if len(requested_payloads) == 1:
+            orchestrator.rest_send.response_current = {
+                "DATA": {
+                    "results": [
+                        {"vrfName": "ansible-vrf-a", "status": "success"},
+                        {
+                            "vrfName": "ansible-vrf-b",
+                            "status": "failed",
+                            "message": "Fabric re-sync is in progress. Retry after sync completes.",
+                        },
+                    ]
+                }
+            }
+            raise Exception("partial delete failure")
+        return {"results": [{"vrfName": "ansible-vrf-b", "status": "success"}]}
+
+    object.__setattr__(orchestrator, "delete_retry_delay", 0)
+    object.__setattr__(orchestrator, "_request", request)
+
+    result = orchestrator._delete_bulk_with_retry(["ansible-vrf-a", "ansible-vrf-b"])
+
+    assert requested_payloads == [
+        ["ansible-vrf-a", "ansible-vrf-b"],
+        ["ansible-vrf-b"],
+    ]
+    assert result["results"] == [
+        {"vrfName": "ansible-vrf-b", "status": "success"},
+        {"vrfName": "ansible-vrf-a", "status": "success"},
+    ]
+
+
+def test_vrfs_00100_child_create_bulk_uses_update_endpoint():
+    """
+    # Summary
+
+    Verify parent-driven child fabric work never POST-creates VRFs on member
+    fabrics.  ND requires VRF creation at the parent/group level; child fabric
+    overrides are applied with PUT.
+    """
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "merged",
+            "config": [{"vrf_name": "ansible-msd-vrf"}],
+        },
+        is_child=True,
+    )
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        return {"status": "success"}
+
+    object.__setattr__(orchestrator, "_request", request)
+    model = VrfDataModel.from_config(
+        {
+            "fabric_name": "AK-VXLAN",
+            "vrf_name": "ansible-msd-vrf",
+            "fabric_data": {
+                "advertiseDefaultRoute": False,
+                "advertiseHostRoute": True,
+            },
+        }
+    )
+
+    result = orchestrator.create_bulk([model])
+
+    assert result == [{"status": "success"}]
+    assert len(requests) == 1
+    assert requests[0]["verb"].value == "PUT"
+    assert requests[0]["path"] == "/api/v1/manage/fabrics/AK-VXLAN/vrfs/ansible-msd-vrf"
+    assert requests[0]["data"] == {
+        "fabricName": "AK-VXLAN",
+        "vrfName": "ansible-msd-vrf",
+        "vrfType": "vxlanIbgp",
+        "fabricData": {
+            "advertiseHostRoute": True,
+            "advertiseDefaultRoute": False,
+        },
+    }

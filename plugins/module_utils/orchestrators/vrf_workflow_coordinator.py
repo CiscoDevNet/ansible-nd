@@ -28,6 +28,7 @@ import copy
 import time
 
 from typing import Any
+from urllib.parse import quote
 
 from ansible.module_utils.basic import AnsibleModule
 
@@ -35,6 +36,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationTyp
 from ansible_collections.cisco.nd.plugins.module_utils.nd_state_machine import NDStateMachine
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_actions import (
     EpManageFabricsVrfActionsDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_networks import (
+    EpManageFabricsNetworksGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_attachments import (
     EpManageFabricsVrfAttachmentsPost,
@@ -263,12 +267,12 @@ class VrfWorkflowCoordinator:
                     )
 
             # Parent config: same VRF but without child_fabric_config
-            parent_vrf = copy.deepcopy(vrf)
+            parent_vrf = dict(vrf)
             parent_vrf.pop("child_fabric_config", None)
             parent_config.append(parent_vrf)
 
         # Step 4 — run parent state machine
-        parent_module_args = copy.deepcopy(module_args)
+        parent_module_args = dict(module_args)
         parent_module_args["config"] = parent_config
         parent_result = self._run_state_machine_with_attachments(
             parent_module_args,
@@ -360,7 +364,13 @@ class VrfWorkflowCoordinator:
         VRF-specific payload transformation is kept here so the shared state
         machine does not need to know about VRF playbook field aliases.
         """
-        return VrfStateMachine(self).run_basic(module_args, strategy=strategy)
+        return self._vrf_state_machine().run_basic(module_args, strategy=strategy)
+
+    def _vrf_state_machine(self) -> VrfStateMachine:
+        """Return the VRF-specific state machine wrapper for this coordinator."""
+        if not hasattr(self, "_vrf_state_machine_instance"):
+            self._vrf_state_machine_instance = VrfStateMachine(self)
+        return self._vrf_state_machine_instance
 
     def _new_state_machine(self, module_args: dict, strategy: BaseVrfStrategy | None = None) -> tuple[NDStateMachine, Any, Any]:
         """
@@ -424,7 +434,7 @@ class VrfWorkflowCoordinator:
         separate endpoints.  Keep attach/deploy out of the VRF payload and
         apply them around the normal state machine.
         """
-        return VrfStateMachine(self).run(module_args, strategy=strategy, defer_deploy=defer_deploy)
+        return self._vrf_state_machine().run(module_args, strategy=strategy, defer_deploy=defer_deploy)
 
     def _run_overridden_state_machine_with_attachments(
         self,
@@ -440,7 +450,7 @@ class VrfWorkflowCoordinator:
         ``sm.existing`` from NDStateMachine initialization instead of querying
         current VRFs separately and then building a second state machine later.
         """
-        return VrfStateMachine(self).run_overridden(module_args, strategy, defer_deploy=defer_deploy)
+        return self._vrf_state_machine().run_overridden(module_args, strategy, defer_deploy=defer_deploy)
 
     def _run_deleted_state_machine_with_detach_deploy(
         self,
@@ -456,7 +466,7 @@ class VrfWorkflowCoordinator:
         ``deploy_type`` controls whether the pre-delete deployment is scoped to
         switches or to the VRF.
         """
-        return VrfStateMachine(self).run_deleted(module_args, strategy)
+        return self._vrf_state_machine().run_deleted(module_args, strategy)
 
     def _delete_all_existing_vrfs(
         self,
@@ -470,52 +480,7 @@ class VrfWorkflowCoordinator:
         NDStateMachine initialization, which has already queried the fabric;
         do not issue another current-state query or rewrite proposed config.
         """
-        return VrfStateMachine(self).delete_all_existing_vrfs(module_args, strategy)
-
-    def _prepare_overridden_deletions(
-        self,
-        module_args: dict,
-        strategy: BaseVrfStrategy,
-        omitted_vrf_names: list[str],
-    ) -> list[dict[str, Any]]:
-        """
-        Detach/deploy omitted VRFs before overridden deletes them.
-
-        ``overridden`` removes VRFs that exist on ND but are not present in the
-        playbook.  Those omitted VRFs may still be attached, so they need the
-        same pre-delete detach/deploy/wait sequence used by ``state=deleted``.
-        """
-        if not omitted_vrf_names:
-            return []
-
-        traces: list[dict[str, Any]] = []
-        detach_trace = self._apply_deleted_attachment_phase(
-            module_args,
-            strategy,
-            omitted_vrf_names,
-        )
-        if detach_trace:
-            traces.append(detach_trace)
-
-        deploy_payloads = self._build_deploy_payloads(
-            module_args.get("config") or [],
-            detach_trace.get("deploy_targets", {}) if detach_trace else {},
-        )
-        for deploy_payload in deploy_payloads:
-            deploy_trace = self._deploy_vrf_attachments(
-                module_args,
-                strategy,
-                deploy_payload,
-            )
-            traces.append(deploy_trace)
-
-        if deploy_payloads:
-            self._wait_for_vrfs_delete_ready(
-                module_args,
-                strategy,
-                omitted_vrf_names,
-            )
-        return traces
+        return self._vrf_state_machine().delete_all_existing_vrfs(module_args, strategy)
 
     # ── Attachment / deployment helpers ──────────────────────────
 
@@ -626,6 +591,8 @@ class VrfWorkflowCoordinator:
         state = module_args.get("state", "merged")
         config = module_args.get("config") or []
 
+        if not config and state != "overridden":
+            return {}
         if phase == "pre" and state not in ("deleted", "replaced", "overridden"):
             return {}
         if phase == "post" and state not in ("merged", "replaced", "overridden"):
@@ -642,6 +609,8 @@ class VrfWorkflowCoordinator:
                 strategy,
             )
         )
+        if phase == "post" and not desired:
+            return {}
         vrf_names = self._configured_vrf_names(config)
         deploy_enabled = self._deploy_enabled_by_vrf(config)
 
@@ -715,6 +684,7 @@ class VrfWorkflowCoordinator:
         module_args: dict,
         strategy: BaseVrfStrategy,
         vrf_names: list[str] | None = None,
+        attachment_details: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
         Detach all current attachments for deleted VRFs, independent of config.
@@ -724,10 +694,14 @@ class VrfWorkflowCoordinator:
         ND, not what the playbook happens to include under ``attach``.
         """
         vrf_names = vrf_names if vrf_names is not None else self._configured_vrf_names(module_args.get("config") or [])
-        attachments = self._current_attachment_details_ignore_missing(
-            module_args,
-            strategy,
-            vrf_names or None,
+        attachments = (
+            attachment_details
+            if attachment_details is not None
+            else self._current_attachment_details_ignore_missing(
+                module_args,
+                strategy,
+                vrf_names or None,
+            )
         )
 
         payloads: list[dict[str, Any]] = []
@@ -766,6 +740,17 @@ class VrfWorkflowCoordinator:
             deploy_targets,
             OperationType.DELETE,
         )
+
+    def _filter_attachment_details_by_vrf(
+        self,
+        attachments: list[dict[str, Any]],
+        vrf_names: list[str] | set[str],
+    ) -> list[dict[str, Any]]:
+        """Return attachment rows for the requested VRF names."""
+        vrf_name_set = set(vrf_names)
+        if not vrf_name_set:
+            return []
+        return [attachment for attachment in attachments if attachment.get("vrfName") in vrf_name_set]
 
     def _attachment_has_pending_delete_work(self, attachment: dict[str, Any]) -> bool:
         """Return True for an already-detached row that still needs deploy."""
@@ -957,12 +942,23 @@ class VrfWorkflowCoordinator:
         elif isinstance(data, list):
             attachments = data
 
+        return self._attachment_map_from_details(attachments)
+
+    def _attachment_map_from_details(
+        self,
+        attachments: list[dict[str, Any]],
+        vrf_names: list[str] | set[str] | None = None,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        """Key attached VRF attachment rows by (vrfName, switchId)."""
+        vrf_name_set = set(vrf_names) if vrf_names is not None else None
         current: dict[tuple[str, str], dict[str, Any]] = {}
         for attachment in attachments:
             if attachment.get("attach") is not True:
                 continue
             vrf_name = attachment.get("vrfName")
             switch_id = attachment.get("switchId")
+            if vrf_name_set is not None and vrf_name not in vrf_name_set:
+                continue
             if vrf_name and switch_id:
                 current[(vrf_name, switch_id)] = attachment
         return current
@@ -1030,6 +1026,85 @@ class VrfWorkflowCoordinator:
         """Return True for ND's attachment-query error when a VRF is absent."""
         message = str(error)
         return "VRF(s)" in message and "not found in fabric" in message
+
+    def _ensure_vrfs_have_no_networks(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        vrf_names: list[str],
+    ) -> None:
+        """Fail before VRF deletion when networks still reference the VRFs."""
+        if not vrf_names:
+            return
+
+        networks = self._current_networks_for_vrfs(module_args, strategy, vrf_names)
+        if not networks:
+            return
+
+        networks_by_vrf: dict[str, list[str]] = {}
+        for network in networks:
+            vrf_name = network.get("vrfName") or network.get("vrf_name")
+            network_name = network.get("networkName") or network.get("network_name") or network.get("displayName") or "<unknown>"
+            if vrf_name:
+                networks_by_vrf.setdefault(vrf_name, []).append(network_name)
+
+        if networks_by_vrf:
+            self.module.fail_json(
+                msg=(
+                    "Cannot delete VRF(s) because network(s) still reference them "
+                    f"on fabric '{strategy.fabric_name}': {networks_by_vrf}. "
+                    "Remove the associated networks before deleting the VRF."
+                )
+            )
+
+    def _current_networks_for_vrfs(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        vrf_names: list[str],
+    ) -> list[dict[str, Any]]:
+        """Gather networks referencing the requested VRFs."""
+        vrf_name_set = set(vrf_names)
+        try:
+            networks = []
+            for vrf_name in vrf_names:
+                networks.extend(self._query_networks_for_vrfs(module_args, strategy, [vrf_name], use_filter=True))
+        except Exception:
+            networks = self._query_networks_for_vrfs(module_args, strategy, vrf_names, use_filter=False)
+        return [network for network in networks if (network.get("vrfName") or network.get("vrf_name")) in vrf_name_set]
+
+    def _query_networks_for_vrfs(
+        self,
+        module_args: dict,
+        strategy: BaseVrfStrategy,
+        vrf_names: list[str],
+        use_filter: bool,
+    ) -> list[dict[str, Any]]:
+        """Query the networks endpoint, optionally scoped by VRF filter."""
+        orchestrator, _results = self._new_vrf_orchestrator(module_args, strategy)
+        endpoint = orchestrator._make_endpoint(EpManageFabricsNetworksGet)
+        if hasattr(endpoint, "endpoint_params"):
+            endpoint.endpoint_params.max = 10000
+            if use_filter:
+                endpoint.endpoint_params.filter = self._vrf_name_filter(vrf_names)
+
+        data = orchestrator._request(
+            path=endpoint.path,
+            verb=endpoint.verb,
+            not_found_ok=True,
+            operation_type=OperationType.QUERY,
+        )
+        if isinstance(data, dict):
+            return data.get("networks") or data.get("items") or []
+        if isinstance(data, list):
+            return data
+        return []
+
+    def _vrf_name_filter(self, vrf_names: list[str]) -> str:
+        """Build a URL-safe Lucene filter for VRF names."""
+        terms = [f"vrfName:{vrf_name}" for vrf_name in sorted(set(vrf_names))]
+        expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
+        return quote(expression, safe="")
 
     def _planned_detach_payloads(
         self,
@@ -1243,8 +1318,8 @@ class VrfWorkflowCoordinator:
         vrf_names: list[str] | None = None,
     ) -> None:
         """Wait until configured VRFs are absent or in notApplicable state."""
-        vrf_name_set = set(vrf_names if vrf_names is not None else self._configured_vrf_names(module_args.get("config") or []))
-        if not vrf_name_set:
+        pending_vrf_names = set(vrf_names if vrf_names is not None else self._configured_vrf_names(module_args.get("config") or []))
+        if not pending_vrf_names:
             return
 
         timeout = int(module_args.get("timeout") or self.module.params.get("timeout") or 30)
@@ -1252,16 +1327,18 @@ class VrfWorkflowCoordinator:
         ready_statuses = {"notApplicable", "NA", "na", ""}
         last_statuses: dict[str, str] = {}
 
-        while True:
+        while pending_vrf_names:
             vrfs = self._query_current_vrfs(module_args, strategy)
             last_statuses = {}
             for vrf in vrfs:
                 name = vrf.get("vrf_name") or vrf.get("vrfName")
-                if name in vrf_name_set:
+                if name in pending_vrf_names:
                     status = vrf.get("vrf_status") or vrf.get("vrfStatus") or ""
                     last_statuses[name] = str(status)
 
-            if all(name not in last_statuses or last_statuses[name] in ready_statuses for name in vrf_name_set):
+            ready_vrf_names = {name for name in pending_vrf_names if name not in last_statuses or last_statuses[name] in ready_statuses}
+            pending_vrf_names.difference_update(ready_vrf_names)
+            if not pending_vrf_names:
                 return
 
             if time.time() >= deadline:
