@@ -230,6 +230,19 @@ def request_with_rest_send(
     return response.get("DATA", {})
 
 
+def _is_transient_error(error: Exception) -> bool:
+    """Return True for errors worth retrying.
+
+    Client errors (HTTP 4xx) will not succeed on retry, so they are raised
+    immediately. Server errors (5xx) and errors with an unknown status
+    (e.g. transport/timeout failures reported with status < 0) are treated
+    as transient and retried.
+    """
+    if isinstance(error, NDModuleError):
+        return error.status >= 500 or error.status < 0
+    return True
+
+
 def request_with_verify_settings(module: Any, rest_send: RestSend, path: str, verb: HttpVerbEnum, data: Any = None) -> Any:
     """Run a controller read using the configured verify timeout/retry policy."""
     settings = get_verify_settings(module.params)
@@ -251,8 +264,8 @@ def request_with_verify_settings(module: Any, rest_send: RestSend, path: str, ve
                 timeout=timeout,
                 force_check_mode=True,
             )
-        except Exception:
-            if attempt + 1 >= retries:
+        except Exception as error:
+            if attempt + 1 >= retries or not _is_transient_error(error):
                 raise
 
 

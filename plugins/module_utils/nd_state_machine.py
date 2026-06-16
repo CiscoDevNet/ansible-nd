@@ -65,6 +65,7 @@ class NDStateMachine:
         self.ignore_errors = self.module.params.get("ignore_errors", False)
         self.supports_bulk_create = self.model_orchestrator.supports_bulk_create
         self.supports_bulk_delete = self.model_orchestrator.supports_bulk_delete
+        self.track_deletes_in_sent = self.model_orchestrator.track_deletes_in_sent
 
         # Initialize collections
         try:
@@ -217,7 +218,8 @@ class NDStateMachine:
         # Batch remove from collection (single index rebuild)
         keys_to_delete = [item.get_identifier_value() for item in items]
         self.existing.delete_many(keys_to_delete)
-        self.sent.add_many(items)
+        if self.track_deletes_in_sent:
+            self.sent.add_many(items)
 
         # Log deletion
         self.output.assign(after=self.existing)

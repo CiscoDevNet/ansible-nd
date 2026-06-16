@@ -44,6 +44,11 @@ class NDBaseOrchestrator(BaseModel, Generic[ModelType]):
     model_class: ClassVar[type[NDBaseModel]] = NDBaseModel
     supports_bulk_create: ClassVar[bool] = False
     supports_bulk_delete: ClassVar[bool] = False
+    # When True, items removed during deleted/overridden states are also added
+    # to the state machine's ``sent`` collection. Off by default so the
+    # generic ``sent`` keeps its "created/updated only" meaning for modules
+    # that do not opt in.
+    track_deletes_in_sent: ClassVar[bool] = False
 
     # NOTE: if not defined by subclasses, return an error as they are required
     create_endpoint: type[NDEndpointBaseModel]

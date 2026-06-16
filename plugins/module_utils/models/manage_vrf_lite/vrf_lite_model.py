@@ -302,12 +302,6 @@ class VrfLitePlaybookConfigModel(BaseModel):
     config_actions: ConfigActionsModel | None = Field(default=None)
     config: list[VrfLitePlaybookItemModel] | None = Field(default=None)
 
-    @model_validator(mode="after")
-    def validate_config_actions(self) -> "VrfLitePlaybookConfigModel":
-        if self.config_actions and not self.config_actions.save and self.config_actions.deploy:
-            raise ValueError("config_actions.deploy=true requires config_actions.save=true")
-        return self
-
     def to_runtime_config(self) -> list[dict[str, Any]]:
         """Normalize playbook config into NDStateMachine runtime items."""
         return [item.to_runtime_config() for item in (self.config or [])]

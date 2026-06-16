@@ -68,6 +68,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
     model_class: ClassVar[type[NDBaseModel]] = VrfLiteAttachmentEntry
     supports_bulk_create: ClassVar[bool] = True
     supports_bulk_delete: ClassVar[bool] = True
+    track_deletes_in_sent: ClassVar[bool] = True
 
     create_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
     update_endpoint: type[NDEndpointBaseModel] = EpManageFabricsGet
@@ -185,7 +186,6 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         module.params["config"] = explode_playbook_to_entries(config=config, module=module, state=state, current_entries=current_entries)
 
     def query_all(self, **kwargs: Any) -> list[dict[str, Any]]:
-        module = self._module()
         current = self._query_current_state(flat=True)
         self._prepare_state_machine_config(current)
         return current
