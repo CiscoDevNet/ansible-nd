@@ -568,7 +568,7 @@ def test_ethernet_trunk_host_interface_00162(value, match):
         (["1-"], True),
         (["100,200"], True),
         ([""], True),
-        ([100], True),
+        ([True], True),
     ],
     ids=[
         "none_passthrough",
@@ -590,7 +590,7 @@ def test_ethernet_trunk_host_interface_00162(value, match):
         "trailing_dash_rejected",
         "comma_in_element_rejected",
         "empty_string_rejected",
-        "non_string_entry_rejected",
+        "bool_entry_rejected",
     ],
 )
 def test_ethernet_trunk_host_interface_00170(value, should_raise):
@@ -621,6 +621,37 @@ def test_ethernet_trunk_host_interface_00170(value, should_raise):
 
 
 @pytest.mark.parametrize(
+    "value,expected",
+    [
+        ([100], ["100"]),
+        ([10, "20-30"], ["10", "20-30"]),
+        ([100, 200], ["100", "200"]),
+    ],
+    ids=["single_int", "int_and_range_string", "multiple_ints"],
+)
+def test_ethernet_trunk_host_interface_00171(value, expected):
+    """
+    # Summary
+
+    Verify `_validate_customer_vlan_id_list` coerces JSON int entries to strings, mirroring `_validate_allowed_vlans`.
+    ND returns single-id VLAN values as JSON ints (e.g. `100`); without coercion `from_response()` would raise on an
+    interface whose `vlanMappingEntries` echo int customer VLAN ids, breaking the query / idempotency path.
+
+    ## Test
+
+    - Int entries are coerced to their string form and accepted
+    - Mixed int / range-string lists coerce only the ints
+
+    ## Classes and Methods
+
+    - ethernet_trunk_host_interface._validate_customer_vlan_id_list()
+    """
+    with does_not_raise():
+        instance = EthernetTrunkHostVlanMappingEntryModel(customer_vlan_id=value)
+    assert instance.customer_vlan_id == expected
+
+
+@pytest.mark.parametrize(
     "value,match",
     [
         (["0"], r"out of bounds"),
@@ -629,7 +660,7 @@ def test_ethernet_trunk_host_interface_00170(value, should_raise):
         (["200-100"], r"start greater than end"),
         (["abc"], r"VLAN id or range"),
         ([""], r"non-empty strings"),
-        ([42], r"non-empty strings"),
+        ([True], r"non-empty strings"),
     ],
     ids=[
         "vlan_zero_message",
@@ -638,7 +669,7 @@ def test_ethernet_trunk_host_interface_00170(value, should_raise):
         "reversed_range_message",
         "shape_error_message",
         "empty_string_message",
-        "non_string_message",
+        "bool_entry_message",
     ],
 )
 def test_ethernet_trunk_host_interface_00172(value, match):
@@ -1070,23 +1101,42 @@ def test_ethernet_trunk_host_interface_00530():
     "value,expected",
     [
         ("ethernet1/1", "Ethernet1/1"),
+        ("ETHERNET1/1", "Ethernet1/1"),
+        ("etHernet1/1", "Ethernet1/1"),
         ("Ethernet1/1", "Ethernet1/1"),
-        ("e1/1", "E1/1"),
-        ("eth1/1/1", "Eth1/1/1"),
+        ("eth1/1", "Ethernet1/1"),
+        ("e1/1", "Ethernet1/1"),
+        ("eth1/1/1", "Ethernet1/1/1"),
+        ("Ethernet1/1.10", "Ethernet1/1.10"),
+        ("loopback0", "Loopback0"),
         ("", ""),
     ],
-    ids=["lowercase_full", "already_cap", "single_letter", "breakout", "empty_passthrough"],
+    ids=[
+        "lowercase_full",
+        "uppercase_full",
+        "mixed_case_full",
+        "already_cap",
+        "abbrev_eth",
+        "abbrev_e",
+        "abbrev_breakout",
+        "subinterface_passthrough",
+        "unrecognized_prefix_titlecase",
+        "empty_passthrough",
+    ],
 )
 def test_ethernet_trunk_host_interface_00550(value, expected):
     """
     # Summary
 
-    Verify `normalize_interface_name` capitalizes the first character.
+    Verify `normalize_interface_name` expands any case-insensitive NX-OS abbreviation of `Ethernet`
+    (`e`, `eth`, ...) to the canonical wire prefix and falls back to Title case for unrecognized prefixes.
 
     ## Test
 
-    - Lowercase input capitalized
-    - Already-capitalized input unchanged
+    - Case variants of the full name normalize to `Ethernet...`
+    - Abbreviations (`eth1/1`, `e1/1`) expand to `Ethernet1/1` so they match the wire form (idempotency)
+    - Subinterface / breakout suffixes pass through verbatim
+    - An unrecognized prefix is Title-cased rather than expanded
 
     ## Classes and Methods
 

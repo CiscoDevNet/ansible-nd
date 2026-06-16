@@ -60,6 +60,11 @@ _VLAN_ID_OR_RANGE_SHAPE = re.compile(r"^\d+(-\d+)?$")
 # class attribute in ModelPrivateAttr regardless of ClassVar annotation.
 _INTERFACE_NAME_PREFIX_RE = re.compile(r"^([A-Za-z]+)(.*)$")
 
+# This module exclusively manages ethernet interfaces (interface_type is frozen to "ethernet"),
+# so the canonical wire prefix is always "Ethernet". Any case-insensitive NX-OS abbreviation of
+# this name (e.g. "e", "eth", "ether") expands to the full form so user input matches the wire key.
+_CANONICAL_INTERFACE_TYPE = "Ethernet"
+
 
 def _validate_vlan_id_or_range(token: str, field_name: str) -> None:
     """
@@ -132,6 +137,8 @@ def _validate_customer_vlan_id_list(value):
 
     Validate `customer_vlan_id` is a list of non-empty VLAN id or range strings where every id is in 1..4094 and every range start <= end.
     Used in `vlanMappingEntries` to identify which customer VLAN ids map to a provider VLAN id.
+    ND returns single-id values as JSON ints (e.g. `250`); this validator coerces int -> str per entry, mirroring `_validate_allowed_vlans`,
+    so GET responses round-trip and idempotency comparisons stay stable.
 
     Used as the `BeforeValidator` payload for the `CustomerVlanIdList` Annotated type.
 
@@ -139,18 +146,22 @@ def _validate_customer_vlan_id_list(value):
 
     ### ValueError
 
-    - If any list entry is not a non-empty string.
+    - If any list entry is not a non-empty string (after int coercion).
     - If any entry is not a VLAN id or range, has an id outside 1..4094, or has a reversed range.
     """
     if value is None:
         return value
     if not isinstance(value, list):
         return value
+    coerced = []
     for entry in value:
+        if isinstance(entry, int) and not isinstance(entry, bool):
+            entry = str(entry)
         if not isinstance(entry, str) or not entry:
             raise ValueError(f"customer_vlan_id entries must be non-empty strings (VLAN id or range); got {entry!r}")
         _validate_vlan_id_or_range(entry, "customer_vlan_id")
-    return value
+        coerced.append(entry)
+    return coerced
 
 
 # TODO: After all per-policy interface modules (ethernet_trunk_host, svi, port_channel_trunk_host, ...) merge to develop, consolidate
@@ -395,16 +406,22 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
         """
         # Summary
 
-        Normalize the leading alphabetic prefix of an interface name to ND's canonical Title case so that
-        any user-supplied casing round-trips against the wire form. Examples:
+        Normalize the leading alphabetic prefix of an interface name to ND's canonical `Ethernet` form so that
+        any user-supplied casing or NX-OS abbreviation round-trips against the wire form. Examples:
 
         - `ethernet1/1` -> `Ethernet1/1`
         - `ETHERNET1/1` -> `Ethernet1/1`
         - `etHernet1/1` -> `Ethernet1/1`
+        - `eth1/1` -> `Ethernet1/1` (abbreviation expanded)
+        - `e1/1` -> `Ethernet1/1` (abbreviation expanded)
         - `Ethernet1/1` -> `Ethernet1/1` (idempotent)
 
-        Only the leading alphabetic run is rewritten; digits and separators (`/`, `-`) are preserved verbatim,
-        so subinterface and breakout forms (`Ethernet1/1.10`, `Ethernet1/1/1`) pass through unchanged.
+        Because the wire key is matched exactly, an abbreviated prefix that is not expanded would never match
+        ND's `Ethernet...` form, silently breaking idempotency. Any case-insensitive prefix of `Ethernet`
+        (`e`, `et`, `eth`, ...) is therefore expanded to the full canonical name. An unrecognized prefix falls
+        back to Title case so it still round-trips. Only the leading alphabetic run is rewritten; digits and
+        separators (`/`, `.`, `-`) are preserved verbatim, so subinterface and breakout forms
+        (`Ethernet1/1.10`, `Ethernet1/1/1`) pass through unchanged.
 
         ## Raises
 
@@ -416,6 +433,8 @@ class EthernetTrunkHostInterfaceModel(NDBaseModel):
         if not match:
             return value
         prefix, rest = match.groups()
+        if _CANONICAL_INTERFACE_TYPE.lower().startswith(prefix.lower()):
+            return _CANONICAL_INTERFACE_TYPE + rest
         return prefix[0].upper() + prefix[1:].lower() + rest
 
     # --- Argument Spec ---
