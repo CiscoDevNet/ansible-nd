@@ -419,7 +419,13 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
                     f"Staging failed for update group(s) {update_group_names} in fabric '{self.fabric_name}': " f"{self._format_switch_statuses(failed)}"
                 )
 
-            if switches and all(_switch_is_prepared(sw) for sw in switches):
+            # No member switches in the requested groups means there is nothing to stage or
+            # validate, so the wait is already satisfied. Returning here (rather than falling
+            # through to the deadline check) avoids polling a switch-less group until `timeout`.
+            if not switches:
+                return
+
+            if all(_switch_is_prepared(sw) for sw in switches):
                 return
 
             if time.monotonic() >= deadline:

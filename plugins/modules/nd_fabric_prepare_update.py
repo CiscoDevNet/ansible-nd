@@ -124,7 +124,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Resul
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
 
-def _run_prepare(module: AnsibleModule) -> dict:
+def _run_prepare(module: AnsibleModule) -> tuple[Results | None, dict]:
     """
     # Summary
 
@@ -134,6 +134,10 @@ def _run_prepare(module: AnsibleModule) -> dict:
     before/after diff is needed). In check mode the stage action is skipped (it cannot be
     previewed) but a required change is still reported.
 
+    Returns the orchestrator's `Results` instance (which records every REST call for verbosity-gated
+    `-vv` / `-vvv` output) together with the config-level `changed` / `before` / `after` fields, so
+    `main` can render them with `NDOutput.format_with_verbosity`.
+
     ## Raises
 
     ### Exception
@@ -141,8 +145,6 @@ def _run_prepare(module: AnsibleModule) -> dict:
     - Propagated from the orchestrator if the pre-flight check fails, a request fails, a switch
       reports a staging failure, or the wait times out.
     """
-    output = NDOutput(output_level=module.params.get("output_level", "normal"))
-
     sender = Sender()
     sender.ansible_module = module
     rest_send_params = dict(module.params)
@@ -164,11 +166,11 @@ def _run_prepare(module: AnsibleModule) -> dict:
 
     if FabricPrepareUpdateOrchestrator.snapshot_fully_prepared(before):
         # Every switch is already staged and validated for the update group's configured image.
-        return output.format(changed=False, before=before, after=before)
+        return orchestrator.results, {"changed": False, "before": before, "after": before}
 
     if module.check_mode:
         # The stage action cannot be previewed; report the pending change without acting.
-        return output.format(changed=True, before=before, after=before)
+        return orchestrator.results, {"changed": True, "before": before, "after": before}
 
     orchestrator.stage(update_groups)
     if module.params["wait"]:
@@ -179,7 +181,7 @@ def _run_prepare(module: AnsibleModule) -> dict:
         )
 
     after = orchestrator.status_snapshot(update_groups)
-    return output.format(changed=True, before=before, after=after)
+    return orchestrator.results, {"changed": True, "before": before, "after": after}
 
 
 def main():
@@ -196,11 +198,14 @@ def main():
     module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
     require_pydantic(module)
 
+    output = NDOutput(output_level=module.params.get("output_level", "normal"))
+
     try:
-        result = _run_prepare(module)
-        module.exit_json(**result)
+        results, output_fields = _run_prepare(module)
+        verbosity = module._verbosity if hasattr(module, "_verbosity") else 0
+        module.exit_json(**output.format_with_verbosity(verbosity, results, **output_fields))
     except Exception as e:
-        module.fail_json(msg=f"Module execution failed: {str(e)}")
+        module.fail_json(msg=f"Module execution failed: {str(e)}", **output.format())
 
 
 if __name__ == "__main__":

@@ -304,5 +304,18 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
         "MESSAGE": "Internal Server Error",
         "DATA": {"message": "Internal Server Error"}
+    },
+
+    "test_fabric_prepare_update_00550a": {
+        "TEST_NOTES": ["wait_for_completion: requested group resolves but has no member switches"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {"updateGroupName": "prep_leaf", "updateGroupStatus": "none", "stageValidatePercentage": 0, "updateGroupSwitches": []}
+            ]
+        }
     }
 }

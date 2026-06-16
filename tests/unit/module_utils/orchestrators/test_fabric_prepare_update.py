@@ -615,3 +615,32 @@ def test_fabric_prepare_update_00540() -> None:
 
     with pytest.raises(RuntimeError, match=r"failed 4 times in a row"):
         instance.wait_for_completion(["prep_leaf"], timeout=300, interval=0)
+
+
+def test_fabric_prepare_update_00550() -> None:
+    """
+    # Summary
+
+    Verify `wait_for_completion` returns immediately when a requested update group resolves but has
+    no member switches, instead of polling it until `timeout`.
+
+    ## Test
+
+    - The summary reports `prep_leaf` with an empty `updateGroupSwitches` list
+    - `wait_for_completion` returns on the first poll without raising, even with `timeout=0`
+
+    ## Classes and Methods
+
+    - FabricPrepareUpdateOrchestrator.wait_for_completion()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_prepare_update(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricPrepareUpdateOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.wait_for_completion(["prep_leaf"], timeout=0, interval=0)
