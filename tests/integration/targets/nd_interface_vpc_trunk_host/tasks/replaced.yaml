@@ -4,10 +4,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# vpc500 was created in merged.yaml. Replace its config (change allowed_vlans, native_vlan,
+# vpc200 was created in merged.yaml. Replace its config (change allowed_vlans, native_vlan,
 # add a peer1 member) and verify the change is reflected.
 
-- name: "REPLACED: Update vpc500 policy (check mode)"
+- name: "REPLACED: Update vpc200 policy (check mode)"
   cisco.nd.nd_interface_vpc_trunk_host: &replace_vpc
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
@@ -17,7 +17,7 @@
   check_mode: true
   register: cm_replaced
 
-- name: "REPLACED: Update vpc500 policy (normal mode)"
+- name: "REPLACED: Update vpc200 policy (normal mode)"
   cisco.nd.nd_interface_vpc_trunk_host: *replace_vpc
   register: nm_replaced
 

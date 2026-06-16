@@ -4,10 +4,10 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# After replaced.yaml, vpc500 exists. State overridden with a single new vpc (vpc501) should
-# remove vpc500 and create vpc501 fabric-wide.
+# After replaced.yaml, vpc200 exists. State overridden with a single new vpc (vpc201) should
+# remove vpc200 and create vpc201 fabric-wide.
 
-- name: "OVERRIDDEN: Single source of truth = vpc501 only (check mode)"
+- name: "OVERRIDDEN: Single source of truth = vpc201 only (check mode)"
   cisco.nd.nd_interface_vpc_trunk_host: &override_vpc
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
@@ -17,7 +17,7 @@
   check_mode: true
   register: cm_overridden
 
-- name: "OVERRIDDEN: Single source of truth = vpc501 only (normal mode)"
+- name: "OVERRIDDEN: Single source of truth = vpc201 only (normal mode)"
   cisco.nd.nd_interface_vpc_trunk_host: *override_vpc
   register: nm_overridden
 

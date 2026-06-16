@@ -4,20 +4,20 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-# After overridden.yaml, only vpc501 exists. Remove it explicitly and verify idempotency.
+# After overridden.yaml, only vpc201 exists. Remove it explicitly and verify idempotency.
 
-- name: "DELETED: Remove vpc501 (check mode)"
+- name: "DELETED: Remove vpc201 (check mode)"
   cisco.nd.nd_interface_vpc_trunk_host: &delete_vpc
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
     config:
       - switch_ip: "{{ test_switch_ip_peer1 }}"
-        interface_name: vpc501
+        interface_name: vpc201
     state: deleted
   check_mode: true
   register: cm_deleted
 
-- name: "DELETED: Remove vpc501 (normal mode)"
+- name: "DELETED: Remove vpc201 (normal mode)"
   cisco.nd.nd_interface_vpc_trunk_host: *delete_vpc
   register: nm_deleted
 

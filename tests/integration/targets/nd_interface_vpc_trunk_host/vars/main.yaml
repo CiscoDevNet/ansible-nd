@@ -12,28 +12,30 @@ test_switch_ip_peer2: "{{ nd_test_vpc_peer2_ip | default('192.168.12.152') }}"
 # The previous nd_vpc_pair module was closed (PR #278); the shared vPC interface infrastructure was
 # re-homed onto the nd_interface_vpc_base branch, and this substrate now uses nd_manage_vpc_pair.
 #
-# peer1_switch_id / peer2_switch_id accept management IPs (or serials). This config uses a PHYSICAL
-# peer-link (use_virtual_peer_link: false) because the Nexus 9000v testbed does not support virtual/
-# fabric peering. The peer-link members (switch_member_interfaces / peer_switch_member_interfaces) and
-# po ids live under nd_manage_vpc_pair's vpc_pair_details (VpcPairDetailsDefault) template. Values mirror
-# the known-good SITE1 physical pair (S1_LE1 Eth1/2 <-> S1_LE2 Eth1/2, mgmt-VRF keepalive, domain 1).
-# Keep-alive local IPs are set explicitly (nd_manage_vpc_pair does not auto-fill them from the mgmt IP).
+# peer1_switch_id / peer2_switch_id accept management IPs (or serials).
+#
+# This substrate uses a VIRTUAL peer-link (use_virtual_peer_link: true). A PHYSICAL peer-link is the
+# real-world-preferred config, but it is currently broken at the ND controller layer: actions/configSave
+# fails to generate physical vPC peer-link config with HTTP 500 "Member port <Eth> is a member of
+# VPC_PAIR, remove ... first" (lab-verified on ND with NX-OS 10.6(2), reproducible via the raw API and
+# independent of nd_manage_vpc_pair). A virtual peer-link generates, deploys, and forms cleanly on the
+# same N9000v switches (both peers vpcConfigured, consistency OK). Virtual peer-link is sufficient here
+# because the vPC interface tests only need the pair to exist for peer-serial resolution.
+#
+# TODO(4.2.1) vpc-physical-peer-link-configsave-fails
+# Revert to a physical peer-link once ND fixes physical peer-link config generation, i.e. restore
+# use_virtual_peer_link: false plus switch_po_id / peer_switch_po_id / switch_member_interfaces /
+# peer_switch_member_interfaces (Ethernet1/2 on both peers) under vpc_pair_details.
 vpc_pair_setup:
   peer1_switch_id: "{{ test_switch_ip_peer1 }}"
   peer2_switch_id: "{{ test_switch_ip_peer2 }}"
-  use_virtual_peer_link: false
+  use_virtual_peer_link: true
   vpc_pair_details:
     type: default
     domain_id: 1
     keep_alive_vrf: management
     switch_keep_alive_local_ip: "{{ test_switch_ip_peer1 }}"
     peer_switch_keep_alive_local_ip: "{{ test_switch_ip_peer2 }}"
-    switch_po_id: 1
-    peer_switch_po_id: 1
-    switch_member_interfaces:
-      - Ethernet1/2
-    peer_switch_member_interfaces:
-      - Ethernet1/2
 
 # Baseline vPC trunk-host interface used by merged + idempotency tests.
 # ND requires per-peer peer1AllowedVlans/peer2AllowedVlans and peer1NativeVlan/peer2NativeVlan
@@ -41,17 +43,17 @@ vpc_pair_setup:
 # single user-facing `allowed_vlans` and `native_vlan` and fans them out on write.
 vpc_trunk_host_baseline:
   switch_ip: "{{ test_switch_ip_peer1 }}"
-  interface_name: vpc500
+  interface_name: vpc200
   config_data:
     network_os:
       policy:
         admin_state: true
         allowed_vlans: "100-200"
         native_vlan: 99
-        peer1_port_channel_id: 500
+        peer1_port_channel_id: 200
         peer1_member_ports:
           - Ethernet1/8
-        peer2_port_channel_id: 500
+        peer2_port_channel_id: 200
         peer2_member_ports:
           - Ethernet1/8
         port_channel_mode: active
@@ -61,38 +63,38 @@ vpc_trunk_host_baseline:
 # Updated config for replaced tests (different allowed_vlans + native_vlan + add a member on peer1).
 vpc_trunk_host_updated:
   switch_ip: "{{ test_switch_ip_peer1 }}"
-  interface_name: vpc500
+  interface_name: vpc200
   config_data:
     network_os:
       policy:
         admin_state: true
         allowed_vlans: "100-300"
         native_vlan: 100
-        peer1_port_channel_id: 500
+        peer1_port_channel_id: 200
         peer1_member_ports:
           - Ethernet1/8
           - Ethernet1/9
-        peer2_port_channel_id: 500
+        peer2_port_channel_id: 200
         peer2_member_ports:
           - Ethernet1/8
         port_channel_mode: active
         lacp_rate: fast
         mtu: jumbo
 
-# Second vPC for overridden test: define only this one, expect vpc500 to be removed.
+# Second vPC for overridden test: define only this one, expect vpc200 to be removed.
 vpc_trunk_host_overridden:
   switch_ip: "{{ test_switch_ip_peer1 }}"
-  interface_name: vpc501
+  interface_name: vpc201
   config_data:
     network_os:
       policy:
         admin_state: true
         allowed_vlans: all
         native_vlan: 1
-        peer1_port_channel_id: 501
+        peer1_port_channel_id: 201
         peer1_member_ports:
           - Ethernet1/10
-        peer2_port_channel_id: 501
+        peer2_port_channel_id: 201
         peer2_member_ports:
           - Ethernet1/10
         port_channel_mode: active
@@ -101,17 +103,17 @@ vpc_trunk_host_overridden:
 # Nexus 9000v virtual switches reject `switchport vlan mapping ... dot1q-tunnel ...`.
 vpc_trunk_host_with_vlan_mapping:
   switch_ip: "{{ test_switch_ip_peer1 }}"
-  interface_name: vpc500
+  interface_name: vpc200
   config_data:
     network_os:
       policy:
         admin_state: true
         allowed_vlans: "100-200"
         native_vlan: 99
-        peer1_port_channel_id: 500
+        peer1_port_channel_id: 200
         peer1_member_ports:
           - Ethernet1/8
-        peer2_port_channel_id: 500
+        peer2_port_channel_id: 200
         peer2_member_ports:
           - Ethernet1/8
         port_channel_mode: active

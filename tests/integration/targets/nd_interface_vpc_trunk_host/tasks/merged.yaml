@@ -6,7 +6,7 @@
 
 # --- MERGED CREATE ---
 
-- name: "MERGED CREATE: Create vpc500 (check mode)"
+- name: "MERGED CREATE: Create vpc200 (check mode)"
   cisco.nd.nd_interface_vpc_trunk_host: &merge_vpc
     output_level: "{{ nd_info.output_level }}"
     fabric_name: "{{ test_fabric_name }}"
@@ -16,7 +16,7 @@
   check_mode: true
   register: cm_merged_create
 
-- name: "MERGED CREATE: Create vpc500 (normal mode)"
+- name: "MERGED CREATE: Create vpc200 (normal mode)"
   cisco.nd.nd_interface_vpc_trunk_host: *merge_vpc
   register: nm_merged_create
 
@@ -32,12 +32,12 @@
   ansible.builtin.pause:
     seconds: 30
 
-- name: "MERGED IDEMPOTENT: Re-apply vpc500 (check mode)"
+- name: "MERGED IDEMPOTENT: Re-apply vpc200 (check mode)"
   cisco.nd.nd_interface_vpc_trunk_host: *merge_vpc
   check_mode: true
   register: cm_merged_idem
 
-- name: "MERGED IDEMPOTENT: Re-apply vpc500 (normal mode)"
+- name: "MERGED IDEMPOTENT: Re-apply vpc200 (normal mode)"
   cisco.nd.nd_interface_vpc_trunk_host: *merge_vpc
   register: nm_merged_idem
 
