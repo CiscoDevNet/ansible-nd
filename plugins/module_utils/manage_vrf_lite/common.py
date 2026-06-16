@@ -9,14 +9,51 @@ from __future__ import annotations
 import ipaddress
 from typing import Any, NoReturn
 
+from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.exceptions import (
     VrfLiteResourceError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
+from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
+from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
 
 DEFAULT_VERIFY_TIMEOUT = 10
 DEFAULT_VERIFY_RETRIES = 5
 DEFAULT_CONFIG_ACTION_TYPE = "switch"
 CONFIG_ACTION_TYPE_CHOICES = ("switch", "global")
+
+
+class _VrfLiteListPayloadRestSend(RestSend):
+    """RestSend variant for the ND VRF attachment API's top-level list body."""
+
+    @property
+    def payload(self) -> Any:
+        return self._payload
+
+    @payload.setter
+    def payload(self, value: Any) -> None:
+        if not isinstance(value, (dict, list)):
+            msg = "{0}.payload: payload must be a dict or list. ".format(self.class_name)
+            msg += "Got {0}.".format(value)
+            raise TypeError(msg)
+        self._payload = value
+
+
+class _VrfLiteListPayloadSender(Sender):
+    """Sender variant for the ND VRF attachment API's top-level list body."""
+
+    @property
+    def payload(self) -> Any:
+        return self._payload
+
+    @payload.setter
+    def payload(self, value: Any) -> None:
+        if value is not None and not isinstance(value, (dict, list)):
+            msg = "{0}.payload: payload must be a dict, list, or None. ".format(self.class_name)
+            msg += "Got type {0}, value {1}.".format(type(value).__name__, value)
+            raise TypeError(msg)
+        self._payload = value
 
 
 def _params(source: Any) -> dict[str, Any]:
@@ -120,7 +157,80 @@ def get_verify_settings(source: Any) -> dict[str, Any]:
     }
 
 
-def request_with_verify_settings(module: Any, nd_v2: Any, path: str, verb: Any, data: Any = None) -> Any:
+def _list_payload_rest_send(module: Any, base_rest_send: RestSend) -> RestSend:
+    rest_send = _VrfLiteListPayloadRestSend(
+        {
+            "check_mode": module.check_mode,
+            "state": module.params.get("state"),
+        }
+    )
+    rest_send.timeout = base_rest_send.timeout
+    rest_send.send_interval = base_rest_send.send_interval
+    rest_send.unit_test = base_rest_send.unit_test
+
+    sender = _VrfLiteListPayloadSender()
+    sender.ansible_module = module
+    rest_send.sender = sender
+    rest_send.response_handler = ResponseHandler()
+    return rest_send
+
+
+def request_with_rest_send(
+    module: Any,
+    rest_send: RestSend,
+    path: str,
+    verb: HttpVerbEnum,
+    data: Any = None,
+    timeout: int | None = None,
+    force_check_mode: bool = False,
+) -> Any:
+    """Run a controller request through the orchestrator's RestSend path."""
+    active_rest_send = _list_payload_rest_send(module, rest_send) if isinstance(data, list) else rest_send
+
+    active_rest_send.save_settings()
+    if timeout is not None:
+        active_rest_send.timeout = timeout
+    if force_check_mode:
+        active_rest_send.check_mode = False
+
+    try:
+        active_rest_send.path = path
+        active_rest_send.verb = verb
+        if data is not None:
+            active_rest_send.payload = data
+        active_rest_send.commit()
+    except (TypeError, ValueError) as error:
+        raise ValueError("Error in request: {0}".format(error)) from error
+    finally:
+        active_rest_send.restore_settings()
+
+    response = active_rest_send.response_current
+    result = active_rest_send.result_current
+
+    if not result.get("success", False):
+        response_data = response.get("DATA")
+        raw = None
+        payload = None
+
+        if isinstance(response_data, dict):
+            if "raw_response" in response_data:
+                raw = response_data["raw_response"]
+            else:
+                payload = response_data
+
+        error_msg = active_rest_send.response_handler.error_message if active_rest_send.response_handler else "Unknown error"
+        raise NDModuleError(
+            msg=error_msg or "Unknown error",
+            status=response.get("RETURN_CODE", -1),
+            request_payload=data if isinstance(data, dict) else None,
+            response_payload=payload,
+            raw=raw,
+        )
+
+    return response.get("DATA", {})
+
+
+def request_with_verify_settings(module: Any, rest_send: RestSend, path: str, verb: HttpVerbEnum, data: Any = None) -> Any:
     """Run a controller read using the configured verify timeout/retry policy."""
     settings = get_verify_settings(module.params)
     timeout = settings.get("timeout", DEFAULT_VERIFY_TIMEOUT)
@@ -131,19 +241,19 @@ def request_with_verify_settings(module: Any, nd_v2: Any, path: str, verb: Any, 
         retries = DEFAULT_VERIFY_RETRIES
 
     for attempt in range(retries):
-        rest_send = nd_v2._get_rest_send()
-        rest_send.save_settings()
-        rest_send.timeout = timeout
-        rest_send.check_mode = False
         try:
-            if data is None:
-                return nd_v2.request(path, verb)
-            return nd_v2.request(path, verb, data)
+            return request_with_rest_send(
+                module=module,
+                rest_send=rest_send,
+                path=path,
+                verb=verb,
+                data=data,
+                timeout=timeout,
+                force_check_mode=True,
+            )
         except Exception:
             if attempt + 1 >= retries:
                 raise
-        finally:
-            rest_send.restore_settings()
 
 
 def get_config_actions(source: Any) -> dict[str, Any]:

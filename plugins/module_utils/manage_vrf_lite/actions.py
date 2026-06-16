@@ -13,6 +13,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     _raise_vrf_lite_error,
     _resolve_serial,
+    request_with_rest_send,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query import (
     query_vrf_lite_state,
@@ -26,115 +27,32 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_p
     parse_instance_values,
     vrf_lite_items_to_config,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd import ResponseHandler
-from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
-from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender as NDSender
 
 
-class _VrfLiteListPayloadRestSend(RestSend):
-    """RestSend variant for the NDFC VRF attachment API's top-level list body."""
-
-    @property
-    def payload(self) -> Any:
-        return self._payload
-
-    @payload.setter
-    def payload(self, value: Any) -> None:
-        if not isinstance(value, (dict, list)):
-            msg = "{0}.payload: payload must be a dict or list. ".format(self.class_name)
-            msg += "Got {0}.".format(value)
-            raise TypeError(msg)
-        self._payload = value
-
-
-class _VrfLiteListPayloadSender(NDSender):
-    """Sender variant for the NDFC VRF attachment API's top-level list body."""
-
-    @property
-    def payload(self) -> Any:
-        return self._payload
-
-    @payload.setter
-    def payload(self, value: Any) -> None:
-        if value is not None and not isinstance(value, (dict, list)):
-            msg = "{0}.payload: payload must be a dict, list, or None. ".format(self.class_name)
-            msg += "Got type {0}, value {1}.".format(type(value).__name__, value)
-            raise TypeError(msg)
-        self._payload = value
-
-
-def _request_vrf_lite_payload(nd_v2: Any, path: str, verb: HttpVerbEnum, payload: Any) -> Any:
+def _request_vrf_lite_payload(module: Any, rest_send: Any, path: str, verb: HttpVerbEnum, payload: Any) -> Any:
     """Send VRF Lite payloads without widening the shared REST sender contract."""
-    if not isinstance(payload, list):
-        return nd_v2.request(path, verb, payload)
-
-    if not hasattr(nd_v2, "_get_rest_send") or not hasattr(nd_v2, "module"):
-        return nd_v2.request(path, verb, payload)
-
-    base_rest_send = nd_v2._get_rest_send()
-    rest_send = _VrfLiteListPayloadRestSend(
-        {
-            "check_mode": nd_v2.module.check_mode,
-            "state": nd_v2.params.get("state"),
-        }
-    )
-    rest_send.timeout = base_rest_send.timeout
-    rest_send.send_interval = base_rest_send.send_interval
-    rest_send.unit_test = base_rest_send.unit_test
-
-    sender = _VrfLiteListPayloadSender()
-    sender.ansible_module = nd_v2.module
-    rest_send.sender = sender
-    response_handler = ResponseHandler()
-    rest_send.response_handler = response_handler
-
     try:
-        rest_send.path = path
-        rest_send.verb = verb
-        rest_send.payload = payload
-        rest_send.commit()
-    except (TypeError, ValueError) as error:
-        raise ValueError("Error in VRF Lite request: {0}".format(error)) from error
-
-    response = rest_send.response_current
-    result = rest_send.result_current
-
-    nd_v2.method = verb.value
-    nd_v2.path = path
-    nd_v2.response = response.get("MESSAGE")
-    nd_v2.status = response.get("RETURN_CODE", -1)
-    nd_v2.url = response.get("REQUEST_PATH")
-
-    if not result.get("success", False):
-        response_data = response.get("DATA")
-        raw = None
-        response_payload = None
-        if isinstance(response_data, dict):
-            if "raw_response" in response_data:
-                raw = response_data["raw_response"]
-            else:
-                response_payload = response_data
-
-        error_msg = response_handler.error_message or "Unknown error"
-
+        return request_with_rest_send(
+            module=module,
+            rest_send=rest_send,
+            path=path,
+            verb=verb,
+            data=payload,
+        )
+    except Exception as error:
         _raise_vrf_lite_error(
-            msg="{0}; request_payload={1}".format(error_msg, json.dumps(payload, sort_keys=True)),
-            status=nd_v2.status,
+            msg="{0}; request_payload={1}".format(error, json.dumps(payload, sort_keys=True)),
             request_payload=payload,
-            response_payload=response_payload,
-            raw=raw,
         )
 
-    return response.get("DATA", {})
 
-
-def _ensure_vrf_exists(module: Any, vrf_name: str) -> None:
+def _ensure_vrf_exists(module: Any, rest_send: Any, vrf_name: str) -> None:
     known_vrfs = module.params.get("_known_vrfs") or []
     if vrf_name in known_vrfs:
         return
 
     fabric_name = module.params.get("fabric_name")
-    refreshed = query_vrf_lite_state(module=module, fabric_name=fabric_name, filter_vrfs={vrf_name})
+    refreshed = query_vrf_lite_state(module=module, rest_send=rest_send, fabric_name=fabric_name, filter_vrfs={vrf_name})
     if not refreshed:
         _raise_vrf_lite_error(
             msg="VRF '{0}' does not exist in fabric '{1}'.".format(vrf_name, fabric_name),
@@ -143,7 +61,7 @@ def _ensure_vrf_exists(module: Any, vrf_name: str) -> None:
         )
 
 
-def _reserve_dot1q_if_needed(nd_v2: Any, fabric_name: str, vrf_name: str, serial_number: str, lite_item: dict[str, Any]) -> dict[str, Any]:
+def _reserve_dot1q_if_needed(module: Any, rest_send: Any, fabric_name: str, vrf_name: str, serial_number: str, lite_item: dict[str, Any]) -> dict[str, Any]:
     if lite_item.get("dot1q") not in (None, ""):
         return lite_item
 
@@ -160,7 +78,7 @@ def _reserve_dot1q_if_needed(nd_v2: Any, fabric_name: str, vrf_name: str, serial
         "allocatedTo": vrf_name,
     }
 
-    response = nd_v2.request(VrfLiteEndpoints.reserve_id(fabric_name), HttpVerbEnum.POST, payload)
+    response = request_with_rest_send(module, rest_send, VrfLiteEndpoints.reserve_id(fabric_name), HttpVerbEnum.POST, payload)
 
     dot1q_value = None
     if isinstance(response, dict):
@@ -222,15 +140,15 @@ def _entry_vlan_id(module: Any, entry: Any, raw_attach: dict[str, Any] | None = 
     )
 
 
-def build_attach_payload_for_entry(module: Any, nd_v2: Any, entry: Any) -> dict[str, Any]:
-    """Build one NDFC attachment row for one flat VRF Lite entry."""
+def build_attach_payload_for_entry(module: Any, rest_send: Any, entry: Any) -> dict[str, Any]:
+    """Build one ND attachment row for one flat VRF Lite entry."""
     serial_number = _resolve_serial(module, entry.switch_ip)
     raw_attach = _raw_attachment_entry(module, entry.vrf_name, serial_number)
     vlan_id = _entry_vlan_id(module, entry, raw_attach)
 
     resolved_extensions = []
     for lite_item in vrf_lite_items_to_config(_entry_extensions(entry)):
-        resolved_extensions.append(_reserve_dot1q_if_needed(nd_v2, module.params.get("fabric_name"), entry.vrf_name, serial_number, lite_item))
+        resolved_extensions.append(_reserve_dot1q_if_needed(module, rest_send, module.params.get("fabric_name"), entry.vrf_name, serial_number, lite_item))
 
     instance_values = build_instance_values_api(
         getattr(entry, "import_evpn_rt", None),
@@ -271,7 +189,7 @@ def _build_detach_payload(
 
 
 def build_detach_payload_for_entry(module: Any, entry: Any) -> dict[str, Any]:
-    """Build one NDFC row that removes VRF Lite data for one flat entry."""
+    """Build one ND row that removes VRF Lite data for one flat entry."""
     serial_number = _resolve_serial(module, entry.switch_ip)
     raw_attach = _raw_attachment_entry(module, entry.vrf_name, serial_number)
     vlan_id = getattr(entry, "vlan_id", None)
@@ -309,14 +227,14 @@ def _collect_attachment_failures(response: Any) -> list[str]:
     return failures
 
 
-def _post_attachment_payload(nd_v2: Any, fabric_name: str, vrf_name: str, lan_attach_list: list[dict[str, Any]]) -> dict[str, Any]:
+def _post_attachment_payload(module: Any, rest_send: Any, fabric_name: str, vrf_name: str, lan_attach_list: list[dict[str, Any]]) -> dict[str, Any]:
     if not lan_attach_list:
         return {}
 
     path = VrfLiteEndpoints.vrf_attachments_post(fabric_name)
     payload = {"attachments": lan_attach_list}
     try:
-        response = _request_vrf_lite_payload(nd_v2, path, HttpVerbEnum.POST, payload)
+        response = _request_vrf_lite_payload(module, rest_send, path, HttpVerbEnum.POST, payload)
     except Exception as error:
         _raise_vrf_lite_error(
             msg="{0}; request_path={1}; request_payload={2}".format(error, path, json.dumps(payload, sort_keys=True)),

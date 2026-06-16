@@ -312,11 +312,11 @@ def test_manage_vrf_lite_00475_query_ignores_detached_attachment_rows(monkeypatc
 
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_fabric_switches",
-        lambda _nd_v2, _fabric_name, _timeout: {"SN1": "10.0.0.1"},
+        lambda _module, _rest_send, _fabric_name: {"SN1": "10.0.0.1"},
     )
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_vrfs",
-        lambda _nd_v2, _fabric_name, _timeout: [
+        lambda _module, _rest_send, _fabric_name: [
             {
                 "vrfName": "BLUE",
                 "vrfTemplateConfig": '{"vrfVlanId":500}',
@@ -339,7 +339,7 @@ def test_manage_vrf_lite_00475_query_ignores_detached_attachment_rows(monkeypatc
         ],
     )
 
-    result = query_vrf_lite_state(module=module, fabric_name="FABRIC1", filter_vrfs={"BLUE"})
+    result = query_vrf_lite_state(module=module, rest_send=object(), fabric_name="FABRIC1", filter_vrfs={"BLUE"})
 
     assert result == [{"vrf_name": "BLUE", "vlan_id": 500, "deploy": False, "attach": []}]
     assert module.params["_raw_vrf_attachment_map"] == {}
@@ -350,11 +350,11 @@ def test_manage_vrf_lite_00480_query_ignores_base_vrf_attachments_without_vrf_li
 
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_fabric_switches",
-        lambda _nd_v2, _fabric_name, _timeout: {"SN1": "10.0.0.1"},
+        lambda _module, _rest_send, _fabric_name: {"SN1": "10.0.0.1"},
     )
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_vrfs",
-        lambda _nd_v2, _fabric_name, _timeout: [
+        lambda _module, _rest_send, _fabric_name: [
             {
                 "vrfName": "BLUE",
                 "vrfTemplateConfig": '{"vrfVlanId":500}',
@@ -380,7 +380,7 @@ def test_manage_vrf_lite_00480_query_ignores_base_vrf_attachments_without_vrf_li
         ],
     )
 
-    result = query_vrf_lite_state(module=module, fabric_name="FABRIC1", filter_vrfs={"BLUE"})
+    result = query_vrf_lite_state(module=module, rest_send=object(), fabric_name="FABRIC1", filter_vrfs={"BLUE"})
 
     assert result == [{"vrf_name": "BLUE", "vlan_id": 500, "deploy": False, "attach": []}]
     assert module.params["_raw_vrf_attachment_map"] == {
@@ -420,11 +420,11 @@ def test_manage_vrf_lite_00481_query_enriches_pending_attachment_from_switch_det
 
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_fabric_switches",
-        lambda _nd_v2, _fabric_name, _timeout: {"SN1": "10.0.0.1"},
+        lambda _module, _rest_send, _fabric_name: {"SN1": "10.0.0.1"},
     )
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.query._query_vrfs",
-        lambda _nd_v2, _fabric_name, _timeout: [
+        lambda _module, _rest_send, _fabric_name: [
             {
                 "vrfName": "BLUE",
                 "vrfTemplateConfig": '{"vrfVlanId":500}',
@@ -461,7 +461,7 @@ def test_manage_vrf_lite_00481_query_enriches_pending_attachment_from_switch_det
         },
     )
 
-    result = query_vrf_lite_state(module=module, fabric_name="FABRIC1", filter_vrfs={"BLUE"})
+    result = query_vrf_lite_state(module=module, rest_send=object(), fabric_name="FABRIC1", filter_vrfs={"BLUE"})
 
     assert result == [
         {
@@ -588,7 +588,7 @@ def test_manage_vrf_lite_00493_attachment_deploy_false_does_not_suppress_attachm
 
     payload = build_attach_payload_for_entry(
         module=module,
-        nd_v2=_FakeNDModule(),
+        rest_send=_FakeNDModule(),
         entry=entry,
     )
 
@@ -647,7 +647,7 @@ def test_manage_vrf_lite_00495_delete_query_filters_vrfs_without_managed_attachm
 
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.orchestrators.manage_vrf_lite.query_vrf_lite_state",
-        lambda module, fabric_name, filter_vrfs=None, flat=True: [
+        lambda module, rest_send, fabric_name, filter_vrfs=None, flat=True: [
             {"vrf_name": "BLUE", "switch_ip": "SN1", "vlan_id": 500},
         ],
     )
@@ -768,7 +768,14 @@ def test_manage_vrf_lite_00495d_query_all_prepares_state_machine_config(monkeypa
 def test_manage_vrf_lite_00496_verify_retry_policy_is_applied_to_reads():
     class _FakeRestSend:
         def __init__(self):
-            self.timeout = None
+            self.timeout = 30
+            self.check_mode = True
+            self.path = None
+            self.verb = None
+            self.response_current = {}
+            self.result_current = {}
+            self.response_handler = None
+            self.calls = 0
             self.saved = 0
             self.restored = 0
             self.timeouts = []
@@ -780,32 +787,25 @@ def test_manage_vrf_lite_00496_verify_retry_policy_is_applied_to_reads():
             self.restored += 1
             self.timeouts.append(self.timeout)
 
-    class _FakeNDModule:
-        def __init__(self):
-            self.calls = 0
-            self.rest_send = _FakeRestSend()
-
-        def _get_rest_send(self):
-            return self.rest_send
-
-        def request(self, path, verb):
-            assert path == "/read"
-            assert verb == HttpVerbEnum.GET
+        def commit(self):
+            assert self.path == "/read"
+            assert self.verb == HttpVerbEnum.GET
             self.calls += 1
             if self.calls < 3:
                 raise RuntimeError("controller not ready")
-            return {"ok": True}
+            self.response_current = {"DATA": {"ok": True}}
+            self.result_current = {"success": True}
 
     module = _DummyModule({"verify": {"retries": 3, "timeout": 7}})
-    nd_v2 = _FakeNDModule()
+    rest_send = _FakeRestSend()
 
-    result = request_with_verify_settings(module, nd_v2, "/read", HttpVerbEnum.GET)
+    result = request_with_verify_settings(module, rest_send, "/read", HttpVerbEnum.GET)
 
     assert result == {"ok": True}
-    assert nd_v2.calls == 3
-    assert nd_v2.rest_send.saved == 3
-    assert nd_v2.rest_send.restored == 3
-    assert nd_v2.rest_send.timeouts == [7, 7, 7]
+    assert rest_send.calls == 3
+    assert rest_send.saved == 3
+    assert rest_send.restored == 3
+    assert rest_send.timeouts == [7, 7, 7]
 
 
 def test_manage_vrf_lite_00500_guardrails_warn_non_border_role_without_support_flag(monkeypatch):
@@ -833,7 +833,7 @@ def test_manage_vrf_lite_00500_guardrails_warn_non_border_role_without_support_f
         }
     )
 
-    def _inventory(_module, _fabric_name):
+    def _inventory(_module, _fabric_name, _rest_send):
         return {"SN1": {"role": "leaf", "ip_address": "10.0.0.1", "raw": {}}}
 
     monkeypatch.setattr(
@@ -842,10 +842,10 @@ def test_manage_vrf_lite_00500_guardrails_warn_non_border_role_without_support_f
     )
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.validation._query_vrf_lite_support",
-        lambda _module, _fabric_name, _vrf_name, _serial_number: None,
+        lambda _module, _rest_send, _fabric_name, _vrf_name, _serial_number: None,
     )
 
-    validate_vrf_lite_write_guardrails(module=module, model_instance=model)
+    validate_vrf_lite_write_guardrails(module=module, model_instance=model, rest_send=object())
 
     warnings = get_runtime_warnings(module.params)
     assert any("Proceeding with controller-side validation" in warning for warning in warnings)
@@ -876,7 +876,7 @@ def test_manage_vrf_lite_00550_guardrails_allow_external_connectivity_leaf(monke
         }
     )
 
-    def _inventory(_module, _fabric_name):
+    def _inventory(_module, _fabric_name, _rest_send):
         return {
             "SN1": {
                 "role": "leaf",
@@ -892,10 +892,73 @@ def test_manage_vrf_lite_00550_guardrails_allow_external_connectivity_leaf(monke
     )
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.validation._query_vrf_lite_support",
-        lambda _module, _fabric_name, _vrf_name, _serial_number: True,
+        lambda _module, _rest_send, _fabric_name, _vrf_name, _serial_number: True,
     )
 
-    validate_vrf_lite_write_guardrails(module=module, model_instance=model)
+    validate_vrf_lite_write_guardrails(module=module, model_instance=model, rest_send=object())
+
+
+def test_manage_vrf_lite_00575_guardrails_cache_vrf_lite_support_by_switch():
+    class _FakeRestSend:
+        def __init__(self):
+            self.timeout = 30
+            self.check_mode = False
+            self.path = None
+            self.verb = None
+            self.response_handler = None
+            self.response_current = {}
+            self.result_current = {}
+            self.calls = 0
+
+        def save_settings(self):
+            pass
+
+        def restore_settings(self):
+            pass
+
+        def commit(self):
+            assert self.path == VrfLiteEndpoints.vrf_switch("F1", "BLUE", "SN1")
+            assert self.verb == HttpVerbEnum.GET
+            self.calls += 1
+            self.response_current = {"DATA": {"isVrfLiteSupported": True}}
+            self.result_current = {"success": True}
+
+    module = _DummyWarnModule(
+        {
+            "fabric_name": "F1",
+            "_ip_to_sn_mapping": {"10.0.0.1": "SN1"},
+            "_fabric_switch_inventory": {
+                "SN1": {
+                    "switchId": "SN1",
+                    "fabricManagementIp": "10.0.0.1",
+                    "switchRole": "border",
+                }
+            },
+            "_vrf_lite_support_cache": {},
+        }
+    )
+    model = VrfLiteModel.from_config(
+        {
+            "vrf_name": "BLUE",
+            "attach": [
+                {
+                    "ip_address": "10.0.0.1",
+                    "vrf_lite": [
+                        {
+                            "interface": "Ethernet1/10",
+                            "neighbor_ipv4": "192.0.2.9",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    rest_send = _FakeRestSend()
+
+    validate_vrf_lite_write_guardrails(module=module, model_instance=model, rest_send=rest_send)
+    validate_vrf_lite_write_guardrails(module=module, model_instance=model, rest_send=rest_send)
+
+    assert rest_send.calls == 1
 
 
 def test_manage_vrf_lite_00600_guardrails_reject_unsupported_switch(monkeypatch):
@@ -923,7 +986,7 @@ def test_manage_vrf_lite_00600_guardrails_reject_unsupported_switch(monkeypatch)
         }
     )
 
-    def _inventory(_module, _fabric_name):
+    def _inventory(_module, _fabric_name, _rest_send):
         return {"SN1": {"role": "border", "ip_address": "10.0.0.1", "raw": {}}}
 
     monkeypatch.setattr(
@@ -932,11 +995,11 @@ def test_manage_vrf_lite_00600_guardrails_reject_unsupported_switch(monkeypatch)
     )
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.validation._query_vrf_lite_support",
-        lambda _module, _fabric_name, _vrf_name, _serial_number: False,
+        lambda _module, _rest_send, _fabric_name, _vrf_name, _serial_number: False,
     )
 
     with pytest.raises(VrfLiteResourceError, match="does not report VRF Lite support"):
-        validate_vrf_lite_write_guardrails(module=module, model_instance=model)
+        validate_vrf_lite_write_guardrails(module=module, model_instance=model, rest_send=object())
 
 
 def test_manage_vrf_lite_00700_guardrails_collect_warnings_without_module_warn(monkeypatch):
@@ -965,7 +1028,7 @@ def test_manage_vrf_lite_00700_guardrails_collect_warnings_without_module_warn(m
         }
     )
 
-    def _inventory(_module, _fabric_name):
+    def _inventory(_module, _fabric_name, _rest_send):
         return {"SN1": {"role": "", "ip_address": "10.0.0.1", "raw": {}}}
 
     monkeypatch.setattr(
@@ -974,10 +1037,10 @@ def test_manage_vrf_lite_00700_guardrails_collect_warnings_without_module_warn(m
     )
     monkeypatch.setattr(
         "ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.validation._query_vrf_lite_support",
-        lambda _module, _fabric_name, _vrf_name, _serial_number: (_x for _x in ()).throw(Exception("boom")),
+        lambda _module, _rest_send, _fabric_name, _vrf_name, _serial_number: (_x for _x in ()).throw(Exception("boom")),
     )
 
-    validate_vrf_lite_write_guardrails(module=module, model_instance=model)
+    validate_vrf_lite_write_guardrails(module=module, model_instance=model, rest_send=object())
 
     warnings = get_runtime_warnings(module.params)
     assert any("Unable to determine switch role" in warning for warning in warnings)
@@ -987,26 +1050,42 @@ def test_manage_vrf_lite_00700_guardrails_collect_warnings_without_module_warn(m
 
 
 def test_manage_vrf_lite_00800_attachment_post_uses_manage_attachment_payload():
-    class _FakeNDModule:
+    class _FakeRestSend:
         def __init__(self):
             self.calls = []
+            self.timeout = 30
+            self.check_mode = False
+            self.path = None
+            self.verb = None
+            self.payload = None
+            self.response_current = {}
+            self.result_current = {}
+            self.response_handler = None
 
-        def request(self, path, verb, payload):
-            self.calls.append((path, verb, payload))
-            return {"ok": True}
+        def save_settings(self):
+            pass
 
-    nd_v2 = _FakeNDModule()
+        def restore_settings(self):
+            pass
+
+        def commit(self):
+            self.calls.append((self.path, self.verb, self.payload))
+            self.response_current = {"DATA": {"ok": True}}
+            self.result_current = {"success": True}
+
+    rest_send = _FakeRestSend()
     lan_attach_list = [{"serialNumber": "SN1", "isAttached": True}]
 
     result = _post_attachment_payload(
-        nd_v2=nd_v2,
+        module=_DummyModule({}),
+        rest_send=rest_send,
         fabric_name="FABRIC1",
         vrf_name="BLUE",
         lan_attach_list=lan_attach_list,
     )
 
     assert result == {"ok": True}
-    assert nd_v2.calls == [
+    assert rest_send.calls == [
         (
             "/api/v1/manage/fabrics/FABRIC1/vrfAttachments",
             HttpVerbEnum.POST,
@@ -1016,16 +1095,29 @@ def test_manage_vrf_lite_00800_attachment_post_uses_manage_attachment_payload():
 
 
 def test_manage_vrf_lite_00850_attachment_post_rejects_controller_failed_body():
-    class _FakeNDModule:
-        def request(self, path, verb, payload):
-            del path, verb, payload
-            return {
-                "BLUE-[SN1/leaf1]": "Attach Response : Failed : VPC details not found for Peer Serial no: SN2",
+    class _FakeRestSend:
+        timeout = 30
+        check_mode = False
+        response_handler = None
+
+        def save_settings(self):
+            pass
+
+        def restore_settings(self):
+            pass
+
+        def commit(self):
+            self.response_current = {
+                "DATA": {
+                    "BLUE-[SN1/leaf1]": "Attach Response : Failed : VPC details not found for Peer Serial no: SN2",
+                }
             }
+            self.result_current = {"success": True}
 
     with pytest.raises(VrfLiteResourceError, match="attachment API reported failure"):
         _post_attachment_payload(
-            nd_v2=_FakeNDModule(),
+            module=_DummyModule({}),
+            rest_send=_FakeRestSend(),
             fabric_name="FABRIC1",
             vrf_name="BLUE",
             lan_attach_list=[{"serialNumber": "SN1"}],

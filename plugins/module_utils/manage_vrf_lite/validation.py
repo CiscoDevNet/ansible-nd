@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import NDModuleError
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
@@ -19,7 +20,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common im
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_endpoints import (
     VrfLiteEndpoints,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule as NDModuleV2
 
 
 def _coerce_switch_list(response: Any) -> list[dict[str, Any]]:
@@ -58,18 +58,20 @@ def _is_external_connectivity_switch(switch_data: dict[str, Any]) -> bool:
     return str(fabric_type or "").strip().lower() == "externalconnectivity"
 
 
-def _load_switch_inventory(module: Any, fabric_name: str) -> dict[str, dict[str, Any]]:
-    # TODO: Use a shared FabricContext/fabric inventory helper when available.
-    cached = module.params.get("_fabric_switch_inventory")
-    if isinstance(cached, dict) and cached:
-        return cached
-
-    nd_v2 = NDModuleV2(module)
-    response = request_with_verify_settings(module, nd_v2, VrfLiteEndpoints.fabric_switches(fabric_name), HttpVerbEnum.GET)
-
+def _normalize_switch_inventory(response: Any) -> dict[str, dict[str, Any]]:
     inventory: dict[str, dict[str, Any]] = {}
-    for switch in _coerce_switch_list(response):
-        serial = switch.get("serialNumber") or switch.get("switchId")
+
+    if isinstance(response, dict) and "switches" not in response:
+        switch_items = response.items()
+    else:
+        switch_items = [(None, switch) for switch in _coerce_switch_list(response)]
+
+    for key, switch in switch_items:
+        if not isinstance(switch, dict):
+            continue
+
+        raw = switch.get("raw") if isinstance(switch.get("raw"), dict) and switch.get("raw") else switch
+        serial = switch.get("serialNumber") or switch.get("switchId") or raw.get("serialNumber") or raw.get("switchId") or key
         if not serial:
             continue
 
@@ -79,10 +81,22 @@ def _load_switch_inventory(module: Any, fabric_name: str) -> dict[str, dict[str,
 
         inventory[serial_text] = {
             "role": _normalize_role(switch),
-            "fabric_type": switch.get("fabricType"),
-            "ip_address": switch.get("fabricManagementIp"),
-            "raw": switch,
+            "fabric_type": switch.get("fabricType") or switch.get("fabric_type") or raw.get("fabricType") or raw.get("fabric_type"),
+            "ip_address": switch.get("fabricManagementIp") or switch.get("ip_address") or raw.get("fabricManagementIp"),
+            "raw": raw,
         }
+    return inventory
+
+
+def _load_switch_inventory(module: Any, fabric_name: str, rest_send: Any) -> dict[str, dict[str, Any]]:
+    cached = module.params.get("_fabric_switch_inventory")
+    if isinstance(cached, dict) and cached:
+        inventory = _normalize_switch_inventory(cached)
+        module.params["_fabric_switch_inventory"] = inventory
+        return inventory
+
+    fabric_context = FabricContext(rest_send=rest_send, fabric_name=fabric_name)
+    inventory = _normalize_switch_inventory(fabric_context.switch_inventory_by_id)
 
     module.params["_fabric_switch_inventory"] = inventory
     return inventory
@@ -114,25 +128,36 @@ def _extract_support_flag(value: Any) -> bool | None:
     return None
 
 
-def _query_vrf_lite_support(module: Any, fabric_name: str, vrf_name: str, serial_number: str) -> bool | None:
-    nd_v2 = NDModuleV2(module)
+def _query_vrf_lite_support(module: Any, rest_send: Any, fabric_name: str, vrf_name: str, serial_number: str) -> bool | None:
+    cache = module.params.get("_vrf_lite_support_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        module.params["_vrf_lite_support_cache"] = cache
+
+    cache_key = "{0}\0{1}\0{2}".format(fabric_name, vrf_name, serial_number)
+    if cache_key in cache:
+        return cache[cache_key]
+
     response = request_with_verify_settings(
         module,
-        nd_v2,
+        rest_send,
         VrfLiteEndpoints.vrf_switch(fabric_name, vrf_name, serial_number),
         HttpVerbEnum.GET,
     )
 
-    return _extract_support_flag(response)
+    support = _extract_support_flag(response)
+    cache[cache_key] = support
+    return support
 
 
 def _warn_on_uncertain_role(module: Any, serial_number: str, role: str, switch_data: dict[str, Any]) -> None:
     if role and not _is_border_role(role) and not _is_external_connectivity_switch(switch_data):
         append_runtime_warning(
             module.params,
-            ("Switch '{0}' has role '{1}', but NDFC did not return an explicit VRF Lite " "support flag. Proceeding with controller-side validation.").format(
-                serial_number, role
-            ),
+            (
+                "Switch '{0}' has role '{1}', but the controller did not return an explicit VRF Lite "
+                "support flag. Proceeding with controller-side validation."
+            ).format(serial_number, role),
         )
     if not role:
         append_runtime_warning(
@@ -141,7 +166,7 @@ def _warn_on_uncertain_role(module: Any, serial_number: str, role: str, switch_d
         )
 
 
-def validate_vrf_lite_write_guardrails(module: Any, model_instance: Any) -> None:
+def validate_vrf_lite_write_guardrails(module: Any, model_instance: Any, rest_send: Any) -> None:
     """
     Validate switch existence, role suitability, and platform support hints.
     """
@@ -154,7 +179,7 @@ def validate_vrf_lite_write_guardrails(module: Any, model_instance: Any) -> None
 
     fabric_name = module.params.get("fabric_name")
     vrf_name = model_instance.vrf_name
-    inventory = _load_switch_inventory(module, fabric_name)
+    inventory = _load_switch_inventory(module, fabric_name, rest_send)
 
     for attach in attachments:
         switch_identifier = getattr(attach, "switch_ip", None) or getattr(attach, "ip_address", None)
@@ -178,7 +203,7 @@ def validate_vrf_lite_write_guardrails(module: Any, model_instance: Any) -> None
         role = switch_data.get("role", "")
         support = None
         try:
-            support = _query_vrf_lite_support(module, fabric_name, vrf_name, serial_number)
+            support = _query_vrf_lite_support(module, rest_send, fabric_name, vrf_name, serial_number)
         except NDModuleError as error:
             append_runtime_warning(
                 module.params,

@@ -27,6 +27,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common im
     get_config_actions,
     get_runtime_warnings,
     get_verify_settings,
+    request_with_rest_send,
     _raise_vrf_lite_error,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.deploy import (
@@ -56,7 +57,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBase
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_attachment_entry import (
     VrfLiteAttachmentEntry,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule as NDModuleV2
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.base import (
     NDBaseOrchestrator,
 )
@@ -137,6 +137,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         module.params["_have_loaded"] = False
         module.params["_raw_vrf_attachment_map"] = {}
         module.params["_fabric_switch_inventory"] = {}
+        module.params["_vrf_lite_support_cache"] = {}
         module.params["_warnings"] = list(module.params.get("_warnings")) if isinstance(module.params.get("_warnings"), list) else []
 
     @staticmethod
@@ -209,13 +210,12 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         seen_vrfs = set()
         for entry in entries:
             if entry.vrf_name not in seen_vrfs:
-                _ensure_vrf_exists(module, entry.vrf_name)
+                _ensure_vrf_exists(module, self.rest_send, entry.vrf_name)
                 seen_vrfs.add(entry.vrf_name)
-            validate_vrf_lite_write_guardrails(module=module, model_instance=entry)
+            validate_vrf_lite_write_guardrails(module=module, model_instance=entry, rest_send=self.rest_send)
 
     def _post_grouped_rows(self, rows_by_vrf: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         module = self._module()
-        nd_v2 = NDModuleV2(module)
         responses = []
         for vrf_name in sorted(rows_by_vrf):
             rows = rows_by_vrf[vrf_name]
@@ -224,7 +224,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             responses.append(
                 {
                     "vrf_name": vrf_name,
-                    "response": _post_attachment_payload(nd_v2, module.params.get("fabric_name"), vrf_name, rows),
+                    "response": _post_attachment_payload(module, self.rest_send, module.params.get("fabric_name"), vrf_name, rows),
                 }
             )
         return {"response": responses}
@@ -237,10 +237,9 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             return {"planned": [entry.to_config() for entry in entries]}
 
         self._validate_attach_entries(entries)
-        nd_v2 = NDModuleV2(module)
         rows_by_vrf: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for entry in entries:
-            rows_by_vrf[entry.vrf_name].append(build_attach_payload_for_entry(module, nd_v2, entry))
+            rows_by_vrf[entry.vrf_name].append(build_attach_payload_for_entry(module, self.rest_send, entry))
         return self._post_grouped_rows(rows_by_vrf)
 
     def _post_detach_entries(self, entries: list[Any]) -> dict[str, Any]:
@@ -335,6 +334,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
         try:
             have = query_vrf_lite_state(
                 module=module,
+                rest_send=self.rest_send,
                 fabric_name=fabric_name,
                 filter_vrfs=(filter_vrfs if filter_vrfs else None),
                 flat=True,
@@ -418,14 +418,13 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
                 "response": [],
             }
 
-        nd_v2 = NDModuleV2(module)
         responses = []
         changed = bool(module.params.get("_changed_vrfs"))
 
         if save_enabled:
             save_payload = {"type": config_actions.get("type", "switch")}
             try:
-                save_resp = nd_v2.request(VrfLiteEndpoints.config_save(fabric_name), HttpVerbEnum.POST, save_payload)
+                save_resp = request_with_rest_send(module, self.rest_send, VrfLiteEndpoints.config_save(fabric_name), HttpVerbEnum.POST, save_payload)
                 responses.append(
                     {
                         "operation": "config_save",
@@ -462,7 +461,7 @@ class ManageVrfLiteOrchestrator(NDBaseOrchestrator):
             if target_switch_ids:
                 deploy_payload["switchIds"] = target_switch_ids
             try:
-                deploy_resp = nd_v2.request(VrfLiteEndpoints.vrf_deployments(fabric_name), HttpVerbEnum.POST, deploy_payload)
+                deploy_resp = request_with_rest_send(module, self.rest_send, VrfLiteEndpoints.vrf_deployments(fabric_name), HttpVerbEnum.POST, deploy_payload)
                 responses.append(
                     {
                         "operation": "vrf_deploy",

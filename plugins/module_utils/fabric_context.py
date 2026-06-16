@@ -57,6 +57,7 @@ class FabricContext:
         self._fabric_summary = _NOT_FETCHED
         self._switch_map: dict[str, str] | None = None
         self._switch_map_by_id: dict[str, str] | None = None
+        self._switch_inventory_by_id: dict[str, dict] | None = None
 
     def _query_get(self, path: str) -> dict:
         """
@@ -182,6 +183,7 @@ class FabricContext:
         self._fabric_summary = _NOT_FETCHED
         self._switch_map = None
         self._switch_map_by_id = None
+        self._switch_inventory_by_id = None
 
     def _load_switch_maps(self) -> None:
         """
@@ -203,6 +205,7 @@ class FabricContext:
         switches = (result.get("switches") or []) if result else []
         self._switch_map = {sw["fabricManagementIp"]: sw["switchId"] for sw in switches if sw.get("fabricManagementIp") and sw.get("switchId")}
         self._switch_map_by_id = {sw["switchId"]: sw["fabricManagementIp"] for sw in switches if sw.get("switchId") and sw.get("fabricManagementIp")}
+        self._switch_inventory_by_id = {sw["switchId"]: sw for sw in switches if sw.get("switchId")}
 
     @property
     def switch_map(self) -> dict[str, str]:
@@ -243,6 +246,22 @@ class FabricContext:
         if self._switch_map_by_id is None:
             raise AssertionError("switch_map_by_id is None after _load_switch_maps()")
         return self._switch_map_by_id
+
+    @property
+    def switch_inventory_by_id(self) -> dict[str, dict]:
+        """
+        # Summary
+
+        Return cached raw switch inventory keyed by ``switchId``.
+
+        This uses the same switch-list response as ``switch_map`` and
+        ``switch_map_by_id`` so callers that need role or fabric-type metadata
+        do not need to issue a second switches query.
+        """
+        self._load_switch_maps()
+        if self._switch_inventory_by_id is None:
+            raise AssertionError("switch_inventory_by_id is None after _load_switch_maps()")
+        return self._switch_inventory_by_id
 
     def get_switch_id(self, switch_ip: str) -> str:
         """

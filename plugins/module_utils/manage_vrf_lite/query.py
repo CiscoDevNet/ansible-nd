@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ansible_collections.cisco.nd.plugins.module_utils.fabric_context import FabricContext
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.common import (
     request_with_verify_settings,
@@ -20,7 +21,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vrf_lite.runtime_p
     parse_instance_values,
     parse_vrf_lite_extension_values,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import NDModule as NDModuleV2
 
 
 def _parse_vrf_template_vlan(vrf_object: dict[str, Any]) -> int | None:
@@ -57,42 +57,27 @@ def _result_list(data: Any, keys: tuple[str, ...]) -> list[Any]:
     return []
 
 
-def _query_fabric_switches(module: Any, nd_v2: Any, fabric_name: str) -> dict[str, str]:
+def _query_fabric_switches(module: Any, rest_send: Any, fabric_name: str) -> dict[str, str]:
     """Return serial->mgmt-ip mapping from fabric switch inventory."""
-    # TODO: Use a shared FabricContext/fabric inventory helper when available.
-    path = VrfLiteEndpoints.fabric_switches(fabric_name)
-    response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.GET)
-
-    switches = _result_list(
-        response if not isinstance(response, dict) else response.get("switches", response),
-        ("switches", "DATA", "data", "items"),
-    )
-
-    sn_to_ip = {}
-    for switch in switches:
-        if not isinstance(switch, dict):
-            continue
-        serial = switch.get("serialNumber") or switch.get("switchId")
-        mgmt_ip = switch.get("fabricManagementIp")
-        if serial and mgmt_ip:
-            sn_to_ip[str(serial).strip()] = str(mgmt_ip).strip()
-
-    return sn_to_ip
+    fabric_context = FabricContext(rest_send=rest_send, fabric_name=fabric_name)
+    inventory = fabric_context.switch_inventory_by_id
+    module.params["_fabric_switch_inventory"] = inventory
+    return {str(serial).strip(): str(switch.get("fabricManagementIp")).strip() for serial, switch in inventory.items() if switch.get("fabricManagementIp")}
 
 
-def _query_vrfs(module: Any, nd_v2: Any, fabric_name: str) -> list[dict[str, Any]]:
+def _query_vrfs(module: Any, rest_send: Any, fabric_name: str) -> list[dict[str, Any]]:
     path = VrfLiteEndpoints.vrfs(fabric_name)
-    response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.GET)
+    response = request_with_verify_settings(module, rest_send, path, HttpVerbEnum.GET)
 
     return [item for item in _result_list(response, ("DATA", "data", "vrfs", "items")) if isinstance(item, dict)]
 
 
-def _query_vrf_attachments(module: Any, nd_v2: Any, fabric_name: str, vrf_names: list[str]) -> list[dict[str, Any]]:
+def _query_vrf_attachments(module: Any, rest_send: Any, fabric_name: str, vrf_names: list[str]) -> list[dict[str, Any]]:
     if not vrf_names:
         return []
 
     path = VrfLiteEndpoints.vrf_attachments_query(fabric_name)
-    response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.POST, {"vrfNames": vrf_names})
+    response = request_with_verify_settings(module, rest_send, path, HttpVerbEnum.POST, {"vrfNames": vrf_names})
     attachments = _result_list(response, ("attachments", "DATA", "data", "items"))
     if attachments and all(isinstance(item, dict) and "vrfName" in item and "lanAttachList" not in item for item in attachments):
         grouped: dict[str, list[dict[str, Any]]] = {}
@@ -107,7 +92,7 @@ def _query_vrf_attachments(module: Any, nd_v2: Any, fabric_name: str, vrf_names:
 
 def _query_vrf_switch_details(
     module: Any,
-    nd_v2: Any,
+    rest_send: Any,
     fabric_name: str,
     vrf_name: str,
     serial_numbers: list[str],
@@ -123,7 +108,7 @@ def _query_vrf_switch_details(
         return {}
 
     path = VrfLiteEndpoints.vrf_switch(fabric_name, vrf_name, ",".join(serial_numbers))
-    response = request_with_verify_settings(module, nd_v2, path, HttpVerbEnum.GET)
+    response = request_with_verify_settings(module, rest_send, path, HttpVerbEnum.GET)
 
     detail_map: dict[str, dict[str, Any]] = {}
     for vrf_switch in _result_list(response, ("DATA", "data", "vrfs", "items")):
@@ -204,6 +189,7 @@ def _flatten_to_entries(nested: list[dict[str, Any]], module: Any = None) -> lis
 
 def query_vrf_lite_state(
     module: Any,
+    rest_send: Any,
     fabric_name: str,
     filter_vrfs: set[str] | None = None,
     flat: bool = False,
@@ -216,12 +202,10 @@ def query_vrf_lite_state(
     ``flat=False`` (default) returns the legacy nested list of VRFs with an
     ``attach`` sub-list per VRF.
     """
-    nd_v2 = NDModuleV2(module)
-
-    sn_to_ip = _query_fabric_switches(module, nd_v2, fabric_name)
+    sn_to_ip = _query_fabric_switches(module, rest_send, fabric_name)
     ip_to_sn = {ip: sn for sn, ip in sn_to_ip.items()}
 
-    vrf_objects = _query_vrfs(module, nd_v2, fabric_name)
+    vrf_objects = _query_vrfs(module, rest_send, fabric_name)
 
     result_map: dict[str, dict[str, Any]] = {}
     known_vrfs: set[str] = set()
@@ -245,7 +229,7 @@ def query_vrf_lite_state(
 
     attachment_objects = _query_vrf_attachments(
         module=module,
-        nd_v2=nd_v2,
+        rest_send=rest_send,
         fabric_name=fabric_name,
         vrf_names=sorted(result_map.keys()),
     )
@@ -283,7 +267,7 @@ def query_vrf_lite_state(
 
         for serial_number, switch_detail in _query_vrf_switch_details(
             module=module,
-            nd_v2=nd_v2,
+            rest_send=rest_send,
             fabric_name=fabric_name,
             vrf_name=vrf_name,
             serial_numbers=sorted(set(serials_to_enrich)),

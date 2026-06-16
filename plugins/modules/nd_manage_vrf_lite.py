@@ -12,11 +12,11 @@ ANSIBLE_METADATA = {"metadata_version": "1.1", "status": ["preview"], "supported
 DOCUMENTATION = r"""
 ---
 module: nd_manage_vrf_lite
-version_added: "1.4.0"
+version_added: "2.0.0"
 short_description: Manage VRF Lite attachments on Cisco Nexus Dashboard
 
 description:
-- Manage VRF Lite attachment configuration in ND/NDFC fabrics.
+- Manage VRF Lite attachment configuration in ND fabrics.
 - Supports C(gathered), C(merged), C(replaced), C(overridden), and C(deleted) states.
 - Supports optional save/deploy controls through C(config_actions).
 
@@ -76,7 +76,7 @@ options:
         default: 5
       timeout:
         description:
-        - Seconds to wait between verification retries.
+        - Total per-request timeout budget used by verification queries.
         type: int
         default: 10
 
