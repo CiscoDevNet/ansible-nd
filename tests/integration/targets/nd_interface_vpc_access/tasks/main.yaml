@@ -13,7 +13,7 @@
 # Lab pre-conditions (verified in reference_nd_lab.md):
 #   - SITE1 fabric with peer1 (192.168.12.151) and peer2 (192.168.12.152) reachable
 #   - Ethernet1/5, Ethernet1/6, Ethernet1/7 free on both peers for vPC member testing
-#   - Peer-link cable: peer1 Ethernet1/2 <-> peer2 Ethernet1/2
+#   - vPC pair uses a virtual peer-link (no physical peer-link cable required); see vars/main.yaml
 #
 # Setup creates the vPC pair if missing; teardown unpairs it (which cascades and removes all
 # member vPC interfaces, so we don't need an explicit vPC-interface teardown).
