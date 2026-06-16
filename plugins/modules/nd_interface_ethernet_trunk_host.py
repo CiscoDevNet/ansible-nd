@@ -431,33 +431,40 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.ethernet_tr
 # `validate_interface_names`, `validate_within_item_duplicates`,
 # `validate_across_item_duplicates`, and `expand_config` into a shared helper module
 # (e.g. `plugins/module_utils/interfaces/config_expansion.py`) and import from there.
-def validate_interface_names(config_list):
+def validate_interface_names(config_list: list[dict]) -> None:
     """
     # Summary
 
-    Raise `ValueError` if any element of any `interface_names` list is `None` or an empty string.
-    Ansible's `elements="str"` argspec does not reject these (a Jinja loop can easily produce a list
-    with null/empty entries), and downstream `name.lower()` would otherwise raise `AttributeError` /
-    silently insert a blank interface — neither of which is the friendly fail_json the user expects.
+    Raise `ValueError` if any element of any `interface_names` list is `None`, an empty string, or not a
+    string. Ansible's `elements="str"` argspec does not reject these (a Jinja loop can easily produce a list
+    with null/empty entries, and a templated value may arrive as a non-string), and downstream `name.lower()`
+    would otherwise raise `AttributeError` / silently insert a blank interface — neither of which is the
+    friendly fail_json the user expects.
 
     ## Raises
 
     ### ValueError
 
-    - If any element of `interface_names` is `None` or an empty string.
+    - If any element of `interface_names` is `None`, an empty string, or not a string.
     """
     for item_index, group in enumerate(config_list):
         switch_ip = group.get("switch_ip")
         interface_names = group.get("interface_names") or []
         for entry_index, name in enumerate(interface_names):
-            if name is None or (isinstance(name, str) and not name):
+            if not isinstance(name, str) or not name:
+                if name is None:
+                    reason = "null"
+                elif not isinstance(name, str):
+                    reason = f"not a string (got {type(name).__name__})"
+                else:
+                    reason = "empty"
                 raise ValueError(
                     f"interface_names[{entry_index}] for switch '{switch_ip}' (config item {item_index}) is "
-                    f"{'null' if name is None else 'empty'}. Every entry must be a non-empty interface name."
+                    f"{reason}. Every entry must be a non-empty interface name."
                 )
 
 
-def validate_within_item_duplicates(config_list):
+def validate_within_item_duplicates(config_list: list[dict]) -> None:
     """
     # Summary
 
@@ -473,7 +480,7 @@ def validate_within_item_duplicates(config_list):
     for item_index, group in enumerate(config_list):
         switch_ip = group.get("switch_ip")
         interface_names = group.get("interface_names") or []
-        seen = {}
+        seen: set[str] = set()
         for name in interface_names:
             key = name.lower()
             if key in seen:
@@ -481,11 +488,11 @@ def validate_within_item_duplicates(config_list):
                     f"Duplicate interface '{name}' in interface_names for switch '{switch_ip}' "
                     f"(config item {item_index}). Each interface may appear only once per config item."
                 )
-            seen[key] = True
+            seen.add(key)
 
 
 # TODO: See note above `validate_within_item_duplicates`.
-def validate_across_item_duplicates(config_list):
+def validate_across_item_duplicates(config_list: list[dict]) -> None:
     """
     # Summary
 
@@ -499,7 +506,7 @@ def validate_across_item_duplicates(config_list):
 
     - If the same `(switch_ip, interface_name)` pair appears in more than one config item
     """
-    seen = {}
+    seen: dict[tuple, int] = {}
     for item_index, group in enumerate(config_list):
         switch_ip = group.get("switch_ip")
         interface_names = group.get("interface_names") or []
@@ -513,7 +520,7 @@ def validate_across_item_duplicates(config_list):
             seen[key] = item_index
 
 
-def expand_config(config_list):
+def expand_config(config_list: list[dict]) -> list[dict]:
     """
     # Summary
 
@@ -546,7 +553,7 @@ def expand_config(config_list):
     return expanded
 
 
-def main():
+def main() -> None:
     """
     # Summary
 
