@@ -756,8 +756,8 @@ def test_ethernet_trunk_host_interface_00230():
     [
         ("plain ASCII", False),
         ("with-hyphen and 123", False),
-        ("em — dash", True),
-        ("smart “quotes”", True),
+        ("em \u2014 dash", True),
+        ("smart \u201cquotes\u201d", True),
         ("emoji \U0001f600", True),
         ("latin-1 \xe9", True),
     ],
