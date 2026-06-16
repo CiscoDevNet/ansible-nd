@@ -180,9 +180,11 @@
 # Skipped by default because Nexus 9000v virtual switches reject
 # `switchport vlan mapping ... dot1q-tunnel ...` ("not supported in the
 # current switchport mode"), which surfaces as HTTP 400 from ND on PUT.
-# Enable on a hardware testbed with:
-#   ansible-test network-integration nd_interface_ethernet_trunk_host \
-#       --extra-vars supports_vlan_mapping=true
+# Enable on a hardware-backed testbed by adding to the [nd:vars] section of
+# tests/integration/inventory.networking:
+#   supports_vlan_mapping=true
+# (ansible-test strips the controller's shell env / --extra-vars, so the flag
+# must come from inventory vars -- see the header note in tasks/main.yaml.)
 
 - name: "MERGED VLAN-MAPPING block (gated on supports_vlan_mapping)"
   when: supports_vlan_mapping | default(false) | bool
