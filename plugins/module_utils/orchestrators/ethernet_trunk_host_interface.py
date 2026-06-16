@@ -91,6 +91,11 @@ class EthernetTrunkHostInterfaceOrchestrator(EthernetBaseOrchestrator):
         native_vlan = policy.get("nativeVlan")
         if native_vlan not in (None, 1):
             return False
+        # TODO(4.2.1) normalize-unresettable-policy-fields
+        # Class C fields (bandwidth, debounceLinkupTimer, inheritBandwidth) survive interfaceActions/normalize because
+        # ND's validator rejects 0/null for them, so a normalized interface still carries any prior value. We must treat
+        # such an interface as configured (not an unconfigured default) so `state: deleted` keeps it in scope and routes
+        # it to the per-interface PUT-as-replace reset path. See InterfaceDefaultConfig.UNRESETTABLE_FIELDS for the set.
         if any(policy.get(field) is not None for field in InterfaceDefaultConfig.UNRESETTABLE_FIELDS):
             return False
         return True
