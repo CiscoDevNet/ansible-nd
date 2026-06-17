@@ -3,7 +3,7 @@
 
 """Read-model for ``state=gathered`` output.
 
-``GatheredPolicy`` is a lightweight model that represents a policy as
+``PolicyGathered`` is a lightweight model that represents a policy as
 returned by the ND API, keyed by ``policyId``.  It is used exclusively
 by ``_handle_gathered_state()`` for:
 
@@ -34,10 +34,10 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
-log = logging.getLogger("nd.GatheredPolicy")
+log = logging.getLogger("nd.PolicyGathered")
 
 
-class GatheredPolicy(NDBaseModel):
+class PolicyGathered(NDBaseModel):
     """Read-model for a policy returned by the ND API.
 
     Keyed by ``policy_id`` for ``NDConfigCollection`` dedup.
@@ -116,8 +116,8 @@ class GatheredPolicy(NDBaseModel):
     )
 
     @classmethod
-    def from_api_policy(cls, policy: dict[str, Any]) -> GatheredPolicy:
-        """Create a GatheredPolicy from a raw ND API policy dict.
+    def from_api_policy(cls, policy: dict[str, Any]) -> PolicyGathered:
+        """Create a PolicyGathered from a raw ND API policy dict.
 
         Handles the ``templateInputs`` field which may be a JSON-encoded
         string in the API response.  Parses it into a dict before model
@@ -130,7 +130,7 @@ class GatheredPolicy(NDBaseModel):
             policy: Raw policy dict from the ND API.
 
         Returns:
-            A validated ``GatheredPolicy`` instance.
+            A validated ``PolicyGathered`` instance.
         """
         data = dict(policy)
 

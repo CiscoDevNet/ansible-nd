@@ -308,11 +308,11 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
     FabricSwitchInventory,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.gathered_models import (
-    GatheredPolicyGroup,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.policy_group_base import (
     PolicyGroupCreate,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.policy_group_gathered import (
+    PolicyGroupGathered,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.switch_data_models import (
     SwitchDataModel,
@@ -559,7 +559,7 @@ def _handle_gathered_state(orchestrator, config, log):
             continue
         seen_ids.add(pid)
         try:
-            model = GatheredPolicyGroup.from_api_policy_group(group)
+            model = PolicyGroupGathered.from_api_policy_group(group)
             gathered.append(model.to_gathered_config())
         except Exception as exc:
             log.warning("Failed to parse policy group %s for gathered output: %s", pid, exc)

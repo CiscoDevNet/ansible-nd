@@ -7,7 +7,7 @@
 """
 Unit tests for ``models/manage_policy_groups/gathered_models.py``.
 
-Tests ``GatheredPolicyGroup`` -- the read-model used by the
+Tests ``PolicyGroupGathered`` -- the read-model used by the
 ``state: gathered`` path of ``nd_policy_group``:
 
 - Field defaults and aliases (mirrors the controller's policy-group GET shape).
@@ -33,8 +33,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.constants import (
     SYSTEM_INJECTED_TEMPLATE_KEYS,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.gathered_models import (
-    GatheredPolicyGroup,
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policy_groups.policy_group_gathered import (
+    PolicyGroupGathered,
 )
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
     does_not_raise,
@@ -49,7 +49,7 @@ def test_manage_policy_groups_gathered_models_00010() -> None:
     """
     # Summary
 
-    Verify ``GatheredPolicyGroup`` accepts the minimum required input and
+    Verify ``PolicyGroupGathered`` accepts the minimum required input and
     applies documented defaults.
 
     ## Test
@@ -59,10 +59,10 @@ def test_manage_policy_groups_gathered_models_00010() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.__init__``
+    - ``PolicyGroupGathered.__init__``
     """
     with does_not_raise():
-        instance = GatheredPolicyGroup(policy_id="POLICY-GROUP-1")
+        instance = PolicyGroupGathered(policy_id="POLICY-GROUP-1")
 
     assert instance.policy_id == "POLICY-GROUP-1"
     assert instance.switch_ids == []
@@ -79,31 +79,31 @@ def test_manage_policy_groups_gathered_models_00020() -> None:
     """
     # Summary
 
-    Verify ``GatheredPolicyGroup`` raises ``ValidationError`` when the
+    Verify ``PolicyGroupGathered`` raises ``ValidationError`` when the
     required ``policy_id`` field is omitted.
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.__init__``
+    - ``PolicyGroupGathered.__init__``
     """
     # Pydantic v2 reports the alias (``policyId``) in the missing-field message.
     with pytest.raises(ValidationError, match="policyId"):
-        GatheredPolicyGroup()
+        PolicyGroupGathered()
 
 
 def test_manage_policy_groups_gathered_models_00030() -> None:
     """
     # Summary
 
-    Verify ``GatheredPolicyGroup`` accepts a fully populated instance and
+    Verify ``PolicyGroupGathered`` accepts a fully populated instance and
     preserves every field.
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.__init__``
+    - ``PolicyGroupGathered.__init__``
     """
     with does_not_raise():
-        instance = GatheredPolicyGroup(
+        instance = PolicyGroupGathered(
             policy_id="POLICY-GROUP-9",
             switch_ids=["FDO1", "FDO2"],
             template_name="feature_enable",
@@ -129,7 +129,7 @@ def test_manage_policy_groups_gathered_models_00040() -> None:
     """
     # Summary
 
-    Verify ``GatheredPolicyGroup`` accepts the camelCase aliases used in
+    Verify ``PolicyGroupGathered`` accepts the camelCase aliases used in
     the API response shape.
 
     ## Test
@@ -139,7 +139,7 @@ def test_manage_policy_groups_gathered_models_00040() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.model_validate``
+    - ``PolicyGroupGathered.model_validate``
     """
     payload = {
         "policyId": "POLICY-GROUP-7",
@@ -150,7 +150,7 @@ def test_manage_policy_groups_gathered_models_00040() -> None:
         "templateInputs": {"featureName": "lacp"},
     }
     with does_not_raise():
-        instance = GatheredPolicyGroup.model_validate(payload)
+        instance = PolicyGroupGathered.model_validate(payload)
 
     assert instance.policy_id == "POLICY-GROUP-7"
     assert instance.switch_ids == ["FDO1"]
@@ -174,10 +174,10 @@ def test_manage_policy_groups_gathered_models_00100() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.from_api_policy_group``
+    - ``PolicyGroupGathered.from_api_policy_group``
     """
     with does_not_raise():
-        instance = GatheredPolicyGroup.from_api_policy_group({"policyId": "POLICY-GROUP-1"})
+        instance = PolicyGroupGathered.from_api_policy_group({"policyId": "POLICY-GROUP-1"})
 
     assert instance.policy_id == "POLICY-GROUP-1"
     assert instance.template_inputs == {}
@@ -192,7 +192,7 @@ def test_manage_policy_groups_gathered_models_00110() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.from_api_policy_group``
+    - ``PolicyGroupGathered.from_api_policy_group``
     """
     api_doc = {
         "policyId": "POLICY-GROUP-143310",
@@ -206,7 +206,7 @@ def test_manage_policy_groups_gathered_models_00110() -> None:
         "templateInputs": {"featureName": "lacp"},
     }
     with does_not_raise():
-        instance = GatheredPolicyGroup.from_api_policy_group(api_doc)
+        instance = PolicyGroupGathered.from_api_policy_group(api_doc)
 
     assert instance.policy_id == "POLICY-GROUP-143310"
     assert instance.switch_ids == ["FDO25031SY4", "FDO245206N5"]
@@ -232,14 +232,14 @@ def test_manage_policy_groups_gathered_models_00120() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.from_api_policy_group``
+    - ``PolicyGroupGathered.from_api_policy_group``
     """
     api_doc = {
         "policyId": "POLICY-GROUP-1",
         "templateInputs": '{"featureName": "lacp", "PRIORITY": "750"}',
     }
     with does_not_raise():
-        instance = GatheredPolicyGroup.from_api_policy_group(api_doc)
+        instance = PolicyGroupGathered.from_api_policy_group(api_doc)
 
     assert instance.template_inputs == {"featureName": "lacp", "PRIORITY": "750"}
 
@@ -254,14 +254,14 @@ def test_manage_policy_groups_gathered_models_00130() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.from_api_policy_group``
+    - ``PolicyGroupGathered.from_api_policy_group``
     """
     api_doc = {
         "policyId": "POLICY-GROUP-1",
         "templateInputs": "{not-valid-json",
     }
     with does_not_raise():
-        instance = GatheredPolicyGroup.from_api_policy_group(api_doc)
+        instance = PolicyGroupGathered.from_api_policy_group(api_doc)
 
     assert instance.template_inputs == {}
 
@@ -275,14 +275,14 @@ def test_manage_policy_groups_gathered_models_00140() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.from_api_policy_group``
+    - ``PolicyGroupGathered.from_api_policy_group``
     """
     api_doc = {
         "policyId": "POLICY-GROUP-1",
         "nvPairs": {"featureName": "lacp"},
     }
     with does_not_raise():
-        instance = GatheredPolicyGroup.from_api_policy_group(api_doc)
+        instance = PolicyGroupGathered.from_api_policy_group(api_doc)
 
     assert instance.template_inputs == {"featureName": "lacp"}
 
@@ -300,14 +300,14 @@ def test_manage_policy_groups_gathered_models_00150() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.from_api_policy_group``
+    - ``PolicyGroupGathered.from_api_policy_group``
     """
     original = {
         "policyId": "POLICY-GROUP-1",
         "templateInputs": '{"k": "v"}',
     }
     snapshot = dict(original)
-    GatheredPolicyGroup.from_api_policy_group(original)
+    PolicyGroupGathered.from_api_policy_group(original)
     assert original == snapshot
 
 
@@ -331,9 +331,9 @@ def test_manage_policy_groups_gathered_models_00200() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.to_gathered_config``
+    - ``PolicyGroupGathered.to_gathered_config``
     """
-    instance = GatheredPolicyGroup(
+    instance = PolicyGroupGathered(
         policy_id="POLICY-GROUP-1",
         switch_ids=["FDO1"],
         template_name="feature_enable",
@@ -366,12 +366,12 @@ def test_manage_policy_groups_gathered_models_00210() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.to_gathered_config``
+    - ``PolicyGroupGathered.to_gathered_config``
     """
     raw_inputs = {key: "stripped" for key in SYSTEM_INJECTED_TEMPLATE_KEYS}
     raw_inputs.update({"featureName": "lacp", "CONF": "x"})
 
-    instance = GatheredPolicyGroup(
+    instance = PolicyGroupGathered(
         policy_id="POLICY-GROUP-1",
         template_name="feature_enable",
         priority=750,
@@ -393,9 +393,9 @@ def test_manage_policy_groups_gathered_models_00220() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.to_gathered_config``
+    - ``PolicyGroupGathered.to_gathered_config``
     """
-    instance = GatheredPolicyGroup(
+    instance = PolicyGroupGathered(
         policy_id="POLICY-GROUP-1",
         template_name="switch_freeform",
         priority=750,
@@ -424,9 +424,9 @@ def test_manage_policy_groups_gathered_models_00230() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.to_gathered_config``
+    - ``PolicyGroupGathered.to_gathered_config``
     """
-    instance = GatheredPolicyGroup(
+    instance = PolicyGroupGathered(
         policy_id="POLICY-GROUP-1",
         template_name="switch_freeform",
         priority=0,
@@ -449,9 +449,9 @@ def test_manage_policy_groups_gathered_models_00240() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.to_gathered_config``
+    - ``PolicyGroupGathered.to_gathered_config``
     """
-    instance = GatheredPolicyGroup(
+    instance = PolicyGroupGathered(
         policy_id="POLICY-GROUP-1",
         template_name="feature_enable",
         priority=0,
@@ -476,9 +476,9 @@ def test_manage_policy_groups_gathered_models_00250() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.to_gathered_config``
+    - ``PolicyGroupGathered.to_gathered_config``
     """
-    instance = GatheredPolicyGroup(
+    instance = PolicyGroupGathered(
         policy_id="POLICY-GROUP-1",
         template_name="switch_freeform",
         priority=200,
@@ -506,9 +506,9 @@ def test_manage_policy_groups_gathered_models_00260() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.to_gathered_config``
+    - ``PolicyGroupGathered.to_gathered_config``
     """
-    instance = GatheredPolicyGroup(
+    instance = PolicyGroupGathered(
         policy_id="POLICY-GROUP-1",
         template_name="feature_enable",
         description=None,
@@ -529,7 +529,7 @@ def test_manage_policy_groups_gathered_models_00300() -> None:
     """
     # Summary
 
-    Verify ``GatheredPolicyGroup`` declares the single-identifier strategy
+    Verify ``PolicyGroupGathered`` declares the single-identifier strategy
     used by ``NDConfigCollection`` to de-duplicate gathered output by
     ``policy_id``.
 
@@ -542,10 +542,10 @@ def test_manage_policy_groups_gathered_models_00300() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicyGroup.identifiers``
-    - ``GatheredPolicyGroup.identifier_strategy``
-    - ``GatheredPolicyGroup.exclude_from_diff``
+    - ``PolicyGroupGathered.identifiers``
+    - ``PolicyGroupGathered.identifier_strategy``
+    - ``PolicyGroupGathered.exclude_from_diff``
     """
-    assert GatheredPolicyGroup.identifiers == ["policy_id"]
-    assert GatheredPolicyGroup.identifier_strategy == "single"
-    assert GatheredPolicyGroup.exclude_from_diff == set()
+    assert PolicyGroupGathered.identifiers == ["policy_id"]
+    assert PolicyGroupGathered.identifier_strategy == "single"
+    assert PolicyGroupGathered.exclude_from_diff == set()

@@ -3,7 +3,7 @@
 
 """Read-model for ``state=gathered`` output of policy groups.
 
-``GatheredPolicyGroup`` is a lightweight model that represents a policy group
+``PolicyGroupGathered`` is a lightweight model that represents a policy group
 as returned by the ND API, keyed by ``policyId``.  It is used exclusively
 by the gathered state handler for:
 
@@ -29,16 +29,18 @@ import json
 import logging
 from typing import Any, ClassVar, Literal
 
-from ansible_collections.cisco.nd.plugins.module_utils.constants import SYSTEM_INJECTED_TEMPLATE_KEYS
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.constants import (
+    SYSTEM_INJECTED_TEMPLATE_KEYS,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 
-log = logging.getLogger("nd.GatheredPolicyGroup")
+log = logging.getLogger("nd.PolicyGroupGathered")
 
 
-class GatheredPolicyGroup(NDBaseModel):
+class PolicyGroupGathered(NDBaseModel):
     """Read-model for a policy group returned by the ND API.
 
     Keyed by ``policy_id`` for ``NDConfigCollection`` dedup.
@@ -98,8 +100,8 @@ class GatheredPolicyGroup(NDBaseModel):
     )
 
     @classmethod
-    def from_api_policy_group(cls, group: dict[str, Any]) -> "GatheredPolicyGroup":
-        """Create a GatheredPolicyGroup from a raw ND API policy group dict.
+    def from_api_policy_group(cls, group: dict[str, Any]) -> "PolicyGroupGathered":
+        """Create a PolicyGroupGathered from a raw ND API policy group dict.
 
         Handles ``templateInputs`` which may be a JSON-encoded string in the
         API response.
@@ -108,7 +110,7 @@ class GatheredPolicyGroup(NDBaseModel):
             group: Raw policy group dict from the ND API.
 
         Returns:
-            A validated ``GatheredPolicyGroup`` instance.
+            A validated ``PolicyGroupGathered`` instance.
         """
         data = dict(group)
 

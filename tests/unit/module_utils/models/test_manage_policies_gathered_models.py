@@ -7,7 +7,7 @@
 """
 Unit tests for ``models/manage_policies/gathered_models.py``.
 
-Covers the ``GatheredPolicy`` read-model used by ``state=gathered``:
+Covers the ``PolicyGathered`` read-model used by ``state=gathered``:
 
 - Construction (snake_case and camelCase aliases, defaults, required fields).
 - ClassVar contract (``identifiers``, ``identifier_strategy="single"``,
@@ -30,8 +30,8 @@ import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.gathered_models import (
-    GatheredPolicy,
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_gathered import (
+    PolicyGathered,
 )
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
     does_not_raise,
@@ -69,7 +69,7 @@ def test_manage_policies_gathered_models_00010() -> None:
     """
     # Summary
 
-    Verify the ``GatheredPolicy`` ClassVar contract (identifier metadata and
+    Verify the ``PolicyGathered`` ClassVar contract (identifier metadata and
     config-exclude set) matches the design.
 
     ## Test
@@ -83,12 +83,12 @@ def test_manage_policies_gathered_models_00010() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy`` ClassVars
+    - ``PolicyGathered`` ClassVars
     """
-    assert GatheredPolicy.identifiers == ["policy_id"]
-    assert GatheredPolicy.identifier_strategy == "single"
-    assert GatheredPolicy.exclude_from_diff == set()
-    assert GatheredPolicy.config_exclude_fields == {
+    assert PolicyGathered.identifiers == ["policy_id"]
+    assert PolicyGathered.identifier_strategy == "single"
+    assert PolicyGathered.exclude_from_diff == set()
+    assert PolicyGathered.config_exclude_fields == {
         "entity_type",
         "entity_name",
         "source",
@@ -117,10 +117,10 @@ def test_manage_policies_gathered_models_00020() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.__init__``
+    - ``PolicyGathered.__init__``
     """
     with does_not_raise():
-        m = GatheredPolicy(policy_id="POLICY-1", switch_id="FDO111")
+        m = PolicyGathered(policy_id="POLICY-1", switch_id="FDO111")
 
     assert m.policy_id == "POLICY-1"
     assert m.switch_id == "FDO111"
@@ -149,10 +149,10 @@ def test_manage_policies_gathered_models_00030() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.__init__`` (Field aliases)
+    - ``PolicyGathered.__init__`` (Field aliases)
     """
     with does_not_raise():
-        m = GatheredPolicy(
+        m = PolicyGathered(
             policyId="POLICY-99",
             switchId="FDO999",
             templateName="feature_enable",
@@ -187,13 +187,13 @@ def test_manage_policies_gathered_models_00040(missing) -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.__init__``
+    - ``PolicyGathered.__init__``
     """
     kwargs = {"policy_id": "POLICY-1", "switch_id": "FDO111"}
     del kwargs[missing]
 
     with pytest.raises(ValidationError):
-        GatheredPolicy(**kwargs)
+        PolicyGathered(**kwargs)
 
 
 # =============================================================================
@@ -214,9 +214,9 @@ def test_manage_policies_gathered_models_00050() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.get_identifier_value`` (inherited from NDBaseModel)
+    - ``PolicyGathered.get_identifier_value`` (inherited from NDBaseModel)
     """
-    m = GatheredPolicy(policy_id="POLICY-42", switch_id="FDO000")
+    m = PolicyGathered(policy_id="POLICY-42", switch_id="FDO000")
 
     assert m.get_identifier_value() == "POLICY-42"
 
@@ -232,7 +232,7 @@ def test_manage_policies_gathered_models_00100() -> None:
 
     Verify ``from_api_policy()`` consumes a realistic API response (with
     JSON-string ``templateInputs`` and several "ignored" extra keys) and
-    returns a valid ``GatheredPolicy``.
+    returns a valid ``PolicyGathered``.
 
     ## Test
 
@@ -243,10 +243,10 @@ def test_manage_policies_gathered_models_00100() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.from_api_policy``
+    - ``PolicyGathered.from_api_policy``
     """
     with does_not_raise():
-        m = GatheredPolicy.from_api_policy(_api_policy())
+        m = PolicyGathered.from_api_policy(_api_policy())
 
     assert m.policy_id == "POLICY-28440"
     assert m.switch_id == "FDO25031SY4"
@@ -275,13 +275,13 @@ def test_manage_policies_gathered_models_00110() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.from_api_policy``
+    - ``PolicyGathered.from_api_policy``
     """
     raw = _api_policy()
     snapshot = dict(raw)
     snapshot_inputs = raw["templateInputs"]
 
-    GatheredPolicy.from_api_policy(raw)
+    PolicyGathered.from_api_policy(raw)
 
     assert raw == snapshot
     assert raw["templateInputs"] == snapshot_inputs
@@ -306,11 +306,11 @@ def test_manage_policies_gathered_models_00120() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.from_api_policy``
+    - ``PolicyGathered.from_api_policy``
     """
     raw = _api_policy(templateInputs={"featureName": "vpc", "extra": [1, 2]})
 
-    m = GatheredPolicy.from_api_policy(raw)
+    m = PolicyGathered.from_api_policy(raw)
 
     assert m.template_inputs == {"featureName": "vpc", "extra": [1, 2]}
 
@@ -328,11 +328,11 @@ def test_manage_policies_gathered_models_00130() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.from_api_policy``
+    - ``PolicyGathered.from_api_policy``
     """
     raw = _api_policy(templateInputs='{"featureName": "vpc", "n": 3}')
 
-    m = GatheredPolicy.from_api_policy(raw)
+    m = PolicyGathered.from_api_policy(raw)
 
     assert m.template_inputs == {"featureName": "vpc", "n": 3}
 
@@ -351,12 +351,12 @@ def test_manage_policies_gathered_models_00140() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.from_api_policy``
+    - ``PolicyGathered.from_api_policy``
     """
     raw = _api_policy(templateInputs="{not-json")
 
     with does_not_raise():
-        m = GatheredPolicy.from_api_policy(raw)
+        m = PolicyGathered.from_api_policy(raw)
 
     assert m.template_inputs == {}
 
@@ -375,13 +375,13 @@ def test_manage_policies_gathered_models_00150() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.from_api_policy``
+    - ``PolicyGathered.from_api_policy``
     """
     raw = _api_policy()
     raw.pop("templateInputs")
     raw["nvPairs"] = {"featureName": "ospf"}
 
-    m = GatheredPolicy.from_api_policy(raw)
+    m = PolicyGathered.from_api_policy(raw)
 
     assert m.template_inputs == {"featureName": "ospf"}
 
@@ -399,12 +399,12 @@ def test_manage_policies_gathered_models_00160() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.from_api_policy``
+    - ``PolicyGathered.from_api_policy``
     """
     raw = _api_policy()
     raw.pop("templateInputs")
 
-    m = GatheredPolicy.from_api_policy(raw)
+    m = PolicyGathered.from_api_policy(raw)
 
     assert m.template_inputs == {}
 
@@ -427,13 +427,13 @@ def test_manage_policies_gathered_models_00170() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.from_api_policy``
+    - ``PolicyGathered.from_api_policy``
     """
     raw = _api_policy()
     raw.pop("switchId")
     raw["serialNumber"] = "FDO_LEGACY"
 
-    m = GatheredPolicy.from_api_policy(raw)
+    m = PolicyGathered.from_api_policy(raw)
 
     assert m.switch_id == "FDO_LEGACY"
 
@@ -452,11 +452,11 @@ def test_manage_policies_gathered_models_00180() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.from_api_policy``
+    - ``PolicyGathered.from_api_policy``
     """
     raw = _api_policy(switchId="FDO_NEW", serialNumber="FDO_OLD")
 
-    m = GatheredPolicy.from_api_policy(raw)
+    m = PolicyGathered.from_api_policy(raw)
 
     assert m.switch_id == "FDO_NEW"
 
@@ -484,9 +484,9 @@ def test_manage_policies_gathered_models_00200() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.to_gathered_config``
+    - ``PolicyGathered.to_gathered_config``
     """
-    m = GatheredPolicy.from_api_policy(_api_policy())
+    m = PolicyGathered.from_api_policy(_api_policy())
 
     cfg = m.to_gathered_config()
 
@@ -525,9 +525,9 @@ def test_manage_policies_gathered_models_00210() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.to_gathered_config``
+    - ``PolicyGathered.to_gathered_config``
     """
-    m = GatheredPolicy(
+    m = PolicyGathered(
         policy_id="POLICY-NULL",
         switch_id="FDO000",
         description=None,
@@ -559,9 +559,9 @@ def test_manage_policies_gathered_models_00220() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.to_gathered_config``
+    - ``PolicyGathered.to_gathered_config``
     """
-    m = GatheredPolicy.from_api_policy(
+    m = PolicyGathered.from_api_policy(
         _api_policy(
             entityType="switch",
             entityName="SWITCH",
@@ -603,12 +603,12 @@ def test_manage_policies_gathered_models_00230() -> None:
 
     ## Classes and Methods
 
-    - ``GatheredPolicy.from_api_policy``
-    - ``GatheredPolicy.to_gathered_config``
+    - ``PolicyGathered.from_api_policy``
+    - ``PolicyGathered.to_gathered_config``
     """
     raw = _api_policy(policyId="POLICY-RT", switchId="FDO_RT")
 
-    cfg = GatheredPolicy.from_api_policy(raw).to_gathered_config()
+    cfg = PolicyGathered.from_api_policy(raw).to_gathered_config()
 
     assert cfg["policy_id"] == "POLICY-RT"
     assert cfg["switch"][0]["serial_number"] == "FDO_RT"

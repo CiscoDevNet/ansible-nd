@@ -65,9 +65,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import (
     PlaybookPolicyConfig,
 )
-from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.gathered_models import (
-    GatheredPolicy,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_actions import (
     PolicyIds,
     SwitchIds,
@@ -78,6 +75,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.po
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_crud import (
     PolicyCreateBulk,
     PolicyUpdate,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.policy_gathered import (
+    PolicyGathered,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_switches.switch_data_models import (
     SwitchDataModel,
@@ -1126,9 +1126,9 @@ class NDPolicyModule:
             return
 
         # De-duplicate by policyId using NDConfigCollection.
-        # GatheredPolicy uses policyId as its single identifier, so
+        # PolicyGathered uses policyId as its single identifier, so
         # adding a policy with a duplicate policyId is silently skipped.
-        gathered_collection = NDConfigCollection(model_class=GatheredPolicy)
+        gathered_collection = NDConfigCollection(model_class=PolicyGathered)
         skipped = 0
         for pol in policies:
             pid = pol.get("policyId")
@@ -1137,7 +1137,7 @@ class NDPolicyModule:
                 skipped += 1
                 continue
             try:
-                model = GatheredPolicy.from_api_policy(pol)
+                model = PolicyGathered.from_api_policy(pol)
             except Exception as exc:
                 self.log.warning(f"Failed to parse policy {pid} for gathered output: {exc}")
                 skipped += 1
