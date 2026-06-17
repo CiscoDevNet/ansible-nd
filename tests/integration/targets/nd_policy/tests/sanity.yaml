@@ -282,6 +282,78 @@
         that:
           - result.failed == true
 
+    ##############################################
+    ##  TC10 - Policy entry + empty switch list ##
+    ##         must FAIL (no silent no-op)      ##
+    ##############################################
+    #
+    # `translate_config` rejects a config that contains one or more policy
+    # entries paired with an empty top-level `switch: []` list. This
+    # combination is almost always a user error (e.g. a Jinja expression
+    # like `target_switches | default([])` rendering to `[]` at runtime),
+    # and previously it was silently swallowed as a no-op. The module
+    # now fails up-front naming the offending policy entries so the user
+    # can fix their input.
+    - name: "SANITY TC10a - merged: policy entry + empty switch list must fail"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: switch_freeform
+            description: "policy with empty switch list"
+            template_inputs:
+              CONF: "system vlan long-name"
+          - switch: []
+      register: result
+      ignore_errors: true
+      tags: sanity
+
+    - name: "SANITY TC10a - Verify failure for empty switch list (merged)"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+          - "'switch' in (result.msg | lower)"
+          - "'switch_freeform' in result.msg"
+      tags: sanity
+
+    - name: "SANITY TC10b - deleted: policy entry + empty switch list must fail"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: true
+        config:
+          - name: POLICY-99999999
+          - switch: []
+      register: result
+      ignore_errors: true
+      tags: sanity
+
+    - name: "SANITY TC10b - Verify failure for empty switch list (deleted)"
+      ansible.builtin.assert:
+        that:
+          - result.failed == true
+          - "'switch' in (result.msg | lower)"
+          - "'POLICY-99999999' in result.msg"
+      tags: sanity
+
+    - name: "SANITY TC10c - empty switch list with NO policies is a no-op (not an error)"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: deleted
+        deploy: false
+        config:
+          - switch: []
+      register: result
+      tags: sanity
+
+    - name: "SANITY TC10c - Verify no-op succeeds when no policy entries"
+      ansible.builtin.assert:
+        that:
+          - result.failed is not defined or result.failed == false
+          - result.changed == false
+      tags: sanity
+
   always:
     - name: "SANITY - Cleanup"
       ansible.builtin.import_tasks: ../tasks/cleanup.yaml

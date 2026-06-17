@@ -480,6 +480,19 @@ class NDPolicyModule:
 
         switches = switch_entry["switch"]
         if not switches:
+            # Empty switch list with no policy entries is a true no-op.
+            # With one or more policy entries it is a user error — fail
+            # loudly instead of silently dropping the request.
+            if global_policies:
+                offending = [p.get("name") or "<unnamed>" for p in global_policies]
+                raise NDModuleError(
+                    msg=(
+                        f"config has {len(global_policies)} policy entry(ies) "
+                        f"({offending}) but the 'switch:' list is empty. "
+                        "Provide at least one switch (serial_number or ip) to "
+                        "target, or remove the policy entries to make this a no-op."
+                    )
+                )
             return []
 
         # ── Step 2: Extract switch serial numbers and per-switch overrides ──

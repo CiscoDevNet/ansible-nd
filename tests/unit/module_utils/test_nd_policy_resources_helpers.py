@@ -1285,3 +1285,58 @@ def test_nd_policy_resources_helpers_00810() -> None:
     assert out[0]["name"] == "POLICY-99"
     assert out[0]["switch"] == "FDO123"
     assert out[0]["template_inputs"] == {"featureName": "lacp"}
+
+
+def test_nd_policy_resources_helpers_00820() -> None:
+    """
+    # Summary
+
+    Verify policy entries paired with an empty ``switch:`` list raise
+    ``NDModuleError`` instead of silently returning ``[]``. This guards
+    against a Jinja expression rendering the switch list to ``[]`` at
+    runtime, which would otherwise drop the request on the floor.
+
+    ## Test
+
+    - Policy entry(ies) + empty switch list -> raises ``NDModuleError``
+      whose message names the offending entries.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule.translate_config``
+    """
+    config = [
+        {"name": "POLICY-12345"},
+        {"switch": []},
+    ]
+
+    with pytest.raises(NDModuleError) as exc:
+        NDPolicyModule.translate_config(config, use_desc_as_key=False)
+
+    assert "POLICY-12345" in str(exc.value)
+    assert "switch" in str(exc.value).lower()
+
+
+def test_nd_policy_resources_helpers_00830() -> None:
+    """
+    # Summary
+
+    Verify the genuine no-op case is preserved: a config with ONLY an
+    empty ``switch:`` entry (no policy entries at all) still returns
+    ``[]`` quietly. Only the policy-entries-plus-empty-switch case is
+    treated as a user error.
+
+    ## Test
+
+    - ``[{"switch": []}]`` -> ``[]`` (no error).
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule.translate_config``
+    """
+    config = [{"switch": []}]
+
+    with does_not_raise():
+        out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+
+    assert out == []
