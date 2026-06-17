@@ -86,6 +86,30 @@ class SwitchSerialNumberMixin(BaseModel):
     switch_sn: Optional[str] = Field(default=None, min_length=1, description="Switch serial number")
 
 
+class FilterMixin(BaseModel):
+    """Mixin for endpoints that accept a Lucene filter expression."""
+
+    filter: Optional[str] = Field(default=None, min_length=1, description="Lucene filter expression")
+
+
+class MaxMixin(BaseModel):
+    """Mixin for endpoints that accept a max results parameter."""
+
+    max: Optional[int] = Field(default=None, ge=1, description="Maximum number of results")
+
+
+class OffsetMixin(BaseModel):
+    """Mixin for endpoints that accept a pagination offset parameter."""
+
+    offset: Optional[int] = Field(default=None, ge=0, description="Pagination offset")
+
+
+class TicketIdMixin(BaseModel):
+    """Mixin for endpoints that accept a change-control ticket ID."""
+
+    ticket_id: Optional[str] = Field(default=None, min_length=1, description="Change control ticket ID")
+
+
 class UpdateGroupNameMixin(BaseModel):
     """Mixin for endpoints that require update_group_name parameter."""
 
