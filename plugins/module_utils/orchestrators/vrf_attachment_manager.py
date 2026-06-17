@@ -229,9 +229,12 @@ class VrfAttachmentManager:
                     "switchId": switch_id,
                     "attach": True,
                 }
-                instance_values = self.coordinator._attachment_instance_values(attachment.get("attachment_options") or {})
+                instance_values = self.coordinator._attachment_instance_values(attachment)
                 if instance_values:
                     payload["instanceValues"] = instance_values
+                freeform_config = attachment.get("freeform_config")
+                if freeform_config is not None:
+                    payload["extraConfig"] = freeform_config
                 desired[(vrf_name, switch_id)] = payload
 
         return desired
@@ -303,9 +306,12 @@ class VrfAttachmentManager:
         return candidates
 
     @staticmethod
-    def attachment_instance_values(attachment_options: dict[str, Any]) -> dict[str, Any]:
-        """Map playbook attachment_options fields to ND instanceValues."""
+    def attachment_instance_values(attachment: dict[str, Any]) -> dict[str, Any]:
+        """Map playbook attach fields to ND instanceValues."""
+        attachment_options = attachment.get("attachment_options") or {}
         raw = {
+            "dpu_secure": attachment_options.get("dpu_secure"),
+            "dpu_affinity": attachment_options.get("dpu_affinity"),
             "loopback_id": attachment_options.get("loopback_id"),
             "loopback_ipv4_address": attachment_options.get("loopback_ipv4_address"),
             "loopback_ipv6_address": attachment_options.get("loopback_ipv6_address"),
@@ -445,6 +451,8 @@ class VrfAttachmentManager:
     ) -> bool:
         """Return True when existing attachment satisfies desired fields."""
         if existing.get("attach") is not True:
+            return False
+        if existing.get("extraConfig") != desired.get("extraConfig"):
             return False
         desired_instance = desired.get("instanceValues") or {}
         if not desired_instance:

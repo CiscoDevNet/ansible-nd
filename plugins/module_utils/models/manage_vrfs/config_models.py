@@ -35,6 +35,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.valida
     VrfValidators,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums import (
+    DpuAffinity,
     VrfType,
 )
 
@@ -62,6 +63,16 @@ class VrfAttachmentOptionsConfigModel(NDNestedModel):
 
     identifiers: ClassVar[list[str]] = []
 
+    dpu_secure: bool | None = Field(
+        default=None,
+        alias="dpuSecure",
+        description="Enable DPU secure mode for this attachment",
+    )
+    dpu_affinity: DpuAffinity | None = Field(
+        default=None,
+        alias="dpuAffinity",
+        description="DPU affinity for this attachment",
+    )
     loopback_id: int | None = Field(
         default=None,
         alias="loopbackId",
@@ -142,6 +153,11 @@ class VrfAttachmentConfigModel(NDNestedModel):
     ip_address: str = Field(
         alias="ipAddress",
         description="Management IP address of the switch to attach this VRF to",
+    )
+    freeform_config: str | None = Field(
+        default=None,
+        alias="freeformConfig",
+        description="Additional free-form CLI configuration mapped to API extraConfig",
     )
     attachment_options: VrfAttachmentOptionsConfigModel | None = Field(
         default=None,

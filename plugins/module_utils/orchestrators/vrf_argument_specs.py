@@ -11,6 +11,7 @@ files can import them at the top level without creating a circular dependency
 """
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums import (
+    DpuAffinity,
     VrfType,
 )
 
@@ -53,6 +54,8 @@ def _trm_fields_spec(defaults=True):
 def _attachment_options_spec():
     """Argument spec for one entry's attachment_options."""
     return dict(
+        dpu_secure=dict(type="bool"),
+        dpu_affinity=dict(type="str", choices=DpuAffinity.choices()),
         loopback_id=dict(type="int"),
         loopback_ipv4_address=dict(type="str"),
         loopback_ipv6_address=dict(type="str"),
@@ -67,6 +70,7 @@ def _attachment_spec():
     """Argument spec for one entry inside attach."""
     return dict(
         ip_address=dict(type="str", required=True),
+        freeform_config=dict(type="str"),
         attachment_options=dict(
             type="dict",
             options=_attachment_options_spec(),

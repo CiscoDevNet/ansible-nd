@@ -339,6 +339,10 @@ options:
             description: Management IP address of the switch to attach or detach.
             type: str
             required: true
+          freeform_config:
+            description:
+              - Additional free-form CLI configuration for this attachment.
+            type: str
           attachment_options:
             description:
               - Attachment-specific options for this switch.
@@ -346,6 +350,22 @@ options:
                 C(instanceValues) payload internally.
             type: dict
             suboptions:
+              dpu_secure:
+                description:
+                  - Enable DPU secure mode for this attachment.
+                  - Translated to C(instanceValues.dpuSecure) in the Manage API
+                    payload.
+                type: bool
+              dpu_affinity:
+                description:
+                  - DPU affinity for this attachment.
+                type: str
+                choices:
+                  - dynamic
+                  - dpu1
+                  - dpu2
+                  - dpu3
+                  - dpu4
               loopback_id:
                 description: Attachment loopback interface identifier, 0-1023.
                 type: int
@@ -474,7 +494,12 @@ EXAMPLES = r"""
           - "65000:50010"
         attach:
           - ip_address: 192.0.2.10
+            freeform_config: |
+              interface loopback101
+                description VRF_BLUE attachment
             attachment_options:
+              dpu_secure: false
+              dpu_affinity: dynamic
               loopback_id: 101
               loopback_ipv4_address: 10.255.101.1
               import_vpn_rt:

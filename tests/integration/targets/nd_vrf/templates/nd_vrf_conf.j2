@@ -53,9 +53,12 @@
   'deploy_type'
 ] %}
 {% set attach_fields = [
-  'ip_address'
+  'ip_address',
+  'freeform_config'
 ] %}
 {% set attachment_option_fields = [
+  'dpu_secure',
+  'dpu_affinity',
   'loopback_id',
   'loopback_ipv4_address',
   'loopback_ipv6_address',
@@ -107,6 +110,9 @@
 {% set _ = attachment_options.update({field: attach[field]}) %}
 {% endif %}
 {% endfor %}
+{% if attach.attachment_options is defined %}
+{% set _ = attachment_options.update(attach.attachment_options) %}
+{% endif %}
 {% if attachment_options %}
 {% set _ = attach_item.update({'attachment_options': attachment_options}) %}
 {% endif %}

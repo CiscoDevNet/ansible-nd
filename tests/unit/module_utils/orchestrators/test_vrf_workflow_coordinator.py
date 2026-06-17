@@ -207,6 +207,53 @@ def test_vrf_workflow_coordinator_00004_child_write_ignores_null_parser_defaults
         raise AssertionError("child write was not rejected")
 
 
+def test_vrf_workflow_coordinator_00005_attach_fields_map_to_api_payload():
+    """
+    # Summary
+
+    Verify attachment_options DPU fields and attach-level freeform_config are
+    mapped to the correct Manage API attachment payload locations.
+    """
+    module_args = {
+        "fabric": "AK-VXLAN",
+        "state": "merged",
+        "config": [
+            {
+                "vrf_name": "ansible-vrf",
+                "attach": [
+                    {
+                        "ip_address": "192.0.2.10",
+                        "freeform_config": "interface loopback10\n description test",
+                        "attachment_options": {
+                            "dpu_secure": True,
+                            "dpu_affinity": "dpu1",
+                            "loopback_id": 10,
+                            "loopback_ipv4_address": "10.10.10.10",
+                            "import_vpn_rt": ["65000:10"],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    coordinator = VrfWorkflowCoordinator(
+        module=_Module(dict(module_args)),
+        strategy=_StandaloneStrategy(),
+    )
+
+    object.__setattr__(coordinator, "_resolve_switch_ids", lambda *_args: {"192.0.2.10": "FDO123"})
+
+    desired = coordinator._desired_attachment_map(module_args, _StandaloneStrategy())
+    payload = desired[("ansible-vrf", "FDO123")]
+
+    assert payload["extraConfig"] == "interface loopback10\n description test"
+    assert payload["instanceValues"]["dpuSecure"] is True
+    assert payload["instanceValues"]["dpuAffinity"] == "dpu1"
+    assert payload["instanceValues"]["loopbackId"] == 10
+    assert payload["instanceValues"]["loopbackIpv4Address"] == "10.10.10.10"
+    assert payload["instanceValues"]["routeTargetImport"] == ["65000:10"]
+
+
 def test_vrf_workflow_coordinator_00010_parent_child_results_keep_state_machine_shape():
     """
     # Summary

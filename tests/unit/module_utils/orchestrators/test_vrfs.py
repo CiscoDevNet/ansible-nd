@@ -214,7 +214,10 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
         "attach": [
             {
                 "ip_address": "192.168.1.224",
+                "freeform_config": "interface loopback10\n description test",
                 "attachment_options": {
+                    "dpu_secure": True,
+                    "dpu_affinity": "dynamic",
                     "loopback_id": 10,
                     "loopback_ipv4_address": "10.10.10.10",
                     "loopback_ipv6_address": "2001:db8::10",
@@ -235,7 +238,10 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
         assert parsed["deploy_type"] == "vrf"
         attachment = parsed["attach"][0]
         assert attachment["ip_address"] == "192.168.1.224"
+        assert attachment["freeform_config"] == "interface loopback10\n description test"
         attachment_options = attachment["attachment_options"]
+        assert attachment_options["dpu_secure"] is True
+        assert attachment_options["dpu_affinity"] == "dynamic"
         assert attachment_options["loopback_id"] == 10
         assert attachment_options["loopback_ipv4_address"] == "10.10.10.10"
         assert attachment_options["loopback_ipv6_address"] == "2001:db8::10"
@@ -257,8 +263,12 @@ def test_vrfs_00026_config_models_match_argument_specs():
     attach_spec = vrf_base_argument_spec()["attach"]["options"]
     attachment_options_spec = attach_spec["attachment_options"]["options"]
 
-    assert set(attach_spec) == {"ip_address", "attachment_options"}
+    assert set(attach_spec) == {"ip_address", "freeform_config", "attachment_options"}
     assert "loopback_id" not in attach_spec
+    assert "dpu_secure" not in attach_spec
+    assert "dpu_affinity" not in attach_spec
+    assert attachment_options_spec["dpu_affinity"]["choices"] == ["dynamic", "dpu1", "dpu2", "dpu3", "dpu4"]
+    assert "dpu_secure" in attachment_options_spec
     assert "loopback_id" in attachment_options_spec
     assert "import_vpn_rt" in attachment_options_spec
 
