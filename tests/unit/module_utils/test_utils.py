@@ -27,7 +27,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
-
 # =============================================================================
 # issubset - scalars
 # =============================================================================
