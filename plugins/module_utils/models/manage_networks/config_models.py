@@ -66,7 +66,7 @@ class NetworkInterfaceConfigModel(NDNestedModel):
 
 
 class NetworkTorPortConfigModel(NDNestedModel):
-    """Compatibility model for legacy dcnm_network tor_ports entries."""
+    """Compatibility model for legacy tor_ports entries."""
 
     identifiers: ClassVar[list[str]] = []
 
@@ -125,8 +125,8 @@ class NetworkAttachmentConfigModel(NDNestedModel):
     def _check_interfaces_or_ports(self):
         if self.tor_ports:
             raise ValueError(
-                "tor_ports is not supported by the manage.json networkAttachments schema. "
-                "The schema supports attachment interfaces only through interfaces[]."
+                "tor_ports is not supported by the Network attachment API. "
+                "Use interfaces[] for attachment interfaces."
             )
         if not self.interfaces and not self.ports:
             raise ValueError("Either interfaces or ports is required for network attachments")
@@ -249,7 +249,7 @@ class NetworkConfigModel(NDBaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_legacy_network_keys(cls, data):
-        """Accept the existing dcnm_network playbook names as aliases."""
+        """Accept legacy playbook names as aliases."""
         if not isinstance(data, dict):
             return data
 
@@ -300,7 +300,7 @@ class NetworkConfigModel(NDBaseModel):
 
     @staticmethod
     def _normalize_legacy_dhcp_servers(data: dict[str, Any]) -> list[dict[str, Any]] | None:
-        """Normalize old DHCP server keys into manage.json serverAddress/serverVrf shape."""
+        """Normalize old DHCP server keys into API serverAddress/serverVrf shape."""
         normalized_servers: list[dict[str, Any]] = []
         for server in data.get("dhcp_servers") or data.get("dhcpServers") or []:
             if not isinstance(server, dict):

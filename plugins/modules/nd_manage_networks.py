@@ -6,7 +6,7 @@
 
 DOCUMENTATION = r"""
 ---
-module: nd_network
+module: nd_manage_networks
 version_added: "1.0.0"
 short_description: Manages Network definitions on Cisco Nexus Dashboard.
 description:
@@ -78,7 +78,7 @@ options:
         type: str
       net_name:
         description:
-          - Compatibility alias for C(network_name), matching C(dcnm_network).
+          - Compatibility alias for C(network_name).
         type: str
       network_id:
         description:
@@ -87,7 +87,7 @@ options:
         type: int
       net_id:
         description:
-          - Compatibility alias for C(network_id), matching C(dcnm_network).
+          - Compatibility alias for C(network_id).
         type: int
       network_type:
         description:
@@ -347,12 +347,12 @@ options:
           - Parent/standalone switch attachment entries for this Network.
           - Switches are identified by management IP address and resolved to
             ND C(switchId) values before the attachment payload is sent.
-          - Existing C(dcnm_network)-style C(ports) and C(deploy) are accepted
-            by the argument spec.
+          - Existing C(ports) and C(deploy) attachment fields are accepted by
+            the argument spec.
           - C(tor_ports) is recognized for compatibility but rejected during
-            validation because the Manage C(networkAttachments) schema does not
-            expose a TOR attachment field.
-          - New Manage-schema C(interfaces) entries are also accepted.
+            validation because the Network attachment API does not expose a TOR
+            attachment field.
+          - API-shaped C(interfaces) entries are also accepted.
           - If C(attach) entries are present, the module attaches the Network to
             those switches.
           - In C(state=replaced), omitting C(attach) deattaches existing
@@ -369,22 +369,21 @@ options:
             required: true
           ports:
             description:
-              - Compatibility attachment interface list matching C(dcnm_network).
-              - Each entry is converted to an access-mode Manage interface entry.
+              - Compatibility attachment interface list.
+              - Each entry is converted to an access-mode interface entry.
             type: list
             elements: str
           deploy:
             description:
               - Per-attachment compatibility deploy flag.
-              - Kept for C(dcnm_network) playbook compatibility.
               - Network-level C(deploy) controls deployment behavior.
             type: bool
             default: true
           tor_ports:
             description:
-              - Compatibility C(dcnm_network) TOR attachment entries.
-              - This is recognized but not supported by the Manage
-                C(networkAttachments) schema and fails validation if provided.
+              - Compatibility TOR attachment entries.
+              - This is recognized but not supported by the Network attachment
+                API and fails validation if provided.
             type: list
             elements: dict
             suboptions:
@@ -398,7 +397,7 @@ options:
                 elements: str
           interfaces:
             description:
-              - Manage-schema interface attachment entries.
+              - API-shaped interface attachment entries.
             type: list
             elements: dict
             suboptions:
@@ -525,7 +524,7 @@ extends_documentation_fragment:
 EXAMPLES = r"""
 # ── Standalone fabric — create a Network and attach it to a switch ───────────────
 - name: Create Network on standalone fabric and deploy by switch
-  cisco.nd.nd_network:
+  cisco.nd.nd_manage_networks:
     fabric: fab1
     state: merged
     config:
@@ -560,7 +559,7 @@ EXAMPLES = r"""
 
 # ── Standalone fabric — create Network with TRM ──────────────────────────────────
 - name: Create Network with Tenant Routed Multicast enabled
-  cisco.nd.nd_network:
+  cisco.nd.nd_manage_networks:
     fabric: fab1
     state: merged
     config:
@@ -575,7 +574,7 @@ EXAMPLES = r"""
 
 # ── Standalone fabric — create user-defined Network template payload ─────────────
 - name: Create user-defined Network
-  cisco.nd.nd_network:
+  cisco.nd.nd_manage_networks:
     fabric: fab1
     state: merged
     config:
@@ -590,7 +589,7 @@ EXAMPLES = r"""
 
 # ── MSD parent fabric — create Network with child fabric-instance overrides ──────
 - name: Create Network on MSD parent with per-child fabric-instance overrides
-  cisco.nd.nd_network:
+  cisco.nd.nd_manage_networks:
     fabric: msd_parent
     state: merged
     config:
@@ -622,7 +621,7 @@ EXAMPLES = r"""
 
 # ── MCFG parent fabric — create Network with child fabric-instance overrides ─────
 - name: Create Network on MCFG parent with child fabric overrides
-  cisco.nd.nd_network:
+  cisco.nd.nd_manage_networks:
     fabric: mcfg_parent
     state: merged
     config:
@@ -646,14 +645,14 @@ EXAMPLES = r"""
 
 # ── Child fabric — gathered only ────────────────────────────────────────────────
 - name: Gathered Networks on a child fabric (write ops must go through parent)
-  cisco.nd.nd_network:
+  cisco.nd.nd_manage_networks:
     fabric: child_fabric_1
     state: gathered
     config: []
 
 # ── Delete Networks ──────────────────────────────────────────────────────────────
 - name: Delete a Network
-  cisco.nd.nd_network:
+  cisco.nd.nd_manage_networks:
     fabric: fab1
     state: deleted
     config:
@@ -661,7 +660,7 @@ EXAMPLES = r"""
 
 # ── Replace Network configuration ───────────────────────────────────────────────
 - name: Replace Network configuration (full replace)
-  cisco.nd.nd_network:
+  cisco.nd.nd_manage_networks:
     fabric: fab1
     state: replaced
     config:

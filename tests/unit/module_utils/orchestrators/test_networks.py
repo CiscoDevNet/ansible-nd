@@ -112,7 +112,7 @@ def test_argument_spec_uses_manage_json_defaults():
     assert spec["dhcp_servers"]["options"]["server_address"]["required"] is True
 
 
-def test_legacy_dcnm_network_names_are_normalized():
+def test_legacy_network_names_are_normalized():
     model = NetworkConfigModel.from_config(
         {
             "net_name": "LEGACY_NET",
@@ -201,7 +201,7 @@ def test_attachment_options_replace_instance_values():
     }
 
 
-def test_tor_ports_are_rejected_because_manage_schema_has_no_tor_attachment_field():
+def test_tor_ports_are_rejected_because_network_attachment_api_has_no_tor_field():
     with pytest.raises(ValueError, match="tor_ports is not supported"):
         NetworkConfigModel.from_config(
             {

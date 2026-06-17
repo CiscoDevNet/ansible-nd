@@ -134,7 +134,7 @@ class NetworkValidators:
 
     @staticmethod
     def validate_tenant_name(v: str | None) -> str | None:
-        """Validate tenant name according to manage.json tenantName."""
+        """Validate tenant name format and length."""
         if v is None:
             return None
         v = str(v).strip()
@@ -148,7 +148,7 @@ class NetworkValidators:
 
     @staticmethod
     def validate_vlan_id(v: int | None) -> int | None:
-        """Validate VLAN ID range from manage.json vlanId."""
+        """Validate VLAN ID range."""
         if v is None:
             return None
         if not (2 <= v <= 4094):

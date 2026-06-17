@@ -56,7 +56,7 @@ class MultisiteParentNetworkStrategy(StandaloneNetworkStrategy):
         state: str,
     ) -> dict[str, Any]:
         """
-        Build module_args for executing nd_network against a Multisite child fabric.
+        Build module_args for executing nd_manage_networks against a Multisite child fabric.
 
         The child task runs as a standalone operation (no further child splitting).
         deploy is forced to False — the parent handles deployment.

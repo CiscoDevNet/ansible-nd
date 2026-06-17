@@ -93,7 +93,7 @@ def test_manage_network_data_models_00100() -> None:
 
 
 def test_manage_network_data_models_00105() -> None:
-    """Verify manage.json defaults and nested L2 fabricData properties."""
+    """Verify API defaults and nested L2 fabricData properties."""
     model = DefaultL2DataModel(
         vlanName="VLAN3000",
         fabricData={

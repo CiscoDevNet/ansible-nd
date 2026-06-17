@@ -1,7 +1,7 @@
 # Copyright: (c) 2026, Akshayanat C S (@achengam) <achengam@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""Argument-spec helpers for nd_network.py."""
+"""Argument-spec helpers for nd_manage_networks.py."""
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     MappingType,
