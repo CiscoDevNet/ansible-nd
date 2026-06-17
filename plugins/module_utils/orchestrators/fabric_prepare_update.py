@@ -366,25 +366,31 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
         """
         return "; ".join(f"{s.switch_name or s.switch_id}=[staged:{s.image_staged_status}, validated:{s.image_validated_status}]" for s in switches)
 
-    def wait_for_completion(self, update_group_names: list[str], timeout: int, interval: int) -> None:
+    def wait_for_completion(self, update_group_names: list[str], timeout: int, interval: int) -> SoftwareUpdatePlanSummaryModel:
         """
         # Summary
 
         Poll the software update plan summary until every switch in the requested update groups has
-        staged and validated. Returns when staging is complete.
+        staged and validated. Returns the final summary once staging is complete, so the caller can
+        reuse it for the `after` snapshot instead of issuing another GET.
 
-        A staging poll runs for many minutes, so a single transient transport error (a token
-        refresh, a brief controller hiccup) is tolerated: a failed poll is retried, and only
-        `_MAX_CONSECUTIVE_POLL_FAILURES` failures in a row abort the wait. A successful poll resets
-        the failure count.
+        A staging poll runs for many minutes, so a transient hiccup is tolerated. Both a failed
+        summary GET and a summary that does not yet resolve the requested groups (for example a
+        controller returning a partial body during a failover) are treated as retryable: the poll is
+        retried, and only `_MAX_CONSECUTIVE_POLL_FAILURES` failures in a row abort the wait. A
+        successful, fully-resolved poll resets the failure count.
+
+        The `timeout` is honored ahead of the retry budget: if the deadline has passed, a timeout is
+        raised even when the most recent poll failed, so a small `timeout` is never overshot by the
+        retry loop.
 
         ## Raises
 
         ### RuntimeError
 
-        - If a requested update group is missing from the summary.
         - If any switch reports a staging or validation failure.
-        - If the summary poll fails more than `_MAX_CONSECUTIVE_POLL_FAILURES` times in a row.
+        - If the summary poll fails (transport error or unresolved groups) more than
+          `_MAX_CONSECUTIVE_POLL_FAILURES` times in a row before the deadline.
         - If staging does not complete within `timeout` seconds.
         """
         deadline = time.monotonic() + max(timeout, 0)
@@ -392,26 +398,27 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
         while True:
             try:
                 summary = self.get_summary()
+                groups = self._resolve_groups(summary, update_group_names)
+                switches = [sw for group in groups for sw in (group.update_group_switches or [])]
             except Exception as e:  # pylint: disable=broad-except
-                # A long poll will occasionally hit a transient transport error; retry it rather
-                # than aborting the whole prepare. Only a sustained run of failures is fatal.
+                # A long poll will occasionally hit a transient transport error, or briefly return a
+                # body that does not resolve the requested groups; retry rather than aborting the
+                # whole prepare. Honor the user's timeout first, then the retry budget; only a
+                # sustained run of failures before the deadline is fatal.
                 consecutive_failures += 1
-                if consecutive_failures > _MAX_CONSECUTIVE_POLL_FAILURES:
-                    raise RuntimeError(
-                        f"Polling staging status for update group(s) {update_group_names} in fabric "
-                        f"'{self.fabric_name}' failed {consecutive_failures} times in a row: {e}"
-                    ) from e
                 if time.monotonic() >= deadline:
                     raise RuntimeError(
                         f"Timed out after {timeout}s waiting for staging of update group(s) {update_group_names} "
                         f"in fabric '{self.fabric_name}' to complete; last poll error: {e}"
                     ) from e
+                if consecutive_failures > _MAX_CONSECUTIVE_POLL_FAILURES:
+                    raise RuntimeError(
+                        f"Polling staging status for update group(s) {update_group_names} in fabric "
+                        f"'{self.fabric_name}' failed {consecutive_failures} times in a row: {e}"
+                    ) from e
                 time.sleep(interval)
                 continue
             consecutive_failures = 0
-
-            groups = self._resolve_groups(summary, update_group_names)
-            switches = [sw for group in groups for sw in (group.update_group_switches or [])]
 
             failed = [sw for sw in switches if _switch_has_failed(sw)]
             if failed:
@@ -423,10 +430,10 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
             # validate, so the wait is already satisfied. Returning here (rather than falling
             # through to the deadline check) avoids polling a switch-less group until `timeout`.
             if not switches:
-                return
+                return summary
 
             if all(_switch_is_prepared(sw) for sw in switches):
-                return
+                return summary
 
             if time.monotonic() >= deadline:
                 raise RuntimeError(

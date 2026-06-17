@@ -317,5 +317,43 @@
                 {"updateGroupName": "prep_leaf", "updateGroupStatus": "none", "stageValidatePercentage": 0, "updateGroupSwitches": []}
             ]
         }
+    },
+
+    "test_fabric_prepare_update_00560a": {
+        "TEST_NOTES": ["wait_for_completion: single poll failure (500) with the deadline already passed - timeout wins over the retry budget"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"message": "Internal Server Error"}
+    },
+
+    "test_fabric_prepare_update_00570a": {
+        "TEST_NOTES": ["wait_for_completion: poll 1 returns a body that does not yet resolve the requested group (retryable)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {"updateGroups": []}
+    },
+    "test_fabric_prepare_update_00570b": {
+        "TEST_NOTES": ["wait_for_completion: poll 2 resolves the group and reports staging complete"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/softwareUpdatePlan/summary",
+        "MESSAGE": "OK",
+        "DATA": {
+            "updateGroups": [
+                {
+                    "updateGroupName": "prep_leaf",
+                    "updateGroupStatus": "stageSuccess",
+                    "stageValidatePercentage": 100,
+                    "updateGroupSwitches": [
+                        {"switchId": "FDO1", "switchName": "leaf-1", "switchRole": "leaf", "imageStagedStatus": "success", "imageValidatedStatus": "success"},
+                        {"switchId": "FDO2", "switchName": "leaf-2", "switchRole": "leaf", "imageStagedStatus": "success", "imageValidatedStatus": "success"}
+                    ]
+                }
+            ]
+        }
     }
 }

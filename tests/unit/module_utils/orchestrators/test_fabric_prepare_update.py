@@ -22,7 +22,10 @@ import inspect
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
-from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_prepare_update.software_update_plan_summary import SwitchStageStatusModel
+from ansible_collections.cisco.nd.plugins.module_utils.models.fabric_prepare_update.software_update_plan_summary import (
+    SoftwareUpdatePlanSummaryModel,
+    SwitchStageStatusModel,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.fabric_prepare_update import (
     FabricPrepareUpdateOrchestrator,
     _switch_has_failed,
@@ -479,7 +482,7 @@ def test_fabric_prepare_update_00500() -> None:
     ## Test
 
     - Poll 1 reports staging in progress; poll 2 reports staging complete
-    - `wait_for_completion` polls twice and returns without raising
+    - `wait_for_completion` polls twice and returns the final summary without raising
 
     ## Classes and Methods
 
@@ -496,7 +499,12 @@ def test_fabric_prepare_update_00500() -> None:
     instance = FabricPrepareUpdateOrchestrator(rest_send=rest_send)
 
     with does_not_raise():
-        instance.wait_for_completion(["prep_leaf"], timeout=300, interval=0)
+        result = instance.wait_for_completion(["prep_leaf"], timeout=300, interval=0)
+
+    # The final summary is returned so the caller can reuse it for the `after` snapshot
+    # instead of issuing another GET.
+    assert isinstance(result, SoftwareUpdatePlanSummaryModel)
+    assert [g.update_group_name for g in (result.update_groups or [])] == ["prep_leaf"]
 
 
 def test_fabric_prepare_update_00510() -> None:
@@ -644,3 +652,64 @@ def test_fabric_prepare_update_00550() -> None:
 
     with does_not_raise():
         instance.wait_for_completion(["prep_leaf"], timeout=0, interval=0)
+
+
+def test_fabric_prepare_update_00560() -> None:
+    """
+    # Summary
+
+    Verify `wait_for_completion` honors `timeout` ahead of the retry budget: when a poll fails after
+    the deadline has passed, it raises a timeout rather than a consecutive-failure error.
+
+    ## Test
+
+    - The first (and only) summary poll fails with a transport error (HTTP 500)
+    - `timeout=0` forces the deadline to pass before the failure is evaluated
+    - `wait_for_completion` raises a timeout `RuntimeError`, not a "failed N times in a row" error
+
+    ## Classes and Methods
+
+    - FabricPrepareUpdateOrchestrator.wait_for_completion()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_prepare_update(f"{method_name}a")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricPrepareUpdateOrchestrator(rest_send=rest_send)
+
+    with pytest.raises(RuntimeError, match=r"Timed out after 0s.*last poll error"):
+        instance.wait_for_completion(["prep_leaf"], timeout=0, interval=0)
+
+
+def test_fabric_prepare_update_00570() -> None:
+    """
+    # Summary
+
+    Verify `wait_for_completion` retries a poll whose summary does not yet resolve the requested
+    update group (a partial body during a controller hiccup) rather than aborting.
+
+    ## Test
+
+    - Poll 1 returns an empty `updateGroups` list, so the requested group does not resolve
+    - Poll 2 resolves the group and reports staging complete
+    - `wait_for_completion` rides through the unresolved poll and returns without raising
+
+    ## Classes and Methods
+
+    - FabricPrepareUpdateOrchestrator.wait_for_completion()
+    """
+    method_name = inspect.stack()[0][3]
+
+    def responses():
+        yield responses_fabric_prepare_update(f"{method_name}a")
+        yield responses_fabric_prepare_update(f"{method_name}b")
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+    instance = FabricPrepareUpdateOrchestrator(rest_send=rest_send)
+
+    with does_not_raise():
+        instance.wait_for_completion(["prep_leaf"], timeout=300, interval=0)

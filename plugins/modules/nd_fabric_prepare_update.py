@@ -173,14 +173,19 @@ def _run_prepare(module: AnsibleModule) -> tuple[Results | None, dict]:
         return orchestrator.results, {"changed": True, "before": before, "after": before}
 
     orchestrator.stage(update_groups)
+
+    # When waiting, reuse the final poll summary for the `after` snapshot so completion does not
+    # cost an extra GET. When not waiting, no summary is available yet, so status_snapshot fetches
+    # the just-started staging status fresh.
+    final_summary = None
     if module.params["wait"]:
-        orchestrator.wait_for_completion(
+        final_summary = orchestrator.wait_for_completion(
             update_groups,
             timeout=module.params["wait_timeout"],
             interval=module.params["wait_interval"],
         )
 
-    after = orchestrator.status_snapshot(update_groups)
+    after = orchestrator.status_snapshot(update_groups, summary=final_summary)
     return orchestrator.results, {"changed": True, "before": before, "after": after}
 
 
