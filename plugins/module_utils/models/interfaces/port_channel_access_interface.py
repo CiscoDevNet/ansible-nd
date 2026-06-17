@@ -25,7 +25,7 @@ interfaces inherit access-mode settings from the port-channel; users do not pre-
             - `network_os_type` (default: "nx-os")
             - `policy` -> `PortChannelAccessPolicyModel`
                 - `admin_state`, `access_vlan`, `ports`, `port_channel_mode`,
-                  `lacp_rate`, `bpdu_guard`, `description`, `policy_type`, etc.
+                  `lacp_rate`, `bpdu_guard`, `description`, etc.
 """
 
 from __future__ import annotations
@@ -34,7 +34,9 @@ from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     Field,
+    SerializationInfo,
     field_validator,
+    model_serializer,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -167,6 +169,41 @@ class PortChannelAccessPolicyModel(NDNestedModel):
                 normalized.append(name)
         return normalized
 
+    @model_serializer(mode="wrap")
+    def _strip_policy_type_in_config(self, handler, info: SerializationInfo):
+        """
+        # Summary
+
+        Omit `policy_type` from `to_config()` output while leaving payload and diff modes untouched.
+
+        The field is hardcoded by the model (frozen at `AccessPoHostPolicyTypeEnum.ACCESS_PO_HOST`), is excluded
+        from the Ansible argspec, and is therefore not something the user supplies or needs surfaced back.
+        The wire form `"accessPoHost"` would otherwise appear under the `policy_type` key in
+        `before`/`after`/`gathered` output and confuse playbooks that compare against the Ansible
+        snake_case convention. Payload and diff serialization still emit the wire value so the POST/PUT
+        body and the round-trip diff comparison line up with what ND returns.
+
+        Implemented as a wrap-mode model serializer because `exclude_none=True` on `to_config()` evaluates
+        the field value before serialization runs — returning None from a field_serializer is too late to
+        drop the key.
+
+        ## Raises
+
+        ### AssertionError
+
+        - If the wrapped handler returns a non-`dict`. A model-level serializer always serializes to a `dict`,
+          so this is an invariant check that fails loudly rather than silently leaving `policy_type` in the
+          config output.
+        """
+        result = handler(self)
+        if not isinstance(result, dict):
+            raise AssertionError(f"Expected dict from model serialization, got {type(result).__name__}")
+        mode = (info.context or {}).get("mode", "payload")
+        if mode == "config":
+            result.pop("policy_type", None)
+            result.pop("policyType", None)
+        return result
+
 
 class PortChannelAccessNetworkOSModel(NDNestedModel):
     """
@@ -195,7 +232,7 @@ class PortChannelAccessConfigDataModel(NDNestedModel):
     """
 
     mode: Literal["access"] = Field(default="access", alias="mode", frozen=True)
-    network_os: PortChannelAccessNetworkOSModel = Field(alias="networkOS")
+    network_os: PortChannelAccessNetworkOSModel = Field(default_factory=PortChannelAccessNetworkOSModel, alias="networkOS")
 
 
 class PortChannelAccessInterfaceModel(NDBaseModel):

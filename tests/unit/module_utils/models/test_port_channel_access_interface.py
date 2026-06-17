@@ -18,7 +18,6 @@ Tests the Port-channel accessPoHost Interface Pydantic model classes.
 from __future__ import annotations
 
 import copy
-from contextlib import contextmanager
 
 import pytest
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -37,14 +36,8 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.port_ch
     PortChannelAccessNetworkOSModel,
     PortChannelAccessPolicyModel,
 )
+from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import does_not_raise
 from pydantic import ValidationError
-
-
-@contextmanager
-def does_not_raise():
-    """A context manager that does not raise an exception."""
-    yield
-
 
 # =============================================================================
 # Test data constants
@@ -96,7 +89,6 @@ SAMPLE_ANSIBLE_CONFIG = {
                 "bpdu_guard": "enable",
                 "bpdu_filter": "disable",
                 "description": "uplink to host",
-                "policy_type": "accessPoHost",
                 "speed": "10Gb",
                 "duplex_mode": "auto",
                 "mtu": "jumbo",
@@ -629,19 +621,22 @@ def test_port_channel_access_interface_00470():
     """
     # Summary
 
-    Verify `network_os` is a required field.
+    Verify `network_os` defaults to an empty `PortChannelAccessNetworkOSModel` when omitted, so constructing
+    `config_data` without an explicit `network_os` does not raise a raw `ValidationError`.
 
     ## Test
 
     - Construct without network_os
-    - ValidationError raised
+    - config_data.network_os is a PortChannelAccessNetworkOSModel with a None policy
 
     ## Classes and Methods
 
     - PortChannelAccessConfigDataModel.__init__()
     """
-    with pytest.raises(ValidationError, match=r"network_os|networkOS"):
-        PortChannelAccessConfigDataModel()
+    with does_not_raise():
+        instance = PortChannelAccessConfigDataModel()
+    assert isinstance(instance.network_os, PortChannelAccessNetworkOSModel)
+    assert instance.network_os.policy is None
 
 
 # =============================================================================
@@ -922,19 +917,26 @@ def test_port_channel_access_interface_00710():
     """
     # Summary
 
-    Verify `policy_type` round-trips as the API value in config output.
+    Verify `policy_type` is omitted from `to_config()` output (the field is hardcoded by the model and is
+    not in the argspec, so surfacing the wire form `"accessPoHost"` back to playbooks would only confuse
+    assertions that compare against the snake_case Ansible convention).
 
     ## Test
 
-    - Stored "accessPoHost" -> output "accessPoHost" (no Ansible↔API translation; field is hardcoded by the model)
+    - From a full API response, to_config() does NOT include `policy_type` in the policy dict
+    - All other policy fields ARE present (sanity check that we only omitted policy_type)
 
     ## Classes and Methods
 
     - PortChannelAccessInterfaceModel.to_config()
+    - PortChannelAccessPolicyModel._strip_policy_type_in_config()
     """
     instance = PortChannelAccessInterfaceModel.from_response(copy.deepcopy(SAMPLE_API_RESPONSE))
     result = instance.to_config()
-    assert result["config_data"]["network_os"]["policy"]["policy_type"] == "accessPoHost"
+    policy = result["config_data"]["network_os"]["policy"]
+    assert "policy_type" not in policy
+    assert policy["admin_state"] is True
+    assert policy["access_vlan"] == 100
 
 
 def test_port_channel_access_interface_00720():

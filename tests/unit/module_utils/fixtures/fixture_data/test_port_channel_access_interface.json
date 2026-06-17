@@ -5,7 +5,10 @@
         "The fixtures simulate ND responses for:",
         "  - GET /api/v1/manage/fabrics/{fabric_name}/summary  (fabric_summary via FabricContext; FabricContext.fabric_is_deployment_frozen() reads the fabricStatus field from this response, not a separate /deploymentFreeze endpoint)",
         "  - GET /api/v1/manage/fabrics/{fabric_name}/switches (switch_map via FabricContext)",
-        "  - GET /api/v1/manage/fabrics/{fabric_name}/switches/{sn}/interfaces (EpManageInterfacesListGet per switch)"
+        "  - GET /api/v1/manage/fabrics/{fabric_name}/switches/{sn}/interfaces (EpManageInterfacesListGet per switch)",
+        "  - POST/PUT/GET /api/v1/manage/fabrics/{fabric_name}/switches/{sn}/interfaces[/{name}] (create/update/query_one/create_bulk for the 00200-00800 CRUD tests)",
+        "query_all tests (00400-00430) use descriptive keys; CRUD tests (00200-00800) use the test_<module>_<NNNNN><suffix> convention.",
+        "Switch A: fabricManagementIp=192.168.1.1, switchId=FDO11111AAA. Switch B: fabricManagementIp=192.168.1.2, switchId=FDO22222BBB."
     ],
     "test_query_all_happy_path_00400a": {
         "TEST_NOTES": ["Fabric summary: fabric exists (for validate_prerequisites)"],
@@ -235,5 +238,309 @@
         "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
         "MESSAGE": "Not Found",
         "DATA": {}
+    },
+
+    "test_port_channel_access_orchestrator_00200a": {
+        "TEST_NOTES": ["create happy path: switches list (1 switch)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_00200b": {
+        "TEST_NOTES": ["create happy path: POST /interfaces (200)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_port_channel_access_orchestrator_00210a": {
+        "TEST_NOTES": ["create _request failure: switches list (1 switch)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_00210b": {
+        "TEST_NOTES": ["create _request failure: POST returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_port_channel_access_orchestrator_00220a": {
+        "TEST_NOTES": ["create unknown switch_ip: switches list has a DIFFERENT IP than the model's switch_ip"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+
+    "test_port_channel_access_orchestrator_00300a": {
+        "TEST_NOTES": ["update happy path: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_00300b": {
+        "TEST_NOTES": ["update happy path: PUT /interfaces/port-channel501"],
+        "RETURN_CODE": 200,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/port-channel501",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_port_channel_access_orchestrator_00310a": {
+        "TEST_NOTES": ["update _request failure: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_00310b": {
+        "TEST_NOTES": ["update _request failure: PUT returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "PUT",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/port-channel501",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_port_channel_access_orchestrator_00320a": {
+        "TEST_NOTES": ["delete: only switches list consumed (no API call by delete itself)"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+
+    "test_port_channel_access_orchestrator_00330a": {
+        "TEST_NOTES": ["delete unknown switch: switches list has a DIFFERENT IP"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+
+    "test_port_channel_access_orchestrator_00500a": {
+        "TEST_NOTES": ["create_bulk: switches list with 2 switches"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"},
+                {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_00500b": {
+        "TEST_NOTES": ["create_bulk: POST switch A (port-channel501+port-channel502)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+    "test_port_channel_access_orchestrator_00500c": {
+        "TEST_NOTES": ["create_bulk: POST switch B (port-channel601)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_port_channel_access_orchestrator_00510a": {
+        "TEST_NOTES": ["create_bulk failure: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"},
+                {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_00510b": {
+        "TEST_NOTES": ["create_bulk failure: POST switch A succeeds"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+    "test_port_channel_access_orchestrator_00510c": {
+        "TEST_NOTES": ["create_bulk failure: POST switch B fails"],
+        "RETURN_CODE": 500,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO22222BBB/interfaces",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_port_channel_access_orchestrator_00520a": {
+        "TEST_NOTES": ["create_bulk single: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_00520b": {
+        "TEST_NOTES": ["create_bulk single: POST switch A (port-channel501)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+
+    "test_port_channel_access_orchestrator_00600a": {
+        "TEST_NOTES": ["delete_bulk: only switches list consumed"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"},
+                {"fabricManagementIp": "192.168.1.2", "switchId": "FDO22222BBB"}
+            ]
+        }
+    },
+
+    "test_port_channel_access_orchestrator_00700a": {
+        "TEST_NOTES": ["query_one happy: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_00700b": {
+        "TEST_NOTES": ["query_one happy: GET /interfaces/port-channel501"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/port-channel501",
+        "MESSAGE": "OK",
+        "DATA": {
+            "interfaceName": "port-channel501",
+            "interfaceType": "portChannel",
+            "configData": {
+                "mode": "access",
+                "networkOS": {
+                    "networkOSType": "nx-os",
+                    "policy": {
+                        "policyType": "accessPoHost",
+                        "accessVlan": 100,
+                        "ports": ["Ethernet1/1"],
+                        "portChannelMode": "active"
+                    }
+                }
+            }
+        }
+    },
+
+    "test_port_channel_access_orchestrator_00710a": {
+        "TEST_NOTES": ["query_one failure: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_00710b": {
+        "TEST_NOTES": ["query_one failure: GET returns 500"],
+        "RETURN_CODE": 500,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces/port-channel501",
+        "MESSAGE": "Internal Server Error",
+        "DATA": {"error": "boom"}
+    },
+
+    "test_port_channel_access_orchestrator_00800a": {
+        "TEST_NOTES": ["deploy queue de-dup: switches list"],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {"fabricManagementIp": "192.168.1.1", "switchId": "FDO11111AAA"}
+            ]
+        }
+    },
+    "test_port_channel_access_orchestrator_00800b": {
+        "TEST_NOTES": ["deploy queue de-dup: first POST"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
+    },
+    "test_port_channel_access_orchestrator_00800c": {
+        "TEST_NOTES": ["deploy queue de-dup: second POST (same identifier — should NOT add a second queue entry)"],
+        "RETURN_CODE": 200,
+        "METHOD": "POST",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/switches/FDO11111AAA/interfaces",
+        "MESSAGE": "OK",
+        "DATA": {"status": "ok"}
     }
 }
