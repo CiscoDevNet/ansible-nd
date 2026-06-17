@@ -339,31 +339,38 @@ options:
             description: Management IP address of the switch to attach or detach.
             type: str
             required: true
-          loopback_id:
-            description: Attachment loopback interface identifier, 0-1023.
-            type: int
-          loopback_ipv4_address:
-            description: Attachment loopback IPv4 address.
-            type: str
-          loopback_ipv6_address:
-            description: Attachment loopback IPv6 address.
-            type: str
-          import_vpn_rt:
-            description: Attachment-level VPN import route targets.
-            type: list
-            elements: str
-          export_vpn_rt:
-            description: Attachment-level VPN export route targets.
-            type: list
-            elements: str
-          import_evpn_rt:
-            description: Attachment-level EVPN import route targets.
-            type: list
-            elements: str
-          export_evpn_rt:
-            description: Attachment-level EVPN export route targets.
-            type: list
-            elements: str
+          attachment_options:
+            description:
+              - Attachment-specific options for this switch.
+              - These fields are translated to the Manage API
+                C(instanceValues) payload internally.
+            type: dict
+            suboptions:
+              loopback_id:
+                description: Attachment loopback interface identifier, 0-1023.
+                type: int
+              loopback_ipv4_address:
+                description: Attachment loopback IPv4 address.
+                type: str
+              loopback_ipv6_address:
+                description: Attachment loopback IPv6 address.
+                type: str
+              import_vpn_rt:
+                description: Attachment-level VPN import route targets.
+                type: list
+                elements: str
+              export_vpn_rt:
+                description: Attachment-level VPN export route targets.
+                type: list
+                elements: str
+              import_evpn_rt:
+                description: Attachment-level EVPN import route targets.
+                type: list
+                elements: str
+              export_evpn_rt:
+                description: Attachment-level EVPN export route targets.
+                type: list
+                elements: str
       child_fabric_config:
         description:
           - Per-child-fabric override entries for MSD and MCFG parent fabrics.
@@ -467,16 +474,17 @@ EXAMPLES = r"""
           - "65000:50010"
         attach:
           - ip_address: 192.0.2.10
-            loopback_id: 101
-            loopback_ipv4_address: 10.255.101.1
-            import_vpn_rt:
-              - "65000:50110"
-            export_vpn_rt:
-              - "65000:50110"
-            import_evpn_rt:
-              - "65000:50110"
-            export_evpn_rt:
-              - "65000:50110"
+            attachment_options:
+              loopback_id: 101
+              loopback_ipv4_address: 10.255.101.1
+              import_vpn_rt:
+                - "65000:50110"
+              export_vpn_rt:
+                - "65000:50110"
+              import_evpn_rt:
+                - "65000:50110"
+              export_evpn_rt:
+                - "65000:50110"
         deploy: true
         deploy_type: switch
 
@@ -527,9 +535,10 @@ EXAMPLES = r"""
         bgp_passwd_encrypt: 3
         attach:
           - ip_address: 192.0.2.10
-            loopback_id: 101
-            loopback_ipv4_address: 10.255.101.1
-            loopback_ipv6_address: 2001:db8:101::1
+            attachment_options:
+              loopback_id: 101
+              loopback_ipv4_address: 10.255.101.1
+              loopback_ipv6_address: 2001:db8:101::1
         deploy: true
         deploy_type: vrf
         child_fabric_config:
@@ -596,6 +605,87 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+changed:
+  description: Whether the module changed VRF, attachment, or deployment state.
+  returned: always
+  type: bool
+before:
+  description: VRF configuration present on ND before the operation.
+  returned: always
+  type: list
+  elements: dict
+after:
+  description: VRF configuration present on ND after the operation.
+  returned: always
+  type: list
+  elements: dict
+diff:
+  description: Configuration diff calculated by the module.
+  returned: always
+  type: list
+  elements: dict
+fabric_type:
+  description:
+    - Resolved fabric topology used by the workflow.
+    - Values include V(standalone), V(multisite_parent), V(multisite_child),
+      V(multicluster_parent), and V(multicluster_child).
+  returned: always
+  type: str
+workflow:
+  description: Human-readable workflow path selected for the operation.
+  returned: always
+  type: str
+parent_fabric:
+  description:
+    - Parent fabric result for MSD or MCFG parent workflows that execute child
+      fabric tasks.
+    - Contains the same state-machine and API trace fields as a standalone
+      result.
+  returned: when a parent workflow processes one or more child fabrics
+  type: dict
+child_fabrics:
+  description:
+    - Per-child-fabric results for MSD or MCFG parent workflows.
+    - Each entry contains the same state-machine and API trace fields as a
+      standalone result, plus the child fabric name.
+  returned: when a parent workflow processes one or more child fabrics
+  type: list
+  elements: dict
+api_paths:
+  description: REST API paths called by the module.
+  returned: with verbosity C(-vv) or C(output_level=debug)
+  type: list
+  elements: str
+api_verbs:
+  description: REST API verbs called by the module.
+  returned: with verbosity C(-vv) or C(output_level=debug)
+  type: list
+  elements: str
+api_payload:
+  description: REST request payloads sent to ND.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+api_response:
+  description: Raw normalized REST responses returned by ND.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+api_result:
+  description: Response-handler result for each REST call.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+api_diff:
+  description: Per-REST-call diff data recorded by the result infrastructure.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
+api_metadata:
+  description: Per-REST-call metadata recorded by the result infrastructure.
+  returned: with verbosity C(-vvv) or C(output_level=debug)
+  type: list
+  elements: dict
 """
 
 from ansible.module_utils.basic import AnsibleModule

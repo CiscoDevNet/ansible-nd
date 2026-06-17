@@ -19,13 +19,15 @@
         [
           {
             'ip_address': nd_vrf_standalone_switch,
-            'loopback_id': 111,
-            'loopback_ipv4_address': '10.255.111.1',
-            'loopback_ipv6_address': '2001:db8:111::1',
-            'import_vpn_rt': ['65000:51111'],
-            'export_vpn_rt': ['65000:51111'],
-            'import_evpn_rt': ['65000:51111'],
-            'export_evpn_rt': ['65000:51111']
+            'attachment_options': {
+              'loopback_id': 111,
+              'loopback_ipv4_address': '10.255.111.1',
+              'loopback_ipv6_address': '2001:db8:111::1',
+              'import_vpn_rt': ['65000:51111'],
+              'export_vpn_rt': ['65000:51111'],
+              'import_evpn_rt': ['65000:51111'],
+              'export_evpn_rt': ['65000:51111']
+            }
           }
         ] if nd_vrf_standalone_switch | length > 0 else []
       }}

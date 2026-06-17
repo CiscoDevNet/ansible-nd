@@ -21,8 +21,10 @@
         [
           {
             'ip_address': nd_vrf_mcfg_switch,
-            'loopback_id': 103,
-            'loopback_ipv4_address': '10.255.103.1'
+            'attachment_options': {
+              'loopback_id': 103,
+              'loopback_ipv4_address': '10.255.103.1'
+            }
           }
         ] if nd_vrf_mcfg_switch | length > 0 else []
       }}

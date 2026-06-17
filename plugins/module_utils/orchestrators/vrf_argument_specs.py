@@ -50,10 +50,9 @@ def _trm_fields_spec(defaults=True):
     )
 
 
-def _attachment_spec():
-    """Argument spec for one entry inside attach."""
+def _attachment_options_spec():
+    """Argument spec for one entry's attachment_options."""
     return dict(
-        ip_address=dict(type="str", required=True),
         loopback_id=dict(type="int"),
         loopback_ipv4_address=dict(type="str"),
         loopback_ipv6_address=dict(type="str"),
@@ -61,6 +60,17 @@ def _attachment_spec():
         export_vpn_rt=_route_target_spec(),
         import_evpn_rt=_route_target_spec(),
         export_evpn_rt=_route_target_spec(),
+    )
+
+
+def _attachment_spec():
+    """Argument spec for one entry inside attach."""
+    return dict(
+        ip_address=dict(type="str", required=True),
+        attachment_options=dict(
+            type="dict",
+            options=_attachment_options_spec(),
+        ),
     )
 
 

@@ -47,24 +47,21 @@ _CUSTOM_VRF_TEMPLATE_FIELDS = (
 
 
 # =============================================================================
-# VrfAttachmentConfigModel — playbook-facing VRF attachment entry
+# VrfAttachmentOptionsConfigModel — playbook-facing instance values
 # =============================================================================
 
 
-class VrfAttachmentConfigModel(NDNestedModel):
+class VrfAttachmentOptionsConfigModel(NDNestedModel):
     """
-    Playbook-facing VRF attachment entry.
+    Playbook-facing VRF attachment instance values.
 
-    The public config accepts switch management IPs.  The workflow resolves
-    those IPs to switchId values before sending the ND attachment payload.
+    These fields map to the Manage API ``instanceValues`` object.  The
+    playbook-facing name is ``attachment_options`` to avoid exposing the API
+    field name directly.
     """
 
     identifiers: ClassVar[list[str]] = []
 
-    ip_address: str = Field(
-        alias="ipAddress",
-        description="Management IP address of the switch to attach this VRF to",
-    )
     loopback_id: int | None = Field(
         default=None,
         alias="loopbackId",
@@ -103,7 +100,7 @@ class VrfAttachmentConfigModel(NDNestedModel):
         description="Attachment-level EVPN export route targets",
     )
 
-    @field_validator("ip_address", "loopback_ipv4_address", mode="before")
+    @field_validator("loopback_ipv4_address", mode="before")
     @classmethod
     def _validate_ipv4(cls, v: str | None) -> str | None:
         return VrfValidators.validate_ipv4_address(v)
@@ -123,6 +120,39 @@ class VrfAttachmentConfigModel(NDNestedModel):
     @classmethod
     def _normalize_rt(cls, v: str | list[str] | None) -> list[str] | None:
         return VrfValidators.normalize_route_targets(v)
+
+
+# =============================================================================
+# VrfAttachmentConfigModel — playbook-facing VRF attachment entry
+# =============================================================================
+
+
+class VrfAttachmentConfigModel(NDNestedModel):
+    """
+    Playbook-facing VRF attachment entry.
+
+    The public config accepts switch management IPs.  The workflow resolves
+    those IPs to switchId values before sending the ND attachment payload.
+    Optional attachment-specific settings live under ``attachment_options`` and
+    are translated to API ``instanceValues`` internally.
+    """
+
+    identifiers: ClassVar[list[str]] = []
+
+    ip_address: str = Field(
+        alias="ipAddress",
+        description="Management IP address of the switch to attach this VRF to",
+    )
+    attachment_options: VrfAttachmentOptionsConfigModel | None = Field(
+        default=None,
+        alias="attachmentOptions",
+        description="Attachment-specific options mapped to API instanceValues",
+    )
+
+    @field_validator("ip_address", mode="before")
+    @classmethod
+    def _validate_ip_address(cls, v: str | None) -> str | None:
+        return VrfValidators.validate_ipv4_address(v)
 
 
 # =============================================================================

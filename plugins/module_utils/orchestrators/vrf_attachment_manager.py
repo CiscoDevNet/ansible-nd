@@ -229,7 +229,7 @@ class VrfAttachmentManager:
                     "switchId": switch_id,
                     "attach": True,
                 }
-                instance_values = self.coordinator._attachment_instance_values(attachment)
+                instance_values = self.coordinator._attachment_instance_values(attachment.get("attachment_options") or {})
                 if instance_values:
                     payload["instanceValues"] = instance_values
                 desired[(vrf_name, switch_id)] = payload
@@ -303,16 +303,16 @@ class VrfAttachmentManager:
         return candidates
 
     @staticmethod
-    def attachment_instance_values(attachment: dict[str, Any]) -> dict[str, Any]:
-        """Map playbook attachment fields to ND instanceValues."""
+    def attachment_instance_values(attachment_options: dict[str, Any]) -> dict[str, Any]:
+        """Map playbook attachment_options fields to ND instanceValues."""
         raw = {
-            "loopback_id": attachment.get("loopback_id"),
-            "loopback_ipv4_address": attachment.get("loopback_ipv4_address"),
-            "loopback_ipv6_address": attachment.get("loopback_ipv6_address"),
-            "route_target_import": attachment.get("import_vpn_rt"),
-            "route_target_export": attachment.get("export_vpn_rt"),
-            "evpn_route_target_import": attachment.get("import_evpn_rt"),
-            "evpn_route_target_export": attachment.get("export_evpn_rt"),
+            "loopback_id": attachment_options.get("loopback_id"),
+            "loopback_ipv4_address": attachment_options.get("loopback_ipv4_address"),
+            "loopback_ipv6_address": attachment_options.get("loopback_ipv6_address"),
+            "route_target_import": attachment_options.get("import_vpn_rt"),
+            "route_target_export": attachment_options.get("export_vpn_rt"),
+            "evpn_route_target_import": attachment_options.get("import_evpn_rt"),
+            "evpn_route_target_export": attachment_options.get("export_evpn_rt"),
         }
         raw = {key: value for key, value in raw.items() if value is not None}
         if not raw:

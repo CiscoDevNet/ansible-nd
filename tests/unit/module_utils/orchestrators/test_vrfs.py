@@ -214,13 +214,15 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
         "attach": [
             {
                 "ip_address": "192.168.1.224",
-                "loopback_id": 10,
-                "loopback_ipv4_address": "10.10.10.10",
-                "loopback_ipv6_address": "2001:db8::10",
-                "import_vpn_rt": ["65000:10"],
-                "export_vpn_rt": ["65000:11"],
-                "import_evpn_rt": ["65000:12"],
-                "export_evpn_rt": ["65000:13"],
+                "attachment_options": {
+                    "loopback_id": 10,
+                    "loopback_ipv4_address": "10.10.10.10",
+                    "loopback_ipv6_address": "2001:db8::10",
+                    "import_vpn_rt": ["65000:10"],
+                    "export_vpn_rt": ["65000:11"],
+                    "import_evpn_rt": ["65000:12"],
+                    "export_evpn_rt": ["65000:13"],
+                },
             }
         ],
     }
@@ -233,13 +235,14 @@ def test_vrfs_00025_config_model_accepts_supported_attachment_fields():
         assert parsed["deploy_type"] == "vrf"
         attachment = parsed["attach"][0]
         assert attachment["ip_address"] == "192.168.1.224"
-        assert attachment["loopback_id"] == 10
-        assert attachment["loopback_ipv4_address"] == "10.10.10.10"
-        assert attachment["loopback_ipv6_address"] == "2001:db8::10"
-        assert attachment["import_vpn_rt"] == ["65000:10"]
-        assert attachment["export_vpn_rt"] == ["65000:11"]
-        assert attachment["import_evpn_rt"] == ["65000:12"]
-        assert attachment["export_evpn_rt"] == ["65000:13"]
+        attachment_options = attachment["attachment_options"]
+        assert attachment_options["loopback_id"] == 10
+        assert attachment_options["loopback_ipv4_address"] == "10.10.10.10"
+        assert attachment_options["loopback_ipv6_address"] == "2001:db8::10"
+        assert attachment_options["import_vpn_rt"] == ["65000:10"]
+        assert attachment_options["export_vpn_rt"] == ["65000:11"]
+        assert attachment_options["import_evpn_rt"] == ["65000:12"]
+        assert attachment_options["export_evpn_rt"] == ["65000:13"]
 
 
 def test_vrfs_00026_config_models_match_argument_specs():
@@ -251,6 +254,13 @@ def test_vrfs_00026_config_models_match_argument_specs():
     """
     assert set(VrfConfigModel.model_fields) == set(vrf_base_argument_spec())
     assert set(VrfParentConfigModel.model_fields) == set(vrf_parent_argument_spec())
+    attach_spec = vrf_base_argument_spec()["attach"]["options"]
+    attachment_options_spec = attach_spec["attachment_options"]["options"]
+
+    assert set(attach_spec) == {"ip_address", "attachment_options"}
+    assert "loopback_id" not in attach_spec
+    assert "loopback_id" in attachment_options_spec
+    assert "import_vpn_rt" in attachment_options_spec
 
     from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.config_models import (
         VrfChildConfigModel,

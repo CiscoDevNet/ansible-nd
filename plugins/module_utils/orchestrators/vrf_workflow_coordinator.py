@@ -668,9 +668,9 @@ class VrfWorkflowCoordinator:
         """Extract known management/IP fields from a switch inventory item."""
         return self.attachments.switch_ip_candidates(switch)
 
-    def _attachment_instance_values(self, attachment: dict[str, Any]) -> dict[str, Any]:
-        """Map playbook attachment fields to ND instanceValues."""
-        return self.attachments.attachment_instance_values(attachment)
+    def _attachment_instance_values(self, attachment_options: dict[str, Any]) -> dict[str, Any]:
+        """Map playbook attachment_options fields to ND instanceValues."""
+        return self.attachments.attachment_instance_values(attachment_options)
 
     def _current_attachment_map(
         self,

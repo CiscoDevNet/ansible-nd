@@ -21,9 +21,11 @@
         [
           {
             'ip_address': nd_vrf_msd_switch,
-            'loopback_id': 102,
-            'loopback_ipv4_address': '10.255.102.1',
-            'loopback_ipv6_address': '2001:db8:102::1'
+            'attachment_options': {
+              'loopback_id': 102,
+              'loopback_ipv4_address': '10.255.102.1',
+              'loopback_ipv6_address': '2001:db8:102::1'
+            }
           }
         ] if nd_vrf_msd_switch | length > 0 else []
       }}

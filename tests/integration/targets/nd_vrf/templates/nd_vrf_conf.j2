@@ -53,7 +53,9 @@
   'deploy_type'
 ] %}
 {% set attach_fields = [
-  'ip_address',
+  'ip_address'
+] %}
+{% set attachment_option_fields = [
   'loopback_id',
   'loopback_ipv4_address',
   'loopback_ipv6_address',
@@ -99,6 +101,15 @@
 {% set _ = attach_item.update({field: attach[field]}) %}
 {% endif %}
 {% endfor %}
+{% set attachment_options = {} %}
+{% for field in attachment_option_fields %}
+{% if attach[field] is defined %}
+{% set _ = attachment_options.update({field: attach[field]}) %}
+{% endif %}
+{% endfor %}
+{% if attachment_options %}
+{% set _ = attach_item.update({'attachment_options': attachment_options}) %}
+{% endif %}
 {% set _ = attach_list.append(attach_item) %}
 {% endfor %}
 {% set _ = vrf_item.update({'attach': attach_list}) %}
