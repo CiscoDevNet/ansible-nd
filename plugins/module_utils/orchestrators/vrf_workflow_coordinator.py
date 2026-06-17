@@ -5,20 +5,13 @@
 """
 VrfWorkflowCoordinator — Parent / child VRF workflow orchestration.
 
-Replaces the following workflow handlers from the dcnm_vrf action plugin:
-  - handle_parent_workflow
-  - handle_child_workflow
-  - handle_standalone_workflow
-  - create_child_task / execute_child_task
-  - create_structured_results
-
-The coordinator is constructed inside nd_vrf.py after the strategy is
+The coordinator is constructed inside nd_manage_vrfs.py after the strategy is
 resolved. For standalone and child fabrics it runs the state machine
 directly. For parent fabrics it:
   1. Pre-validates the config (vlan_id placement, vrf_lite structure).
   2. Strips child_fabric_config from each VRF → clean parent config.
   3. Runs the parent task via NDStateMachine (once wired).
-  4. Builds child module_args per child fabric and re-invokes nd_vrf.
+  4. Builds child module_args per child fabric and re-invokes nd_manage_vrfs.
   5. Aggregates and structures the combined results.
 """
 

@@ -19,7 +19,7 @@ strategy and parent/child splitting to VrfWorkflowCoordinator.
 
 Architecture overview
 ─────────────────────
-  nd_vrf.py (AnsibleModule entry)
+  nd_manage_vrfs.py (AnsibleModule entry)
       │
       ▼
   VrfFabricResolver.resolve()  ──► BaseVrfStrategy subclass
@@ -30,7 +30,7 @@ Architecture overview
       ├── standalone / child ──► NDVrfOrchestrator ──► NDStateMachine
       │
       └── parent ─────────────► NDVrfOrchestrator (parent task)
-                                  └── per child ──► nd_vrf (recursive)
+                                  └── per child ──► nd_manage_vrfs (recursive)
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
     create_bulk_endpoint: type | None = EpManageFabricsVrfsPost
     delete_bulk_endpoint: type | None = EpManageFabricsVrfActionsRemovePost
 
-    # Strategy is injected at construction time by nd_vrf.py / VrfFabricResolver.
+    # Strategy is injected at construction time by nd_manage_vrfs.py / VrfFabricResolver.
     strategy: BaseVrfStrategy | None = None
     delete_retry_attempts: ClassVar[int] = 3
     delete_retry_delay: ClassVar[int] = 30

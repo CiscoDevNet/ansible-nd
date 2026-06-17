@@ -6,7 +6,7 @@
 
 """Playbook-facing Pydantic models for VRF configuration.
 
-Three models covering the three deployment topologies exposed by nd_vrf.py:
+Three models covering the three deployment topologies exposed by nd_manage_vrfs.py:
 
 - ``VrfChildConfigModel``  — per-child-fabric override entry (nested, used
   inside ``VrfParentConfigModel``).
@@ -187,7 +187,7 @@ class VrfChildConfigModel(NDNestedModel):
     All fields except ``fabric`` are optional; absent fields mean "inherit
     the parent setting".
 
-    Based on: nd_vrf.py config.child_fabric_config suboptions
+    Based on: nd_manage_vrfs.py config.child_fabric_config suboptions
     """
 
     identifiers: ClassVar[list[str]] = []
@@ -396,11 +396,11 @@ class VrfConfigModel(NDBaseModel):
     """
     Playbook-facing VRF configuration model for standalone fabrics.
 
-    Carries the full field set from nd_vrf.py for use against a single
+    Carries the full field set from nd_manage_vrfs.py for use against a single
     (standalone) fabric.  All cross-field dependencies are validated by
     ``@model_validator`` hooks.
 
-    Based on: nd_vrf.py config suboptions (standalone topology)
+    Based on: nd_manage_vrfs.py config suboptions (standalone topology)
     """
 
     identifiers: ClassVar[list[str] | None] = ["vrf_name"]
@@ -859,7 +859,7 @@ class VrfParentConfigModel(NDBaseModel):
     Cross-field TRM and bgp_password dependencies are validated identically
     to ``VrfConfigModel``.
 
-    Based on: nd_vrf.py config suboptions (parent / MSD topology)
+    Based on: nd_manage_vrfs.py config suboptions (parent / MSD topology)
     """
 
     identifiers: ClassVar[list[str] | None] = ["vrf_name"]

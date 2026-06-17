@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - replaced]
+- name: Test Entry Point - [nd_manage_vrfs - replaced]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing Replaced Tests - [nd_vrf]                       +"
+      - "+     Executing Replaced Tests - [nd_manage_vrfs]                       +"
       - "----------------------------------------------------------------"
   tags: replaced
 
@@ -104,7 +104,7 @@
   tags: replaced
 
 - name: Replaced TC1 - Create Base VRF
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_replace_base_conf }}"
@@ -113,7 +113,7 @@
   tags: replaced
 
 - name: Replaced TC2 - Replace VRF
-  cisco.nd.nd_vrf: &replace_conf
+  cisco.nd.nd_manage_vrfs: &replace_conf
     fabric: "{{ target_fabric }}"
     state: replaced
     config: "{{ nd_vrf_standalone_replace_conf }}"
@@ -130,7 +130,7 @@
   tags: replaced
 
 - name: Replaced TC2 - Gather VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ target_fabric }}"
     state: gathered
     config: []
@@ -146,7 +146,7 @@
   tags: replaced
 
 - name: Replaced TC3 - Idempotence
-  cisco.nd.nd_vrf: *replace_conf
+  cisco.nd.nd_manage_vrfs: *replace_conf
   register: replace_idempotent
   when: nd_vrf_run_standalone | bool
   tags: replaced

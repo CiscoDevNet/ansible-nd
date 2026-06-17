@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - msd - replaced]
+- name: Test Entry Point - [nd_manage_vrfs - msd - replaced]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing MSD Replaced Tests - [nd_vrf]                  +"
+      - "+     Executing MSD Replaced Tests - [nd_manage_vrfs]                  +"
       - "----------------------------------------------------------------"
   tags:
     - msd
@@ -110,7 +110,7 @@
     - replaced
 
 - name: MSD Replaced TC1 - Create Base VRF
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_msd_replace_base_conf }}"
@@ -121,7 +121,7 @@
     - replaced
 
 - name: MSD Replaced TC2 - Replace Parent and Child VRF
-  cisco.nd.nd_vrf: &msd_replace_conf
+  cisco.nd.nd_manage_vrfs: &msd_replace_conf
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: replaced
     config: "{{ nd_vrf_msd_replace_conf }}"
@@ -143,7 +143,7 @@
     - replaced
 
 - name: MSD Replaced TC2 - Gather Parent VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: gathered
     config: []
@@ -163,7 +163,7 @@
     - replaced
 
 - name: MSD Replaced TC2 - Gather Child VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_msd_child_fabric }}"
     state: gathered
     config: []
@@ -197,7 +197,7 @@
     - replaced
 
 - name: MSD Replaced TC3 - Idempotence
-  cisco.nd.nd_vrf: *msd_replace_conf
+  cisco.nd.nd_manage_vrfs: *msd_replace_conf
   register: msd_replace_idempotent
   when: nd_vrf_run_msd | bool
   tags:

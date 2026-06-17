@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - gathered]
+- name: Test Entry Point - [nd_manage_vrfs - gathered]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing Gathered Tests - [nd_vrf]                       +"
+      - "+     Executing Gathered Tests - [nd_manage_vrfs]                       +"
       - "----------------------------------------------------------------"
   tags: gathered
 
@@ -58,7 +58,7 @@
   tags: gathered
 
 - name: Gathered TC1 - Seed VRF
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_gathered_conf }}"
@@ -67,7 +67,7 @@
   tags: gathered
 
 - name: Gathered TC2 - Gather Standalone VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ target_fabric }}"
     state: gathered
     config: []

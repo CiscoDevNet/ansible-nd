@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - deleted]
+- name: Test Entry Point - [nd_manage_vrfs - deleted]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing Deleted Tests - [nd_vrf]                        +"
+      - "+     Executing Deleted Tests - [nd_manage_vrfs]                        +"
       - "----------------------------------------------------------------"
   tags: deleted
 
@@ -58,7 +58,7 @@
   tags: deleted
 
 - name: Deleted TC1 - Create VRF
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_delete_seed_conf }}"
@@ -67,7 +67,7 @@
   tags: deleted
 
 - name: Deleted TC2 - Delete VRF
-  cisco.nd.nd_vrf: &delete_conf
+  cisco.nd.nd_manage_vrfs: &delete_conf
     fabric: "{{ target_fabric }}"
     state: deleted
     config: "{{ nd_vrf_standalone_delete_conf }}"
@@ -85,7 +85,7 @@
   tags: deleted
 
 - name: Deleted TC2 - Gather VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ target_fabric }}"
     state: gathered
     config: []
@@ -102,7 +102,7 @@
   tags: deleted
 
 - name: Deleted TC3 - Idempotence
-  cisco.nd.nd_vrf: *delete_conf
+  cisco.nd.nd_manage_vrfs: *delete_conf
   register: delete_idempotent
   when: nd_vrf_run_standalone | bool
   tags: deleted

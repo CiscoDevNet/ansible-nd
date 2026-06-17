@@ -3,11 +3,11 @@
 
 
 """
-Argument-spec helpers for nd_vrf.py.
+Argument-spec helpers for nd_manage_vrfs.py.
 
-Defined in module_utils (not in plugins/modules/nd_vrf.py) so that strategy
+Defined in module_utils (not in plugins/modules/nd_manage_vrfs.py) so that strategy
 files can import them at the top level without creating a circular dependency
-(nd_vrf.py → strategies → nd_vrf.py).
+(nd_manage_vrfs.py → strategies → nd_manage_vrfs.py).
 """
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrfs.enums import (

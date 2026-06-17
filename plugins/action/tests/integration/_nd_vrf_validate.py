@@ -13,17 +13,17 @@ module: _nd_vrf_validate
 short_description: Validate ND VRFs in integration tests
 version_added: "1.0.0"
 description:
-  - Integration-test helper for validating VRF data returned by C(cisco.nd.nd_vrf)
+  - Integration-test helper for validating VRF data returned by C(cisco.nd.nd_manage_vrfs)
     or C(cisco.nd.nd_rest).
   - Expected entries are matched by VRF name and compared only for fields
     provided in C(test_data).
-  - This action plugin is used by the C(nd_vrf) integration test target.
+  - This action plugin is used by the C(nd_manage_vrfs) integration test target.
 author:
   - Akshayanat C S (@achengam)
 options:
   nd_data:
     description:
-      - Registered result from a C(cisco.nd.nd_vrf) or C(cisco.nd.nd_rest) task.
+      - Registered result from a C(cisco.nd.nd_manage_vrfs) or C(cisco.nd.nd_rest) task.
     type: dict
     required: true
   test_data:

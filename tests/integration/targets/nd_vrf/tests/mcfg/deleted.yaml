@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - mcfg - deleted]
+- name: Test Entry Point - [nd_manage_vrfs - mcfg - deleted]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing MCFG Deleted Tests - [nd_vrf]                  +"
+      - "+     Executing MCFG Deleted Tests - [nd_manage_vrfs]                  +"
       - "----------------------------------------------------------------"
   tags:
     - mcfg
@@ -56,7 +56,7 @@
     - deleted
 
 - name: MCFG Deleted TC1 - Create VRF
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_mcfg_delete_conf }}"
@@ -67,7 +67,7 @@
     - deleted
 
 - name: MCFG Deleted TC2 - Delete Parent VRF With Ignored Child Config
-  cisco.nd.nd_vrf: &mcfg_delete_conf
+  cisco.nd.nd_manage_vrfs: &mcfg_delete_conf
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: deleted
     config: "{{ nd_vrf_mcfg_delete_conf }}"
@@ -90,7 +90,7 @@
     - deleted
 
 - name: MCFG Deleted TC2 - Gather Parent VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: gathered
     config: []
@@ -111,7 +111,7 @@
     - deleted
 
 - name: MCFG Deleted TC3 - Idempotence
-  cisco.nd.nd_vrf: *mcfg_delete_conf
+  cisco.nd.nd_manage_vrfs: *mcfg_delete_conf
   register: mcfg_delete_idempotent
   when: nd_vrf_run_mcfg | bool
   tags:

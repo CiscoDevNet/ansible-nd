@@ -56,7 +56,7 @@ class MultisiteParentVrfStrategy(StandaloneVrfStrategy):
         state: str,
     ) -> dict[str, Any]:
         """
-        Build module_args for executing nd_vrf against a Multisite child fabric.
+        Build module_args for executing nd_manage_vrfs against a Multisite child fabric.
 
         The child task runs as a standalone operation (no further child splitting).
         deploy is forced to False — the parent handles deployment.

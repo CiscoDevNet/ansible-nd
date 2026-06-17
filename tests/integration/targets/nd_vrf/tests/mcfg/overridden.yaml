@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - mcfg - overridden]
+- name: Test Entry Point - [nd_manage_vrfs - mcfg - overridden]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing MCFG Overridden Tests - [nd_vrf]               +"
+      - "+     Executing MCFG Overridden Tests - [nd_manage_vrfs]               +"
       - "----------------------------------------------------------------"
   tags:
     - mcfg
@@ -83,7 +83,7 @@
     - overridden
 
 - name: MCFG Overridden TC1 - Seed VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_mcfg_over_seed_conf }}"
@@ -94,7 +94,7 @@
     - overridden
 
 - name: MCFG Overridden TC2 - Override VRFs
-  cisco.nd.nd_vrf: &mcfg_over_conf
+  cisco.nd.nd_manage_vrfs: &mcfg_over_conf
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: overridden
     config: "{{ nd_vrf_mcfg_over_conf }}"
@@ -116,7 +116,7 @@
     - overridden
 
 - name: MCFG Overridden TC2 - Gather Parent VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: gathered
     config: []
@@ -147,7 +147,7 @@
     - overridden
 
 - name: MCFG Overridden TC3 - Idempotence
-  cisco.nd.nd_vrf: *mcfg_over_conf
+  cisco.nd.nd_manage_vrfs: *mcfg_over_conf
   register: mcfg_over_idempotent
   when: nd_vrf_run_mcfg | bool
   tags:

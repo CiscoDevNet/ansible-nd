@@ -6,11 +6,10 @@
 VrfFabricResolver — Dynamically selects the correct VRF strategy based on
 the fabric type returned by the ND Manage API.
 
-This consolidates the action plugin's fabric-type detection and workflow
-routing into a single, testable, reusable component under the orchestrator
-layer.
+This consolidates fabric-type detection and workflow routing into a single,
+testable, reusable component under the orchestrator layer.
 
-Detection algorithm (mirrors dcnm_vrf action plugin logic):
+Detection algorithm:
  1. Query federated fabric associations (MFD / "mcfg" scope).
  2. If federation manager absent, fall back to MSD associations.
  3. Classify the target fabric:
@@ -45,8 +44,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.
 # ---------------------------------------------------------------------------
 
 # Error messages returned by the NDFC federated-fabrics API when the site is
-# not part of a federation (standalone or MSD-only deployments).  Mirrors
-# FEDERATION_MANAGER_NOT_FOUND_ERRORS in the dcnm_vrf action plugin.
+# not part of a federation (standalone or MSD-only deployments).
 _FEDERATION_MANAGER_NOT_FOUND_ERRORS: frozenset[str] = frozenset(
     [
         "A federation manager does not exist",
@@ -64,7 +62,6 @@ def _nd_onemanage_proxy(version_str: str) -> str:
 
     ``NDModule.version`` returns a string built from major.minor.maintenance
     (e.g. "3.2.1"), so we compare against ND version numbers, not NDFC ones.
-    Mirrors the ``ndfc_version >= 12.4`` check in the dcnm_vrf action plugin.
     Defaults to the proxy path for unknown/unparseable versions since
     NDBR-VRF targets modern ND deployments.
     """
@@ -193,8 +190,7 @@ class VrfFabricResolver:
             GET {proxy}/appcenter/cisco/ndfc/api/v1/onemanage/fabrics
 
         where {proxy} is '/onemanage' for ND >= 3.2 (NDFC >= 12.4) and ''
-        for older releases.  Mirrors ``obtain_federated_fabric_associations``
-        from the dcnm_vrf action plugin.
+        for older releases.
 
         Returns:
             dict: Mapping of fabricName -> fabric properties dict (including
@@ -261,8 +257,6 @@ class VrfFabricResolver:
     def _fetch_fabric_associations(self) -> dict[str, Any]:
         """
         GET MSD fabric associations (MSD / standalone scope).
-
-        Mirrors ``obtain_fabric_associations`` from the dcnm_vrf action plugin.
 
         API:
             GET /appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/fabrics/msd/fabric-associations

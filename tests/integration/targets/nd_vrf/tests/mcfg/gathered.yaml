@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - mcfg - gathered]
+- name: Test Entry Point - [nd_manage_vrfs - mcfg - gathered]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing MCFG Gathered Tests - [nd_vrf]                 +"
+      - "+     Executing MCFG Gathered Tests - [nd_manage_vrfs]                 +"
       - "----------------------------------------------------------------"
   tags:
     - mcfg
@@ -63,7 +63,7 @@
     - gathered
 
 - name: MCFG Gathered TC1 - Seed VRF
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_mcfg_gathered_conf }}"
@@ -74,7 +74,7 @@
     - gathered
 
 - name: MCFG Gathered TC2 - Gather Parent VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: gathered
     config: []
@@ -94,7 +94,7 @@
     - gathered
 
 - name: MCFG Gathered TC3 - Gather Child VRFs Directly
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_child_fabric }}"
     state: gathered
     config: []

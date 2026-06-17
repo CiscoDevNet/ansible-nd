@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - merged]
+- name: Test Entry Point - [nd_manage_vrfs - merged]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing Merged Tests - [nd_vrf]                         +"
+      - "+     Executing Merged Tests - [nd_manage_vrfs]                         +"
       - "----------------------------------------------------------------"
   tags: merged
 
@@ -102,7 +102,7 @@
   tags: merged
 
 - name: Merged TC1 - Merge VRF
-  cisco.nd.nd_vrf: &merged_conf
+  cisco.nd.nd_manage_vrfs: &merged_conf
     fabric: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_merged_conf }}"
@@ -121,7 +121,7 @@
   tags: merged
 
 - name: Merged TC1 - Gather VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ target_fabric }}"
     state: gathered
     config: []
@@ -138,7 +138,7 @@
   tags: merged
 
 - name: Merged TC2 - Idempotence
-  cisco.nd.nd_vrf: *merged_conf
+  cisco.nd.nd_manage_vrfs: *merged_conf
   register: merged_idempotent
   when: nd_vrf_run_standalone | bool
   tags: merged

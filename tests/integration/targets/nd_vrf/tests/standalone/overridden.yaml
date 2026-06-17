@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - overridden]
+- name: Test Entry Point - [nd_manage_vrfs - overridden]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing Overridden Tests - [nd_vrf]                     +"
+      - "+     Executing Overridden Tests - [nd_manage_vrfs]                     +"
       - "----------------------------------------------------------------"
   tags: overridden
 
@@ -84,7 +84,7 @@
   tags: overridden
 
 - name: Overridden TC1 - Seed VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ target_fabric }}"
     state: merged
     config: "{{ nd_vrf_standalone_over_seed_conf }}"
@@ -95,7 +95,7 @@
   tags: overridden
 
 - name: Overridden TC2 - Override VRFs
-  cisco.nd.nd_vrf: &override_conf
+  cisco.nd.nd_manage_vrfs: &override_conf
     fabric: "{{ target_fabric }}"
     state: overridden
     config: "{{ nd_vrf_standalone_over_conf }}"
@@ -116,7 +116,7 @@
   tags: overridden
 
 - name: Overridden TC2 - Gather VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ target_fabric }}"
     state: gathered
     config: []
@@ -147,7 +147,7 @@
   tags: overridden
 
 - name: Overridden TC3 - Idempotence
-  cisco.nd.nd_vrf: *override_conf
+  cisco.nd.nd_manage_vrfs: *override_conf
   register: override_idempotent
   when:
     - nd_vrf_run_standalone | bool

@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - mcfg - replaced]
+- name: Test Entry Point - [nd_manage_vrfs - mcfg - replaced]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing MCFG Replaced Tests - [nd_vrf]                 +"
+      - "+     Executing MCFG Replaced Tests - [nd_manage_vrfs]                 +"
       - "----------------------------------------------------------------"
   tags:
     - mcfg
@@ -90,7 +90,7 @@
     - replaced
 
 - name: MCFG Replaced TC1 - Create Base VRF
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_mcfg_replace_base_conf }}"
@@ -101,7 +101,7 @@
     - replaced
 
 - name: MCFG Replaced TC2 - Replace Parent and Child VRF
-  cisco.nd.nd_vrf: &mcfg_replace_conf
+  cisco.nd.nd_manage_vrfs: &mcfg_replace_conf
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: replaced
     config: "{{ nd_vrf_mcfg_replace_conf }}"
@@ -123,7 +123,7 @@
     - replaced
 
 - name: MCFG Replaced TC2 - Gather Parent VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: gathered
     config: []
@@ -143,7 +143,7 @@
     - replaced
 
 - name: MCFG Replaced TC2 - Gather Child VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_child_fabric }}"
     state: gathered
     config: []
@@ -178,7 +178,7 @@
     - replaced
 
 - name: MCFG Replaced TC3 - Idempotence
-  cisco.nd.nd_vrf: *mcfg_replace_conf
+  cisco.nd.nd_manage_vrfs: *mcfg_replace_conf
   register: mcfg_replace_idempotent
   when: nd_vrf_run_mcfg | bool
   tags:

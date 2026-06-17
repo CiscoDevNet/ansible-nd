@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - msd - sanity]
+- name: Test Entry Point - [nd_manage_vrfs - msd - sanity]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing MSD Sanity Tests - [nd_vrf]                    +"
+      - "+     Executing MSD Sanity Tests - [nd_manage_vrfs]                    +"
       - "----------------------------------------------------------------"
   tags:
     - msd
@@ -145,7 +145,7 @@
     - sanity
 
 - name: MSD Sanity TC1 - Merged
-  cisco.nd.nd_vrf: &msd_sanity_merge
+  cisco.nd.nd_manage_vrfs: &msd_sanity_merge
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_msd_sanity_merge_conf }}"
@@ -157,7 +157,7 @@
     - sanity
 
 - name: MSD Sanity TC1 - Gather Parent After Merged
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: gathered
     config: []
@@ -178,7 +178,7 @@
     - sanity
 
 - name: MSD Sanity TC1 - Merged Idempotence
-  cisco.nd.nd_vrf: *msd_sanity_merge
+  cisco.nd.nd_manage_vrfs: *msd_sanity_merge
   register: msd_sanity_merged_idempotent
   when: nd_vrf_run_msd | bool
   tags:
@@ -195,7 +195,7 @@
     - sanity
 
 - name: MSD Sanity TC2 - Replaced
-  cisco.nd.nd_vrf: &msd_sanity_replace
+  cisco.nd.nd_manage_vrfs: &msd_sanity_replace
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: replaced
     config: "{{ nd_vrf_msd_sanity_replace_conf }}"
@@ -207,7 +207,7 @@
     - sanity
 
 - name: MSD Sanity TC2 - Gather Parent After Replaced
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: gathered
     config: []
@@ -228,7 +228,7 @@
     - sanity
 
 - name: MSD Sanity TC2 - Replaced Idempotence
-  cisco.nd.nd_vrf: *msd_sanity_replace
+  cisco.nd.nd_manage_vrfs: *msd_sanity_replace
   register: msd_sanity_replaced_idempotent
   when: nd_vrf_run_msd | bool
   tags:
@@ -245,7 +245,7 @@
     - sanity
 
 - name: MSD Sanity TC3 - Overridden
-  cisco.nd.nd_vrf: &msd_sanity_override
+  cisco.nd.nd_manage_vrfs: &msd_sanity_override
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: overridden
     config: "{{ nd_vrf_msd_sanity_override_conf }}"
@@ -257,7 +257,7 @@
     - sanity
 
 - name: MSD Sanity TC3 - Gather Parent After Overridden
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: gathered
     config: []
@@ -290,7 +290,7 @@
     - sanity
 
 - name: MSD Sanity TC3 - Overridden Idempotence
-  cisco.nd.nd_vrf: *msd_sanity_override
+  cisco.nd.nd_manage_vrfs: *msd_sanity_override
   register: msd_sanity_overridden_idempotent
   when: nd_vrf_run_msd | bool
   tags:
@@ -307,7 +307,7 @@
     - sanity
 
 - name: MSD Sanity TC4 - Deleted
-  cisco.nd.nd_vrf: &msd_sanity_delete
+  cisco.nd.nd_manage_vrfs: &msd_sanity_delete
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: deleted
     config: "{{ nd_vrf_msd_sanity_delete_conf }}"
@@ -330,7 +330,7 @@
     - sanity
 
 - name: MSD Sanity TC4 - Deleted Idempotence
-  cisco.nd.nd_vrf: *msd_sanity_delete
+  cisco.nd.nd_manage_vrfs: *msd_sanity_delete
   register: msd_sanity_deleted_idempotent
   when: nd_vrf_run_msd | bool
   tags:
@@ -347,7 +347,7 @@
     - sanity
 
 - name: MSD Sanity TC5 - Reject Write Operation on Child Fabric
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_msd_child_fabric }}"
     state: merged
     config:

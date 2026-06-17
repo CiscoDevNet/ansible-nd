@@ -19,7 +19,7 @@
     - target_fabric | length > 0
 
 - name: VRF Setup - Delete All VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ target_fabric }}"
     state: deleted
     config: []

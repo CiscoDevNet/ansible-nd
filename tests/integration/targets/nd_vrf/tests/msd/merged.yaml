@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - msd - merged]
+- name: Test Entry Point - [nd_manage_vrfs - msd - merged]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing MSD Merged Tests - [nd_vrf]                    +"
+      - "+     Executing MSD Merged Tests - [nd_manage_vrfs]                    +"
       - "----------------------------------------------------------------"
   tags:
     - msd
@@ -143,7 +143,7 @@
     - merged
 
 - name: MSD Merged TC1 - Merge Parent and Child VRF
-  cisco.nd.nd_vrf: &msd_merged_conf
+  cisco.nd.nd_manage_vrfs: &msd_merged_conf
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_msd_merged_conf }}"
@@ -170,7 +170,7 @@
     - merged
 
 - name: MSD Merged TC1 - Gather Parent VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_msd_parent_fabric }}"
     state: gathered
     config: []
@@ -190,7 +190,7 @@
     - merged
 
 - name: MSD Merged TC1 - Gather Child VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_msd_child_fabric }}"
     state: gathered
     config: []
@@ -229,7 +229,7 @@
     - merged
 
 - name: MSD Merged TC2 - Idempotence
-  cisco.nd.nd_vrf: *msd_merged_conf
+  cisco.nd.nd_manage_vrfs: *msd_merged_conf
   register: msd_merged_idempotent
   when: nd_vrf_run_msd | bool
   tags:

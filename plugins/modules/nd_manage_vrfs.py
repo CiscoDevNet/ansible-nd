@@ -6,7 +6,7 @@
 
 DOCUMENTATION = r"""
 ---
-module: nd_vrf
+module: nd_manage_vrfs
 version_added: "1.0.0"
 short_description: Manages VRF definitions on Cisco Nexus Dashboard.
 description:
@@ -474,7 +474,7 @@ extends_documentation_fragment:
 EXAMPLES = r"""
 # ── Standalone fabric — create a VRF and attach it to a switch ───────────────
 - name: Create VRF on standalone fabric and deploy by switch
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: fab1
     state: merged
     config:
@@ -515,7 +515,7 @@ EXAMPLES = r"""
 
 # ── Standalone fabric — create VRF with TRM ──────────────────────────────────
 - name: Create VRF with Tenant Routed Multicast enabled
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: fab1
     state: merged
     config:
@@ -530,7 +530,7 @@ EXAMPLES = r"""
 
 # ── Standalone fabric — create user-defined VRF template payload ─────────────
 - name: Create user-defined VRF
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: fab1
     state: merged
     config:
@@ -545,7 +545,7 @@ EXAMPLES = r"""
 
 # ── MSD parent fabric — create VRF with child fabric-instance overrides ──────
 - name: Create VRF on MSD parent with per-child fabric-instance overrides
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: msd_parent
     state: merged
     config:
@@ -578,7 +578,7 @@ EXAMPLES = r"""
 
 # ── MCFG parent fabric — create VRF with child fabric-instance overrides ─────
 - name: Create VRF on MCFG parent with child fabric overrides
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: mcfg_parent
     state: merged
     config:
@@ -602,14 +602,14 @@ EXAMPLES = r"""
 
 # ── Child fabric — gathered only ────────────────────────────────────────────────
 - name: Gathered VRFs on a child fabric (write ops must go through parent)
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: child_fabric_1
     state: gathered
     config: []
 
 # ── Delete VRFs ──────────────────────────────────────────────────────────────
 - name: Delete a VRF
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: fab1
     state: deleted
     config:
@@ -617,7 +617,7 @@ EXAMPLES = r"""
 
 # ── Replace VRF configuration ───────────────────────────────────────────────
 - name: Replace VRF configuration (full replace)
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: fab1
     state: replaced
     config:

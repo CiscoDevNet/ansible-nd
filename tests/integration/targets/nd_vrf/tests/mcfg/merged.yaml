@@ -1,9 +1,9 @@
 ---
-- name: Test Entry Point - [nd_vrf - mcfg - merged]
+- name: Test Entry Point - [nd_manage_vrfs - mcfg - merged]
   ansible.builtin.debug:
     msg:
       - "----------------------------------------------------------------"
-      - "+     Executing MCFG Merged Tests - [nd_vrf]                   +"
+      - "+     Executing MCFG Merged Tests - [nd_manage_vrfs]                   +"
       - "----------------------------------------------------------------"
   tags:
     - mcfg
@@ -126,7 +126,7 @@
     - merged
 
 - name: MCFG Merged TC1 - Merge Parent and Child VRF
-  cisco.nd.nd_vrf: &mcfg_merged_conf
+  cisco.nd.nd_manage_vrfs: &mcfg_merged_conf
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: merged
     config: "{{ nd_vrf_mcfg_merged_conf }}"
@@ -153,7 +153,7 @@
     - merged
 
 - name: MCFG Merged TC1 - Gather Parent VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_parent_fabric }}"
     state: gathered
     config: []
@@ -173,7 +173,7 @@
     - merged
 
 - name: MCFG Merged TC1 - Gather Child VRFs
-  cisco.nd.nd_vrf:
+  cisco.nd.nd_manage_vrfs:
     fabric: "{{ nd_vrf_mcfg_child_fabric }}"
     state: gathered
     config: []
@@ -213,7 +213,7 @@
     - merged
 
 - name: MCFG Merged TC2 - Idempotence
-  cisco.nd.nd_vrf: *mcfg_merged_conf
+  cisco.nd.nd_manage_vrfs: *mcfg_merged_conf
   register: mcfg_merged_idempotent
   when: nd_vrf_run_mcfg | bool
   tags:

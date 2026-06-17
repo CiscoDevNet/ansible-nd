@@ -4,15 +4,12 @@
 
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
-"""Enumerations for VRF Operations.
-
-Extracted from OpenAPI schema (manage.json) for Nexus Dashboard Manage APIs v1.1.332.
-"""
+"""Enumerations for VRF operations."""
 
 from enum import Enum
 
 # =============================================================================
-# ENUMS - Extracted from OpenAPI Schema components/schemas
+# ENUMS
 # =============================================================================
 
 
