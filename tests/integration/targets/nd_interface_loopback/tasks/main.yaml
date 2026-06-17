@@ -30,28 +30,55 @@
   ansible.builtin.fail:
     msg: 'Please define the following variables: ansible_host, ansible_user and ansible_password.'
   when: ansible_host is not defined or ansible_user is not defined or ansible_password is not defined
+  tags:
+    - always
 
 - name: Set vars
   ansible.builtin.set_fact:
     nd_info: &nd_info
       output_level: '{{ api_key_output_level | default("debug") }}'
+  tags:
+    - always
 
 - name: Run nd_interface_loopback state tests with optional logging env
   block:
     - name: Pre-test cleanup
       ansible.builtin.include_tasks: setup.yaml
+      tags:
+        - nd4x_demo
+        - nd4x_demo_setup
 
-    - name: Run nd_interface_loopback merged state tests
-      ansible.builtin.include_tasks: merged.yaml
+     #- name: Run nd_interface_loopback merged state tests
+      # ansible.builtin.include_tasks: merged.yaml
 
+    - name: Run nd_interface_loopback merged state tests using ND4.x demo harness
+      ansible.builtin.include_tasks: nd4x_demo_merged.yaml
+      tags:
+         - nd4x_demo
+         - nd4x_demo_create
+         - nd4x_demo_verify
+         - nd4x_demo_cleanup
+    
     - name: Run nd_interface_loopback replaced state tests
       ansible.builtin.include_tasks: replaced.yaml
+      when: nd4x_demo_run_remaining_states | default(false) | bool
 
     - name: Run nd_interface_loopback overridden state tests
       ansible.builtin.include_tasks: overridden.yaml
+      when: nd4x_demo_run_remaining_states | default(false) | bool
 
     - name: Run nd_interface_loopback deleted state tests
       ansible.builtin.include_tasks: deleted.yaml
+      when: nd4x_demo_run_remaining_states | default(false) | bool
+
+    #- name: Run nd_interface_loopback replaced state tests
+    #  ansible.builtin.include_tasks: replaced.yaml
+
+    #- name: Run nd_interface_loopback overridden state tests
+    #  ansible.builtin.include_tasks: overridden.yaml
+
+    #- name: Run nd_interface_loopback deleted state tests
+    #  ansible.builtin.include_tasks: deleted.yaml
   module_defaults:
     cisco.nd.nd_interface_loopback:
       timeout: 300

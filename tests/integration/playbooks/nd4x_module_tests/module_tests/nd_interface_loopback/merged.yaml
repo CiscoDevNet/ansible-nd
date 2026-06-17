@@ -1,0 +1,49 @@
+---
+# Demo merged state test using the shared ND 4.x action plugin pattern.
+
+- name: Run standardized nd_interface_loopback merged tests
+  block:
+    - name: "MERGED CREATE: Create loopback100 using standard runner"
+      cisco.nd.nd4x_module_test:
+        module: cisco.nd.nd_interface_loopback
+        state: merged
+        common_args:
+          output_level: "{{ nd_info.output_level }}"
+          fabric_name: "{{ test_fabric_name }}"
+        config:
+          - "{{ loopback_100 }}"
+        expected:
+          check_mode_changed: true
+          first_run_changed: true
+          second_run_changed: false
+          failed: false
+        idempotency_retries: 6
+        idempotency_delay: 10
+      register: merged_create_100
+      tags:
+        - nd4x_demo
+        - nd4x_demo_create
+
+    - name: "MERGED CREATE: Verify loopback100 exists"
+      ansible.builtin.assert:
+        that:
+          - merged_create_100.first_run_result.after
+            | selectattr('interface_name', 'equalto', 'loopback100')
+            | list
+            | length == 1
+      tags:
+        - nd4x_demo
+        - nd4x_demo_verify
+
+  always:
+    - name: "MERGED CLEANUP: Remove loopback100"
+      cisco.nd.nd_interface_loopback:
+        output_level: "{{ nd_info.output_level }}"
+        fabric_name: "{{ test_fabric_name }}"
+        config:
+          - switch_ip: "{{ test_switch_ip }}"
+            interface_name: loopback100
+        state: deleted
+      tags:
+        - nd4x_demo
+        - nd4x_demo_cleanup

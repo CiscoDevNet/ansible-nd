@@ -1,31 +1,19 @@
 [nd]
-nd ansible_host=<TODO>
+nd ansible_host=10.122.84.112
 
 [nd:vars]
 ansible_connection=ansible.netcommon.httpapi
-ansible_python_interpreter=/usr/bin/python3.9
+ansible_python_interpreter=/Users/astawast/ABC/ansible_collections/cisco/nd/ansible-nd/.venv-run/bin/python
 ansible_network_os=cisco.nd.nd
 ansible_httpapi_validate_certs=False
 ansible_httpapi_use_ssl=True
-ansible_httpapi_use_proxy=True
-ansible_user=ansible_github_ci
-ansible_password=<TODO>
-insights_group=<TODO>
-site_name=<TODO>
-site_host=<TODO>
-site_username=<TODO>
-site_password=<TODO>
-dns_server=<TODO>
-app_network=<TODO>
-service_network=<TODO>
-ntp_server=<TODO>
-serial_number=<TODO>
-management_ip_address=<TODO>
-deployment_password=<TODO>
-management_ip=<TODO>
-management_gateway=<TODO>
-external_management_service_ip=<TODO>
-external_data_service_ip=<TODO>
-data_ip=<TODO>
-data_gateway=<TODO>
-service_package_host=173.36.219.254
+ansible_httpapi_use_proxy=False
+ansible_httpapi_login_domain=local
+ansible_command_timeout=120
+ansible_connect_timeout=60
+ansible_user=admin
+ansible_password=idgeR09!
+nd_test_fabric_name=VXLAN_Fabric
+nd_test_switch_ip=10.122.84.63
+
+
