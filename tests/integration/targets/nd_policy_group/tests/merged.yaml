@@ -53,6 +53,24 @@
     ##   MERGE - Same template, different desc  ##
     ##############################################
 
+    # TC-3 PRE: BFD freeform requires 'feature bfd' to be enabled on the
+    # switch first, otherwise NX-OS rejects 'bfd interval ...' commands
+    # and ND reports a switch-level deploy failure.
+    - name: "MERGED TC3-PRE - Enable BFD feature via feature_enable template"
+      cisco.nd.nd_policy_group:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Enable BFD feature"
+            switch_ids:
+              - "{{ switch_serial_1 }}"
+            template_inputs:
+              featureName: bfd
+      register: result_bfd_feature
+      tags: merged
+
     # TC-3: Create a second group with same template but different description
     - name: "MERGED TC3 - Create second switch_freeform group (different description)"
       cisco.nd.nd_policy_group:
