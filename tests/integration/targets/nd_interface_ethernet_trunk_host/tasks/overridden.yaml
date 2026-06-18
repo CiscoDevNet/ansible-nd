@@ -127,3 +127,66 @@
       - eth45_after.config_data.network_os.policy.allowed_vlans == "400-500"
       - eth46_after.config_data.network_os.policy.allowed_vlans == "400-500"
       - eth47_after.config_data.network_os.policy.allowed_vlans == "400-500"
+
+# --- OVERRIDDEN: EMPTY CONFIG NORMALIZES ALL FABRIC INTERFACES ---
+# An empty config under state: overridden leaves nothing in the proposed set,
+# so every existing trunkHost interface is treated as out-of-scope and
+# normalized back to the fabric-default int_trunk_host template. Because the
+# overridden scope is fabric-wide (not limited to the 41-48 test range), this
+# resets ALL trunkHost interfaces in the fabric. This is a deliberate,
+# destructive behavior; the test below verifies the fan-out interfaces from the
+# prior test are reset, then re-establishes them so the deleted state tests
+# that follow start from a known configured state.
+
+- name: "OVERRIDDEN EMPTY: Normalize all fabric trunkHost interfaces (check mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host: &override_empty
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config: []
+    state: overridden
+  check_mode: true
+  register: cm_overridden_empty
+
+- name: "OVERRIDDEN EMPTY: Normalize all fabric trunkHost interfaces (normal mode)"
+  cisco.nd.nd_interface_ethernet_trunk_host: *override_empty
+  register: nm_overridden_empty
+
+- name: "OVERRIDDEN EMPTY: Verify fan-out interfaces were reset to defaults"
+  vars:
+    eth45_after: "{{ nm_overridden_empty.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/45') | list }}"
+  ansible.builtin.assert:
+    that:
+      - cm_overridden_empty is changed
+      - nm_overridden_empty is changed
+      # Ethernet1/45 carried allowed_vlans 400-500 before; after the empty
+      # overridden it is either absent from the managed-default query filter or
+      # reset to the trunk default.
+      - eth45_after | length == 0 or
+        eth45_after[0].config_data.network_os.policy.allowed_vlans != "400-500"
+
+# --- OVERRIDDEN EMPTY: IDEMPOTENCY ---
+
+- name: "OVERRIDDEN EMPTY IDEMPOTENT: Re-apply empty overridden"
+  cisco.nd.nd_interface_ethernet_trunk_host: *override_empty
+  register: nm_overridden_empty_idem
+
+- name: "OVERRIDDEN EMPTY IDEMPOTENT: Verify no change when all interfaces already at defaults"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_empty_idem is not changed
+
+# --- RESTORE: Re-establish fan-out config for the deleted state tests ---
+
+- name: "OVERRIDDEN EMPTY: Restore Ethernet1/45-47 fan-out config for deleted tests"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_45_46_47 }}"
+    state: merged
+  register: nm_overridden_empty_restore
+
+- name: "OVERRIDDEN EMPTY: Verify fan-out config restored"
+  ansible.builtin.assert:
+    that:
+      - nm_overridden_empty_restore is changed

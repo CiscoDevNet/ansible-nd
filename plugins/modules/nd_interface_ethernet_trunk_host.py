@@ -292,6 +292,10 @@ options:
     - Use O(state=overridden) to enforce the configuration as the single source of truth.
       The resources on ND will be modified to exactly match the configuration.
       Any resource existing on ND but not present in the configuration will be deleted. Use with extra caution.
+      The scope of O(state=overridden) is fabric-wide. Specifying an empty O(config) list resets
+      every trunkHost interface in the fabric to its fabric default configuration, not only the
+      interfaces named in prior tasks. Use an empty O(config) with O(state=overridden) only when
+      that fabric-wide reset is the intended outcome.
     - Use O(state=deleted) to reset the specified interfaces to their fabric default configuration via the
       C(interfaceActions/normalize) API. Physical ethernet interfaces cannot be truly deleted from a switch;
       this operation is the API equivalent of the NX-OS C(default interface) CLI command.
@@ -306,6 +310,8 @@ notes:
 - This module manages NX-OS ethernet trunkHost interfaces only (interface_type C(ethernet), mode C(trunk),
   network_os_type C(nx-os), policy_type C(trunkHost)). These values are hardcoded by the module and are not user-configurable.
 - Interfaces that are port-channel members have restricted mutability.
+- O(state=overridden) operates fabric-wide. An empty O(config) list resets every trunkHost
+  interface in the fabric to its fabric default configuration.
 """
 
 EXAMPLES = r"""
