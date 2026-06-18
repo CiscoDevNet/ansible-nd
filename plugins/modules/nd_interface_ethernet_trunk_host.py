@@ -13,7 +13,7 @@ version_added: "2.0.0"
 short_description: Manage ethernet trunkHost interfaces on Cisco Nexus Dashboard
 description:
 - Manage ethernet trunkHost interfaces on Cisco Nexus Dashboard.
-- It supports creating, updating, querying, and deleting trunkHost interface configurations on switches within a fabric.
+- It supports creating, updating, and deleting trunkHost interface configurations on switches within a fabric.
 - Multiple interfaces can share the same configuration via the O(config[].interface_names) list.
 - Interfaces that are port-channel members have restricted mutability; only O(config[].config_data.network_os.policy.description),
   O(config[].config_data.network_os.policy.admin_state), and O(config[].config_data.network_os.policy.extra_config)
