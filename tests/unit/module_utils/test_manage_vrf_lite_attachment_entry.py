@@ -121,6 +121,40 @@ def test_merge_preserves_unmentioned_interfaces():
     assert by_iface == {"Eth1": 150, "Eth2": 200}
 
 
+def test_merge_preserves_same_interface_with_different_dot1q_values():
+    base = VrfLiteAttachmentEntry.from_config(
+        {
+            "vrf_name": "X",
+            "switch_ip": "1.1.1.1",
+            "extensions": [
+                {"interface": "Eth1", "dot1q": 100, "ipv4_addr": "10.0.0.2/30"},
+                {"interface": "Eth1", "dot1q": 101, "ipv4_addr": "10.0.0.6/30"},
+            ],
+        }
+    )
+    incoming = VrfLiteAttachmentEntry.from_config(
+        {
+            "vrf_name": "X",
+            "switch_ip": "1.1.1.1",
+            "extensions": [
+                {"interface": "Eth1", "dot1q": 100, "ipv4_addr": "10.0.0.2/30"},
+                {"interface": "Eth1", "dot1q": 101, "ipv4_addr": "10.0.0.6/30"},
+            ],
+        }
+    )
+
+    merged = base.merge(incoming)
+
+    assert merged.extensions is not None
+    assert [(item.interface, item.dot1q) for item in merged.extensions] == [
+        ("Eth1", 100),
+        ("Eth1", 101),
+    ]
+
+    coll = NDConfigCollection(model_class=VrfLiteAttachmentEntry, items=[base])
+    assert coll.get_diff_config(merged, exclude_unset=True) == "no_diff"
+
+
 def test_merge_scalar_fields_only_when_set():
     base = VrfLiteAttachmentEntry(vrf_name="X", switch_ip="1.1.1.1", vlan_id=100)
     incoming = VrfLiteAttachmentEntry(vrf_name="X", switch_ip="1.1.1.1")  # vlan_id unset

@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import ClassVar, Literal
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -17,6 +16,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_vrf_lite.vrf_lite_model import (
     VrfLiteConnectionModel,
+    merge_vrf_lite_connections,
 )
 
 
@@ -71,8 +71,9 @@ class VrfLiteAttachmentEntry(NDBaseModel):
         Custom behavior:
         - scalar fields follow NDBaseModel merge semantics (only explicitly set
           fields on ``other`` are applied)
-        - ``extensions`` list is merged by ``interface`` so merged-state runs
-          preserve existing extensions that the user did not mention
+        - ``extensions`` list is merged by ``interface`` + ``dot1q`` so
+          merged-state runs preserve existing subinterfaces that the user did
+          not mention
         """
         if not isinstance(other, type(self)):
             raise TypeError("VrfLiteAttachmentEntry.merge requires both models to be the same type")
@@ -90,22 +91,7 @@ class VrfLiteAttachmentEntry(NDBaseModel):
         if "extensions" in incoming_data and incoming_data.get("extensions") is not None:
             current_extensions = self.extensions or []
             incoming_extensions = other.extensions or []
-
-            merged_extensions: dict[str, VrfLiteConnectionModel] = {}
-            for item in current_extensions:
-                key = str(item.interface).strip().lower()
-                merged_extensions[key] = deepcopy(item)
-
-            for item in incoming_extensions:
-                key = str(item.interface).strip().lower()
-                existing_item = merged_extensions.get(key)
-                if existing_item is None:
-                    merged_extensions[key] = deepcopy(item)
-                else:
-                    merged_extensions[key] = existing_item.merge(item)
-
-            merged_data["extensions"] = [
-                item.model_dump(by_alias=False, exclude_none=False) for _key, item in sorted(merged_extensions.items(), key=lambda kv: kv[0])
-            ]
+            merged_extensions = merge_vrf_lite_connections(current_extensions, incoming_extensions)
+            merged_data["extensions"] = [item.model_dump(by_alias=False, exclude_none=False) for item in merged_extensions]
 
         return type(self).model_validate(merged_data, by_name=True, by_alias=True)

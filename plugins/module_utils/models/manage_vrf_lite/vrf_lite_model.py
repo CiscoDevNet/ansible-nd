@@ -42,6 +42,40 @@ class VrfLiteConnectionModel(NDNestedModel):
     peer_vrf: str | None = Field(default=None, alias="peer_vrf")
 
 
+def _vrf_lite_connection_key(item: VrfLiteConnectionModel) -> tuple[str, str]:
+    interface = str(item.interface).strip().lower()
+    dot1q = "" if item.dot1q in (None, "") else str(item.dot1q)
+    return (interface, dot1q)
+
+
+def merge_vrf_lite_connections(
+    current_items: list[VrfLiteConnectionModel],
+    incoming_items: list[VrfLiteConnectionModel],
+) -> list[VrfLiteConnectionModel]:
+    merged: dict[tuple[str, str], VrfLiteConnectionModel] = {}
+
+    for item in current_items:
+        merged[_vrf_lite_connection_key(item)] = deepcopy(item)
+
+    for item in incoming_items:
+        key = _vrf_lite_connection_key(item)
+        existing_key = key
+
+        if existing_key not in merged:
+            interface_matches = [candidate_key for candidate_key in merged if candidate_key[0] == key[0]]
+            single_interface_match = interface_matches[0] if len(interface_matches) == 1 else None
+            if single_interface_match and (not key[1] or not single_interface_match[1]):
+                existing_key = single_interface_match
+
+        existing_item = merged.get(existing_key)
+        if existing_item is None:
+            merged[key] = deepcopy(item)
+        else:
+            merged[existing_key] = existing_item.merge(item)
+
+    return [item for _key, item in sorted(merged.items(), key=lambda kv: kv[0])]
+
+
 class VrfLiteAttachmentModel(NDNestedModel):
     """Attachment data for one switch under a VRF."""
 
@@ -76,8 +110,8 @@ class VrfLiteAttachmentModel(NDNestedModel):
 
         Custom behavior:
         - scalar fields follow NDBaseModel merge semantics (explicit fields only)
-        - `vrf_lite` list is merged by interface so merged mode preserves
-          existing interfaces not mentioned in the playbook input
+        - `vrf_lite` list is merged by interface + dot1q so merged mode
+          preserves existing subinterfaces not mentioned in the playbook input
         """
         if not isinstance(other, type(self)):
             raise TypeError("VrfLiteAttachmentModel.merge requires both models to be the same type")
@@ -99,23 +133,8 @@ class VrfLiteAttachmentModel(NDNestedModel):
         if "vrf_lite" in incoming_data and incoming_data.get("vrf_lite") is not None:
             current_vrf_lite = self.vrf_lite or []
             incoming_vrf_lite = other.vrf_lite or []
-
-            merged_vrf_lite = {}
-            for item in current_vrf_lite:
-                key = str(item.interface).strip().lower()
-                merged_vrf_lite[key] = deepcopy(item)
-
-            for item in incoming_vrf_lite:
-                key = str(item.interface).strip().lower()
-                existing_item = merged_vrf_lite.get(key)
-                if existing_item is None:
-                    merged_vrf_lite[key] = deepcopy(item)
-                else:
-                    merged_vrf_lite[key] = existing_item.merge(item)
-
-            merged_data["vrf_lite"] = [
-                item.model_dump(by_alias=False, exclude_none=False) for _key, item in sorted(merged_vrf_lite.items(), key=lambda kv: kv[0])
-            ]
+            merged_vrf_lite = merge_vrf_lite_connections(current_vrf_lite, incoming_vrf_lite)
+            merged_data["vrf_lite"] = [item.model_dump(by_alias=False, exclude_none=False) for item in merged_vrf_lite]
 
         return type(self).model_validate(merged_data, by_name=True, by_alias=True)
 

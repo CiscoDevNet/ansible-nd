@@ -24,7 +24,7 @@ def vrf_lite_items_to_config(vrf_lite_items: list[dict[str, Any]] | None) -> lis
             continue
         data = model.model_dump(by_alias=False, exclude_none=True)
         items.append({key: value for key, value in data.items() if value != ""})
-    return sorted(items, key=lambda i: i.get("interface", ""))
+    return sorted(items, key=lambda i: (str(i.get("interface", "")).lower(), int(i.get("dot1q") or 0)))
 
 
 def _json_value(value: Any) -> Any:
