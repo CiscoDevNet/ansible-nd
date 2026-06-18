@@ -12,6 +12,13 @@ from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.common im
     _raise_vpc_error,
     get_config_actions,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.manage_vpc_pair.enums import (
+    VpcFieldNames,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_switchactions import (
+    EpManageFabricsSwitchActionsDeployPost,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule as NDModuleV2,
     NDModuleError,
@@ -107,99 +114,140 @@ def _is_non_fatal_config_save_error(error: NDModuleError) -> bool:
     return any(signature in message for signature in non_fatal_signatures)
 
 
-def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dict[str, Any]:
+def _collect_affected_switch_ids(nrm: Any, result: dict[str, Any]) -> list[str]:
     """
-    Custom save/deploy action handler for vPC fabric changes using RestSend.
+    Collect the serial numbers of switches affected by this run.
 
-    - Smart action decision (_needs_deployment)
-    - Optional Step 1: Save fabric configuration
-    - Optional Step 2: Deploy fabric with forceShowRun=true
-    - Proper error handling with NDModuleError
-    - Results aggregation
-    - Executes only if there are actual changes or pending operations
+    Switch-scoped deploy targets only the switches that changed (created,
+    updated, deleted, or currently not in-sync) instead of the whole fabric.
+
+    Serials are gathered from two complementary sources so that every write
+    operation is covered, including a fresh create where the query-phase
+    pending lists are still empty:
+
+    1. The authoritative per-run diff in ``result`` (``created`` / ``deleted``
+       identifiers and ``updated`` entries). Each identifier is a
+       ``(switch_id, peer_switch_id)`` tuple of switch serials.
+    2. The query-phase ``_pending_create`` / ``_pending_delete`` /
+       ``_not_in_sync_pairs`` contexts, which cover the deploy-only,
+       no-diff case (pair already exists but is not in-sync on the controller).
 
     Args:
         nrm: NDStateMachine instance
-        fabric_name: Fabric name to deploy
-        result: Module result dictionary to check for changes
+        result: Module result dictionary with class diff information
 
     Returns:
-        Save/deploy result dictionary
+        Ordered, de-duplicated list of switch serial numbers.
+    """
+    switch_ids: list[str] = []
+    seen: set[str] = set()
+
+    def _add(serial: Any) -> None:
+        if serial and serial not in seen:
+            seen.add(serial)
+            switch_ids.append(serial)
+
+    def _add_identifier(identifier: Any) -> None:
+        # Identifiers are (switch_id, peer_switch_id) serial tuples/lists.
+        if isinstance(identifier, (list, tuple)):
+            for serial in identifier:
+                _add(serial)
+
+    # Source 1: authoritative per-run diff.
+    if isinstance(result, dict):
+        for identifier in result.get("created", []) or []:
+            _add_identifier(identifier)
+        for identifier in result.get("deleted", []) or []:
+            _add_identifier(identifier)
+        for entry in result.get("updated", []) or []:
+            if isinstance(entry, dict):
+                _add_identifier(entry.get("identifier"))
+            else:
+                _add_identifier(entry)
+
+    # Source 2: query-phase pending / not-in-sync contexts.
+    for key in ("_pending_create", "_pending_delete", "_not_in_sync_pairs"):
+        for pair in nrm.module.params.get(key, []) or []:
+            _add(pair.get(VpcFieldNames.SWITCH_ID))
+            _add(pair.get(VpcFieldNames.PEER_SWITCH_ID))
+
+    return switch_ids
+
+
+def _build_switch_deploy_path(fabric_name: str) -> str:
+    """
+    Build the switch-scoped deploy endpoint path for the given fabric.
+
+    POST /api/v1/manage/fabrics/{fabricName}/switchActions/deploy
+    """
+    endpoint = EpManageFabricsSwitchActionsDeployPost(fabric_name=fabric_name)
+    return endpoint.path
+
+
+def _switch_level_deploy(nd_v2: NDModuleV2, fabric_name: str, switch_ids: list[str], results: Any) -> None:
+    """
+    Generate and push configuration for specific switches.
+
+    Uses the switch-scoped ``switchActions/deploy`` endpoint, which generates
+    and deploys configuration only for the supplied switch serials. This avoids
+    the fabric-level ``actions/configSave`` path that returns HTTP 500 for vPC
+    pairs configured with a physical peer-link (issue #335).
+
+    Args:
+        nd_v2: NDModuleV2 RestSend wrapper.
+        fabric_name: Fabric name.
+        switch_ids: Switch serial numbers to deploy.
+        results: Results aggregator.
 
     Raises:
-        NDModuleError: If deployment fails
+        VpcPairResourceError: If the deploy call fails.
     """
-    config_actions = get_config_actions(nrm.module)
-    save_enabled = bool(config_actions.get("save", True))
-    deploy_enabled = bool(config_actions.get("deploy", True))
-    action_type = config_actions.get("type", "switch")
-    action_payload = {"type": action_type}
+    deploy_path = _build_switch_deploy_path(fabric_name)
+    payload = {"switchIds": switch_ids}
 
-    # Defensive runtime validation (model validation already enforces this).
-    if deploy_enabled and not save_enabled:
-        _raise_vpc_error(msg="Invalid config_actions: deploy=true requires save=true")
+    try:
+        nd_v2.request(deploy_path, HttpVerbEnum.POST, payload)
+        register_action_api_call(
+            results=results,
+            request_path=deploy_path,
+            payload=payload,
+            return_code=nd_v2.status,
+            message="Switch deployment successful",
+            success=True,
+            changed=True,
+        )
+    except NDModuleError as error:
+        register_action_api_call(
+            results=results,
+            request_path=deploy_path,
+            payload=payload,
+            return_code=error.status,
+            message=error.msg,
+            success=False,
+            changed=False,
+        )
+        results.build_final_result()
+        final_result = dict(results.final_result)
+        final_msg = final_result.pop("msg", "Switch deployment failed")
+        _raise_vpc_error(msg=final_msg, **final_result)
 
-    if not save_enabled and not deploy_enabled:
-        return {
-            "msg": "Config actions disabled (save=false, deploy=false), skipping config save/deploy",
-            "fabric": fabric_name,
-            "deployment_needed": False,
-            "changed": False,
-            "config_actions": config_actions,
-        }
 
-    # Smart deployment decision (from Common.needs_deployment)
-    if not _needs_deployment(result, nrm):
-        return {
-            "msg": ("No configuration changes, pending operations, or out-of-sync pairs " "detected, skipping config actions"),
-            "fabric": fabric_name,
-            "deployment_needed": False,
-            "changed": False,
-            "config_actions": config_actions,
-        }
+def _fabric_level_deploy(
+    nd_v2: NDModuleV2,
+    nrm: Any,
+    fabric_name: str,
+    action_payload: dict[str, Any],
+    save_enabled: bool,
+    deploy_enabled: bool,
+    results: Any,
+) -> None:
+    """
+    Fabric-level (global) config save + deploy flow.
 
-    if nrm.module.check_mode:
-        # check_mode deployment preview
-        pending_create = nrm.module.params.get("_pending_create", [])
-        pending_delete = nrm.module.params.get("_pending_delete", [])
-        not_in_sync_pairs = nrm.module.params.get("_not_in_sync_pairs", [])
-        planned_actions = []
-        if save_enabled:
-            save_path = FabricUtils.build_config_save_path(fabric_name)
-            planned_actions.append(f"POST {save_path} payload={action_payload}")
-        if deploy_enabled:
-            deploy_path = FabricUtils.build_config_deploy_path(fabric_name, force_show_run=True)
-            planned_actions.append(f"POST {deploy_path} payload={action_payload}")
-        if save_enabled and deploy_enabled:
-            preview_msg = "CHECK MODE: Would save and deploy fabric configuration"
-        elif save_enabled:
-            preview_msg = "CHECK MODE: Would save fabric configuration"
-        else:
-            preview_msg = "CHECK MODE: Would deploy fabric configuration"
-
-        deployment_info = {
-            "msg": preview_msg,
-            "fabric": fabric_name,
-            "deployment_needed": True,
-            "changed": True,
-            "would_save": save_enabled,
-            "would_deploy": deploy_enabled,
-            "config_actions": config_actions,
-            "deployment_decision_factors": {
-                "diff_has_changes": _has_explicit_diff_changes(result),
-                "pending_create_operations": len(pending_create),
-                "pending_delete_operations": len(pending_delete),
-                "not_in_sync_pairs": len(not_in_sync_pairs),
-                "actual_changes": result.get("changed", False),
-            },
-            "planned_actions": planned_actions,
-        }
-        return deployment_info
-
-    # Initialize RestSend via NDModuleV2
-    nd_v2 = NDModuleV2(nrm.module)
+    Retained for ``config_actions.type == "global"`` and as a fallback when no
+    affected switch serials can be resolved for a switch-scoped deploy.
+    """
     fabric_utils = FabricUtils(nd_v2, fabric_name)
-    results = Results()
 
     # Step 1: Save config
     if save_enabled:
@@ -281,6 +329,118 @@ def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dic
             final_result = dict(results.final_result)
             final_msg = final_result.pop("msg", "Fabric deployment failed")
             _raise_vpc_error(msg=final_msg, **final_result)
+
+
+def custom_vpc_deploy(nrm: Any, fabric_name: str, result: dict[str, Any]) -> dict[str, Any]:
+    """
+    Custom save/deploy action handler for vPC fabric changes using RestSend.
+
+    - Smart action decision (_needs_deployment)
+    - Optional Step 1: Save fabric configuration
+    - Optional Step 2: Deploy fabric with forceShowRun=true
+    - Proper error handling with NDModuleError
+    - Results aggregation
+    - Executes only if there are actual changes or pending operations
+
+    Args:
+        nrm: NDStateMachine instance
+        fabric_name: Fabric name to deploy
+        result: Module result dictionary to check for changes
+
+    Returns:
+        Save/deploy result dictionary
+
+    Raises:
+        NDModuleError: If deployment fails
+    """
+    config_actions = get_config_actions(nrm.module)
+    save_enabled = bool(config_actions.get("save", True))
+    deploy_enabled = bool(config_actions.get("deploy", True))
+    action_type = config_actions.get("type", "switch")
+    action_payload = {"type": action_type}
+
+    # Defensive runtime validation (model validation already enforces this).
+    if deploy_enabled and not save_enabled:
+        _raise_vpc_error(msg="Invalid config_actions: deploy=true requires save=true")
+
+    if not save_enabled and not deploy_enabled:
+        return {
+            "msg": "Config actions disabled (save=false, deploy=false), skipping config save/deploy",
+            "fabric": fabric_name,
+            "deployment_needed": False,
+            "changed": False,
+            "config_actions": config_actions,
+        }
+
+    # Smart deployment decision (from Common.needs_deployment)
+    if not _needs_deployment(result, nrm):
+        return {
+            "msg": ("No configuration changes, pending operations, or out-of-sync pairs " "detected, skipping config actions"),
+            "fabric": fabric_name,
+            "deployment_needed": False,
+            "changed": False,
+            "config_actions": config_actions,
+        }
+
+    if nrm.module.check_mode:
+        # check_mode deployment preview
+        pending_create = nrm.module.params.get("_pending_create", [])
+        pending_delete = nrm.module.params.get("_pending_delete", [])
+        not_in_sync_pairs = nrm.module.params.get("_not_in_sync_pairs", [])
+        planned_actions = []
+        switch_ids = _collect_affected_switch_ids(nrm, result) if action_type == "switch" and deploy_enabled else []
+        if switch_ids:
+            deploy_path = _build_switch_deploy_path(fabric_name)
+            planned_actions.append(f"POST {deploy_path} payload={{'switchIds': {switch_ids}}}")
+            preview_msg = "CHECK MODE: Would deploy configuration for affected switches"
+        else:
+            if save_enabled:
+                save_path = FabricUtils.build_config_save_path(fabric_name)
+                planned_actions.append(f"POST {save_path} payload={action_payload}")
+            if deploy_enabled:
+                deploy_path = FabricUtils.build_config_deploy_path(fabric_name, force_show_run=True)
+                planned_actions.append(f"POST {deploy_path} payload={action_payload}")
+            if save_enabled and deploy_enabled:
+                preview_msg = "CHECK MODE: Would save and deploy fabric configuration"
+            elif save_enabled:
+                preview_msg = "CHECK MODE: Would save fabric configuration"
+            else:
+                preview_msg = "CHECK MODE: Would deploy fabric configuration"
+
+        deployment_info = {
+            "msg": preview_msg,
+            "fabric": fabric_name,
+            "deployment_needed": True,
+            "changed": True,
+            "would_save": save_enabled,
+            "would_deploy": deploy_enabled,
+            "config_actions": config_actions,
+            "deployment_decision_factors": {
+                "diff_has_changes": _has_explicit_diff_changes(result),
+                "pending_create_operations": len(pending_create),
+                "pending_delete_operations": len(pending_delete),
+                "not_in_sync_pairs": len(not_in_sync_pairs),
+                "actual_changes": result.get("changed", False),
+            },
+            "planned_actions": planned_actions,
+        }
+        return deployment_info
+
+    # Initialize RestSend via NDModuleV2
+    nd_v2 = NDModuleV2(nrm.module)
+    results = Results()
+
+    # Switch-scoped deploy (config_actions.type == "switch", the default) targets
+    # only the affected switches via switchActions/deploy, which generates and
+    # pushes config in a single call. This avoids the fabric-level actions/configSave
+    # path that returns HTTP 500 for vPC pairs with a physical peer-link (issue #335).
+    # The fabric-level (global) flow is retained for type == "global" and as a
+    # fallback when no affected switch serials can be resolved.
+    switch_ids = _collect_affected_switch_ids(nrm, result) if action_type == "switch" and deploy_enabled else []
+    if switch_ids:
+        _switch_level_deploy(nd_v2, fabric_name, switch_ids, results)
+    else:
+        _fabric_level_deploy(nd_v2, nrm, fabric_name, action_payload, save_enabled, deploy_enabled, results)
 
     # Build final result
     results.build_final_result()

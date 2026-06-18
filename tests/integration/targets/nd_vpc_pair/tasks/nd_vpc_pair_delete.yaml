@@ -184,25 +184,24 @@
       - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
   tags: delete
 
-- name: DELETE - TC2b - ASSERT - Verify config-save and deploy API traces
+- name: DELETE - TC2b - ASSERT - Verify switch-level deploy API traces
   ansible.builtin.assert:
     that:
       - result.deployment.response is defined
-      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+          | list
+          | length
+        ) > 0
       - >
         (
           result.deployment.response
           | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
           | list
           | length
-        ) > 0
-      - >
-        (
-          result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
-          | list
-          | length
-        ) > 0
+        ) == 0
   tags: delete
 
 - name: DELETE - TC2b - GATHER - Verify deploy delete result in ND
@@ -431,21 +430,20 @@
       - tc6_delete_result.deployment.config_actions.deploy == true
       - tc6_delete_result.deployment.config_actions.type == "switch"
       - tc6_delete_result.deployment.response is defined
-      - (tc6_delete_result.deployment.response | length) >= 2
+      - >
+        (
+          tc6_delete_result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+          | list
+          | length
+        ) > 0
       - >
         (
           tc6_delete_result.deployment.response
           | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
           | list
           | length
-        ) > 0
-      - >
-        (
-          tc6_delete_result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
-          | list
-          | length
-        ) > 0
+        ) == 0
   tags: delete
 
 # TC7 - check_mode should not apply delete configuration changes

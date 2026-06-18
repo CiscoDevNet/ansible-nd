@@ -267,25 +267,24 @@
       - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
   tags: override
 
-- name: OVERRIDE - TC5 - ASSERT - Verify config-save and deploy API traces
+- name: OVERRIDE - TC5 - ASSERT - Verify switch-level deploy API traces
   ansible.builtin.assert:
     that:
       - result.deployment.response is defined
-      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+          | list
+          | length
+        ) > 0
       - >
         (
           result.deployment.response
           | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
           | list
           | length
-        ) > 0
-      - >
-        (
-          result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
-          | list
-          | length
-        ) > 0
+        ) == 0
   tags: override
 
 - name: OVERRIDE - TC5 - GATHER - Verify pair exists after deploy flow

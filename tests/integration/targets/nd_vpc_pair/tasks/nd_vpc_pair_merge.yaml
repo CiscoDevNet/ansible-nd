@@ -539,8 +539,8 @@
       - >
         (
           (tc6b_deployment_needed and (result.deployment.response is defined)
-           and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/actions/configSave') | list | length) > 0)
-           and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/actions/deploy') | list | length) > 0))
+           and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy') | list | length) > 0)
+           and ((result.deployment.response | selectattr('REQUEST_PATH', 'search', '/actions/configSave') | list | length) == 0))
           or
           ((not tc6b_deployment_needed) and (result.deployment.msg | default('') is search('skipping')))
         )
@@ -827,25 +827,24 @@
       - (result.deployment_needed | default(result.deployment.deployment_needed | default(false))) | bool == true
   tags: merge
 
-- name: MERGE - TC10 - ASSERT - Verify config-save and deploy API traces
+- name: MERGE - TC10 - ASSERT - Verify switch-level deploy API traces
   ansible.builtin.assert:
     that:
       - result.deployment.response is defined
-      - (result.deployment.response | length) >= 2
+      - >
+        (
+          result.deployment.response
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
+          | list
+          | length
+        ) > 0
       - >
         (
           result.deployment.response
           | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
           | list
           | length
-        ) > 0
-      - >
-        (
-          result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
-          | list
-          | length
-        ) > 0
+        ) == 0
   tags: merge
 
 - name: MERGE - TC10 - GATHER - Query gathered pair after deploy flow
@@ -1486,17 +1485,17 @@
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) > 0
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
           | list
           | length
-        ) > 0
+        ) == 0
   tags: merge
 
 # TC18 - config_actions save-only path (save=true, deploy=false)
@@ -1687,18 +1686,18 @@
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
+          | selectattr('REQUEST_PATH', 'search', '/switchActions/deploy')
           | list
           | length
         ) > 0
       - >
         (
           result.deployment.response
-          | selectattr('REQUEST_PATH', 'search', '/actions/deploy')
+          | selectattr('REQUEST_PATH', 'search', '/actions/configSave')
           | list
           | length
-        ) > 0
-      - 'result.deployment.response | to_json is search(''"type": "switch"'')'
+        ) == 0
+      - 'result.deployment.response | to_json is search(''switchIds'')'
   tags: merge
 
 # TC22 - Interaction: deploy=true + config_actions set (config_actions must win)
