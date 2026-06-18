@@ -166,6 +166,23 @@
       tags: merged_with_vars
 
     # TC-7: switch_freeform with inline multiline CONF (OSPF best practices)
+    # PRE: `router ospf` requires `feature ospf` to be enabled first, otherwise
+    # NX-OS rejects the config and ND reports a switch-level deploy failure.
+    - name: "MERGED_WITH_VARS TC7-PRE - Enable OSPF feature via feature_enable template"
+      cisco.nd.nd_policy:
+        fabric_name: "{{ fabric_name }}"
+        state: merged
+        deploy: true
+        config:
+          - name: feature_enable
+            description: "Enable OSPF feature"
+            template_inputs:
+              featureName: ospf
+          - switch:
+              - serial_number: "{{ switch_serial_1 }}"
+      register: result_ospf_feature
+      tags: merged_with_vars
+
     - name: "MERGED_WITH_VARS TC7 - Create OSPF best practices policy"
       cisco.nd.nd_policy:
         fabric_name: "{{ fabric_name }}"
