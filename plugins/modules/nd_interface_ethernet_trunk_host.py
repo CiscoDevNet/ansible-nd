@@ -413,7 +413,6 @@ EXAMPLES = r"""
               allowed_vlans: "100-200"
     deploy: false
     state: merged
-
 """
 
 RETURN = r"""
