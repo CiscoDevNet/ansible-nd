@@ -5,7 +5,7 @@ from __future__ import annotations
 
 DOCUMENTATION = r"""
 ---
-module: nd_policy
+module: nd_manage_policy
 version_added: "2.0.0"
 short_description: Manages policies on Cisco Nexus Dashboard (ND).
 description:
@@ -282,7 +282,7 @@ EXAMPLES = r"""
 #         switch2: template_101, template_102, template_103
 
 - name: Create policies with per-switch extras
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: merged
     deploy: true
@@ -321,7 +321,7 @@ EXAMPLES = r"""
 #         switch2: template_101 (priority 101), template_102, template_103
 
 - name: Create policies with per-switch override
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: merged
     deploy: true
@@ -352,7 +352,7 @@ EXAMPLES = r"""
 # CREATE POLICY (including template inputs)
 
 - name: Create policy including required template inputs
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     config:
       - name: switch_freeform
@@ -371,7 +371,7 @@ EXAMPLES = r"""
 #       to modify a particular policy when use_desc_as_key is false.
 
 - name: Modify policies using policy IDs
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: merged
     deploy: true
@@ -390,7 +390,7 @@ EXAMPLES = r"""
 # UPDATE using description as key
 
 - name: Use description as key to update
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     use_desc_as_key: true
     config:
@@ -407,7 +407,7 @@ EXAMPLES = r"""
 # Use description as key with per-switch policies
 
 - name: Create policies with description as key
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     use_desc_as_key: true
     config:
@@ -440,7 +440,7 @@ EXAMPLES = r"""
 # DELETE POLICY
 
 - name: Delete policies using template name
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     config:
@@ -452,7 +452,7 @@ EXAMPLES = r"""
           - serial_number: "{{ switch2 }}"
 
 - name: Delete policies using policy-id
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     config:
@@ -462,7 +462,7 @@ EXAMPLES = r"""
           - serial_number: "{{ switch1 }}"
 
 - name: Delete all policies on switches
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     config:
@@ -471,7 +471,7 @@ EXAMPLES = r"""
           - serial_number: "{{ switch2 }}"
 
 - name: Delete policies without deploying (mark for deletion only)
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     deploy: false
@@ -487,7 +487,7 @@ EXAMPLES = r"""
 #       removed from the controller.
 
 - name: Delete switch_freeform policies (direct DELETE fallback)
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     config:
@@ -496,7 +496,7 @@ EXAMPLES = r"""
           - serial_number: "{{ switch1 }}"
 
 - name: Delete policies using description as key
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     use_desc_as_key: true
     state: deleted
@@ -507,13 +507,13 @@ EXAMPLES = r"""
           - serial_number: "{{ switch1 }}"
 
 - name: Gather all policies on all fabric switches (no config needed)
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: gathered
   register: all_policies
 
 - name: Gather only switch_freeform policies on a specific switch
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: gathered
     config:
@@ -523,13 +523,13 @@ EXAMPLES = r"""
   register: freeform_policies
 
 - name: Use gathered output to re-create policies on another fabric
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ all_policies.gathered }}"
 
 - name: Use gathered output to delete those exact policies by policy ID
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     config: "{{ all_policies.gathered }}"
@@ -694,7 +694,7 @@ def _record_nd_module_error_result(
 # Main
 # =============================================================================
 def main():
-    """Main entry point for the nd_policy module."""
+    """Main entry point for the nd_manage_policy module."""
 
     argument_spec = nd_argument_spec()
     argument_spec.update(PlaybookPolicyConfig.get_argument_spec())
@@ -708,7 +708,7 @@ def main():
     try:
         log_config = Log()
         log_config.commit()
-        log = logging.getLogger("nd.nd_policy")
+        log = logging.getLogger("nd.nd_manage_policy")
     except ValueError as error:
         module.fail_json(msg=str(error))
 
@@ -727,7 +727,7 @@ def main():
     results.action = f"policy_{state}"
 
     try:
-        log.info("Starting nd_policy module: state=%s", state)
+        log.info("Starting nd_manage_policy module: state=%s", state)
 
         # Create NDPolicyModule — all business logic lives here
         policy_module = NDPolicyModule(

@@ -15,7 +15,7 @@
 
     # TC-1: Create a single policy group
     - name: "MERGED TC1 - Create switch_freeform policy group"
-      cisco.nd.nd_policy_group: &merged_freeform
+      cisco.nd.nd_manage_policy_group: &merged_freeform
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -39,7 +39,7 @@
 
     # TC-2: Idempotence - Re-run the same task
     - name: "MERGED TC2 - Idempotence check"
-      cisco.nd.nd_policy_group: *merged_freeform
+      cisco.nd.nd_manage_policy_group: *merged_freeform
       register: result
       tags: merged
 
@@ -57,7 +57,7 @@
     # switch first, otherwise NX-OS rejects 'bfd interval ...' commands
     # and ND reports a switch-level deploy failure.
     - name: "MERGED TC3-PRE - Enable BFD feature via feature_enable template"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -73,7 +73,7 @@
 
     # TC-3: Create a second group with same template but different description
     - name: "MERGED TC3 - Create second switch_freeform group (different description)"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -100,7 +100,7 @@
 
     # TC-4: Update template_inputs on existing group
     - name: "MERGED TC4 - Update template_inputs on existing policy group"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -120,7 +120,7 @@
 
     # TC-5: Idempotence after update
     - name: "MERGED TC5 - Idempotence after template_inputs update"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -144,7 +144,7 @@
 
     # TC-6: Update template_inputs on existing group
     - name: "MERGED TC6 - Update template_inputs"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -168,7 +168,7 @@
 
     # TC-7: Create multiple groups in a single task
     - name: "MERGED TC7 - Bulk create two feature_enable groups"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -196,7 +196,7 @@
 
     # TC-8: Idempotence on bulk create
     - name: "MERGED TC8 - Idempotence on bulk create"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -228,7 +228,7 @@
 
     # TC-9: Fail when description is missing for merged state
     - name: "MERGED TC9 - Expect failure when description is missing"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         config:
@@ -252,7 +252,7 @@
 
     # TC-10: Create clock_timezone group, then update HOUR_OFFSET
     - name: "MERGED TC10 - Create clock_timezone policy group"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -276,7 +276,7 @@
 
     # TC-11: Update HOUR_OFFSET from 1 → 5 (same description, same template)
     - name: "MERGED TC11 - Update clock_timezone HOUR_OFFSET"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -298,7 +298,7 @@
 
     # TC-12: Idempotence after HOUR_OFFSET update
     - name: "MERGED TC12 - Idempotence after clock_timezone update"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -326,7 +326,7 @@
     # Before: switch_ids = [switch_serial_1]
     # After:  switch_ids = [switch_serial_2, switch_serial_3]
     - name: "MERGED TC13 - Update switch_ids (add new, remove old)"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -347,7 +347,7 @@
 
     # TC-14: Idempotence after switch_ids update
     - name: "MERGED TC14 - Idempotence after switch_ids change"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true

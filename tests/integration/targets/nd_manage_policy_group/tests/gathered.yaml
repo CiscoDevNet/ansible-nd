@@ -23,7 +23,7 @@
     ##############################################
 
     - name: "GATHERED SETUP - Create test policy groups"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -76,7 +76,7 @@
     # TC-1: Gather ALL (no config)
     # ==========================================
     - name: "GATHERED TC1 - Gather all policy groups (no config)"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
       register: result
@@ -97,7 +97,7 @@
     # TC-2: Gather by template name (multi-match)
     # ==========================================
     - name: "GATHERED TC2 - Gather feature_enable groups"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -120,7 +120,7 @@
     # TC-3: Gather by template name (single match)
     # ==========================================
     - name: "GATHERED TC3 - Gather clock_timezone groups"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -143,7 +143,7 @@
     # TC-4: Gather by template + description (exact match)
     # ==========================================
     - name: "GATHERED TC4 - Gather exact match (feature_enable + Enable LACP)"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -165,7 +165,7 @@
     # TC-5: Gather by policy group ID
     # ==========================================
     - name: "GATHERED TC5a - First gather all to extract a policy_id"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
       register: all_gathered
@@ -177,7 +177,7 @@
       tags: gathered
 
     - name: "GATHERED TC5c - Gather by extracted policy group ID"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -199,7 +199,7 @@
     # TC-6: Gather non-existent template
     # ==========================================
     - name: "GATHERED TC6 - Gather non-existent template"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -219,7 +219,7 @@
     # TC-7: Gather non-existent policy group ID
     # ==========================================
     - name: "GATHERED TC7 - Gather non-existent policy group ID"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -239,7 +239,7 @@
     # TC-8: Gather with multiple filter entries
     # ==========================================
     - name: "GATHERED TC8 - Gather feature_enable + clock_timezone"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -287,7 +287,7 @@
     # TC-10: Gathered idempotency
     # ==========================================
     - name: "GATHERED TC10a - First gather"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -297,7 +297,7 @@
       tags: gathered
 
     - name: "GATHERED TC10b - Second gather (same params)"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:

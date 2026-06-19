@@ -15,7 +15,7 @@
 
     # Create a switch_freeform policy group with deploy=true
     - name: "DELETED SETUP - Create switch_freeform policy group with deploy"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -41,7 +41,7 @@
     ##############################################
 
     - name: "DELETED TC1 - Delete switch_freeform policy group with deploy"
-      cisco.nd.nd_policy_group: &delete_freeform
+      cisco.nd.nd_manage_policy_group: &delete_freeform
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -62,7 +62,7 @@
     ##############################################
 
     - name: "DELETED TC2 - Idempotence check (already deleted)"
-      cisco.nd.nd_policy_group: *delete_freeform
+      cisco.nd.nd_manage_policy_group: *delete_freeform
       register: result
       tags: deleted
 
@@ -77,7 +77,7 @@
     ##############################################
 
     - name: "DELETED TC3 - Delete a policy group that does not exist"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true

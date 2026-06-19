@@ -13,7 +13,7 @@ Provides all business logic for switch policy management on ND:
       deploy=false → markDelete only (policy left in markDeleted state on controller;
                      running config remains on the switch until the next deploy)
 
-The module file ``nd_policy.py`` contains only DOCUMENTATION, argument_spec,
+The module file ``nd_manage_policy.py`` contains only DOCUMENTATION, argument_spec,
 and a thin ``main()`` that instantiates this class and calls ``manage_state()``.
 
 Models (from ``models.nd_manage_policies``):
@@ -3125,9 +3125,7 @@ class NDPolicyModule:
            round-trip after the PUT, so a successful return only means
            the controller accepted the request — not that every field
            persisted.  Callers relying on correctness should use
-           ``state: gathered`` post-apply or the integration-test
-           validation action plugin (``nd_policy_validate``) for
-           end-to-end verification.
+           ``state: gathered`` post-apply for end-to-end verification.
 
         Args:
             want: The want dict with desired policy fields.

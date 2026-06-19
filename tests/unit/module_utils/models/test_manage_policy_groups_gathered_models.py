@@ -8,7 +8,7 @@
 Unit tests for ``models/manage_policy_groups/gathered_models.py``.
 
 Tests ``PolicyGroupGathered`` -- the read-model used by the
-``state: gathered`` path of ``nd_policy_group``:
+``state: gathered`` path of ``nd_manage_policy_group``:
 
 - Field defaults and aliases (mirrors the controller's policy-group GET shape).
 - ``from_api_policy_group()`` parsing, including JSON-encoded

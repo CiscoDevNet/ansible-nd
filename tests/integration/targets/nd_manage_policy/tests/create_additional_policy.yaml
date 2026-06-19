@@ -23,7 +23,7 @@
 
     # TC-1: First create with create_additional_policy=true
     - name: "ADDITIONAL TC1 - First create with create_additional_policy=true"
-      cisco.nd.nd_policy: &add_pol
+      cisco.nd.nd_manage_policy: &add_pol
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -46,7 +46,7 @@
       tags: additional
 
     - name: "ADDITIONAL TC1 - Gather after first create"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -73,7 +73,7 @@
     # TC-2: Re-run the SAME task — must NOT be idempotent.  Should produce
     #       a SECOND policy with a different policyId.
     - name: "ADDITIONAL TC2 - Re-run same task (must not be idempotent)"
-      cisco.nd.nd_policy: *add_pol
+      cisco.nd.nd_manage_policy: *add_pol
       register: result_second
       tags: additional
 
@@ -84,7 +84,7 @@
       tags: additional
 
     - name: "ADDITIONAL TC2 - Gather after second create"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -116,12 +116,12 @@
     # TC-3: A third run produces a 3rd distinct policy — proves the bypass
     #       is not capped after some count.
     - name: "ADDITIONAL TC3 - Third run creates yet another duplicate"
-      cisco.nd.nd_policy: *add_pol
+      cisco.nd.nd_manage_policy: *add_pol
       register: result_third
       tags: additional
 
     - name: "ADDITIONAL TC3 - Gather after third create"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:

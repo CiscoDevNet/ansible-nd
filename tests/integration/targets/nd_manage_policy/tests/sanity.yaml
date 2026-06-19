@@ -15,7 +15,7 @@
 
     # TC-1: Missing fabric_name should fail
     - name: "SANITY TC1 - Missing fabric_name"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         state: merged
         deploy: true
         config:
@@ -36,7 +36,7 @@
 
     # TC-2: Missing config for merged state should fail
     - name: "SANITY TC2 - Merged state without config"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -52,7 +52,7 @@
 
     # TC-3: Duplicate descriptions with use_desc_as_key should fail atomically
     - name: "SANITY TC3 - Duplicate descriptions with use_desc_as_key"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -80,7 +80,7 @@
 
     # TC-4: Empty description with use_desc_as_key should fail
     - name: "SANITY TC4 - Empty description with use_desc_as_key"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -104,7 +104,7 @@
 
     # TC-5: Invalid template name should fail
     - name: "SANITY TC5 - Non-existent template name"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -126,7 +126,7 @@
 
     # TC-6: Create, delete, re-create cycle (full lifecycle)
     - name: "SANITY TC6a - Create a policy"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -149,7 +149,7 @@
       tags: sanity
 
     - name: "SANITY TC6b - Delete the policy"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -167,7 +167,7 @@
       tags: sanity
 
     - name: "SANITY TC6c - Re-create the policy"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -191,7 +191,7 @@
 
     # TC-7: Invalid switch serial number should fail
     - name: "SANITY TC7 - Non-existent switch serial"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -220,7 +220,7 @@
     # _get_diff_merged_single).  Bugfix B2 changed it to a hard failure
     # so an operator typo in a POLICY-ID does not look like success.
     - name: "SANITY TC8 - use_desc_as_key with non-existent POLICY-ID must fail"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -253,7 +253,7 @@
     # `switch:` list).  Mixing the two shapes at the top level produces
     # ambiguous semantics and is rejected up-front before any API call.
     - name: "SANITY TC9 - Mixed legacy + self-contained shapes must fail"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -295,7 +295,7 @@
     # now fails up-front naming the offending policy entries so the user
     # can fix their input.
     - name: "SANITY TC10a - merged: policy entry + empty switch list must fail"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -318,7 +318,7 @@
       tags: sanity
 
     - name: "SANITY TC10b - deleted: policy entry + empty switch list must fail"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -338,7 +338,7 @@
       tags: sanity
 
     - name: "SANITY TC10c - empty switch list with NO policies is a no-op (not an error)"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: false

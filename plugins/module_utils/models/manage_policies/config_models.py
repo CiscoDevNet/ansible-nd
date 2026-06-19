@@ -12,7 +12,7 @@ Schema constraints (source: ND API specification, createBasePolicy):
     - description: string, maxLength=255
     - templateName: string, maxLength=255
 
-Usage in nd_policy.py main()::
+Usage in nd_manage_policy.py main()::
 
     from .models.manage_policies.config_models import PlaybookPolicyConfig
 
@@ -235,7 +235,7 @@ class PlaybookPolicyConfig(NDNestedModel):
 
     @classmethod
     def get_argument_spec(cls) -> dict[str, Any]:
-        """Return the Ansible argument spec for nd_policy.
+        """Return the Ansible argument spec for nd_manage_policy.
 
         Returns:
             Dict suitable for passing to ``AnsibleModule(argument_spec=...)``.

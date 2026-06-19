@@ -4,7 +4,7 @@
 # Also cleans up create_additional_policy duplicates by template-name-only delete.
 
 - name: "CLEANUP MERGED - Delete IT-MERGED prefixed policy groups"
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     deploy: true
@@ -32,14 +32,14 @@
 # Catch any create_additional_policy duplicates that don't have IT-MERGED- descriptions
 # These are created without descriptions or with auto-generated ones
 - name: "CLEANUP MERGED - Gather all to find stray IT-MERGED groups"
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: "{{ fabric_name }}"
     state: gathered
   register: cleanup_gather
   ignore_errors: true
 
 - name: "CLEANUP MERGED - Delete any remaining IT-MERGED groups by policy_id"
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     deploy: true

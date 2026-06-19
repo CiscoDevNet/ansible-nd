@@ -3,7 +3,7 @@
 # Uses description-based composite keys for precise cleanup.
 
 - name: "CLEANUP GATHERED - Delete IT-GATHERED prefixed policy groups"
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     deploy: true
@@ -19,7 +19,7 @@
   ignore_errors: true
 
 - name: "CLEANUP RT - Delete IT-RT prefixed policy groups"
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     deploy: true

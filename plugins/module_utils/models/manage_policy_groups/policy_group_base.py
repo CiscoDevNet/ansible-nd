@@ -259,7 +259,7 @@ class PolicyGroupCreate(NDBaseModel):
 
     @classmethod
     def get_argument_spec(cls) -> dict[str, Any]:
-        """Return the Ansible argument spec for nd_policy_group.
+        """Return the Ansible argument spec for nd_manage_policy_group.
 
         Uses suboptions with no defaults for optional fields so that
         Ansible does not inject default values and Pydantic's

@@ -3,7 +3,7 @@
 # Uses multiple template names to ensure thorough cleanup
 
 - name: "CLEANUP - Delete all test policies from switches"
-  cisco.nd.nd_policy:
+  cisco.nd.nd_manage_policy:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     deploy: true

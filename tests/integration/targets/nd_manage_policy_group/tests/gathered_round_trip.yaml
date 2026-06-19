@@ -24,7 +24,7 @@
     ##############################################
 
     - name: "RT SETUP - Create test policy groups"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -70,7 +70,7 @@
 
     # Gather all our test groups for use in subsequent TCs
     - name: "RT SETUP - Gather all IT-RT test groups"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
       register: baseline_gathered
@@ -96,7 +96,7 @@
     # TC-1: Gathered → Merged (idempotent re-apply)
     # ==========================================
     - name: "RT TC1 - Re-apply gathered output via state=merged"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -120,7 +120,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC2b - Modify switch_ids and apply"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -141,7 +141,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC2e - Re-gather and verify switch_ids updated"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -166,7 +166,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC3b - Update priority via gathered output"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -186,7 +186,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC3d - Re-gather and verify new priority"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -210,7 +210,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC4b - Update template_inputs CONF"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -230,7 +230,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC4e - Re-gather and verify new template_inputs"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -251,7 +251,7 @@
     - name: "RT TC5a - Delete clock_timezone via gathered output"
       vars:
         clock_gathered: "{{ our_gathered | selectattr('description', 'equalto', 'IT-RT-Timezone CET') | first }}"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -268,7 +268,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC5d - Re-gather clock_timezone and verify gone"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -287,7 +287,7 @@
     # TC-6: Gathered → Deleted (delete all remaining)
     # ==========================================
     - name: "RT TC6a - Gather remaining IT-RT groups"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
       register: remaining
@@ -299,7 +299,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC6c - Delete all remaining IT-RT groups using gathered"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -316,7 +316,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC6f - Re-gather and verify no IT-RT groups remain"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
       register: post_delete
@@ -335,7 +335,7 @@
     # TC-7: Gathered → Deleted (already deleted = idempotent)
     # ==========================================
     - name: "RT TC7 - Delete same groups again (should be no-op)"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -362,7 +362,7 @@
     # ==========================================
     # Re-create groups first since we deleted everything in TC6
     - name: "RT TC8a - Re-create test groups"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -377,7 +377,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC8c - Gather to get policy_id"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -392,7 +392,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC8e - Update via policy_id as name"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -413,7 +413,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC8h - Re-gather and verify switch_ids updated via ID"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -432,7 +432,7 @@
     # TC-9: Gathered → Deleted with policy_id
     # ==========================================
     - name: "RT TC9a - Delete via policy_id"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -448,7 +448,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC9d - Verify group gone via gather"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -467,7 +467,7 @@
     # TC-10: Full round-trip: Create → Gather → Delete → Re-create from gathered
     # ==========================================
     - name: "RT TC10a - Create 2 groups"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -489,7 +489,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC10c - Gather the 2 groups"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
       register: snapshot
@@ -501,7 +501,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC10e - Delete all IT-RT groups"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -509,7 +509,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC10g - Verify deleted"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
       register: post_delete
@@ -529,7 +529,7 @@
     # API (the correct, surfaced behavior).  For re-create from a snapshot we
     # rely on the composite key (template name + description).
     - name: "RT TC10i - Re-create from gathered snapshot (strip stale policy_id)"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -551,7 +551,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC10l - Re-gather and compare"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
       register: final_gather
@@ -571,7 +571,7 @@
     # TC-11: Round-trip with switch_freeform (markDelete fallback)
     # ==========================================
     - name: "RT TC11a - Create switch_freeform group"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -585,7 +585,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC11c - Gather the freeform group"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -607,7 +607,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC11f - Delete switch_freeform (triggers markDelete fallback + direct DELETE)"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -622,7 +622,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC11i - Re-create from freeform snapshot (strip stale policy_id)"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -644,7 +644,7 @@
       tags: gathered_round_trip
 
     - name: "RT TC11l - Verify re-created freeform via gather"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:

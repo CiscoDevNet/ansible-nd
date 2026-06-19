@@ -15,7 +15,7 @@
 
     # TC-1: Banner with multiline template_inputs
     - name: "MERGED_WITH_VARS TC1 - Create banner policy with multiline input"
-      cisco.nd.nd_policy: &banner_pol
+      cisco.nd.nd_manage_policy: &banner_pol
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -45,7 +45,7 @@
 
     # TC-2: Idempotence for banner
     - name: "MERGED_WITH_VARS TC2 - Banner idempotence"
-      cisco.nd.nd_policy: *banner_pol
+      cisco.nd.nd_manage_policy: *banner_pol
       register: result
       tags: merged_with_vars
 
@@ -57,7 +57,7 @@
 
     # TC-3: vrf_route_tracking with specific inputs
     - name: "MERGED_WITH_VARS TC3 - Create vrf_route_tracking policy"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -88,7 +88,7 @@
       tags: merged_with_vars
 
     - name: "MERGED_WITH_VARS TC4 - Create syslog policy from file"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -116,7 +116,7 @@
       tags: merged_with_vars
 
     - name: "MERGED_WITH_VARS TC5 - Create spanning-tree policy from file"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -144,7 +144,7 @@
       tags: merged_with_vars
 
     - name: "MERGED_WITH_VARS TC6 - Create alias policy from file"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -169,7 +169,7 @@
     # PRE: `router ospf` requires `feature ospf` to be enabled first, otherwise
     # NX-OS rejects the config and ND reports a switch-level deploy failure.
     - name: "MERGED_WITH_VARS TC7-PRE - Enable OSPF feature via feature_enable template"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -184,7 +184,7 @@
       tags: merged_with_vars
 
     - name: "MERGED_WITH_VARS TC7 - Create OSPF best practices policy"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true

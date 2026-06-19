@@ -15,7 +15,7 @@
 
     # SETUP: Enable BFD feature (prerequisite for BFD timers)
     - name: "MERGED_MULTI_TEMPLATE SETUP - Enable BFD feature"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -32,7 +32,7 @@
 
     # TC-1: Create multiple policies with different templates in one task
     - name: "MERGED_MULTI_TEMPLATE TC1 - Create five policies across different templates"
-      cisco.nd.nd_policy: &multi_tmpl
+      cisco.nd.nd_manage_policy: &multi_tmpl
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -87,7 +87,7 @@
 
     # TC-2: Idempotence - re-run same task
     - name: "MERGED_MULTI_TEMPLATE TC2 - Idempotence check"
-      cisco.nd.nd_policy: *multi_tmpl
+      cisco.nd.nd_manage_policy: *multi_tmpl
       register: result
       tags: merged_multi_template
 
@@ -99,7 +99,7 @@
 
     # TC-3: Verify via gathered
     - name: "MERGED_MULTI_TEMPLATE TC3 - Gather and verify policies"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:

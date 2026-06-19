@@ -7,7 +7,7 @@
 """
 Unit tests for ``models/manage_policies/config_models.py``.
 
-Tests the user-facing Pydantic models that validate ``nd_policy`` playbook
+Tests the user-facing Pydantic models that validate ``nd_manage_policy`` playbook
 input before any API or translation logic runs:
 
 - ``PlaybookSwitchPolicyConfig``  - per-switch policy override entry.

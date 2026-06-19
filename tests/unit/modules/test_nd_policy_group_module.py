@@ -5,7 +5,7 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 """
-Unit tests for ``plugins/modules/nd_policy_group.py`` module-level helpers.
+Unit tests for ``plugins/modules/nd_manage_policy_group.py`` module-level helpers.
 
 This file covers the four module-private helpers that orchestrate config
 resolution and switch-IP-to-serial translation before the state machine
@@ -22,7 +22,7 @@ runs:
 The state machine (``manage_state`` / ``_handle_*_state`` for merged /
 deleted / query) is **not** exercised here -- it requires the full
 ``RestSend`` harness and is covered by the integration suite under
-``tests/integration/targets/nd_policy_group``.
+``tests/integration/targets/nd_manage_policy_group``.
 """
 
 # pylint: disable=protected-access
@@ -32,8 +32,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from ansible_collections.cisco.nd.plugins.modules import nd_policy_group
-from ansible_collections.cisco.nd.plugins.modules.nd_policy_group import (
+from ansible_collections.cisco.nd.plugins.modules import nd_manage_policy_group
+from ansible_collections.cisco.nd.plugins.modules.nd_manage_policy_group import (
     _handle_gathered_state,
     _looks_like_ipv4,
     _resolve_config,
@@ -728,10 +728,10 @@ def _install_inventory_stubs(monkeypatch: pytest.MonkeyPatch, ip_map: dict[str, 
     Returns the ``_FakeNDModule`` instance used for the call so tests
     can assert on ``check_mode`` / save / restore behaviour."""
     fake_nd = _FakeNDModule()
-    monkeypatch.setattr(nd_policy_group, "NDModule", lambda _module: fake_nd)
+    monkeypatch.setattr(nd_manage_policy_group, "NDModule", lambda _module: fake_nd)
     inventory = _FakeInventory(ip_map)
     monkeypatch.setattr(
-        nd_policy_group.FabricSwitchInventory,
+        nd_manage_policy_group.FabricSwitchInventory,
         "from_fabric",
         classmethod(lambda cls, nd, fabric, log, model_class: inventory),
     )
@@ -778,7 +778,7 @@ def test_nd_policy_group_module_00410(monkeypatch: pytest.MonkeyPatch) -> None:
     def _boom(_module: object) -> None:
         raise AssertionError("NDModule should not be instantiated for serial-only configs")
 
-    monkeypatch.setattr(nd_policy_group, "NDModule", _boom)
+    monkeypatch.setattr(nd_manage_policy_group, "NDModule", _boom)
 
     config = [{"switch_ids": ["FDO111", "FDO222"]}]
     module = FakeModule()

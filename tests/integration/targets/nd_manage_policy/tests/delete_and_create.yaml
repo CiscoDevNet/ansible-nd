@@ -33,7 +33,7 @@
     ##############################################
 
     - name: "REPLACE SETUP - Create clock_timezone with description REPLACE-X"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -59,7 +59,7 @@
       tags: replace
 
     - name: "REPLACE SETUP - Gather to capture original policy"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -90,7 +90,7 @@
     # TC-1: Re-apply the SAME description on a DIFFERENT template.
     #       This is the only path that triggers delete_and_create.
     - name: "REPLACE TC1 - Reuse description REPLACE-X with clock_summertime template"
-      cisco.nd.nd_policy: &replace_new_template
+      cisco.nd.nd_manage_policy: &replace_new_template
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -115,7 +115,7 @@
 
     # TC-2: Verify END STATE — old clock_timezone gone, new clock_summertime present
     - name: "REPLACE TC2 - Gather post-replace state"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -145,7 +145,7 @@
 
     # TC-3: Idempotence — re-running with the new template should be a no-op
     - name: "REPLACE TC3 - Re-run with new template (idempotence)"
-      cisco.nd.nd_policy: *replace_new_template
+      cisco.nd.nd_manage_policy: *replace_new_template
       register: result
       tags: replace
 
@@ -174,7 +174,7 @@
     #      fallback (markDelete will return "content type PYTHON" error)
     #   4. The new feature_enable policy must be created
     - name: "REPLACE TC4 SETUP - Create switch_freeform (PYTHON) with description REPLACE-PY"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -198,7 +198,7 @@
       tags: replace
 
     - name: "REPLACE TC4 SETUP - Capture original PYTHON policy"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -223,7 +223,7 @@
       tags: replace
 
     - name: "REPLACE TC4 - Reuse REPLACE-PY with feature_enable (forces PYTHON-fallback delete)"
-      cisco.nd.nd_policy: &replace_py_new
+      cisco.nd.nd_manage_policy: &replace_py_new
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -247,7 +247,7 @@
       tags: replace
 
     - name: "REPLACE TC4 - Gather post-replace state"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -275,7 +275,7 @@
       tags: replace
 
     - name: "REPLACE TC4 - Idempotence after PYTHON-fallback replace"
-      cisco.nd.nd_policy: *replace_py_new
+      cisco.nd.nd_manage_policy: *replace_py_new
       register: result
       tags: replace
 

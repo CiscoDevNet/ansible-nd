@@ -3,7 +3,7 @@
 # Each entry needs (description, name) to match the composite key.
 
 - name: "CLEANUP - Delete all test policy groups"
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: "{{ fabric_name }}"
     state: deleted
     deploy: true

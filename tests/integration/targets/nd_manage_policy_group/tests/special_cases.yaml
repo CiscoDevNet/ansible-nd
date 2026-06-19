@@ -30,7 +30,7 @@
     # SETUP: Create a baseline switch_freeform group so force-create
     # has an existing (description, template_name) collision.
     - name: "SPECIAL A.SETUP - Baseline switch_freeform group"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -57,7 +57,7 @@
 
     # ---- TC1: force_create WITH description (duplicate by intent) ----
     - name: "SPECIAL A.TC1 - Force-create duplicate (same desc, different CONF)"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -93,7 +93,7 @@
 
     # ---- TC2: force_create WITHOUT description ----
     - name: "SPECIAL A.TC2 - Force-create without description"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -130,7 +130,7 @@
 
     # ---- TC3: check_mode merged (no real create) ----
     - name: "SPECIAL B.TC3 - check_mode merged on non-existent group"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -157,7 +157,7 @@
       tags: special
 
     - name: "SPECIAL B.TC3.verify - Confirm nothing was actually created"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -175,7 +175,7 @@
 
     # SETUP for TC4: create a real group to delete in check_mode
     - name: "SPECIAL B.TC4.setup - Create group for check_mode delete"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -200,7 +200,7 @@
 
     # ---- TC4: check_mode deleted (no real delete) ----
     - name: "SPECIAL B.TC4 - check_mode deleted on existing group"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -222,7 +222,7 @@
       tags: special
 
     - name: "SPECIAL B.TC4.verify - Confirm group still exists after check_mode"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -245,7 +245,7 @@
 
     # ---- TC5: deploy=false on create ----
     - name: "SPECIAL C.TC5 - Create with deploy=false"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: false
@@ -281,7 +281,7 @@
 
     # SETUP for TC6: create a multi-switch group, then remove one switch with deploy=false
     - name: "SPECIAL C.TC6.setup - Create multi-switch group"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -308,7 +308,7 @@
 
     # ---- TC6: deploy=false on update with switch removal ----
     - name: "SPECIAL C.TC6 - Update with switch removal, deploy=false"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: false
@@ -351,7 +351,7 @@
 
     # SETUP: Create a known group and capture its policy_id
     - name: "SPECIAL D.SETUP - Create group for ID-based tests"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -382,7 +382,7 @@
 
     # ---- TC7: gather by ID ----
     - name: "SPECIAL D.TC7 - Gather policy group by POLICY-GROUP-* ID"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -402,7 +402,7 @@
 
     # ---- TC8: update by ID (no description provided) ----
     - name: "SPECIAL D.TC8 - Update existing group by ID only"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -432,7 +432,7 @@
     # ---- TC10: merged with unknown POLICY-GROUP-* ID → fail ----
     # (TC9 — delete by ID — moved after TC10/11/12 to keep spc_policy_id alive)
     - name: "SPECIAL D.TC10 - Merged with unknown POLICY-GROUP-* ID"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -455,7 +455,7 @@
 
     # ---- TC11: deleted with unknown POLICY-GROUP-* ID → skip silently ----
     - name: "SPECIAL D.TC11 - Deleted with unknown POLICY-GROUP-* ID"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -472,7 +472,7 @@
 
     # ---- TC12: mixed config — update-by-ID + new create-by-desc ----
     - name: "SPECIAL D.TC12 - Mixed: update by ID + create by description"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -510,7 +510,7 @@
 
     # ---- TC9: delete by ID ----
     - name: "SPECIAL D.TC9 - Delete policy group by POLICY-GROUP-* ID"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true
@@ -536,7 +536,7 @@
 
     # ---- TC13: missing template_name (no `name` field) ----
     - name: "SPECIAL E.TC13 - Missing `name` field in merged config"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -559,7 +559,7 @@
 
     # ---- TC14: cross-entry duplicate (description, name) ----
     - name: "SPECIAL E.TC14 - Duplicate (description, name) across config entries"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -597,7 +597,7 @@
     # both policies in a single bulk-create call.
 
     - name: "SPECIAL F.TC15 - Bulk: feature_enable bfd + BFD timers freeform"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -634,7 +634,7 @@
 
     # Idempotence on BFD chain
     - name: "SPECIAL F.TC15b - Idempotence on BFD bulk create"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -664,7 +664,7 @@
     # The shared cleanup deletes by (description, name) which collapses
     # force-create duplicates. Target the captured policy_ids first.
     - name: "SPECIAL - Cleanup force-created policies by policy_id"
-      cisco.nd.nd_policy_group:
+      cisco.nd.nd_manage_policy_group:
         fabric_name: "{{ fabric_name }}"
         state: deleted
         deploy: true

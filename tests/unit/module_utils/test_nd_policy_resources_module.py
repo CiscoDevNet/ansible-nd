@@ -19,7 +19,7 @@ A small file-private harness (``FakeAnsibleModule`` + ``FakeND`` +
 module + REST stack. The state machine and execution layer
 (``manage_state`` / ``_handle_*_state`` / ``_execute_*``) are NOT
 exercised here -- they require the full FakeRestSend harness and are
-covered by the integration tests under ``tests/integration/targets/nd_policy``.
+covered by the integration tests under ``tests/integration/targets/nd_manage_policy``.
 """
 
 # pylint: disable=use-implicit-booleaness-not-comparison

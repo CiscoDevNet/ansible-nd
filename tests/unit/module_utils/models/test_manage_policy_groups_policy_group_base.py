@@ -8,7 +8,7 @@
 Unit tests for ``models/manage_policy_groups/policy_group_base.py``.
 
 Tests ``PolicyGroupCreate`` -- the Pydantic request-body model used for
-creating, updating, and identifying policy groups in ``nd_policy_group``:
+creating, updating, and identifying policy groups in ``nd_manage_policy_group``:
 
 - Field defaults, aliases, validators.
 - ``validate_switch_ids`` field validator.

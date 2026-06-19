@@ -15,7 +15,7 @@
 
     # TC-1: Create policies on two switches simultaneously
     - name: "MERGED_MULTI_SWITCH TC1 - Create policy on two switches"
-      cisco.nd.nd_policy: &multi_sw_merge
+      cisco.nd.nd_manage_policy: &multi_sw_merge
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -48,7 +48,7 @@
 
     # TC-2: Idempotence on multi-switch
     - name: "MERGED_MULTI_SWITCH TC2 - Idempotence check"
-      cisco.nd.nd_policy: *multi_sw_merge
+      cisco.nd.nd_manage_policy: *multi_sw_merge
       register: result
       tags: merged_multi_switch
 
@@ -60,7 +60,7 @@
 
     # TC-3: Enable BFD feature first (prerequisite for BFD timers)
     - name: "MERGED_MULTI_SWITCH TC3a - Enable BFD feature on both switches"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -85,7 +85,7 @@
 
     # TC-3b: Per-switch policy override - different priorities per switch
     - name: "MERGED_MULTI_SWITCH TC3 - Per-switch policy overrides"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true

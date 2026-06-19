@@ -36,7 +36,7 @@
     ##############################################
 
     - name: "DEFAULT_KEY SETUP - Create baseline clock_timezone"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -62,7 +62,7 @@
       tags: default_key
 
     - name: "DEFAULT_KEY SETUP - Gather baseline"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -91,7 +91,7 @@
 
     # TC-1: Re-apply identical config → SKIP (idempotent), policyId unchanged.
     - name: "DEFAULT_KEY TC1 - Re-apply identical config (idempotency)"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -116,7 +116,7 @@
       tags: default_key
 
     - name: "DEFAULT_KEY TC1 - Gather and verify nothing was added or replaced"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -139,7 +139,7 @@
     #        This is a known semantic of default mode and is the reason
     #        use_desc_as_key=true exists.)
     - name: "DEFAULT_KEY TC2 - Apply same template with NEW priority"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -164,7 +164,7 @@
       tags: default_key
 
     - name: "DEFAULT_KEY TC2 - Gather to confirm count grew 1 → 2"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:
@@ -199,7 +199,7 @@
     #       mode rule: 2 matches with no full-equality match → SKIP (no
     #       new duplicate is added when create_additional=false).
     - name: "DEFAULT_KEY TC3 - Re-apply changed-priority config (multi-match SKIP)"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: merged
         deploy: true
@@ -218,7 +218,7 @@
       tags: default_key
 
     - name: "DEFAULT_KEY TC3 - Gather to confirm count is still 2"
-      cisco.nd.nd_policy:
+      cisco.nd.nd_manage_policy:
         fabric_name: "{{ fabric_name }}"
         state: gathered
         config:

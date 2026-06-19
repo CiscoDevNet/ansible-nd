@@ -5,7 +5,7 @@ from __future__ import annotations
 
 DOCUMENTATION = r"""
 ---
-module: nd_policy_group
+module: nd_manage_policy_group
 short_description: Manage policy groups on Cisco Nexus Dashboard (ND)
 version_added: "2.0.0"
 description:
@@ -170,7 +170,7 @@ notes:
 
 EXAMPLES = r"""
 - name: Create a policy group to enable LACP on multiple switches
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: merged
     config:
@@ -183,7 +183,7 @@ EXAMPLES = r"""
           featureName: lacp
 
 - name: Create multiple policy groups in one task
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: merged
     config:
@@ -199,7 +199,7 @@ EXAMPLES = r"""
           featureName: lldp
 
 - name: Create duplicate policy groups (always create, skip idempotency)
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: merged
     config:
@@ -210,7 +210,7 @@ EXAMPLES = r"""
           CONF: "system vlan long-name"
 
 - name: Delete policy groups by description + template name
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: deleted
     config:
@@ -218,14 +218,14 @@ EXAMPLES = r"""
         description: "Enable LACP"
 
 - name: Delete ALL policy groups using a specific template (no description)
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: deleted
     config:
       - name: feature_enable
 
 - name: Delete specific policy groups by policy group ID
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: deleted
     config:
@@ -233,7 +233,7 @@ EXAMPLES = r"""
       - name: POLICY-GROUP-789012
 
 - name: Update a policy group by policy group ID
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: merged
     config:
@@ -245,7 +245,7 @@ EXAMPLES = r"""
           featureName: lacp
 
 - name: Delete without deploying (stage only)
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: deleted
     deploy: false
@@ -254,13 +254,13 @@ EXAMPLES = r"""
         description: "Enable LACP"
 
 - name: Gather all policy groups on the fabric (no config needed)
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: gathered
   register: all_policy_groups
 
 - name: Gather policy groups filtered by template name
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: gathered
     config:
@@ -268,14 +268,14 @@ EXAMPLES = r"""
   register: feature_policies
 
 - name: Gather a specific policy group by ID
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: gathered
     config:
       - name: POLICY-GROUP-143310
 
 - name: Gather policy groups by template name and description
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: gathered
     config:
@@ -283,13 +283,13 @@ EXAMPLES = r"""
         description: "Enable LACP"
 
 - name: Use gathered output to re-create policy groups on another fabric
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: "{{ target_fabric }}"
     state: merged
     config: "{{ all_policy_groups.gathered }}"
 
 - name: Use gathered output to delete those exact policy groups
-  cisco.nd.nd_policy_group:
+  cisco.nd.nd_manage_policy_group:
     fabric_name: my_fabric
     state: deleted
     config: "{{ all_policy_groups.gathered }}"
@@ -655,7 +655,7 @@ def main():
     try:
         log_config = Log()
         log_config.commit()
-        log = logging.getLogger("nd.nd_policy_group")
+        log = logging.getLogger("nd.nd_manage_policy_group")
     except ValueError as error:
         module.fail_json(msg=str(error))
 
@@ -724,7 +724,7 @@ def main():
 
     try:
         log.info(
-            "Starting nd_policy_group module: state=%s, config_entries=%d, deploy=%s",
+            "Starting nd_manage_policy_group module: state=%s, config_entries=%d, deploy=%s",
             state,
             len(config),
             module.params.get("deploy"),
