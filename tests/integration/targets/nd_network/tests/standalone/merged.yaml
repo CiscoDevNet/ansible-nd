@@ -1,0 +1,138 @@
+---
+- name: Test Entry Point - [nd_manage_networks - merged]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Merged Tests - [nd_manage_networks]                    +"
+      - "----------------------------------------------------------------"
+  tags: merged
+
+- name: Merged - Build Standalone Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_standalone_fabric }}"
+    target_network_names:
+      - ansible-nd-net-merged-l2
+      - ansible-nd-net-merged-l3
+    target_network_delete_config: >-
+      {{
+        [
+          {
+            'network_name': 'ansible-nd-net-merged-l2',
+            'is_l2only': true
+          }
+        ] + (
+          [
+            {
+              'network_name': 'ansible-nd-net-merged-l3',
+              'is_l2only': false,
+              'vrf_name': nd_network_l3_vrf_name
+            }
+          ] if nd_network_run_l3 | bool else []
+        )
+      }}
+    nd_network_attach_block: >-
+      {{
+        [
+          {
+            'ip_address': nd_network_standalone_switch,
+            'vlan_id': nd_network_base_vlan + 1,
+            'interfaces': [
+              {
+                'mode': 'access',
+                'interface_range': nd_network_standalone_interface
+              }
+            ],
+            'deploy': false
+          }
+        ] if nd_network_run_attach | bool else []
+      }}
+  delegate_to: localhost
+  tags: merged
+
+- name: Merged - Build Standalone Network Config
+  ansible.builtin.set_fact:
+    nd_network_merged_config:
+      - network_name: ansible-nd-net-merged-l2
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 1 }}"
+        vlan_id: "{{ nd_network_base_vlan + 1 }}"
+        vlan_name: ansible_nd_net_merged_l2_vlan
+        rt_auto: true
+        enable_ir: false
+        attach: "{{ nd_network_attach_block }}"
+        deploy: false
+      - network_name: ansible-nd-net-merged-l3
+        is_l2only: false
+        network_id: "{{ nd_network_base_id + 2 }}"
+        vlan_id: "{{ nd_network_base_vlan + 2 }}"
+        vlan_name: ansible_nd_net_merged_l3_vlan
+        vrf_name: "{{ nd_network_l3_vrf_name }}"
+        gateway_ipv4_address: 10.91.2.1/24
+        arp_suppression: true
+        routing_tag: 12345
+        netflow_enable: false
+        deploy: false
+  delegate_to: localhost
+  tags: merged
+
+- name: Merged - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged - Prepare Configuration
+  vars:
+    file: standalone_merged
+    network_conf: "{{ nd_network_merged_config if nd_network_run_l3 | bool else [nd_network_merged_config[0]] }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged TC1 - Merge Network
+  cisco.nd.nd_manage_networks: &merged_conf
+    fabric: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_standalone_merged_conf }}"
+    output_level: debug
+  register: merged_result
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged TC1 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - merged_result.changed == true
+      - merged_result.fabric_type == "standalone"
+      - merged_result.workflow == "Standalone Fabric Network Processing"
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged TC1 - Gather Networks
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_standalone_merged_conf }}"
+  register: gathered_result
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged TC1 - Validate Gathered Data
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ gathered_result }}"
+    test_data: "{{ nd_network_standalone_merged_conf }}"
+    changed: "{{ merged_result.changed }}"
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged TC2 - Idempotence
+  cisco.nd.nd_manage_networks: *merged_conf
+  register: merged_idempotent
+  when: nd_network_run_standalone | bool
+  tags: merged
+
+- name: Merged TC2 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - merged_idempotent.changed == false
+  when: nd_network_run_standalone | bool
+  tags: merged

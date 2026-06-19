@@ -1,0 +1,112 @@
+---
+- name: Test Entry Point - [nd_manage_networks - replaced]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Replaced Tests - [nd_manage_networks]                  +"
+      - "----------------------------------------------------------------"
+  tags: replaced
+
+- name: Replaced - Build Standalone Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_standalone_fabric }}"
+    target_network_names:
+      - ansible-nd-net-replaced
+    target_network_delete_config:
+      - network_name: ansible-nd-net-replaced
+        is_l2only: true
+    nd_network_replace_base:
+      - network_name: ansible-nd-net-replaced
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 3 }}"
+        vlan_id: "{{ nd_network_base_vlan + 3 }}"
+        vlan_name: ansible_nd_net_replaced_base
+        enable_ir: false
+        deploy: false
+    nd_network_replace_config:
+      - network_name: ansible-nd-net-replaced
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 3 }}"
+        vlan_id: "{{ nd_network_base_vlan + 3 }}"
+        vlan_name: ansible_nd_net_replaced_updated
+        rt_auto: true
+        enable_ir: false
+        deploy: false
+  delegate_to: localhost
+  tags: replaced
+
+- name: Replaced - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when: nd_network_run_standalone | bool
+  tags: replaced
+
+- name: Replaced - Prepare Base Configuration
+  vars:
+    file: standalone_replace_base
+    network_conf: "{{ nd_network_replace_base }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_standalone | bool
+  tags: replaced
+
+- name: Replaced - Prepare Replacement Configuration
+  vars:
+    file: standalone_replace
+    network_conf: "{{ nd_network_replace_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC1 - Create Base Network
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_standalone_replace_base_conf }}"
+  register: replace_base_result
+  when: nd_network_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC2 - Replace Network
+  cisco.nd.nd_manage_networks: &replace_conf
+    fabric: "{{ target_fabric }}"
+    state: replaced
+    config: "{{ nd_network_standalone_replace_conf }}"
+    output_level: debug
+  register: replace_result
+  when: nd_network_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC2 - Assert Changed
+  ansible.builtin.assert:
+    that:
+      - replace_result.changed == true
+  when: nd_network_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC2 - Gather Networks
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_standalone_replace_conf }}"
+  register: gathered_result
+  when: nd_network_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC2 - Validate Gathered Data
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ gathered_result }}"
+    test_data: "{{ nd_network_standalone_replace_conf }}"
+  when: nd_network_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC3 - Idempotence
+  cisco.nd.nd_manage_networks: *replace_conf
+  register: replace_idempotent
+  when: nd_network_run_standalone | bool
+  tags: replaced
+
+- name: Replaced TC3 - Assert Idempotence
+  ansible.builtin.assert:
+    that:
+      - replace_idempotent.changed == false
+  when: nd_network_run_standalone | bool
+  tags: replaced

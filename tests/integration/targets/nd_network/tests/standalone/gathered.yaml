@@ -1,0 +1,76 @@
+---
+- name: Test Entry Point - [nd_manage_networks - gathered]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Gathered Tests - [nd_manage_networks]                  +"
+      - "----------------------------------------------------------------"
+  tags: gathered
+
+- name: Gathered - Build Standalone Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_standalone_fabric }}"
+    target_network_names:
+      - ansible-nd-net-gathered-a
+      - ansible-nd-net-gathered-b
+    target_network_delete_config:
+      - network_name: ansible-nd-net-gathered-a
+        is_l2only: true
+      - network_name: ansible-nd-net-gathered-b
+        is_l2only: true
+    nd_network_gathered_config:
+      - network_name: ansible-nd-net-gathered-a
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 4 }}"
+        vlan_id: "{{ nd_network_base_vlan + 4 }}"
+        vlan_name: ansible_nd_net_gathered_a
+        rt_auto: true
+        enable_ir: false
+        deploy: false
+      - network_name: ansible-nd-net-gathered-b
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 5 }}"
+        vlan_id: "{{ nd_network_base_vlan + 5 }}"
+        vlan_name: ansible_nd_net_gathered_b
+        enable_ir: false
+        deploy: false
+  delegate_to: localhost
+  tags: gathered
+
+- name: Gathered - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when: nd_network_run_standalone | bool
+  tags: gathered
+
+- name: Gathered - Prepare Configuration
+  vars:
+    file: standalone_gathered
+    network_conf: "{{ nd_network_gathered_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_standalone | bool
+  tags: gathered
+
+- name: Gathered TC1 - Seed Networks
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_standalone_gathered_conf }}"
+  register: gathered_seed_result
+  when: nd_network_run_standalone | bool
+  tags: gathered
+
+- name: Gathered TC2 - Gather Networks
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_standalone_gathered_conf }}"
+  register: gathered_result
+  when: nd_network_run_standalone | bool
+  tags: gathered
+
+- name: Gathered TC2 - Validate Gathered Data
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ gathered_result }}"
+    test_data: "{{ nd_network_standalone_gathered_conf }}"
+  when: nd_network_run_standalone | bool
+  tags: gathered

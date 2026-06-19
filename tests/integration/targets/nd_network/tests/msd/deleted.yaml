@@ -1,0 +1,4 @@
+---
+- name: Test Entry Point - [nd_manage_networks - msd - deleted]
+  ansible.builtin.import_tasks: sanity.yaml
+  tags: deleted

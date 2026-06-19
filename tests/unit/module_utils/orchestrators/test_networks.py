@@ -201,6 +201,46 @@ def test_attachment_options_replace_instance_values():
     }
 
 
+def test_resolve_switch_ids_accepts_fabric_management_ip():
+    class Module:
+        def fail_json(self, **kwargs):
+            raise AssertionError(kwargs)
+
+    class Coordinator:
+        module = Module()
+
+        def _new_network_orchestrator(self, module_args, strategy):
+            class Orchestrator:
+                def _make_endpoint(self, endpoint_cls):
+                    endpoint = endpoint_cls()
+                    endpoint.fabric_name = "fab1"
+                    return endpoint
+
+                def _request(self, **kwargs):
+                    return {
+                        "switches": [
+                            {
+                                "fabricManagementIp": "10.1.1.11",
+                                "switchId": "FDO123",
+                            }
+                        ]
+                    }
+
+            return Orchestrator(), {}
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    config = [
+        {
+            "network_name": "BLUE_NET",
+            "attach": [{"ip_address": "10.1.1.11"}],
+        }
+    ]
+
+    assert manager.resolve_switch_ids({"config": config}, _orchestrator().strategy, config) == {
+        "10.1.1.11": "FDO123",
+    }
+
+
 def test_tor_ports_are_rejected_because_network_attachment_api_has_no_tor_field():
     with pytest.raises(ValueError, match="tor_ports is not supported"):
         NetworkConfigModel.from_config(
@@ -254,11 +294,281 @@ def test_transform_l2_network_payload_uses_manage_schema_shape():
     assert payload["network_name"] == "BLUE_NET"
     assert payload["network_type"] == "vxlanIbgp"
     assert payload["layer"] == "layer2"
+    assert payload["vrf_name"] == "NA"
     assert payload["l2_data"]["vlanName"] == "BLUE_VLAN"
     assert payload["l2_data"]["rtAuto"] is True
     assert payload["l2_data"]["fabricData"]["enableIr"] is False
     assert payload["l2_data"]["fabricData"]["multicastGroup"] == "239.1.1.2"
     assert "l3_data" not in payload
+
+
+def test_network_create_result_failures_raise():
+    with pytest.raises(Exception, match="Network create failed"):
+        NDNetworkOrchestrator._raise_on_failed_results(
+            {"results": [{"networkName": "BLUE_NET", "status": "failed", "message": "Invalid VRF"}]},
+            "Network create failed",
+        )
+
+
+def test_network_bulk_create_uses_single_networks_payload():
+    orchestrator = _orchestrator()
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        return {
+            "results": [
+                {"networkName": "BLUE_NET", "status": "success"},
+                {"networkName": "GREEN_NET", "status": "success"},
+            ]
+        }
+
+    object.__setattr__(orchestrator, "_request", request)
+    models = [
+        NDNetworkOrchestrator.model_class.from_config(
+            {
+                "fabric_name": "fab1",
+                "network_name": "BLUE_NET",
+                "network_type": "vxlanIbgp",
+                "layer": "layer2",
+                "vrf_name": "NA",
+                "vlan_id": 2301,
+            }
+        ),
+        NDNetworkOrchestrator.model_class.from_config(
+            {
+                "fabric_name": "fab1",
+                "network_name": "GREEN_NET",
+                "network_type": "vxlanIbgp",
+                "layer": "layer3",
+                "vrf_name": "Tenant_A",
+                "vlan_id": 2302,
+            }
+        ),
+    ]
+
+    result = orchestrator.create_bulk(models)
+
+    assert result["results"][0]["networkName"] == "BLUE_NET"
+    assert len(requests) == 1
+    assert requests[0]["path"] == "/api/v1/manage/fabrics/fab1/networks"
+    assert requests[0]["verb"].value == "POST"
+    assert [item["networkName"] for item in requests[0]["data"]["networks"]] == [
+        "BLUE_NET",
+        "GREEN_NET",
+    ]
+
+
+def test_network_bulk_delete_retries_only_sync_failed_networks():
+    orchestrator = _orchestrator()
+    requested_payloads = []
+
+    def request(**kwargs):
+        requested_payloads.append(list(kwargs["data"]["networkNames"]))
+        if len(requested_payloads) == 1:
+            orchestrator.rest_send.response_current = {
+                "DATA": {
+                    "results": [
+                        {"networkName": "BLUE_NET", "status": "success"},
+                        {
+                            "networkName": "GREEN_NET",
+                            "status": "failed",
+                            "message": "Fabric re-sync is in progress. Retry after sync completes.",
+                        },
+                    ]
+                }
+            }
+            raise Exception("partial delete failure")
+        return {"results": [{"networkName": "GREEN_NET", "status": "success"}]}
+
+    object.__setattr__(orchestrator, "delete_retry_delay", 0)
+    object.__setattr__(orchestrator, "_request", request)
+
+    result = orchestrator._delete_bulk_with_retry(["BLUE_NET", "GREEN_NET"])
+
+    assert requested_payloads == [
+        ["BLUE_NET", "GREEN_NET"],
+        ["GREEN_NET"],
+    ]
+    assert result["results"] == [
+        {"networkName": "GREEN_NET", "status": "success"},
+        {"networkName": "BLUE_NET", "status": "success"},
+    ]
+
+
+def test_delete_deploy_payloads_ignore_deploy_false():
+    payloads = NetworkAttachmentManager.build_delete_deploy_payloads(
+        [
+            {
+                "network_name": "BLUE_NET",
+                "deploy": False,
+            }
+        ],
+        {"BLUE_NET": {"FDO123"}},
+    )
+
+    assert payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]
+
+
+def test_delete_deploy_payloads_honor_network_deploy_type():
+    payloads = NetworkAttachmentManager.build_delete_deploy_payloads(
+        [
+            {
+                "network_name": "BLUE_NET",
+                "deploy": False,
+                "deploy_type": "network",
+            }
+        ],
+        {"BLUE_NET": {"FDO123"}},
+    )
+
+    assert payloads == [{"networkNames": ["BLUE_NET"]}]
+
+
+def test_pending_network_status_is_not_delete_ready():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs["msg"])
+
+    class Coordinator:
+        module = Module()
+
+        def _new_network_orchestrator(self, _module_args, _strategy):
+            class Orchestrator:
+                def query_all(self):
+                    return [{"networkName": "BLUE_NET", "networkStatus": "pending"}]
+
+            return Orchestrator(), {}
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.wait_attempts = 1
+    manager.wait_delay = 0
+    manager.undeploy_retry_attempts = 0
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for networks"):
+        manager.wait_for_networks_delete_ready(
+            {"config": [{"network_name": "BLUE_NET"}]},
+            _orchestrator().strategy,
+        )
+
+
+def test_pending_attachment_status_is_not_delete_ready():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs["msg"])
+
+    class Coordinator:
+        module = Module()
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.wait_attempts = 1
+    manager.wait_delay = 0
+    manager.undeploy_retry_attempts = 0
+    manager.current_attachment_details_ignore_missing = lambda *_args: [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "attach": False,
+            "status": "pending",
+        }
+    ]
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for network attachments"):
+        manager.wait_for_attachments_delete_ready(
+            {"config": [{"network_name": "BLUE_NET"}]},
+            _orchestrator().strategy,
+        )
+
+
+def test_pending_attachment_delete_wait_retries_undeploy():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs["msg"])
+
+    class Coordinator:
+        module = Module()
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.wait_attempts = 1
+    manager.wait_delay = 0
+    manager.undeploy_retry_attempts = 1
+    manager.current_attachment_details_ignore_missing = lambda *_args: [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "FDO123",
+            "attach": False,
+            "status": "pending",
+        }
+    ]
+    deploy_payloads = []
+    manager.deploy_network_attachments = lambda _module_args, _strategy, payload: deploy_payloads.append(payload)
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for network attachments"):
+        manager.wait_for_attachments_delete_ready(
+            {"config": [{"network_name": "BLUE_NET"}]},
+            _orchestrator().strategy,
+        )
+
+    assert deploy_payloads == [{"networkNames": ["BLUE_NET"], "switchIds": ["FDO123"]}]
+
+
+def test_pending_network_delete_wait_retries_undeploy():
+    class Module:
+        params = {}
+
+        def fail_json(self, **kwargs):
+            raise RuntimeError(kwargs["msg"])
+
+    class Coordinator:
+        module = Module()
+
+        def _new_network_orchestrator(self, _module_args, _strategy):
+            class Orchestrator:
+                def query_all(self):
+                    return [{"networkName": "BLUE_NET", "networkStatus": "pending"}]
+
+            return Orchestrator(), {}
+
+    manager = NetworkAttachmentManager(coordinator=Coordinator())
+    manager.wait_attempts = 1
+    manager.wait_delay = 0
+    manager.undeploy_retry_attempts = 1
+    deploy_payloads = []
+    manager.deploy_network_attachments = lambda _module_args, _strategy, payload: deploy_payloads.append(payload)
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for networks"):
+        manager.wait_for_networks_delete_ready(
+            {"config": [{"network_name": "BLUE_NET"}]},
+            _orchestrator().strategy,
+        )
+
+    assert deploy_payloads == [{"networkNames": ["BLUE_NET"]}]
+
+
+def test_network_response_normalizes_network_mode_for_l2_idempotency():
+    model = NDNetworkOrchestrator.model_class.from_response(
+        {
+            "fabricName": "fab1",
+            "networkName": "BLUE_NET",
+            "vrfName": "NA",
+            "networkType": "vxlanIbgp",
+            "networkMode": "layer2",
+            "l2Data": {
+                "disableRtAuto": False,
+                "vlanName": "BLUE_VLAN",
+            },
+        }
+    )
+    config = model.to_config()
+
+    assert config["layer"] == "layer2"
+    assert config["l2_data"]["rt_auto"] is True
 
 
 def test_transform_l3_network_payload_uses_l3_data_fabric_data():

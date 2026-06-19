@@ -1,0 +1,5 @@
+---
+- name: Test Entry Point - [nd_manage_networks - msd - overridden]
+  ansible.builtin.import_tasks: sanity.yaml
+  when: nd_network_run_overridden | bool
+  tags: overridden

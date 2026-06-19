@@ -1,0 +1,98 @@
+---
+- name: Test Entry Point - [nd_manage_networks - msd - sanity]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing MSD Sanity Tests - [nd_manage_networks]                +"
+      - "----------------------------------------------------------------"
+  tags: sanity
+
+- name: MSD Sanity - Build Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_msd_parent_fabric }}"
+    target_network_names:
+      - ansible-nd-net-msd-sanity
+    target_network_delete_config:
+      - network_name: ansible-nd-net-msd-sanity
+        is_l2only: true
+    nd_network_msd_sanity_config:
+      - network_name: ansible-nd-net-msd-sanity
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 20 }}"
+        vlan_id: "{{ nd_network_base_vlan + 20 }}"
+        vlan_name: ansible_nd_net_msd_sanity
+        rt_auto: true
+        enable_ir: false
+        child_fabric_config:
+          - fabric: "{{ nd_network_msd_child_fabric }}"
+            network_id: "{{ nd_network_base_id + 20 }}"
+            vlan_id: "{{ nd_network_base_vlan + 20 }}"
+            vlan_name: ansible_nd_net_msd_sanity
+        deploy: false
+  delegate_to: localhost
+  tags: sanity
+
+- name: MSD Sanity - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when: nd_network_run_msd | bool
+  tags: sanity
+
+- name: MSD Sanity - Prepare Configuration
+  vars:
+    file: msd_sanity
+    network_conf: "{{ nd_network_msd_sanity_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_msd | bool
+  tags: sanity
+
+- name: MSD Sanity TC1 - Merge Parent Network
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_msd_sanity_conf }}"
+    output_level: debug
+  register: msd_sanity_merged
+  when: nd_network_run_msd | bool
+  tags: sanity
+
+- name: MSD Sanity TC1 - Assert Parent Workflow
+  ansible.builtin.assert:
+    that:
+      - msd_sanity_merged.changed == true
+      - msd_sanity_merged.fabric_type == "multisite_parent"
+      - msd_sanity_merged.children | default([]) | length >= 1
+  when: nd_network_run_msd | bool
+  tags: sanity
+
+- name: MSD Sanity TC2 - Gather Parent Network
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_msd_sanity_conf }}"
+  register: msd_sanity_gathered
+  when: nd_network_run_msd | bool
+  tags: sanity
+
+- name: MSD Sanity TC2 - Validate Parent Network
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ msd_sanity_gathered }}"
+    test_data: "{{ nd_network_msd_sanity_conf }}"
+  when: nd_network_run_msd | bool
+  tags: sanity
+
+- name: MSD Sanity TC3 - Delete Parent Network
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: deleted
+    config: "{{ target_network_delete_config }}"
+    output_level: debug
+  register: msd_sanity_deleted
+  when: nd_network_run_msd | bool
+  tags: sanity
+
+- name: MSD Sanity TC3 - Assert Delete
+  ansible.builtin.assert:
+    that:
+      - msd_sanity_deleted.changed == true
+  when: nd_network_run_msd | bool
+  tags: sanity

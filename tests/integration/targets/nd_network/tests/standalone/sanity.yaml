@@ -1,0 +1,164 @@
+---
+- name: Test Entry Point - [nd_manage_networks - standalone - sanity]
+  ansible.builtin.debug:
+    msg:
+      - "----------------------------------------------------------------"
+      - "+     Executing Standalone Sanity Tests - [nd_manage_networks]         +"
+      - "----------------------------------------------------------------"
+  tags: sanity
+
+- name: Standalone Sanity - Build Test Data
+  ansible.builtin.set_fact:
+    target_fabric: "{{ nd_network_standalone_fabric }}"
+    target_network_names:
+      - ansible-nd-net-sanity-a
+      - ansible-nd-net-sanity-b
+      - ansible-nd-net-sanity-c
+    target_network_delete_config:
+      - network_name: ansible-nd-net-sanity-a
+        is_l2only: true
+      - network_name: ansible-nd-net-sanity-b
+        is_l2only: true
+      - network_name: ansible-nd-net-sanity-c
+        is_l2only: true
+    nd_network_sanity_merge_config:
+      - network_name: ansible-nd-net-sanity-a
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 40 }}"
+        vlan_id: "{{ nd_network_base_vlan + 40 }}"
+        vlan_name: ansible_nd_net_sanity_a
+        rt_auto: true
+        enable_ir: false
+        deploy: false
+      - network_name: ansible-nd-net-sanity-b
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 41 }}"
+        vlan_id: "{{ nd_network_base_vlan + 41 }}"
+        vlan_name: ansible_nd_net_sanity_b
+        enable_ir: false
+        deploy: false
+    nd_network_sanity_replace_config:
+      - network_name: ansible-nd-net-sanity-a
+        is_l2only: true
+        network_id: "{{ nd_network_base_id + 40 }}"
+        vlan_id: "{{ nd_network_base_vlan + 40 }}"
+        vlan_name: ansible_nd_net_sanity_a_replaced
+        enable_ir: false
+        deploy: false
+    nd_network_sanity_delete_config:
+      - network_name: ansible-nd-net-sanity-a
+        is_l2only: true
+      - network_name: ansible-nd-net-sanity-b
+        is_l2only: true
+  delegate_to: localhost
+  tags: sanity
+
+- name: Standalone Sanity - Import Setup
+  ansible.builtin.import_tasks: ../../tasks/setup.yaml
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity - Prepare Merge Configuration
+  vars:
+    file: standalone_sanity_merge
+    network_conf: "{{ nd_network_sanity_merge_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity - Prepare Replace Configuration
+  vars:
+    file: standalone_sanity_replace
+    network_conf: "{{ nd_network_sanity_replace_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity - Prepare Delete Configuration
+  vars:
+    file: standalone_sanity_delete
+    network_conf: "{{ nd_network_sanity_delete_config }}"
+  ansible.builtin.import_tasks: ../../tasks/conf_prep_tasks.yaml
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC1 - Merged
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: merged
+    config: "{{ nd_network_standalone_sanity_merge_conf }}"
+    output_level: debug
+  register: standalone_sanity_merged
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC1 - Gather After Merged
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_standalone_sanity_merge_conf }}"
+  register: standalone_sanity_gathered
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC1 - Validate Merged
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ standalone_sanity_gathered }}"
+    test_data: "{{ nd_network_standalone_sanity_merge_conf }}"
+    changed: "{{ standalone_sanity_merged.changed }}"
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC2 - Replaced
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: replaced
+    config: "{{ nd_network_standalone_sanity_replace_conf }}"
+    output_level: debug
+  register: standalone_sanity_replaced
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC2 - Gather After Replaced
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_standalone_sanity_replace_conf }}"
+  register: standalone_sanity_replaced_gathered
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC2 - Validate Replaced
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ standalone_sanity_replaced_gathered }}"
+    test_data: "{{ nd_network_standalone_sanity_replace_conf }}"
+    changed: "{{ standalone_sanity_replaced.changed }}"
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC3 - Deleted
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: deleted
+    config: "{{ nd_network_standalone_sanity_delete_conf }}"
+    output_level: debug
+  register: standalone_sanity_deleted
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC3 - Gather After Deleted
+  cisco.nd.nd_manage_networks:
+    fabric: "{{ target_fabric }}"
+    state: gathered
+    config: "{{ nd_network_standalone_sanity_delete_conf }}"
+  register: standalone_sanity_deleted_gathered
+  when: nd_network_run_standalone | bool
+  tags: sanity
+
+- name: Standalone Sanity TC3 - Validate Deleted
+  cisco.nd.tests.integration._nd_network_validate:
+    nd_data: "{{ standalone_sanity_deleted_gathered }}"
+    test_data: "{{ nd_network_standalone_sanity_delete_conf }}"
+    present: false
+  when: nd_network_run_standalone | bool
+  tags: sanity
