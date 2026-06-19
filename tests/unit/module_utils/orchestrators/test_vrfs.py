@@ -81,6 +81,14 @@ class _EndpointStrategy:
         return EpManageFabricsVrfsGet
 
     @staticmethod
+    def vrfs_post_cls():
+        from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrfs import (
+            EpManageFabricsVrfsPost,
+        )
+
+        return EpManageFabricsVrfsPost
+
+    @staticmethod
     def vrf_actions_remove_post_cls():
         from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_actions import (
             EpManageFabricsVrfActionsRemovePost,
@@ -609,6 +617,63 @@ def test_vrfs_00090_bulk_delete_retries_only_sync_failed_vrfs():
     assert result["results"] == [
         {"vrfName": "ansible-vrf-b", "status": "success"},
         {"vrfName": "ansible-vrf-a", "status": "success"},
+    ]
+
+
+def test_vrfs_00095_bulk_create_uses_single_vrfs_payload():
+    """
+    # Summary
+
+    Verify standalone/parent VRF creates are batched into one POST request with
+    the API's list wrapper.
+    """
+    orchestrator = _orchestrator_for_request_tests(
+        {
+            "state": "merged",
+            "config": [
+                {"vrf_name": "ansible-vrf-a"},
+                {"vrf_name": "ansible-vrf-b"},
+            ],
+        }
+    )
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        return {
+            "results": [
+                {"vrfName": "ansible-vrf-a", "status": "success"},
+                {"vrfName": "ansible-vrf-b", "status": "success"},
+            ]
+        }
+
+    object.__setattr__(orchestrator, "_request", request)
+    models = [
+        VrfDataModel.from_config(
+            {
+                "fabric_name": "AK-VXLAN",
+                "vrf_name": "ansible-vrf-a",
+                "vrf_type": "vxlanIbgp",
+            }
+        ),
+        VrfDataModel.from_config(
+            {
+                "fabric_name": "AK-VXLAN",
+                "vrf_name": "ansible-vrf-b",
+                "vrf_type": "vxlanIbgp",
+            }
+        ),
+    ]
+
+    result = orchestrator.create_bulk(models)
+
+    assert result["results"][0]["vrfName"] == "ansible-vrf-a"
+    assert len(requests) == 1
+    assert requests[0]["path"] == "/api/v1/manage/fabrics/AK-VXLAN/vrfs"
+    assert requests[0]["verb"].value == "POST"
+    assert [item["vrfName"] for item in requests[0]["data"]["vrfs"]] == [
+        "ansible-vrf-a",
+        "ansible-vrf-b",
     ]
 
 
