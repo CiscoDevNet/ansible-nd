@@ -82,11 +82,7 @@ class NetworkAttachmentManager:
         if current is None:
             current = self.current_attachment_map(module_args, strategy, query_names)
 
-        payloads = (
-            self.planned_detach_payloads(state, config, current, desired)
-            if phase == "pre"
-            else self.planned_attach_payloads(current, desired)
-        )
+        payloads = self.planned_detach_payloads(state, config, current, desired) if phase == "pre" else self.planned_attach_payloads(current, desired)
         if not payloads:
             return {"current": current} if phase == "pre" else {}
 
@@ -97,7 +93,9 @@ class NetworkAttachmentManager:
             if deploy_enabled.get(network_name, True):
                 self.record_deploy_target(deploy_targets, network_name, payload.get("switchId"))
 
-        trace = self.post_network_attachments(module_args, strategy, payloads, deploy_targets, OperationType.DELETE if phase == "pre" else OperationType.CREATE)
+        trace = self.post_network_attachments(
+            module_args, strategy, payloads, deploy_targets, OperationType.DELETE if phase == "pre" else OperationType.CREATE
+        )
         trace["current"] = current
         trace["payloads"] = payloads
         return trace
@@ -172,12 +170,7 @@ class NetworkAttachmentManager:
         switches = data.get("switches") or data.get("items") or data if isinstance(data, dict) else data
         resolved: dict[str, str] = {}
         for switch in switches or []:
-            ip_address = (
-                switch.get("ipAddress")
-                or switch.get("ip_address")
-                or switch.get("managementIpAddress")
-                or switch.get("fabricManagementIp")
-            )
+            ip_address = switch.get("ipAddress") or switch.get("ip_address") or switch.get("managementIpAddress") or switch.get("fabricManagementIp")
             switch_id = switch.get("switchId") or switch.get("switch_id") or switch.get("serialNumber")
             if ip_address in wanted_ips and switch_id:
                 resolved[ip_address] = switch_id
@@ -232,7 +225,12 @@ class NetworkAttachmentManager:
             return data.get("attachments") or data.get("items") or []
         return data or []
 
-    def current_attachment_details_ignore_missing(self, module_args: dict, strategy: BaseNetworkStrategy, network_names: Optional[list[str]] = None) -> list[dict[str, Any]]:
+    def current_attachment_details_ignore_missing(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        network_names: Optional[list[str]] = None,
+    ) -> list[dict[str, Any]]:
         try:
             return self.current_attachment_details(module_args, strategy, network_names)
         except Exception as exc:
@@ -245,11 +243,19 @@ class NetworkAttachmentManager:
         message = str(error)
         return "Network(s)" in message and "not found in fabric" in message
 
-    def current_attachment_map(self, module_args: dict, strategy: BaseNetworkStrategy, network_names: Optional[list[str]] = None) -> dict[tuple[str, str], dict[str, Any]]:
+    def current_attachment_map(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        network_names: Optional[list[str]] = None,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
         return self.attachment_map_from_details(self.current_attachment_details(module_args, strategy, network_names), network_names)
 
     @staticmethod
-    def attachment_map_from_details(attachments: list[dict[str, Any]], network_names: Optional[Union[list[str], set[str]]] = None) -> dict[tuple[str, str], dict[str, Any]]:
+    def attachment_map_from_details(
+        attachments: list[dict[str, Any]],
+        network_names: Optional[Union[list[str], set[str]]] = None,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
         filter_set = set(network_names or [])
         result: dict[tuple[str, str], dict[str, Any]] = {}
         for attachment in attachments or []:
@@ -394,8 +400,7 @@ class NetworkAttachmentManager:
                 else:
                     grouped.setdefault(tuple(sorted(switch_ids)), set()).add(network_name)
         payloads = [
-            NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(switch_ids)).to_payload()
-            for switch_ids, names in sorted(grouped.items())
+            NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(switch_ids)).to_payload() for switch_ids, names in sorted(grouped.items())
         ]
         if network_level:
             payloads.append(NetworkSwitchesListModel(network_names=sorted(network_level)).to_payload())
@@ -423,8 +428,7 @@ class NetworkAttachmentManager:
                 else:
                     grouped.setdefault(tuple(sorted(switch_ids)), set()).add(network_name)
         payloads = [
-            NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(switch_ids)).to_payload()
-            for switch_ids, names in sorted(grouped.items())
+            NetworkSwitchesListModel(network_names=sorted(names), switch_ids=list(switch_ids)).to_payload() for switch_ids, names in sorted(grouped.items())
         ]
         if network_level:
             payloads.append(NetworkSwitchesListModel(network_names=sorted(network_level)).to_payload())
@@ -527,29 +531,19 @@ class NetworkAttachmentManager:
             retry_targets = {
                 name: set()
                 for name, status in last_statuses.items()
-                if (
-                    name in pending
-                    and retried_networks.get(name, 0) < self.undeploy_retry_attempts
-                    and str(status).strip().lower() in retry_statuses
-                )
+                if (name in pending and retried_networks.get(name, 0) < self.undeploy_retry_attempts and str(status).strip().lower() in retry_statuses)
             }
             if retry_targets:
                 for deploy_payload in self.build_delete_deploy_payloads(module_args.get("config") or [], retry_targets):
                     self.deploy_network_attachments(module_args, strategy, deploy_payload)
                 for network_name in retry_targets:
                     retried_networks[network_name] = retried_networks.get(network_name, 0) + 1
-            ready = {
-                name
-                for name in pending
-                if name not in last_statuses or str(last_statuses[name]).strip().lower() in ready_statuses
-            }
+            ready = {name for name in pending if name not in last_statuses or str(last_statuses[name]).strip().lower() in ready_statuses}
             pending.difference_update(ready)
             if not pending:
                 return
             time.sleep(self.wait_delay)
-        self.coordinator.module.fail_json(
-            msg=f"Timed out waiting for networks to become deletable on fabric '{strategy.fabric_name}': {last_statuses}"
-        )
+        self.coordinator.module.fail_json(msg=f"Timed out waiting for networks to become deletable on fabric '{strategy.fabric_name}': {last_statuses}")
 
     @staticmethod
     def filter_attachment_details_by_network(attachments: list[dict[str, Any]], network_names: Union[list[str], set[str]]) -> list[dict[str, Any]]:

@@ -74,9 +74,9 @@ def test_manage_networks_00040() -> None:
 def test_manage_networks_00050() -> None:
     """Verify missing fabric or network identifiers raise ValueError."""
     with pytest.raises(ValueError, match="fabric_name must be set"):
-        _ = EpManageFabricsNetworksGet().path
+        EpManageFabricsNetworksGet().path
     with pytest.raises(ValueError, match="network_name must be set"):
-        _ = EpManageFabricsNetworksNetworkNameGet(fabric_name="fab1").path
+        EpManageFabricsNetworksNetworkNameGet(fabric_name="fab1").path
 
 
 def test_manage_network_actions_00100() -> None:

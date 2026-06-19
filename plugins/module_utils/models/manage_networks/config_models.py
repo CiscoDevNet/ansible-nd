@@ -20,7 +20,6 @@ from ansible_collections.cisco.nd.plugins.module_utils.models.nested import NDNe
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.enums import (
     MappingType,
     NetworkAttachmentMode,
-    NetworkLayer,
     NetworkType,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.validators import (
@@ -124,10 +123,7 @@ class NetworkAttachmentConfigModel(NDNestedModel):
     @model_validator(mode="after")
     def _check_interfaces_or_ports(self):
         if self.tor_ports:
-            raise ValueError(
-                "tor_ports is not supported by the Network attachment API. "
-                "Use interfaces[] for attachment interfaces."
-            )
+            raise ValueError("tor_ports is not supported by the Network attachment API. Use interfaces[] for attachment interfaces.")
         if not self.interfaces and not self.ports:
             raise ValueError("Either interfaces or ports is required for network attachments")
         return self
@@ -279,11 +275,7 @@ class NetworkConfigModel(NDBaseModel):
         if secondary is None:
             secondary = normalized.get("secondaryGatewayIpv4Collection")
         if secondary is None:
-            secondary = [
-                normalized[key]
-                for key in ("secondary_ip_gw1", "secondary_ip_gw2", "secondary_ip_gw3", "secondary_ip_gw4")
-                if normalized.get(key)
-            ]
+            secondary = [normalized[key] for key in ("secondary_ip_gw1", "secondary_ip_gw2", "secondary_ip_gw3", "secondary_ip_gw4") if normalized.get(key)]
             if secondary:
                 normalized["secondary_gateway_ipv4_collection"] = secondary
 
@@ -384,10 +376,7 @@ class NetworkConfigModel(NDBaseModel):
         custom_fields = {field: getattr(self, field) for field in _CUSTOM_NETWORK_TEMPLATE_FIELDS}
         set_custom_fields = [field for field, value in custom_fields.items() if value is not None]
         if set_custom_fields and network_type != NetworkType.USER_DEFINED.value:
-            raise ValueError(
-                "network template fields require network_type=userDefined: "
-                + ", ".join(set_custom_fields)
-            )
+            raise ValueError("network template fields require network_type=userDefined: " + ", ".join(set_custom_fields))
         if self.deploy_type not in ("switch", "network"):
             raise ValueError("deploy_type must be either 'switch' or 'network'")
         if self.is_l2only is False and not self.vrf_name:

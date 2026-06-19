@@ -96,7 +96,15 @@ display = Display()
 FIELD_PATHS = {
     "network_name": (("network_name",), ("net_name",), ("networkName",), ("parent", "networkName")),
     "net_name": (("network_name",), ("networkName",), ("parent", "networkName")),
-    "network_id": (("network_id",), ("net_id",), ("networkId",), ("l2_data", "networkId"), ("l2Data", "networkId"), ("l3_data", "networkId"), ("l3Data", "networkId")),
+    "network_id": (
+        ("network_id",),
+        ("net_id",),
+        ("networkId",),
+        ("l2_data", "networkId"),
+        ("l2Data", "networkId"),
+        ("l3_data", "networkId"),
+        ("l3Data", "networkId"),
+    ),
     "net_id": (("network_id",), ("networkId",), ("l2_data", "networkId"), ("l2Data", "networkId"), ("l3_data", "networkId"), ("l3Data", "networkId")),
     "network_type": (("network_type",), ("networkType",), ("parent", "networkType")),
     "layer": (("layer",), ("networkMode",), ("parent", "networkMode")),
