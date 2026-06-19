@@ -806,6 +806,14 @@ class NetworkWorkflowCoordinator:
         """Build deploy requests from one or more Network/switch maps."""
         return self.attachments.build_deploy_payloads(config, *target_maps)
 
+    def _build_delete_deploy_payloads(
+        self,
+        config: list[dict],
+        *target_maps: dict[str, set[str]],
+    ) -> list[dict[str, Any]]:
+        """Build delete cleanup deploy requests from Network/switch maps."""
+        return self.attachments.build_delete_deploy_payloads(config, *target_maps)
+
     def _build_pending_network_deploy_payloads(
         self,
         result: dict[str, Any],
@@ -849,6 +857,15 @@ class NetworkWorkflowCoordinator:
     ) -> None:
         """Wait until configured Networks are absent or in notApplicable state."""
         self.attachments.wait_for_networks_delete_ready(module_args, strategy, network_names)
+
+    def _wait_for_network_attachments_delete_ready(
+        self,
+        module_args: dict,
+        strategy: BaseNetworkStrategy,
+        network_names: Optional[list[str]] = None,
+    ) -> None:
+        """Wait until configured Network attachments no longer block deletion."""
+        self.attachments.wait_for_attachments_delete_ready(module_args, strategy, network_names)
 
     def _deploy_network_attachments(
         self,

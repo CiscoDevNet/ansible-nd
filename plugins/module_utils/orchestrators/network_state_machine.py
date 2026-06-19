@@ -304,18 +304,30 @@ class NetworkStateMachine:
         if not config:
             return self.delete_all_existing_networks(module_args, strategy)
 
+        requested_network_names = self.coordinator._configured_network_names(config)
+        current_networks = self.coordinator._query_current_networks(module_args, strategy)
+        current_network_names = {
+            network.get("networkName") or network.get("network_name")
+            for network in current_networks
+        }
+        target_network_names = [
+            network_name
+            for network_name in requested_network_names
+            if network_name in current_network_names
+        ]
         self.coordinator._ensure_networks_have_no_networks(
             module_args,
             strategy,
-            self.coordinator._configured_network_names(config),
+            target_network_names,
         )
-        detach_trace = self.coordinator._apply_deleted_attachment_phase(module_args, strategy)
+        detach_trace = self.coordinator._apply_deleted_attachment_phase(module_args, strategy, target_network_names)
         traces = self._deploy_detach_traces(
             api_args=module_args,
             wait_args=module_args,
             strategy=strategy,
             config=config,
             detach_trace=detach_trace,
+            wait_network_names=target_network_names,
         )
 
         result = self.coordinator._run_state_machine(module_args, strategy=strategy)
@@ -368,11 +380,22 @@ class NetworkStateMachine:
         detach_trace: dict[str, Any],
         wait_network_names: Optional[list[str]] = None,
     ) -> list[dict[str, Any]]:
-        """Return detach trace plus deploy traces, waiting when deploy occurs."""
+        """Return detach trace plus delete undeploy traces, then wait for readiness."""
         traces = [detach_trace] if detach_trace else []
-        deploy_payloads = self.coordinator._build_deploy_payloads(
+        target_network_names = wait_network_names
+        if target_network_names is None:
+            target_network_names = self.coordinator._configured_network_names(config)
+        delete_deploy_targets: dict[str, set[str]] = {
+            network_name: set()
+            for network_name in target_network_names
+            if network_name
+        }
+        for network_name, switch_ids in (detach_trace.get("deploy_targets", {}) if detach_trace else {}).items():
+            delete_deploy_targets.setdefault(network_name, set()).update(switch_ids or set())
+
+        deploy_payloads = self.coordinator._build_delete_deploy_payloads(
             config,
-            detach_trace.get("deploy_targets", {}) if detach_trace else {},
+            delete_deploy_targets,
         )
         for deploy_payload in deploy_payloads:
             traces.append(
@@ -383,11 +406,9 @@ class NetworkStateMachine:
                 )
             )
 
-        if deploy_payloads:
-            if wait_network_names is None:
-                self.coordinator._wait_for_networks_delete_ready(wait_args, strategy)
-            else:
-                self.coordinator._wait_for_networks_delete_ready(wait_args, strategy, wait_network_names)
+        if target_network_names:
+            self.coordinator._wait_for_network_attachments_delete_ready(wait_args, strategy, target_network_names)
+            self.coordinator._wait_for_networks_delete_ready(wait_args, strategy, target_network_names)
         return traces
 
     def _prepend_traces(self, result: dict[str, Any], traces: list[dict[str, Any]]) -> None:

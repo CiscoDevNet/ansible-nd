@@ -361,6 +361,18 @@ class NetworkBaseModel(NetworkCommonModel):
     def validate_network_id(cls, v: int | None) -> int | None:
         return NetworkValidators.validate_network_id(v)
 
+    @classmethod
+    def from_response(cls, response: dict[str, Any], **kwargs) -> "NetworkBaseModel":
+        normalized = dict(response)
+        if "layer" not in normalized and "networkMode" in normalized:
+            normalized["layer"] = normalized["networkMode"]
+        l2_data = normalized.get("l2Data")
+        if isinstance(l2_data, dict) and "rtAuto" not in l2_data and "disableRtAuto" in l2_data:
+            l2_data = dict(l2_data)
+            l2_data["rtAuto"] = not l2_data["disableRtAuto"]
+            normalized["l2Data"] = l2_data
+        return super().from_response(normalized, **kwargs)
+
 
 class VxlanNetworkModel(NetworkBaseModel):
     """VXLAN network model."""

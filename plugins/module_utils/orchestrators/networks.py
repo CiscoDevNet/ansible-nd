@@ -213,6 +213,8 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
 
         layer = self._network_layer(config)
         transformed["layer"] = layer
+        if layer == NetworkLayer.LAYER2.value and transformed.get("vrf_name") in (None, ""):
+            transformed["vrf_name"] = "NA"
         l2_data = self._l2_data(config, network_type)
         if l2_data:
             transformed["l2_data"] = l2_data
@@ -322,24 +324,39 @@ class NDNetworkOrchestrator(NDBaseOrchestrator["NDNetworkModel"]):
         if self.strategy.is_child:
             return [self.update(model_instance) for model_instance in model_instances]
         endpoint = self._make_endpoint(self.strategy.networks_post_cls())
-        return self._request(
+        response = self._request(
             path=endpoint.path,
             verb=endpoint.verb,
             data={"networks": [model.to_payload() for model in model_instances]},
             operation_type=OperationType.CREATE,
         )
+        self._raise_on_failed_results(response, "Network create failed")
+        return response
 
     def update(self, model_instance: NDNetworkModel, **kwargs) -> ResponseType:
         network_name = model_instance.get_identifier_value()
         if isinstance(network_name, (list, tuple)):
             network_name = network_name[0]
         endpoint = self._make_endpoint(self.strategy.network_put_cls(), network_name=network_name)
-        return self._request(
+        response = self._request(
             path=endpoint.path,
             verb=endpoint.verb,
             data=model_instance.to_payload(),
             operation_type=OperationType.UPDATE,
         )
+        self._raise_on_failed_results(response, "Network update failed")
+        return response
+
+    @staticmethod
+    def _raise_on_failed_results(response: ResponseType, prefix: str) -> None:
+        if not isinstance(response, dict):
+            return
+        results = response.get("results")
+        if not isinstance(results, list):
+            return
+        failed = [item for item in results if isinstance(item, dict) and str(item.get("status", "")).lower() != "success"]
+        if failed:
+            raise Exception(f"{prefix}: {failed}")
 
     def delete(self, model_instance: NDNetworkModel, **kwargs) -> ResponseType:
         return self.delete_bulk([model_instance])
