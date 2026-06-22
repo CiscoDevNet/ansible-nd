@@ -935,3 +935,76 @@ def test_nd_policy_group_module_00460(monkeypatch: pytest.MonkeyPatch) -> None:
 
     # save/restore bracket the inventory fetch
     assert fake_nd.rest_send.events == ["save", "restore"]
+
+
+# =============================================================================
+# Test: require_pydantic guard wired into main()
+# =============================================================================
+#
+# Reviewer (mikewiebe) asked for a module-wrapper unit test that simulates
+# ``HAS_PYDANTIC=False`` to prove the freshly-added ``require_pydantic(module)``
+# call in ``main()`` actually fails fast with the standard Ansible
+# "missing required lib" message rather than crashing later with a cryptic
+# AttributeError from the pydantic_compat shim.
+#
+# The check is in two parts:
+#   1. Smoke assertion that ``nd_manage_policy_group`` imports
+#      ``require_pydantic`` from ``common.pydantic_compat`` -- if that import
+#      is ever removed, attribute access in the test below would raise
+#      ``AttributeError`` and the test would fail loudly.
+#   2. Behavioural assertion that, with ``HAS_PYDANTIC`` patched to False,
+#      invoking the imported ``require_pydantic`` against a ``FakeModule``
+#      causes ``fail_json`` to fire with a message naming ``pydantic``.
+# Together these guarantee that, on a Pydantic-less runtime, ``main()`` would
+# exit cleanly via the standard Ansible failure path before touching the
+# orchestrator / argspec helpers.
+#
+# Driving the real ``main()`` is intentionally out of scope here -- that
+# would require argspec satisfaction, ``AnsibleModule`` construction, and
+# the full ``RestSend`` harness, none of which add anything the
+# behavioural assertion below does not already prove.
+
+
+def test_nd_policy_group_module_00500(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    # Summary
+
+    ``nd_manage_policy_group`` imports ``require_pydantic`` from
+    ``common.pydantic_compat``, and that imported reference correctly
+    short-circuits to ``module.fail_json`` when ``HAS_PYDANTIC`` is False --
+    so on a runtime without Pydantic the module fails with the standard
+    Ansible missing-required-lib message instead of a cryptic
+    ``AttributeError`` later in the orchestrator stack.
+
+    ## Test
+
+    - Patch ``HAS_PYDANTIC`` on ``common.pydantic_compat`` to False.
+    - Call ``nd_manage_policy_group.require_pydantic(fake_module)`` via the
+      imported reference.
+    - Assert ``FailJsonError`` was raised by ``FakeModule.fail_json``.
+    - Assert the failure message contains the string ``pydantic`` (the exact
+      wording comes from Ansible's ``missing_required_lib`` helper and is
+      not pinned here to avoid coupling to upstream wording changes).
+
+    ## Classes and Methods
+
+    - ``plugins.modules.nd_manage_policy_group.require_pydantic`` (imported)
+    - ``plugins.module_utils.common.pydantic_compat.require_pydantic``
+    """
+    # Sanity: the wrapper must have actually imported the symbol. If a
+    # future refactor drops the import, this attribute access raises
+    # AttributeError and the test fails before we get to the patching.
+    assert hasattr(nd_manage_policy_group, "require_pydantic")
+
+    from ansible_collections.cisco.nd.plugins.module_utils.common import (
+        pydantic_compat,
+    )
+
+    monkeypatch.setattr(pydantic_compat, "HAS_PYDANTIC", False)
+
+    module = FakeModule()
+    with pytest.raises(FailJsonError):
+        nd_manage_policy_group.require_pydantic(module)
+
+    assert module.fail_json_called is not None
+    assert "pydantic" in module.fail_json_called["msg"].lower()

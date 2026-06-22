@@ -649,10 +649,13 @@ def test_manage_policy_groups_policy_group_base_00500() -> None:
 
     ## Test
 
-    - Top-level keys ``fabric_name``, ``deploy``, ``config``, ``state``
-      are present.
+    - Top-level keys ``fabric_name``, ``deploy``, ``config``,
+      ``ticket_id``, ``cluster_name``, ``state`` are present.
     - ``fabric_name`` is required and aliased to ``fabric``.
     - ``deploy`` defaults to ``True``.
+    - ``ticket_id`` and ``cluster_name`` are plain optional strings
+      (no default, no required flag) so they are omitted from the
+      emitted request path when callers do not set them.
     - ``state`` choices are ``["merged", "deleted", "gathered"]``.
 
     ## Classes and Methods
@@ -661,10 +664,19 @@ def test_manage_policy_groups_policy_group_base_00500() -> None:
     """
     spec = PolicyGroupCreate.get_argument_spec()
 
-    assert set(spec.keys()) == {"fabric_name", "deploy", "config", "state"}
+    assert set(spec.keys()) == {
+        "fabric_name",
+        "deploy",
+        "config",
+        "ticket_id",
+        "cluster_name",
+        "state",
+    }
     assert spec["fabric_name"]["required"] is True
     assert spec["fabric_name"]["aliases"] == ["fabric"]
     assert spec["deploy"]["default"] is True
+    assert spec["ticket_id"] == {"type": "str"}
+    assert spec["cluster_name"] == {"type": "str"}
     assert spec["state"]["default"] == "merged"
     assert spec["state"]["choices"] == ["merged", "deleted", "gathered"]
 

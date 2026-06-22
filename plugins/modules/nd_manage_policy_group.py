@@ -317,6 +317,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
     NDStateMachineError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
     FabricSwitchInventory,
 )
@@ -662,6 +663,13 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
     )
+
+    # Pydantic is a hard runtime dependency for this module (argspec helpers,
+    # orchestrator and model translation all rely on it).  Fail fast with the
+    # standard Ansible ``missing_required_lib`` message if it is not
+    # installed, so users get a clear error rather than a downstream
+    # AttributeError from the pydantic_compat shim.
+    require_pydantic(module)
 
     # Initialize logging
     try:
