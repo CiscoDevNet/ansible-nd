@@ -405,6 +405,7 @@ class RestSend:
         # Summary
 
         A short error string combining the return code and message from the most recent commit.
+        Includes the detailed error message from the response body when available.
 
         ## Raises
 
@@ -412,7 +413,13 @@ class RestSend:
         """
         code = self._response_current.get("RETURN_CODE", -1)
         msg = self._response_current.get("MESSAGE", "Unknown error")
-        return f"({code}): {msg}"
+        summary = f"({code}): {msg}"
+        # Include detailed error from response body if available
+        if self._response_handler is not None:
+            detail = self._response_handler.error_message
+            if detail:
+                summary = f"{summary} - {detail}"
+        return summary
 
     @property
     def check_mode(self) -> bool:

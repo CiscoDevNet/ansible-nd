@@ -16,6 +16,7 @@ __metaclass__ = type
 
 import pytest  # pylint: disable=unused-import
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
+    EpManageFabricConfigDeployPost,
     EpManageFabricsDelete,
     EpManageFabricsDeploymentFreezeGet,
     EpManageFabricsGet,
@@ -23,6 +24,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsPost,
     EpManageFabricsPut,
     EpManageFabricsSummaryGet,
+    FabricConfigDeployEndpointParams,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
 from ansible_collections.cisco.nd.tests.unit.module_utils.common_utils import (
@@ -54,7 +56,7 @@ def test_endpoints_api_v1_manage_fabrics_00010():
     """
     with does_not_raise():
         instance = EpManageFabricsGet()
-    assert instance.class_name == "EpApiV1ManageFabricsGet"
+    assert instance.class_name == "EpManageFabricsGet"
     assert instance.verb == HttpVerbEnum.GET
 
 
@@ -147,7 +149,7 @@ def test_endpoints_api_v1_manage_fabrics_00100():
     """
     with does_not_raise():
         instance = EpManageFabricsListGet()
-    assert instance.class_name == "EpApiV1ManageFabricsListGet"
+    assert instance.class_name == "EpManageFabricsListGet"
     assert instance.verb == HttpVerbEnum.GET
 
 
@@ -297,7 +299,7 @@ def test_endpoints_api_v1_manage_fabrics_00200():
     """
     with does_not_raise():
         instance = EpManageFabricsPost()
-    assert instance.class_name == "EpApiV1ManageFabricsPost"
+    assert instance.class_name == "EpManageFabricsPost"
     assert instance.verb == HttpVerbEnum.POST
 
 
@@ -389,7 +391,7 @@ def test_endpoints_api_v1_manage_fabrics_00300():
     """
     with does_not_raise():
         instance = EpManageFabricsPut()
-    assert instance.class_name == "EpApiV1ManageFabricsPut"
+    assert instance.class_name == "EpManageFabricsPut"
     assert instance.verb == HttpVerbEnum.PUT
 
 
@@ -482,7 +484,7 @@ def test_endpoints_api_v1_manage_fabrics_00400():
     """
     with does_not_raise():
         instance = EpManageFabricsDelete()
-    assert instance.class_name == "EpApiV1ManageFabricsDelete"
+    assert instance.class_name == "EpManageFabricsDelete"
     assert instance.verb == HttpVerbEnum.DELETE
 
 
@@ -575,7 +577,7 @@ def test_endpoints_api_v1_manage_fabrics_00500():
     """
     with does_not_raise():
         instance = EpManageFabricsSummaryGet()
-    assert instance.class_name == "EpApiV1ManageFabricsSummaryGet"
+    assert instance.class_name == "EpManageFabricsSummaryGet"
     assert instance.verb == HttpVerbEnum.GET
 
 
@@ -738,11 +740,188 @@ def test_endpoints_api_v1_manage_fabrics_00620():
 
 
 # =============================================================================
-# Test: EpManageFabricsDeploymentFreezeGet
+# Test: FabricConfigDeployEndpointParams
 # =============================================================================
 
 
 def test_endpoints_api_v1_manage_fabrics_00700():
+    """
+    # Summary
+
+    Verify FabricConfigDeployEndpointParams default values
+
+    ## Test
+
+    - force_show_run defaults to None
+    - incl_all_msd_switches defaults to None
+
+    ## Classes and Methods
+
+    - FabricConfigDeployEndpointParams.__init__()
+    """
+    with does_not_raise():
+        params = FabricConfigDeployEndpointParams()
+    assert params.force_show_run is None
+    assert params.incl_all_msd_switches is None
+
+
+def test_endpoints_api_v1_manage_fabrics_00710():
+    """
+    # Summary
+
+    Verify FabricConfigDeployEndpointParams force_show_run can be set
+
+    ## Test
+
+    - force_show_run can be set to True
+
+    ## Classes and Methods
+
+    - FabricConfigDeployEndpointParams.__init__()
+    """
+    with does_not_raise():
+        params = FabricConfigDeployEndpointParams(force_show_run=True)
+    assert params.force_show_run is True
+
+
+def test_endpoints_api_v1_manage_fabrics_00720():
+    """
+    # Summary
+
+    Verify FabricConfigDeployEndpointParams generates query string with both params
+
+    ## Test
+
+    - to_query_string() includes forceShowRun and inclAllMsdSwitches when both are set
+
+    ## Classes and Methods
+
+    - FabricConfigDeployEndpointParams.to_query_string()
+    """
+    with does_not_raise():
+        params = FabricConfigDeployEndpointParams(force_show_run=True, incl_all_msd_switches=True)
+        result = params.to_query_string()
+    assert "forceShowRun=true" in result
+    assert "inclAllMsdSwitches=true" in result
+
+
+def test_endpoints_api_v1_manage_fabrics_00730():
+    """
+    # Summary
+
+    Verify FabricConfigDeployEndpointParams returns empty query string when no params set
+
+    ## Test
+
+    - to_query_string() returns empty string when no params set
+
+    ## Classes and Methods
+
+    - FabricConfigDeployEndpointParams.to_query_string()
+    """
+    with does_not_raise():
+        params = FabricConfigDeployEndpointParams()
+        result = params.to_query_string()
+    assert result == ""
+
+
+# =============================================================================
+# Test: EpManageFabricConfigDeployPost
+# =============================================================================
+
+
+def test_endpoints_api_v1_manage_fabrics_00800():
+    """
+    # Summary
+
+    Verify EpManageFabricConfigDeployPost basic instantiation
+
+    ## Test
+
+    - Instance can be created
+    - class_name is set correctly
+    - verb is POST
+
+    ## Classes and Methods
+
+    - EpManageFabricConfigDeployPost.__init__()
+    - EpManageFabricConfigDeployPost.class_name
+    - EpManageFabricConfigDeployPost.verb
+    """
+    with does_not_raise():
+        instance = EpManageFabricConfigDeployPost()
+    assert instance.class_name == "EpManageFabricConfigDeployPost"
+    assert instance.verb == HttpVerbEnum.POST
+
+
+def test_endpoints_api_v1_manage_fabrics_00810():
+    """
+    # Summary
+
+    Verify EpManageFabricConfigDeployPost raises ValueError when fabric_name is not set
+
+    ## Test
+
+    - Accessing path raises ValueError when fabric_name is None
+
+    ## Classes and Methods
+
+    - EpManageFabricConfigDeployPost.path
+    """
+    instance = EpManageFabricConfigDeployPost()
+    with pytest.raises(ValueError):
+        instance.path
+
+
+def test_endpoints_api_v1_manage_fabrics_00820():
+    """
+    # Summary
+
+    Verify EpManageFabricConfigDeployPost path without query params
+
+    ## Test
+
+    - path returns correct endpoint path
+
+    ## Classes and Methods
+
+    - EpManageFabricConfigDeployPost.path
+    """
+    with does_not_raise():
+        instance = EpManageFabricConfigDeployPost()
+        instance.fabric_name = "MyFabric"
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/MyFabric/actions/configDeploy"
+
+
+def test_endpoints_api_v1_manage_fabrics_00830():
+    """
+    # Summary
+
+    Verify EpManageFabricConfigDeployPost path with force_show_run
+
+    ## Test
+
+    - path includes forceShowRun in query string when set to True
+
+    ## Classes and Methods
+
+    - EpManageFabricConfigDeployPost.path
+    """
+    with does_not_raise():
+        instance = EpManageFabricConfigDeployPost()
+        instance.fabric_name = "MyFabric"
+        instance.endpoint_params.force_show_run = True
+        result = instance.path
+    assert result == "/api/v1/manage/fabrics/MyFabric/actions/configDeploy?forceShowRun=true"
+
+
+# =============================================================================
+# Test: EpManageFabricsDeploymentFreezeGet
+# =============================================================================
+
+
+def test_endpoints_api_v1_manage_fabrics_00900():
     """
     # Summary
 
@@ -766,7 +945,7 @@ def test_endpoints_api_v1_manage_fabrics_00700():
     assert instance.verb == HttpVerbEnum.GET
 
 
-def test_endpoints_api_v1_manage_fabrics_00710():
+def test_endpoints_api_v1_manage_fabrics_00910():
     """
     # Summary
 
@@ -788,7 +967,7 @@ def test_endpoints_api_v1_manage_fabrics_00710():
     assert result == "/api/v1/manage/fabrics/my-fabric/deploymentFreeze"
 
 
-def test_endpoints_api_v1_manage_fabrics_00720():
+def test_endpoints_api_v1_manage_fabrics_00920():
     """
     # Summary
 
@@ -807,7 +986,7 @@ def test_endpoints_api_v1_manage_fabrics_00720():
         result = instance.path  # noqa: F841
 
 
-def test_endpoints_api_v1_manage_fabrics_00730():
+def test_endpoints_api_v1_manage_fabrics_00930():
     """
     # Summary
 
