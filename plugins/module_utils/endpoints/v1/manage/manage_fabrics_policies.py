@@ -20,6 +20,7 @@ from __future__ import annotations
 __author__ = "L Nikhil Sri Krishna"
 
 from typing import Literal
+from urllib.parse import quote
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ConfigDict,
@@ -131,7 +132,7 @@ class _EpManagePoliciesBase(FabricNameMixin, NDEndpointBaseModel):
         """Build the base endpoint path (without policyId)."""
         if self.fabric_name is None:
             raise ValueError("fabric_name must be set before accessing path")
-        return BasePath.path("fabrics", self.fabric_name, "policies")
+        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "policies")
 
 
 # ============================================================================
@@ -202,7 +203,7 @@ class EpManagePoliciesGet(PolicyIdMixin, _EpManagePoliciesBase):
     def path(self) -> str:
         """Build the endpoint path with optional query string."""
         if self.policy_id:
-            base = f"{self._base_path}/{self.policy_id}"
+            base = f"{self._base_path}/{quote(self.policy_id, safe='')}"
         else:
             base = self._base_path
 
@@ -352,7 +353,7 @@ class EpManagePoliciesPut(PolicyIdMixin, _EpManagePoliciesBase):
         """Build the endpoint path with optional query string."""
         if self.policy_id is None:
             raise ValueError("policy_id must be set before accessing path")
-        base = f"{self._base_path}/{self.policy_id}"
+        base = f"{self._base_path}/{quote(self.policy_id, safe='')}"
         qs = self.endpoint_params.to_query_string()
         return f"{base}?{qs}" if qs else base
 
@@ -411,7 +412,7 @@ class EpManagePoliciesDelete(PolicyIdMixin, _EpManagePoliciesBase):
         """Build the endpoint path with optional query string."""
         if self.policy_id is None:
             raise ValueError("policy_id must be set before accessing path")
-        base = f"{self._base_path}/{self.policy_id}"
+        base = f"{self._base_path}/{quote(self.policy_id, safe='')}"
         qs = self.endpoint_params.to_query_string()
         return f"{base}?{qs}" if qs else base
 

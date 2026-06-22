@@ -700,3 +700,57 @@ def test_manage_policy_groups_00440():
     assert result.startswith("/api/v1/manage/fabrics/my-fabric/policyGroups/POLICY-GROUP-143310?")
     assert "clusterName=cluster1" in result
     assert "ticketId=MyTicket1234" in result
+
+
+# =============================================================================
+# Test: URL-encoding of path segments
+# =============================================================================
+
+
+def test_manage_policy_groups_00450():
+    """
+    # Summary
+
+    Verify `fabric_name` is URL-encoded in the path so reserved characters do not break the route.
+
+    ## Test
+
+    - Space encodes to %20 and slash encodes to %2F when fabric_name contains them
+    - Raw `SITE A/B` does not appear in the rendered path
+
+    ## Classes and Methods
+
+    - EpManagePolicyGroupsPost.path
+    """
+    instance = EpManagePolicyGroupsPost()
+    instance.fabric_name = "SITE A/B"
+    # Space encodes to %20, slash to %2F.
+    assert "/fabrics/SITE%20A%2FB/policyGroups" in instance.path
+    assert " " not in instance.path
+    assert "SITE A/B" not in instance.path
+
+
+def test_manage_policy_groups_00460():
+    """
+    # Summary
+
+    Verify `policy_group_id` is URL-encoded in the path so reserved characters do not break the route.
+
+    ## Test
+
+    - Space, `/`, `#`, and `?` in policy_group_id are percent-encoded
+    - Raw reserved characters do not appear in the rendered path
+
+    ## Classes and Methods
+
+    - EpManagePolicyGroupsDelete.path
+    """
+    instance = EpManagePolicyGroupsDelete()
+    instance.fabric_name = "SITE A/B"
+    instance.policy_group_id = "POLICY-GROUP/143310 #foo?bar"
+    # Space -> %20, slash -> %2F, # -> %23, ? -> %3F.
+    assert "/fabrics/SITE%20A%2FB/policyGroups/POLICY-GROUP%2F143310%20%23foo%3Fbar" in instance.path
+    assert " " not in instance.path
+    assert "POLICY-GROUP/143310" not in instance.path
+    assert "#foo" not in instance.path
+    assert "?bar" not in instance.path
