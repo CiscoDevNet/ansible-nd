@@ -32,14 +32,15 @@ options:
     - name: ansible_httpapi_login_domain
 """
 
-import os
-import re
 import json
-import pickle
-import traceback
 import mimetypes
+import os
+import pickle
+import re
 import sys
 import tempfile
+import traceback
+
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import ConnectionError
 from ansible.plugins.httpapi import HttpApiBase

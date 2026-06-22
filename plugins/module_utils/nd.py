@@ -5,17 +5,17 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
-from functools import reduce
 
-from copy import deepcopy
 import os
 import shutil
 import tempfile
-from ansible.module_utils.basic import json
-from ansible.module_utils.basic import env_fallback
-from ansible.module_utils.six.moves.urllib.parse import urlencode
+from copy import deepcopy
+from functools import reduce
+
 from ansible.module_utils._text import to_native, to_text
+from ansible.module_utils.basic import env_fallback, json
 from ansible.module_utils.connection import Connection
+from ansible.module_utils.six.moves.urllib.parse import urlencode
 from ansible_collections.cisco.nd.plugins.module_utils.constants import ALLOWED_STATES_TO_APPEND_SENT_AND_PROPOSED
 from ansible_collections.cisco.nd.plugins.module_utils.utils import issubset
 
