@@ -852,6 +852,160 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         )
         return config_copy
 
+    def _validate_batch_create_response_for_failures(self, batch_response, pending_count):
+        """Validate batch response for any failed resource creation items.
+
+        Checks that:
+        1. Response count matches the request count (no missing items)
+        2. Each item in the response has a success-like status (or no status)
+        3. No items have failure status values
+
+        Args:
+            batch_response: ``ResourcesManagerBatchResponse`` instance with resources list.
+            pending_count: Expected number of resources in the response.
+
+        Raises:
+            ValueError: On any validation failure (missing responses, non-success status, etc).
+        """
+        self.log.debug(
+            "_validate_batch_create_response_for_failures: validating %s response item(s) against expected count=%s",
+            len(batch_response.resources),
+            pending_count,
+        )
+
+        # Check for response count mismatch (partial success)
+        if len(batch_response.resources) != pending_count:
+            failed_msg = (
+                f"Partial success in batch create: expected {pending_count} responses, "
+                f"but received only {len(batch_response.resources)} resource(s). "
+                f"Module cannot continue with incomplete batch results."
+            )
+            self.log.error("_validate_batch_create_response_for_failures: %s", failed_msg)
+            raise ValueError(failed_msg)
+
+        # Validate that all items in the response indicate success (not failure status)
+        failed_items = []
+        for idx, resp_item in enumerate(batch_response.resources):
+            # Log each response item for debugging
+            self.log.debug(
+                "_validate_batch_create_response_for_failures: response_item[%s] entity_name=%s, status=%s, message=%s",
+                idx,
+                resp_item.entity_name,
+                resp_item.status,
+                resp_item.message,
+            )
+
+            # Check if status indicates failure (if status is present and not success-like)
+            if resp_item.status:
+                status_lower = resp_item.status.lower()
+                # Recognized success status values
+                if status_lower not in ("success", "created", "ok", "succeeded"):
+                    failed_items.append({
+                        "index": idx,
+                        "entity_name": resp_item.entity_name or "unknown",
+                        "status": resp_item.status,
+                        "message": resp_item.message or "no details provided",
+                    })
+                    self.log.error(
+                        "_validate_batch_create_response_for_failures: response_item[%s] has failure status: entity_name=%s, status=%s, message=%s",
+                        idx,
+                        resp_item.entity_name,
+                        resp_item.status,
+                        resp_item.message,
+                    )
+
+        if failed_items:
+            failed_details = "\n".join(
+                f"  [{item['index']}] entity_name={item['entity_name']}: status={item['status']}, message={item['message']}"
+                for item in failed_items
+            )
+            failed_msg = (
+                f"Partial success in batch create: {len(failed_items)} out of {pending_count} "
+                f"resource(s) failed:\n{failed_details}"
+            )
+            self.log.error("_validate_batch_create_response_for_failures: %s", failed_msg)
+            raise ValueError(failed_msg)
+
+        self.log.info(
+            "_validate_batch_create_response_for_failures: all %s resource(s) validated successfully",
+            len(batch_response.resources),
+        )
+
+    def _validate_remove_response_for_failures(self, remove_response, pending_count):
+        """Validate delete response for partial success or per-item failures.
+
+        Checks that:
+        1. Response count matches the request count (no missing responses)
+        2. Each item in the response has a success-like status when status is present
+
+        Args:
+            remove_response: ``RemoveResourcesByIdsResponse`` instance with resources list.
+            pending_count: Expected number of resources in the response.
+
+        Raises:
+            ValueError: On any validation failure.
+        """
+        self.log.debug(
+            "_validate_remove_response_for_failures: validating %s response item(s) against expected count=%s",
+            len(remove_response.resources),
+            pending_count,
+        )
+
+        if len(remove_response.resources) != pending_count:
+            failed_msg = (
+                f"Partial success in batch delete: expected {pending_count} responses, "
+                f"but received only {len(remove_response.resources)} resource(s). "
+                f"Module cannot continue with incomplete batch results."
+            )
+            self.log.error("_validate_remove_response_for_failures: %s", failed_msg)
+            raise ValueError(failed_msg)
+
+        failed_items = []
+        for idx, resp_item in enumerate(remove_response.resources):
+            self.log.debug(
+                "_validate_remove_response_for_failures: response_item[%s] resource_value=%s, status=%s, message=%s",
+                idx,
+                resp_item.resource_value,
+                resp_item.status,
+                resp_item.message,
+            )
+
+            if resp_item.status:
+                status_lower = resp_item.status.lower()
+                if status_lower not in ("success", "deleted", "ok", "succeeded"):
+                    failed_items.append(
+                        {
+                            "index": idx,
+                            "resource_value": resp_item.resource_value or "unknown",
+                            "status": resp_item.status,
+                            "message": resp_item.message or "no details provided",
+                        }
+                    )
+                    self.log.error(
+                        "_validate_remove_response_for_failures: response_item[%s] has failure status: resource_value=%s, status=%s, message=%s",
+                        idx,
+                        resp_item.resource_value,
+                        resp_item.status,
+                        resp_item.message,
+                    )
+
+        if failed_items:
+            failed_details = "\n".join(
+                f"  [{item['index']}] resource_value={item['resource_value']}: status={item['status']}, message={item['message']}"
+                for item in failed_items
+            )
+            failed_msg = (
+                f"Partial success in batch delete: {len(failed_items)} out of {pending_count} "
+                f"resource(s) failed:\n{failed_details}"
+            )
+            self.log.error("_validate_remove_response_for_failures: %s", failed_msg)
+            raise ValueError(failed_msg)
+
+        self.log.info(
+            "_validate_remove_response_for_failures: all %s resource(s) validated successfully",
+            len(remove_response.resources),
+        )
+
     def manage_merged(self):
         """Create or update resources to match the desired state defined in the playbook.
 
@@ -961,6 +1115,9 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             "manage_merged: Batch API response parsed — %s item(s) returned",
             len(batch_response.resources),
         )
+
+        # Validate that batch response is complete and all items succeeded
+        self._validate_batch_create_response_for_failures(batch_response, len(pending_payloads))
 
         # Build a normalised entity_name → cfg lookup for GAP-5 field validation.
         # If two items share a normalised name (unusual), the last one wins; that is
@@ -1120,6 +1277,8 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             "manage_deleted: Delete API response parsed — %s item(s) returned",
             len(remove_response.resources),
         )
+
+        self._validate_remove_response_for_failures(remove_response, len(resource_ids))
 
         for resp_item in remove_response.resources:
             self.api_responses.append({"RETURN_CODE": 200, "DATA": resp_item.model_dump(by_alias=True, exclude_none=True)})

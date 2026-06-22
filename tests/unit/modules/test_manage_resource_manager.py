@@ -2379,6 +2379,81 @@ def test_manage_deleted_success_parses_remove_response_items():
     assert any(entry.get("DATA", {}).get("resourceId") == 101 for entry in module.api_responses)
 
 
+def test_manage_deleted_raises_on_partial_delete_response():
+    """Deleted state fails when the remove response is missing items."""
+    module, nd = _resource_manager_with_nd(state="deleted", config=[])
+    cfg = _config()
+    module.proposed = [cfg]
+    module.existing = []
+
+    fake_changes = {
+        "idempotent": [
+            (cfg, "SER1", {"resourceId": 101}),
+            (cfg, "SER2", {"resourceId": 102}),
+        ],
+        "to_update": [],
+        "to_add": [],
+        "to_delete": [],
+        "debugs": [],
+    }
+
+    nd.request.return_value = {"resources": [{"resourceValue": "101", "status": "deleted"}]}
+    remove_item = MagicMock()
+    remove_item.resource_value = "101"
+    remove_item.status = "deleted"
+    remove_item.message = None
+    remove_item.model_dump.return_value = {"resourceValue": "101", "status": "deleted"}
+    fake_remove_response = MagicMock(resources=[remove_item])
+
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
+        (
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+            "nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response"
+        ),
+        return_value=fake_remove_response,
+    ):
+        with pytest.raises(ValueError, match="Partial success in batch delete"):
+            module.manage_deleted()
+
+
+def test_manage_deleted_raises_on_failed_delete_status():
+    """Deleted state fails when any remove response item reports failure."""
+    module, nd = _resource_manager_with_nd(state="deleted", config=[])
+    cfg = _config()
+    module.proposed = [cfg]
+    module.existing = []
+
+    fake_changes = {
+        "idempotent": [(cfg, "SER1", {"resourceId": 101})],
+        "to_update": [],
+        "to_add": [],
+        "to_delete": [],
+        "debugs": [],
+    }
+
+    nd.request.return_value = {"resources": [{"resourceValue": "101", "status": "failed", "message": "resource is in use"}]}
+    failed_item = MagicMock()
+    failed_item.resource_value = "101"
+    failed_item.status = "failed"
+    failed_item.message = "resource is in use"
+    failed_item.model_dump.return_value = {
+        "resourceValue": "101",
+        "status": "failed",
+        "message": "resource is in use",
+    }
+    fake_remove_response = MagicMock(resources=[failed_item])
+
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
+        (
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+            "nd_manage_resource_manager_resources.RemoveResourcesByIdsResponse.from_response"
+        ),
+        return_value=fake_remove_response,
+    ):
+        with pytest.raises(ValueError, match="Partial success in batch delete"):
+            module.manage_deleted()
+
+
 def test_manage_state_unsupported_state_raises():
     """State dispatch rejects unsupported state names with clear error text."""
     module, unused_nd = _resource_manager_with_nd(state="unsupported", config=[])
