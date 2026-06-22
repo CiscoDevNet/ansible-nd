@@ -18,8 +18,8 @@
           - "{{ loopback_100 }}"
         expected:
           check_mode_changed: true
-          first_run_changed: true
-          second_run_changed: false
+          apply_changed: true
+          idempotency: true
           failed: false
         idempotency_retries: 6
         idempotency_delay: 10

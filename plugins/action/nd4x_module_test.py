@@ -139,7 +139,12 @@ class ActionModule(ActionBase):
         return actual_failed != expected_failed
 
     def _run_idempotency_check(self, module_name, module_args, task_vars, expected, retries, delay):
-        expected_changed = expected.get("second_run_changed")
+        expected_changed = None
+
+        if "idempotency" in expected:
+            expected_changed = not bool(expected["idempotency"])
+        elif "second_run_changed" in expected:
+            expected_changed = bool(expected["second_run_changed"])
 
         for attempt in range(1, retries + 1):
             module_result = self._run_target_module(
@@ -152,7 +157,7 @@ class ActionModule(ActionBase):
                 return module_result, attempt
 
             actual_changed = bool(module_result.get("changed", False))
-            if actual_changed == bool(expected_changed):
+            if actual_changed == expected_changed:
                 return module_result, attempt
 
             if attempt < retries and delay:
@@ -195,6 +200,7 @@ class ActionModule(ActionBase):
 
         changed_checks = [
             ("check_mode_changed", check_mode_result),
+            ("apply_changed", first_run_result),
             ("first_run_changed", first_run_result),
             ("second_run_changed", second_run_result),
         ]
@@ -216,6 +222,24 @@ class ActionModule(ActionBase):
                     self._format_expectation_failure(
                         message="Expected %s=%s but got changed=%s"
                         % (expected_key, expected_value, actual_value),
+                        check_mode_result=check_mode_result,
+                        first_run_result=first_run_result,
+                        second_run_result=second_run_result,
+                        idempotency_attempts=idempotency_attempts,
+                    )
+                )
+        if "idempotency" in expected:
+            if second_run_result is None:
+                raise AnsibleActionFail("Expected idempotency but the idempotency run was skipped")
+
+            expected_idempotent = bool(expected["idempotency"])
+            actual_idempotent = not bool(second_run_result.get("changed", False))
+
+            if actual_idempotent != expected_idempotent:
+                raise AnsibleActionFail(
+                    self._format_expectation_failure(
+                        message="Expected idempotency=%s but got idempotency=%s"
+                        % (expected_idempotent, actual_idempotent),
                         check_mode_result=check_mode_result,
                         first_run_result=first_run_result,
                         second_run_result=second_run_result,
