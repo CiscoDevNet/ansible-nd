@@ -13,7 +13,6 @@ import shutil
 import tempfile
 from ansible.module_utils.basic import json
 from ansible.module_utils.basic import env_fallback
-from ansible.module_utils.six import PY3
 from ansible.module_utils.six.moves.urllib.parse import urlencode
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.connection import Connection
@@ -62,10 +61,8 @@ def sanitize(obj_to_sanitize, keys=None, values=None, recursive=True, remove_non
         raise TypeError("object to sanitize can only be of type list or dict. Got {}".format(type(obj_to_sanitize)))
 
 
-if PY3:
-
-    def cmp(a, b):
-        return (a > b) - (a < b)
+def cmp(a, b):
+    return (a > b) - (a < b)
 
 
 def update_qs(params):
