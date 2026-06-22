@@ -317,7 +317,9 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.exceptions import 
     NDStateMachineError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    require_pydantic,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
     FabricSwitchInventory,
 )

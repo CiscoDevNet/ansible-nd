@@ -543,7 +543,9 @@ import logging
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
-from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
+    require_pydantic,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_policies.config_models import (
     PlaybookPolicyConfig,
 )

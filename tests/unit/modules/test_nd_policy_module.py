@@ -33,7 +33,6 @@ from typing import Any
 import pytest
 from ansible_collections.cisco.nd.plugins.modules import nd_manage_policy
 
-
 # =============================================================================
 # Lightweight test harness (file-private)
 # =============================================================================

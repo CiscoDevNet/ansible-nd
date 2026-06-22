@@ -176,11 +176,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             if with_ticket and self.ticket_id and hasattr(params, "ticket_id"):
                 params.ticket_id = self.ticket_id
         except ValidationError as exc:
-            raise Exception(
-                "Invalid value for orchestrator parameter "
-                "(ticket_id / cluster_name) on endpoint "
-                f"{type(ep).__name__}: {exc}"
-            ) from exc
+            raise Exception("Invalid value for orchestrator parameter " "(ticket_id / cluster_name) on endpoint " f"{type(ep).__name__}: {exc}") from exc
 
     # ------------------------------------------------------------------ #
     # Query operations

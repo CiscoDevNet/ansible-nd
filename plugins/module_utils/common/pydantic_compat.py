@@ -44,20 +44,20 @@ if TYPE_CHECKING:
         BeforeValidator,
         ConfigDict,
         Field,
+        FieldSerializationInfo,
         PrivateAttr,
         PydanticExperimentalWarning,
-        StrictBool,
         SecretStr,
+        SerializationInfo,
+        StrictBool,
         ValidationError,
         ValidationInfo,
+        computed_field,
         field_serializer,
-        model_serializer,
         field_validator,
+        model_serializer,
         model_validator,
         validator,
-        computed_field,
-        FieldSerializationInfo,
-        SerializationInfo,
     )
 
     HAS_PYDANTIC = True  # pylint: disable=invalid-name
@@ -71,20 +71,20 @@ else:
             BeforeValidator,
             ConfigDict,
             Field,
+            FieldSerializationInfo,
             PrivateAttr,
             PydanticExperimentalWarning,
-            StrictBool,
             SecretStr,
+            SerializationInfo,
+            StrictBool,
             ValidationError,
             ValidationInfo,
+            computed_field,
             field_serializer,
-            model_serializer,
             field_validator,
+            model_serializer,
             model_validator,
             validator,
-            computed_field,
-            FieldSerializationInfo,
-            SerializationInfo,
         )
     except ImportError:
         HAS_PYDANTIC = False  # pylint: disable=invalid-name
@@ -280,7 +280,9 @@ def require_pydantic(module) -> None:
       message that includes installation instructions.
     """
     if not HAS_PYDANTIC:
-        from ansible.module_utils.basic import missing_required_lib  # pylint: disable=import-outside-toplevel
+        from ansible.module_utils.basic import (
+            missing_required_lib,  # pylint: disable=import-outside-toplevel
+        )
 
         module.fail_json(msg=missing_required_lib("pydantic"), exception=PYDANTIC_IMPORT_ERROR)
 
