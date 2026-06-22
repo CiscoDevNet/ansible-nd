@@ -281,6 +281,8 @@ class PolicyGroupCreate(NDBaseModel):
                     create_additional_policy=dict(type="bool", default=False),
                 ),
             ),
+            ticket_id=dict(type="str"),
+            cluster_name=dict(type="str"),
             state=dict(type="str", default="merged", choices=["merged", "deleted", "gathered"]),
         )
 

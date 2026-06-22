@@ -119,6 +119,18 @@ options:
         - Only applicable when O(state=merged).
         type: bool
         default: false
+  ticket_id:
+    description:
+    - Change Control Ticket ID to associate with mutation operations
+      (C(POST)/C(PUT)/C(DELETE)/C(markDelete)).
+    - Required when Change Control is enabled on the ND controller.
+    - Must start with a letter and contain only letters, digits, underscores,
+      or hyphens (max 64 characters).
+    type: str
+  cluster_name:
+    description:
+    - Target cluster name in a multi-cluster deployment.
+    type: str
   state:
     description:
     - The desired state of the policy group resources on the Cisco Nexus Dashboard.
@@ -747,6 +759,8 @@ def main():
             rest_send=rest_send,
             fabric_name=module.params["fabric_name"],
             deploy=module.params["deploy"],
+            ticket_id=module.params.get("ticket_id"),
+            cluster_name=module.params.get("cluster_name"),
         )
 
         # Resolve any switch_ids entries that are IPv4 addresses to serial

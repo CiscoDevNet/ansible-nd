@@ -122,14 +122,26 @@ def _make_orchestrator(
     fabric_name: str = "fab1",
     deploy: bool = True,
     results: Results | None = None,
+    ticket_id: str | None = None,
+    cluster_name: str | None = None,
 ) -> PolicyGroupOrchestrator:
-    """Construct a ``PolicyGroupOrchestrator`` with the given wiring."""
-    return PolicyGroupOrchestrator(
-        rest_send=rest_send,
-        fabric_name=fabric_name,
-        deploy=deploy,
-        results=results,
-    )
+    """Construct a ``PolicyGroupOrchestrator`` with the given wiring.
+
+    ``ticket_id`` and ``cluster_name`` default to ``None`` (omitted from the
+    constructor entirely) so the bulk of the existing test suite continues
+    to exercise the no-query-param path and emit unchanged request paths.
+    """
+    kwargs: dict[str, Any] = {
+        "rest_send": rest_send,
+        "fabric_name": fabric_name,
+        "deploy": deploy,
+        "results": results,
+    }
+    if ticket_id is not None:
+        kwargs["ticket_id"] = ticket_id
+    if cluster_name is not None:
+        kwargs["cluster_name"] = cluster_name
+    return PolicyGroupOrchestrator(**kwargs)
 
 
 def _build_pg_model(
@@ -205,6 +217,10 @@ def test_manage_policy_group_orchestrator_00010() -> None:
     assert instance.switch_deploy_endpoint is EpManageSwitchActionsDeployPost
     assert instance.fabric_name == "fab1"
     assert instance.deploy is True
+    # Change-Control / multi-cluster query params default to None so existing
+    # request paths are unchanged when callers do not set them.
+    assert instance.ticket_id is None
+    assert instance.cluster_name is None
     assert instance._raw_cache is None
 
 
@@ -1690,3 +1706,291 @@ def test_manage_policy_group_orchestrator_01150() -> None:
 
     assert models[0].policy_id == "P1"
     assert models[1].policy_id is None
+
+
+# =============================================================================
+# Change Control / multi-cluster: ticket_id + cluster_name forwarding
+# =============================================================================
+#
+# These tests verify that ``ticket_id`` and ``cluster_name`` set on the
+# orchestrator are forwarded as ``ticketId`` / ``clusterName`` query
+# parameters on every endpoint that accepts them.  ``ticket_id`` is
+# suppressed on read endpoints and on ``switchActions/deploy`` because
+# their endpoint models do not expose it.
+#
+# Per-endpoint coverage matrix:
+#
+#   Endpoint                                            cluster_name  ticket_id
+#   ----------------------------------------------------------------------------
+#   GET    /policyGroups                                     YES          NO
+#   GET    /policyGroups/{id}                                YES          NO
+#   POST   /policyGroups                                     YES          YES
+#   PUT    /policyGroups/{id}                                YES          YES
+#   DELETE /policyGroups/{id}                                YES          YES
+#   POST   /policyGroups/actions/markDelete                  YES          YES
+#   POST   /switchActions/deploy                             YES          NO
+#
+# The query string is built by Pydantic and is opaque to the orchestrator;
+# each test asserts on the recorded ``rest_send.path`` via the ``Results``
+# task log, so the assertions are tolerant to parameter ordering.
+
+def test_manage_policy_group_orchestrator_01200() -> None:
+    """
+    # Summary
+
+    ``query_all`` forwards ``cluster_name`` as ``clusterName`` and does NOT
+    forward ``ticket_id`` (the GET endpoint's ``EndpointParams`` model does
+    not expose ``ticket_id``).
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_all
+    - PolicyGroupOrchestrator._apply_endpoint_params
+    """
+    rest_send = _build_rest_send([_resp({"policyGroups": []})])
+    results = _make_results()
+    instance = _make_orchestrator(
+        rest_send,
+        results=results,
+        ticket_id="MyTicket1234",
+        cluster_name="cluster1",
+    )
+
+    instance.query_all()
+
+    path = results._tasks[0].path
+    assert "clusterName=cluster1" in path
+    assert "ticketId=" not in path  # GET does not accept ticketId
+
+
+def test_manage_policy_group_orchestrator_01210() -> None:
+    """
+    # Summary
+
+    ``query_by_id`` forwards ``cluster_name`` and not ``ticket_id``.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_by_id
+    """
+    rest_send = _build_rest_send([_resp({"policyId": "POLICY-GROUP-1", "templateName": "t"})])
+    results = _make_results()
+    instance = _make_orchestrator(
+        rest_send,
+        results=results,
+        ticket_id="MyTicket1234",
+        cluster_name="cluster1",
+    )
+
+    instance.query_by_id("POLICY-GROUP-1")
+
+    path = results._tasks[0].path
+    assert "clusterName=cluster1" in path
+    assert "ticketId=" not in path
+
+
+def test_manage_policy_group_orchestrator_01220() -> None:
+    """
+    # Summary
+
+    ``query_filtered`` (cache-miss path) forwards ``cluster_name`` alongside
+    the Lucene filter parameters and does not forward ``ticket_id``.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.query_filtered
+    """
+    rest_send = _build_rest_send([_resp({"policyGroups": []})])
+    results = _make_results()
+    instance = _make_orchestrator(
+        rest_send,
+        results=results,
+        ticket_id="MyTicket1234",
+        cluster_name="cluster1",
+    )
+
+    instance.query_filtered(template_name="feature_enable")
+
+    path = results._tasks[0].path
+    assert "clusterName=cluster1" in path
+    assert "ticketId=" not in path
+
+
+def test_manage_policy_group_orchestrator_01230() -> None:
+    """
+    # Summary
+
+    ``create_bulk`` forwards both ``clusterName`` and ``ticketId`` on the
+    POST request.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.create_bulk
+    """
+    response_body = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
+    rest_send = _build_rest_send([_resp(response_body, method="POST")])
+    results = _make_results()
+    instance = _make_orchestrator(
+        rest_send,
+        deploy=False,
+        results=results,
+        ticket_id="MyTicket1234",
+        cluster_name="cluster1",
+    )
+
+    instance.create_bulk([_build_pg_model()])
+
+    path = results._tasks[0].path
+    assert "clusterName=cluster1" in path
+    assert "ticketId=MyTicket1234" in path
+
+
+def test_manage_policy_group_orchestrator_01240() -> None:
+    """
+    # Summary
+
+    ``update`` forwards both ``clusterName`` and ``ticketId`` on the PUT
+    request.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.update
+    """
+    # Two responses: (1) cached GET miss for _get_current_switch_ids, then
+    # (2) the actual PUT.  Order matters because _get_current_switch_ids
+    # runs before the PUT inside update().
+    rest_send = _build_rest_send(
+        [
+            _resp({"policyId": "POLICY-GROUP-1", "switchIds": ["SN1"]}, method="GET"),
+            _resp({"policyId": "POLICY-GROUP-1"}, method="PUT"),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(
+        rest_send,
+        deploy=False,
+        results=results,
+        ticket_id="MyTicket1234",
+        cluster_name="cluster1",
+    )
+    model = _build_pg_model(policy_id="POLICY-GROUP-1")
+
+    instance.update(model)
+
+    # Two tasks recorded: GET (cluster-only) then PUT (both).
+    get_path = results._tasks[0].path
+    put_path = results._tasks[1].path
+    assert "clusterName=cluster1" in get_path
+    assert "ticketId=" not in get_path  # GET does not accept ticketId
+    assert "clusterName=cluster1" in put_path
+    assert "ticketId=MyTicket1234" in put_path
+
+
+def test_manage_policy_group_orchestrator_01250() -> None:
+    """
+    # Summary
+
+    ``delete_bulk`` forwards both ``clusterName`` and ``ticketId`` on the
+    markDelete POST. When markDelete fails and the direct-DELETE fallback
+    fires, the DELETE also carries both query parameters.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.delete_bulk
+    - PolicyGroupOrchestrator._mark_delete
+    """
+    # markDelete reports the policy id as failed → triggers direct DELETE.
+    mark_response = {"policyGroups": [{"policyId": "POLICY-GROUP-1", "status": "failed", "message": "PYTHON content-type"}]}
+    rest_send = _build_rest_send(
+        [
+            _resp(mark_response, method="POST"),  # markDelete
+            _resp({}, return_code=204, method="DELETE"),  # direct DELETE fallback
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(
+        rest_send,
+        deploy=False,
+        results=results,
+        ticket_id="MyTicket1234",
+        cluster_name="cluster1",
+    )
+    model = _build_pg_model(policy_id="POLICY-GROUP-1")
+
+    instance.delete_bulk([model])
+
+    mark_path = results._tasks[0].path
+    delete_path = results._tasks[1].path
+    assert "clusterName=cluster1" in mark_path
+    assert "ticketId=MyTicket1234" in mark_path
+    assert "clusterName=cluster1" in delete_path
+    assert "ticketId=MyTicket1234" in delete_path
+
+
+def test_manage_policy_group_orchestrator_01260() -> None:
+    """
+    # Summary
+
+    ``_switch_deploy`` forwards ``clusterName`` only.  ``POST
+    /switchActions/deploy`` accepts ``forceShowRun`` and ``clusterName``
+    but its endpoint model does not expose ``ticket_id``; the orchestrator
+    must suppress the ``ticket_id`` assignment for this endpoint to avoid
+    silently doing nothing or failing on a stricter ``extra='forbid'``
+    model.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator._switch_deploy
+    - PolicyGroupOrchestrator._apply_endpoint_params (with_ticket=False)
+    """
+    # create_bulk → POST then trailing switchActions/deploy when deploy=True.
+    create_response = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
+    deploy_response = {"switchIds": [{"switchId": "SN1", "status": "success", "message": "Deployed Successfully"}]}
+    rest_send = _build_rest_send(
+        [
+            _resp(create_response, method="POST"),
+            _resp(deploy_response, method="POST"),
+        ]
+    )
+    results = _make_results()
+    instance = _make_orchestrator(
+        rest_send,
+        deploy=True,
+        results=results,
+        ticket_id="MyTicket1234",
+        cluster_name="cluster1",
+    )
+
+    instance.create_bulk([_build_pg_model()])
+
+    deploy_path = results._tasks[1].path
+    assert "switchActions/deploy" in deploy_path
+    assert "clusterName=cluster1" in deploy_path
+    assert "ticketId=" not in deploy_path  # not allowed on this endpoint
+
+
+def test_manage_policy_group_orchestrator_01270() -> None:
+    """
+    # Summary
+
+    When neither ``ticket_id`` nor ``cluster_name`` is set on the orchestrator
+    (the default, matching pre-existing behaviour), the request path emitted
+    for a mutation is completely free of these query parameters.  This
+    guarantees the new code is purely additive and does not alter cassettes
+    or recorded fixtures for callers who never set the params.
+
+    ## Classes and Methods
+
+    - PolicyGroupOrchestrator.create_bulk
+    - PolicyGroupOrchestrator._apply_endpoint_params (no-op path)
+    """
+    response_body = {"policyGroups": [{"policyId": "P1", "status": "success"}]}
+    rest_send = _build_rest_send([_resp(response_body, method="POST")])
+    results = _make_results()
+    instance = _make_orchestrator(rest_send, deploy=False, results=results)
+
+    instance.create_bulk([_build_pg_model()])
+
+    path = results._tasks[0].path
+    assert "clusterName=" not in path
+    assert "ticketId=" not in path

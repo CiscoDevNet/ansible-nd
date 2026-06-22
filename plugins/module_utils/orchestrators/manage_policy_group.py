@@ -22,6 +22,7 @@ log = logging.getLogger("nd.PolicyGroupOrchestrator")
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     PrivateAttr,
+    ValidationError,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import (
     NDEndpointBaseModel,
@@ -100,6 +101,27 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     fabric_name: str | None = None
     deploy: bool = True
 
+    # Change Control / multi-cluster query parameters.  When set, these are
+    # forwarded as ``ticketId`` and ``clusterName`` on every policy-group
+    # endpoint that accepts them.  ``ticket_id`` is omitted from read paths
+    # and from ``switchActions/deploy`` (these endpoints do not accept it).
+    # See ``_apply_endpoint_params`` for the per-endpoint dispatch logic.
+    #
+    # NOTE on validation timing:  The endpoint ``EndpointParams`` Pydantic
+    # models declare pattern / min_length / max_length validators on these
+    # fields, but their base (``EndpointQueryParams``) does NOT set
+    # ``validate_assignment=True``.  As a result, validators run at
+    # construction time only — plain attribute assignment via
+    # ``_apply_endpoint_params`` does not re-run them, and invalid values
+    # are surfaced as a controller-side 400 rather than a client-side
+    # exception.  The defensive ``try / except ValidationError`` in
+    # ``_apply_endpoint_params`` remains so that, if a future base-class
+    # change enables ``validate_assignment``, the orchestrator already
+    # produces a readable error message instead of a raw Pydantic
+    # traceback.
+    ticket_id: str | None = None
+    cluster_name: str | None = None
+
     # Per-instance cache of the raw ``query_all`` response (with the
     # ``source``-artifact filter applied).  Declared as a Pydantic
     # PrivateAttr so it is a first-class private attribute rather than
@@ -108,6 +130,57 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
     # on first call; mutation methods reset it to ``None`` via
     # ``_invalidate_cache``.
     _raw_cache: list | None = PrivateAttr(default=None)
+
+    # ------------------------------------------------------------------ #
+    # Endpoint-parameter plumbing
+    # ------------------------------------------------------------------ #
+
+    def _apply_endpoint_params(self, ep, *, with_ticket: bool = True) -> None:
+        """Forward ``cluster_name`` (and optionally ``ticket_id``) to an endpoint.
+
+        Centralises the assignment of the two Change-Control / multi-cluster
+        query parameters so every endpoint call site stays a single line and
+        the same error-handling wrapper is applied uniformly.
+
+        - ``cluster_name`` is forwarded whenever the endpoint's
+          ``endpoint_params`` model declares the attribute.
+        - ``ticket_id`` is forwarded only when ``with_ticket=True`` AND the
+          endpoint's ``endpoint_params`` model declares the attribute.  This
+          avoids ``ValidationError`` / ``AttributeError`` on endpoints whose
+          ``EndpointParams`` model intentionally omits ``ticket_id`` (e.g.
+          read endpoints and ``switchActions/deploy``).
+
+        Args:
+            ep: An endpoint instance with an ``endpoint_params`` attribute.
+            with_ticket: When False, never set ``ticket_id`` even if the
+                endpoint model exposes it.  Read paths and the
+                switch-deploy endpoint set this to False.
+
+        Raises:
+            Exception: Defensive wrapper around any ``ValidationError``
+                that would propagate from the underlying Pydantic model.
+                The base ``EndpointQueryParams`` does NOT currently enable
+                ``validate_assignment``, so attribute assignment does not
+                re-run pattern / min_length / max_length validators —
+                invalid values are surfaced as a controller-side HTTP 400
+                instead.  This wrapper keeps the orchestrator forward-
+                compatible if the base class ever enables
+                ``validate_assignment=True``.
+        """
+        params = getattr(ep, "endpoint_params", None)
+        if params is None:
+            return
+        try:
+            if self.cluster_name and hasattr(params, "cluster_name"):
+                params.cluster_name = self.cluster_name
+            if with_ticket and self.ticket_id and hasattr(params, "ticket_id"):
+                params.ticket_id = self.ticket_id
+        except ValidationError as exc:
+            raise Exception(
+                "Invalid value for orchestrator parameter "
+                "(ticket_id / cluster_name) on endpoint "
+                f"{type(ep).__name__}: {exc}"
+            ) from exc
 
     # ------------------------------------------------------------------ #
     # Query operations
@@ -157,6 +230,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             if raw is None:
                 ep = self.query_all_endpoint()
                 ep.fabric_name = self.fabric_name
+                self._apply_endpoint_params(ep, with_ticket=False)
                 ep.lucene_params.max = 10000
                 result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
                 groups = result.get("policyGroups", []) or []
@@ -222,6 +296,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             ep = self.query_one_endpoint()
             ep.fabric_name = self.fabric_name
             ep.policy_group_id = policy_group_id
+            self._apply_endpoint_params(ep, with_ticket=False)
             result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
             if isinstance(result, dict) and result.get("policyId"):
                 return result
@@ -267,6 +342,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             ep = self.query_all_endpoint()
             ep.fabric_name = self.fabric_name
             ep.lucene_params.max = 10000
+            self._apply_endpoint_params(ep, with_ticket=False)
 
             # Build Lucene filter expression
             filters = []
@@ -305,6 +381,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         try:
             ep = self.create_bulk_endpoint()
             ep.fabric_name = self.fabric_name
+            self._apply_endpoint_params(ep)
 
             payload = {"policyGroups": [m.to_payload() for m in model_instances]}
             result = self._request(path=ep.path, verb=ep.verb, data=payload)
@@ -373,6 +450,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             ep = self.update_endpoint()
             ep.fabric_name = self.fabric_name
             ep.policy_group_id = policy_group_id
+            self._apply_endpoint_params(ep)
 
             result = self._request(path=ep.path, verb=ep.verb, data=model_instance.to_payload())
 
@@ -496,6 +574,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
                     ep = self.delete_endpoint()
                     ep.fabric_name = self.fabric_name
                     ep.policy_group_id = pid
+                    self._apply_endpoint_params(ep)
                     self._request(path=ep.path, verb=ep.verb)
                     direct_deleted.append(pid)
 
@@ -534,6 +613,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         """POST /policyGroups/actions/markDelete with policy IDs."""
         ep = self.mark_delete_endpoint()
         ep.fabric_name = self.fabric_name
+        self._apply_endpoint_params(ep)
         payload = {"policyIds": policy_ids}
         return self._request(path=ep.path, verb=ep.verb, data=payload)
 
@@ -555,6 +635,9 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
         """
         ep = self.switch_deploy_endpoint()
         ep.fabric_name = self.fabric_name
+        # switchActions/deploy accepts ``clusterName`` but does NOT accept
+        # ``ticketId``; suppress the ticket assignment for this endpoint.
+        self._apply_endpoint_params(ep, with_ticket=False)
         payload = {"switchIds": switch_ids}
         log.debug(
             "switchActions/deploy: dispatching to %d switch(es): %s",
@@ -689,6 +772,7 @@ class PolicyGroupOrchestrator(NDBaseOrchestrator[PolicyGroupCreate]):
             ep = self.query_one_endpoint()
             ep.fabric_name = self.fabric_name
             ep.policy_group_id = policy_group_id
+            self._apply_endpoint_params(ep, with_ticket=False)
             result = self._request(path=ep.path, verb=ep.verb, not_found_ok=True)
             if isinstance(result, dict):
                 return set(result.get("switchIds", []) or [])
