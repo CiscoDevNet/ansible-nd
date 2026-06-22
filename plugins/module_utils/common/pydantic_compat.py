@@ -44,20 +44,20 @@ if TYPE_CHECKING:
         BeforeValidator,
         ConfigDict,
         Field,
-        FieldSerializationInfo,
         PrivateAttr,
         PydanticExperimentalWarning,
-        SecretStr,
-        SerializationInfo,
         StrictBool,
+        SecretStr,
         ValidationError,
         ValidationInfo,
-        computed_field,
         field_serializer,
-        field_validator,
         model_serializer,
+        field_validator,
         model_validator,
         validator,
+        computed_field,
+        FieldSerializationInfo,
+        SerializationInfo,
     )
 
     HAS_PYDANTIC = True  # pylint: disable=invalid-name
@@ -71,20 +71,20 @@ else:
             BeforeValidator,
             ConfigDict,
             Field,
-            FieldSerializationInfo,
             PrivateAttr,
             PydanticExperimentalWarning,
-            SecretStr,
-            SerializationInfo,
             StrictBool,
+            SecretStr,
             ValidationError,
             ValidationInfo,
-            computed_field,
             field_serializer,
-            field_validator,
             model_serializer,
+            field_validator,
             model_validator,
             validator,
+            computed_field,
+            FieldSerializationInfo,
+            SerializationInfo,
         )
     except ImportError:
         HAS_PYDANTIC = False  # pylint: disable=invalid-name
@@ -204,6 +204,14 @@ else:
             def __str__(self):
                 return f"ValidationError: {self.message}"
 
+        # Fallback: ValidationInfo placeholder class that does nothing
+        class ValidationInfo:
+            """Pydantic ValidationInfo fallback when pydantic is not available."""
+
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
         # Fallback: model_validator decorator that does nothing
         def model_validator(*args, **kwargs):  # pylint: disable=unused-argument
             """Pydantic model_validator fallback when pydantic is not available."""
@@ -232,13 +240,6 @@ else:
         # Fallback: SerializationInfo placeholder class that does nothing
         class SerializationInfo:
             """Pydantic SerializationInfo fallback when pydantic is not available."""
-
-            def __init__(self, **kwargs):
-                pass
-
-        # Fallback: ValidationInfo placeholder class that does nothing
-        class ValidationInfo:
-            """Pydantic ValidationInfo fallback when pydantic is not available."""
 
             def __init__(self, **kwargs):
                 pass
@@ -279,9 +280,7 @@ def require_pydantic(module) -> None:
       message that includes installation instructions.
     """
     if not HAS_PYDANTIC:
-        from ansible.module_utils.basic import (
-            missing_required_lib,  # pylint: disable=import-outside-toplevel
-        )
+        from ansible.module_utils.basic import missing_required_lib  # pylint: disable=import-outside-toplevel
 
         module.fail_json(msg=missing_required_lib("pydantic"), exception=PYDANTIC_IMPORT_ERROR)
 
@@ -299,6 +298,7 @@ __all__ = [
     "StrictBool",
     "SecretStr",
     "ValidationError",
+    "ValidationInfo",
     "field_serializer",
     "model_serializer",
     "field_validator",

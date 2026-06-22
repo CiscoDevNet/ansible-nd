@@ -9,9 +9,7 @@ This module provides mixin classes that can be composed to add common
 fields to endpoint models without duplication.
 """
 
-from __future__ import annotations
-
-from typing import Optional
+from __future__ import absolute_import, annotations, division, print_function
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     BaseModel,
@@ -59,7 +57,7 @@ class InclAllMsdSwitchesMixin(BaseModel):
 class InterfaceNameMixin(BaseModel):
     """Mixin for endpoints that require interface_name parameter."""
 
-    interface_name: Optional[str] = Field(default=None, min_length=1, description="Interface name")
+    interface_name: str | None = Field(default=None, min_length=1, description="Interface name")
 
 
 class LinkUuidMixin(BaseModel):
@@ -92,20 +90,10 @@ class OffsetMixin(BaseModel):
     offset: int | None = Field(default=None, ge=0, description="Pagination offset")
 
 
-class PolicyIdMixin(BaseModel):
-    """Mixin for endpoints that require policy_id parameter."""
+class NodeNameMixin(BaseModel):
+    """Mixin for endpoints that require node_name parameter."""
 
-    policy_id: str | None = Field(default=None, min_length=1, description="Policy ID (e.g., POLICY-12345)")
-
-
-class PolicyGroupIdMixin(BaseModel):
-    """Mixin for endpoints that require policy_group_id parameter."""
-
-    policy_group_id: str | None = Field(
-        default=None,
-        min_length=1,
-        description="Policy Group ID (e.g., POLICY-GROUP-143310)",
-    )
+    node_name: str | None = Field(default=None, min_length=1, description="Node name")
 
 
 class SwitchSerialNumberMixin(BaseModel):
@@ -120,13 +108,68 @@ class TicketIdMixin(BaseModel):
     ticket_id: str | None = Field(default=None, min_length=1, description="Change control ticket ID")
 
 
+class UpdateGroupNameMixin(BaseModel):
+    """Mixin for endpoints that require update_group_name parameter."""
+
+    update_group_name: str | None = Field(default=None, min_length=1, description="Update group name")
+
+
 class VrfNameMixin(BaseModel):
     """Mixin for endpoints that require vrf_name parameter."""
 
     vrf_name: str | None = Field(default=None, min_length=1, max_length=64, description="VRF name")
 
 
-class NodeNameMixin(BaseModel):
-    """Mixin for endpoints that require node_name parameter."""
+class SwitchIdMixin(BaseModel):
+    """Mixin for endpoints that require switch_id parameter."""
 
-    node_name: str | None = Field(default=None, min_length=1, description="Node name")
+    switch_id: str | None = Field(default=None, min_length=1, description="Switch serial number")
+
+
+class PeerSwitchIdMixin(BaseModel):
+    """Mixin for endpoints that require peer_switch_id parameter."""
+
+    peer_switch_id: str | None = Field(default=None, min_length=1, description="Peer switch serial number")
+
+
+class UseVirtualPeerLinkMixin(BaseModel):
+    """Mixin for endpoints that require use_virtual_peer_link parameter."""
+
+    use_virtual_peer_link: bool | None = Field(
+        default=False,
+        description="Indicates whether a virtual peer link is present",
+    )
+
+
+class FromClusterMixin(BaseModel):
+    """Mixin for endpoints that support fromCluster query parameter."""
+
+    from_cluster: str | None = Field(default=None, description="Optional cluster name")
+
+
+class ComponentTypeMixin(BaseModel):
+    """Mixin for endpoints that require componentType query parameter."""
+
+    component_type: str | None = Field(default=None, description="Component type for filtering response")
+
+
+class ViewMixin(BaseModel):
+    """Mixin for endpoints that support view parameter."""
+
+    view: str | None = Field(default=None, description="Optional view type for filtering results")
+
+
+class PolicyIdMixin(BaseModel):
+    """Mixin for endpoints that require policy_id parameter."""
+
+    policy_id: str | None = Field(default=None, min_length=1, description="Policy ID (e.g., POLICY-12345)")
+
+
+class PolicyGroupIdMixin(BaseModel):
+    """Mixin for endpoints that require policy_group_id parameter."""
+
+    policy_group_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Policy Group ID (e.g., POLICY-GROUP-143310)",
+    )
