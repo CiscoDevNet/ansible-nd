@@ -54,18 +54,20 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
     Preserves the same business logic as nd_manage_resource_manager.py.
     """
 
+    RESOURCE_PAGE_SIZE = 500
+
     def __init__(
         self,
         nd: NDModule,
         results: Results,
         log: logging.Logger | None = None,
     ):
-        """Initialise the module, resolve fabric/state from ND params, and pre-fetch all resources.
+        """Initialise the module and resolve fabric/state from ND params.
 
-        Queries the ND Manage API for all existing resources in ``fabric`` at construction
-        time and caches the result in ``self._all_resources``.  The cached list is used as
-        the ``existing`` baseline for diff computation in both merged and deleted states,
-        avoiding repeated GET requests during the same module run.
+        Resource inventory is intentionally loaded after validation in
+        ``manage_state()`` so gathered, merged, and deleted states can use paginated
+        and, where safe, API-filtered candidate reads instead of a constructor-time
+        fabric-wide scan.
 
         Args:
             nd: Initialised ``NDModule`` wrapper that holds the Ansible module params
@@ -90,15 +92,12 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         self._all_resources = []
         self._resources_fetched = False
 
-        # Get All resources for the given fabric and cache them for matching during merged/deleted operations
-        self._get_all_resources()
-
         # Translate playbook switch IPs to switch IDs through the shared fabric inventory helper.
         self.config = self._resolve_switch_ids_in_config(self.config)
 
-        # Resource collections — existing/previous snapshot at init, proposed populated in manage_state
-        self.existing: list[ResourceManagerResponse] = list(self._all_resources)
-        self.previous: list[ResourceManagerResponse] = list(self._all_resources)
+        # Resource collections — populated after validation in manage_state.
+        self.existing: list[ResourceManagerResponse] = []
+        self.previous: list[ResourceManagerResponse] = []
         self.proposed: list[ResourceManagerConfigModel] = []
 
         # NDOutput for building consistent Ansible output across all states
@@ -236,18 +235,313 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
     # ND API interaction helpers
     # ------------------------------------------------------------------
 
+    def _build_resources_get_endpoint(self, pool_name=None, switch_id=None, filter_expr=None, max_results=None, offset=None):
+        """Build a resources GET endpoint with safe optional query parameters."""
+        self.log.debug(
+            "_build_resources_get_endpoint: fabric=%s, pool_name=%s, switch_id=%s, filter_expr=%s, max=%s, offset=%s",
+            self.fabric,
+            pool_name,
+            switch_id,
+            filter_expr,
+            max_results,
+            offset,
+        )
+        ep = EpManageFabricResourcesGet(fabric_name=self.fabric)
+        if pool_name:
+            ep.endpoint_params.pool_name = pool_name
+        if switch_id:
+            ep.endpoint_params.switch_id = switch_id
+        if filter_expr:
+            ep.lucene_params.filter = filter_expr
+        if max_results is not None:
+            ep.lucene_params.max = max_results
+        if offset is not None:
+            ep.lucene_params.offset = offset
+        self.log.debug("_build_resources_get_endpoint: built path=%s, verb=%s", ep.path, ep.verb)
+        return ep
+
+    def _resources_from_response(self, data):
+        """Extract a resources list from supported ND API response shapes."""
+        if isinstance(data, list):
+            self.log.debug("_resources_from_response: response is bare list with %s resource(s)", len(data))
+            return data
+        if isinstance(data, dict) and isinstance(data.get("resources"), list):
+            self.log.debug(
+                "_resources_from_response: response dict contains resources list with %s resource(s)",
+                len(data["resources"]),
+            )
+            return data["resources"]
+        if isinstance(data, dict) and data and "resources" not in data and "meta" not in data:
+            self.log.debug("_resources_from_response: response is single resource dict, wrapping in list")
+            return [data]
+        self.log.debug(
+            "_resources_from_response: response shape has no resources, treating as empty (type=%s)",
+            type(data).__name__,
+        )
+        return []
+
+    def _remaining_from_response(self, data):
+        """Return ``meta.counts.remaining`` from a response when present."""
+        if not isinstance(data, dict):
+            self.log.debug("_remaining_from_response: response is %s, no pagination metadata", type(data).__name__)
+            return None
+        meta = data.get("meta")
+        if not isinstance(meta, dict):
+            self.log.debug("_remaining_from_response: no meta dict in response")
+            return None
+        counts = meta.get("counts")
+        if not isinstance(counts, dict):
+            self.log.debug("_remaining_from_response: no meta.counts dict in response")
+            return None
+        remaining = counts.get("remaining")
+        if remaining is None:
+            self.log.debug("_remaining_from_response: meta.counts.remaining is absent")
+            return None
+        try:
+            remaining_int = int(remaining)
+            self.log.debug("_remaining_from_response: remaining_raw=%s, remaining_int=%s", remaining, remaining_int)
+            return remaining_int
+        except (TypeError, ValueError):
+            self.log.debug("_remaining_from_response: remaining value is not an integer: %s", remaining)
+            return None
+
+    def _has_next_page(self, data):
+        """Return True when response metadata advertises a next page."""
+        if not isinstance(data, dict):
+            self.log.debug("_has_next_page: response is %s, no next-page metadata", type(data).__name__)
+            return False
+        meta = data.get("meta")
+        if not isinstance(meta, dict):
+            self.log.debug("_has_next_page: no meta dict in response")
+            return False
+        links = meta.get("links")
+        has_next = isinstance(links, dict) and bool(links.get("next"))
+        self.log.debug("_has_next_page: has_next=%s, next=%s", has_next, links.get("next") if isinstance(links, dict) else None)
+        return has_next
+
+    def _parse_resource_list(self, raw_list):
+        """Normalise raw resource entries to response models, preserving raw dicts on parse failure."""
+        self.log.debug("_parse_resource_list: parsing %s raw resource item(s)", len(raw_list))
+        resources = []
+        for raw in raw_list:
+            try:
+                resource_model = ResourceManagerResponse.from_response(raw)
+                self.log.debug(
+                    "Parsed resource: entity_name=%s, pool_name=%s",
+                    getattr(resource_model, "entity_name", None),
+                    getattr(resource_model, "pool_name", None),
+                )
+                resources.append(resource_model)
+            except Exception as exc:
+                self.log.warning(
+                    "Failed to parse resource into ResourceManagerResponse (keeping raw): %s | raw=%s",
+                    exc,
+                    raw,
+                )
+                resources.append(raw)
+        self.log.debug("_parse_resource_list: parsed %s resource item(s)", len(resources))
+        return resources
+
+    def _fetch_resources_paginated(self, pool_name=None, switch_id=None, filter_expr=None):
+        """Fetch resource inventory through the paginated resources GET endpoint."""
+        self.log.info(
+            "_fetch_resources_paginated: starting resource fetch for fabric=%s, pool_name=%s, switch_id=%s, filter_expr=%s",
+            self.fabric,
+            pool_name,
+            switch_id,
+            filter_expr,
+        )
+        resources = []
+        offset = 0
+        page_size = self.RESOURCE_PAGE_SIZE
+        visited_offsets = set()
+        page_count = 0
+        max_pages = 10000
+
+        while True:
+            if offset in visited_offsets:
+                self.log.warning(
+                    "_fetch_resources_paginated: detected repeated offset=%s; stopping pagination to avoid loop",
+                    offset,
+                )
+                break
+            visited_offsets.add(offset)
+            page_count += 1
+            if page_count > max_pages:
+                self.log.warning(
+                    "_fetch_resources_paginated: exceeded max_pages=%s; stopping pagination for safety",
+                    max_pages,
+                )
+                break
+
+            self.log.debug(
+                "_fetch_resources_paginated: requesting page offset=%s, page_size=%s, pool_name=%s, switch_id=%s, filter_expr=%s",
+                offset,
+                page_size,
+                pool_name,
+                switch_id,
+                filter_expr,
+            )
+            ep = self._build_resources_get_endpoint(
+                pool_name=pool_name,
+                switch_id=switch_id,
+                filter_expr=filter_expr,
+                max_results=page_size,
+                offset=offset,
+            )
+            api_start = time.monotonic()
+            try:
+                data = self.nd.request(ep.path, ep.verb)
+            except NDModuleError as exc:
+                api_elapsed = time.monotonic() - api_start
+                if exc.status == 404:
+                    self.log.info(
+                        "_fetch_resources_paginated: GET resources returned 404 after %.3f second(s) "
+                        "(path=%s, state=%s), treating as empty",
+                        api_elapsed,
+                        ep.path,
+                        self.state,
+                    )
+                    break
+                self.log.exception(
+                    "_fetch_resources_paginated: GET resources API call failed after %.3f second(s) (path=%s, state=%s)",
+                    api_elapsed,
+                    ep.path,
+                    self.state,
+                )
+                raise ValueError(
+                    f"_fetch_resources_paginated: GET resources API call failed after {api_elapsed:.3f} second(s)"
+                    f" (path={ep.path}, state={self.state})"
+                ) from exc
+            except Exception:
+                api_elapsed = time.monotonic() - api_start
+                self.log.exception(
+                    "_fetch_resources_paginated: GET resources API call failed after %.3f second(s) (path=%s, state=%s)",
+                    api_elapsed,
+                    ep.path,
+                    self.state,
+                )
+                raise ValueError(
+                    f"_fetch_resources_paginated: GET resources API call failed after {api_elapsed:.3f} second(s)"
+                    f" (path={ep.path}, state={self.state})"
+                )
+
+            api_elapsed = time.monotonic() - api_start
+            raw_list = self._resources_from_response(data)
+            remaining = self._remaining_from_response(data)
+            remaining_raw = None
+            total_count = None
+            if isinstance(data, dict):
+                meta = data.get("meta")
+                if isinstance(meta, dict):
+                    counts = meta.get("counts")
+                    if isinstance(counts, dict):
+                        remaining_raw = counts.get("remaining")
+                        total_count = counts.get("total")
+            has_next = self._has_next_page(data)
+            self.log.info(
+                "_fetch_resources_paginated: GET resources API response time %.3f second(s) "
+                "(path=%s, state=%s, response_count=%s, remaining=%s, remaining_raw=%s, total=%s, has_next=%s)",
+                api_elapsed,
+                ep.path,
+                self.state,
+                len(raw_list),
+                remaining,
+                remaining_raw,
+                total_count,
+                has_next,
+            )
+
+            resources.extend(self._parse_resource_list(raw_list))
+            batch_count = len(raw_list)
+            self.log.info(
+                "_fetch_resources_paginated: pagination iteration=%s "
+                "(offset=%s, page_size=%s, fetched_this_page=%s, cumulative_fetched=%s, remaining=%s, remaining_raw=%s, total=%s, has_next=%s)",
+                page_count,
+                offset,
+                page_size,
+                batch_count,
+                len(resources),
+                remaining,
+                remaining_raw,
+                total_count,
+                has_next,
+            )
+
+            # Stop pagination when response is a bare list (no pagination metadata)
+            if isinstance(data, list):
+                self.log.debug("_fetch_resources_paginated: stopping pagination because response was a bare list")
+                break
+            # Stop pagination when page returned no resources
+            if not raw_list:
+                self.log.debug("_fetch_resources_paginated: stopping pagination because page returned no resources")
+                break
+
+            next_offset = offset + batch_count
+            if next_offset <= offset:
+                self.log.warning(
+                    "_fetch_resources_paginated: non-increasing next_offset detected (offset=%s, batch_count=%s); "
+                    "stopping pagination to avoid loop",
+                    offset,
+                    batch_count,
+                )
+                break
+
+            # Use remaining count as primary pagination indicator (most reliable)
+            if remaining is not None:
+                if remaining <= 0:
+                    self.log.debug("_fetch_resources_paginated: stopping pagination because remaining=%s", remaining)
+                    if remaining < 0:
+                        self.log.warning(
+                            "_fetch_resources_paginated: API returned negative remaining count (%s); "
+                            "stopping pagination early to avoid infinite loop or further data loss",
+                            remaining,
+                        )
+                    break
+                # Continue to next page when remaining > 0
+                self.log.debug(
+                    "_fetch_resources_paginated: continuing pagination because remaining=%s > 0; next_offset=%s",
+                    remaining,
+                    next_offset,
+                )
+                offset = next_offset
+                continue
+
+            # Fallback: use next-page metadata when remaining count not available
+            if has_next:
+                self.log.debug(
+                    "_fetch_resources_paginated: continuing pagination because has_next=True; next_offset=%s",
+                    next_offset,
+                )
+                offset = next_offset
+                continue
+
+            # Final fallback: continue if we got a full page, stop if partial page
+            if batch_count < page_size:
+                self.log.debug(
+                    "_fetch_resources_paginated: stopping pagination because response_count=%s is smaller than page_size=%s",
+                    batch_count,
+                    page_size,
+                )
+                break
+
+            # Safeguard: always continue fetching when we got a full page
+            self.log.debug(
+                "_fetch_resources_paginated: continuing pagination via fallback (full page retrieved); next_offset=%s",
+                next_offset,
+            )
+            offset = next_offset
+
+        self.log.info(
+            "_fetch_resources_paginated: completed resource fetch for fabric=%s, total_resources=%s, total_iterations=%s",
+            self.fabric,
+            len(resources),
+            page_count,
+        )
+        return resources
+
     def _get_all_resources(self):
-        """Fetch all existing resources for the fabric from the ND Manage API and cache them.
-
-        Issues a single GET request to the fabric resources endpoint.  The response is
-        normalised to a flat list of ``ResourceManagerResponse`` model instances (or raw
-        dicts when model parsing fails) and stored in ``self._all_resources``.  Subsequent
-        calls return immediately without hitting the API again (``self._resources_fetched``
-        flag).
-
-        A 404 response is treated as an empty fabric (no resources allocated yet) rather
-        than an error.  Any other ``NDModuleError`` is re-raised to the caller.
-        """
+        """Fetch all existing resources for the fabric from the ND Manage API and cache them."""
         if self._resources_fetched:
             self.log.debug(
                 "Resources already cached for fabric=%s: %s resource(s)",
@@ -257,96 +551,189 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             return
 
         self.log.info("Fetching all resources for fabric=%s", self.fabric)
-
-        ep = EpManageFabricResourcesGet(fabric_name=self.fabric)
-        api_start = time.monotonic()
-        try:
-            data = self.nd.request(ep.path, ep.verb)
-        except NDModuleError as exc:
-            api_elapsed = time.monotonic() - api_start
-            if exc.status == 404:
-                # Fabric has no resources yet — that is valid
-                self.log.info(
-                    "_get_all_resources: GET resources API response time %.3f second(s) (path=%s, state=%s, status=404)",
-                    api_elapsed,
-                    ep.path,
-                    self.state,
-                )
-                self.log.info(
-                    "No resources found (404) for fabric=%s, treating as empty",
-                    self.fabric,
-                )
-                self._resources_fetched = True
-                return
-            self.log.exception(
-                "_get_all_resources: GET resources API call failed after %.3f second(s) (path=%s, state=%s)",
-                api_elapsed,
-                ep.path,
-                self.state,
-            )
-            raise ValueError(
-                f"_get_all_resources: GET resources API call failed after {api_elapsed:.3f} second(s) (path={ep.path}, state={self.state})"
-            ) from exc
-        except Exception:
-            self.log.exception(
-                "_get_all_resources: GET resources API call failed after %.3f second(s) (path=%s, state=%s)",
-                time.monotonic() - api_start,
-                ep.path,
-                self.state,
-            )
-            raise ValueError(
-                f"_get_all_resources: GET resources API call failed after {time.monotonic() - api_start:.3f} second(s) (path={ep.path}, state={self.state})"
-            )
-        api_elapsed = time.monotonic() - api_start
-        _resp_count = len(data) if isinstance(data, list) else len(data["resources"]) if isinstance(data, dict) and "resources" in data else 0
-        self.log.info(
-            "_get_all_resources: GET resources API response time %.3f second(s) (path=%s, state=%s, response_count=%s)",
-            api_elapsed,
-            ep.path,
-            self.state,
-            _resp_count,
-        )
-
-        # The ND API may return a list directly or {"resources": [...], "meta": {...}}
-        if isinstance(data, list):
-            self.log.debug("API returned a list with %s item(s)", len(data))
-            raw_list = data
-        elif isinstance(data, dict) and "resources" in data:
-            self.log.debug(
-                "API returned dict with 'resources' key, %s resource(s)",
-                len(data["resources"]),
-            )
-            raw_list = data["resources"]
-        elif isinstance(data, dict) and data:
-            self.log.debug("API returned a non-empty dict without 'resources' key, wrapping in list")
-            raw_list = [data]
-        else:
-            self.log.debug("API returned empty or unexpected data, treating as empty list")
-            raw_list = []
-
-        for raw in raw_list:
-            try:
-                resource_model = ResourceManagerResponse.from_response(raw)
-                self.log.debug(
-                    "Parsed resource: entity_name=%s, pool_name=%s",
-                    getattr(resource_model, "entity_name", None),
-                    getattr(resource_model, "pool_name", None),
-                )
-                self._all_resources.append(resource_model)
-            except Exception as exc:
-                # If parsing fails, keep the raw dict so we can still match on it
-                self.log.warning(
-                    "Failed to parse resource into ResourceManagerResponse (keeping raw): %s | raw=%s",
-                    exc,
-                    raw,
-                )
-                self._all_resources.append(raw)
-
+        self._all_resources = self._fetch_resources_paginated()
         self._resources_fetched = True
         self.log.info(
             "Fetched %s resource(s) for fabric=%s",
             len(self._all_resources),
             self.fabric,
+        )
+
+    def _entity_filter(self, entity_name):
+        """Build the exact entityName Lucene filter used for safe gathered narrowing."""
+        filter_expr = f"entityName:{entity_name}" if entity_name else None
+        self.log.debug("_entity_filter: entity_name=%s, filter_expr=%s", entity_name, filter_expr)
+        return filter_expr
+
+    def _resource_unique_key(self, resource):
+        """Return a stable fallback key for deduplicating resources without IDs."""
+        key = (
+            self._get_entity_name(resource),
+            self._get_pool_name(resource),
+            self._get_resource_value(resource),
+            self._get_scope_type(resource),
+            self._get_switch_id(resource),
+        )
+        self.log.debug("_resource_unique_key: key=%s", key)
+        return key
+
+    def _deduplicate_resources(self, resources):
+        """Deduplicate resources returned by overlapping filtered API calls."""
+        self.log.debug("_deduplicate_resources: starting with %s resource candidate(s)", len(resources))
+        deduped = []
+        seen_ids = set()
+        seen_keys = set()
+        for resource in resources:
+            resource_id = self._get_resource_id(resource)
+            if resource_id is not None:
+                if resource_id in seen_ids:
+                    self.log.debug("_deduplicate_resources: skipping duplicate resource_id=%s", resource_id)
+                    continue
+                seen_ids.add(resource_id)
+                deduped.append(resource)
+                continue
+
+            key = self._resource_unique_key(resource)
+            if key in seen_keys:
+                self.log.debug("_deduplicate_resources: skipping duplicate fallback key=%s", key)
+                continue
+            seen_keys.add(key)
+            deduped.append(resource)
+        self.log.debug(
+            "_deduplicate_resources: reduced %s candidate(s) to %s unique resource(s)",
+            len(resources),
+            len(deduped),
+        )
+        return deduped
+
+    def _fetch_resources_for_criteria(self, criteria):
+        """Fetch and deduplicate resource candidates for a list of query criteria."""
+        if not criteria:
+            self.log.debug("_fetch_resources_for_criteria: no criteria supplied, returning empty resource list")
+            return []
+
+        self.log.info("_fetch_resources_for_criteria: fetching resources for %s criteria item(s)", len(criteria))
+        resources = []
+        seen_criteria = set()
+        for idx, (pool_name, switch_id, filter_expr) in enumerate(criteria):
+            criteria_key = (pool_name, switch_id, filter_expr)
+            if criteria_key in seen_criteria:
+                self.log.debug("_fetch_resources_for_criteria: skipping duplicate criteria[%s]=%s", idx, criteria_key)
+                continue
+            seen_criteria.add(criteria_key)
+            self.log.debug(
+                "_fetch_resources_for_criteria: fetching criteria[%s]: pool_name=%s, switch_id=%s, filter_expr=%s",
+                idx,
+                pool_name,
+                switch_id,
+                filter_expr,
+            )
+            resources.extend(
+                self._fetch_resources_paginated(
+                    pool_name=pool_name,
+                    switch_id=switch_id,
+                    filter_expr=filter_expr,
+                )
+            )
+        deduped = self._deduplicate_resources(resources)
+        self.log.info(
+            "_fetch_resources_for_criteria: fetched %s resource candidate(s), %s unique resource(s)",
+            len(resources),
+            len(deduped),
+        )
+        return deduped
+
+    def _build_gathered_resource_criteria(self):
+        """Build safe filtered GET criteria from gathered config filters."""
+        self.log.debug(
+            "_build_gathered_resource_criteria: building criteria from %s gathered filter item(s)",
+            len(self.config or []),
+        )
+        criteria = []
+        for idx, filter_item in enumerate(self.config):
+            if not self._filter_has_active_criteria(filter_item):
+                self.log.debug("_build_gathered_resource_criteria: skipping empty filter item at index=%s", idx)
+                continue
+
+            pool_name = filter_item.get("pool_name")
+            filter_expr = self._entity_filter(filter_item.get("entity_name"))
+            filter_switches = filter_item.get("switches") or [None]
+            for switch_id in filter_switches:
+                criteria.append((pool_name, switch_id, filter_expr))
+                self.log.debug(
+                    "_build_gathered_resource_criteria: added criteria from filter index=%s: pool_name=%s, switch_id=%s, filter_expr=%s",
+                    idx,
+                    pool_name,
+                    switch_id,
+                    filter_expr,
+                )
+        self.log.debug("_build_gathered_resource_criteria: built %s criteria item(s)", len(criteria))
+        return criteria
+
+    def _switch_filter_supported(self, scope_type):
+        """Return True when the resources GET switchId filter safely maps to the scope."""
+        supported = scope_type in ("device", "device_interface")
+        self.log.debug("_switch_filter_supported: scope_type=%s, supported=%s", scope_type, supported)
+        return supported
+
+    def _build_candidate_resource_criteria(self, configs):
+        """Build safe filtered GET criteria for modifying states."""
+        self.log.debug(
+            "_build_candidate_resource_criteria: building criteria from %s validated config item(s)",
+            len(configs or []),
+        )
+        criteria = []
+        for idx, cfg in enumerate(configs):
+            pool_name = cfg.pool_name
+            if self._switch_filter_supported(cfg.scope_type) and cfg.switches:
+                for switch_id in cfg.switches:
+                    criteria.append((pool_name, switch_id, None))
+                    self.log.debug(
+                        "_build_candidate_resource_criteria: added switch-filtered criteria from config index=%s: pool_name=%s, switch_id=%s",
+                        idx,
+                        pool_name,
+                        switch_id,
+                    )
+                continue
+            criteria.append((pool_name, None, None))
+            self.log.debug(
+                "_build_candidate_resource_criteria: added pool-only criteria from config index=%s: pool_name=%s, scope_type=%s",
+                idx,
+                pool_name,
+                cfg.scope_type,
+            )
+        self.log.debug("_build_candidate_resource_criteria: built %s criteria item(s)", len(criteria))
+        return criteria
+
+    def _refresh_existing_resources(self, update_previous=False):
+        """Load the current candidate resource snapshot for the active state."""
+        self.log.info(
+            "_refresh_existing_resources: loading resource snapshot for fabric=%s, state=%s, update_previous=%s",
+            self.fabric,
+            self.state,
+            update_previous,
+        )
+        if self.state == "gathered":
+            if not self.config:
+                self.log.debug("_refresh_existing_resources: gathered without config, fetching full paginated inventory")
+                resources = self._fetch_resources_paginated()
+            else:
+                self.log.debug("_refresh_existing_resources: gathered with config, fetching filtered candidate inventory")
+                resources = self._fetch_resources_for_criteria(self._build_gathered_resource_criteria())
+        else:
+            self.log.debug("_refresh_existing_resources: modifying state, fetching filtered candidate inventory")
+            resources = self._fetch_resources_for_criteria(self._build_candidate_resource_criteria(self.proposed))
+
+        self._all_resources = resources
+        self._resources_fetched = True
+        self.existing = list(resources)
+        if update_previous:
+            self.previous = list(resources)
+        self.log.info(
+            "_refresh_existing_resources: loaded %s resource(s) for fabric=%s, state=%s",
+            len(resources),
+            self.fabric,
+            self.state,
         )
 
     def _resolve_switch_ids_in_config(self, config):
@@ -382,6 +769,11 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         inventory = FabricSwitchInventory.from_fabric(self.nd, self.fabric, self.log, SwitchDataModel)
         switches_by_ip = inventory.by_ip()
         switches_by_id = inventory.by_id()
+
+        if not getattr(inventory, "switches", None) or (not switches_by_ip and not switches_by_id):
+            msg = "No switch inventory found for fabric '{0}'; cannot resolve switches for resource manager config".format(self.fabric)
+            self.log.error("_resolve_switch_ids_in_config: %s", msg)
+            raise ValueError(msg)
 
         self.log.debug(
             "_resolve_switch_ids_in_config: inventory indexes built for fabric=%s (by_ip=%s, by_id=%s)",
@@ -817,6 +1209,8 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
         if handler is None:
             raise ValueError("Unsupported state '{0}'".format(self.state))
 
+        self._refresh_existing_resources(update_previous=True)
+
         self.log.info("manage_state: Dispatching to %s()", handler.__name__)
         handler()
 
@@ -865,10 +1259,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
 
         # Re-query to capture post-operation state for current snapshot
         if not self.nd.module.check_mode and changed:
-            self._resources_fetched = False
-            self._all_resources = []
-            self._get_all_resources()
-            self.existing = list(self._all_resources)
+            self._refresh_existing_resources(update_previous=False)
 
         final_results_data = {
             "changed": changed,

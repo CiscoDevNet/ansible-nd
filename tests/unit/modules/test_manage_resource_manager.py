@@ -128,6 +128,7 @@ def _resource_manager_for_exit(verbosity=0):
     module.changed_dict = [{"merged": [], "deleted": [], "gathered": [], "debugs": []}]
     module.existing = []
     module.previous = []
+    module.proposed = []
     module._proposed_list = []
     module.output = NDOutput("normal")
     return module, ansible_module
@@ -390,9 +391,21 @@ def _mock_fabric_inventory(ip_to_id_map=None):
     if ip_to_id_map is None:
         ip_to_id_map = {"192.0.2.10": "SER1", "192.0.2.11": "SER2"}
 
+    switches = []
+    by_ip = {}
+    by_id = {}
+    for ip, serial in ip_to_id_map.items():
+        switch = MagicMock()
+        switch.fabric_management_ip = ip
+        switch.switch_id = serial
+        switches.append(switch)
+        by_ip[ip] = switch
+        by_id[serial] = switch
+
     inventory = MagicMock()
-    inventory.by_ip.return_value = {ip: MagicMock(id=serial) for ip, serial in ip_to_id_map.items()}
-    inventory.by_id.return_value = {serial: MagicMock(ip=ip) for ip, serial in ip_to_id_map.items()}
+    inventory.switches = switches
+    inventory.by_ip.return_value = by_ip
+    inventory.by_id.return_value = by_id
     return inventory
 
 
@@ -401,8 +414,12 @@ def _resource_manager_with_nd(fabric="fabric-1", state="merged", config=None, ch
     nd = _mock_nd_module(fabric, state, config, check_mode)
     results = Results()
     module = NDResourceManagerModule(nd, results, log=LOG)
-    if all_resources:
+    if all_resources is not None:
         module._all_resources = all_resources  # pylint: disable=protected-access
+        module.existing = list(all_resources)
+        module.previous = list(all_resources)
+    if config and all(isinstance(item, ResourceManagerConfigModel) for item in config):
+        module.proposed = list(config)
     return module, nd
 
 
@@ -528,6 +545,7 @@ def test_get_all_resources_api_returns_list():
 
     results = Results()
     module = NDResourceManagerModule(nd, results, log=LOG)
+    module._get_all_resources()  # pylint: disable=protected-access
 
     assert len(module._all_resources) == 2  # pylint: disable=protected-access
     assert module._resources_fetched is True  # pylint: disable=protected-access
@@ -552,6 +570,7 @@ def test_get_all_resources_api_returns_dict_with_resources_key():
 
     results = Results()
     module = NDResourceManagerModule(nd, results, log=LOG)
+    module._get_all_resources()  # pylint: disable=protected-access
 
     assert len(module._all_resources) == 1  # pylint: disable=protected-access
 
@@ -564,6 +583,7 @@ def test_get_all_resources_handles_404_as_empty():
 
     results = Results()
     module = NDResourceManagerModule(nd, results, log=LOG)
+    module._get_all_resources()  # pylint: disable=protected-access
 
     assert len(module._all_resources) == 0  # pylint: disable=protected-access
     assert module._resources_fetched is True  # pylint: disable=protected-access
@@ -584,6 +604,7 @@ def test_get_all_resources_caches_on_second_call():
 
     results = Results()
     module = NDResourceManagerModule(nd, results, log=LOG)
+    module._get_all_resources()  # pylint: disable=protected-access
 
     first_call_count = nd.request.call_count
 
@@ -607,9 +628,74 @@ def test_get_all_resources_preserves_raw_dict_on_parse_failure():
 
     results = Results()
     module = NDResourceManagerModule(nd, results, log=LOG)
+    module._get_all_resources()  # pylint: disable=protected-access
 
     # Should preserve raw dict even if parsing failed
     assert len(module._all_resources) > 0  # pylint: disable=protected-access
+
+
+def test_get_all_resources_reads_multiple_pages_with_offsets():
+    """_get_all_resources follows paginated resource metadata."""
+    nd = _mock_nd_module()
+    page1 = {
+        "resources": [
+            {
+                "resourceId": 101,
+                "entityName": "loopback0",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": "10",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+            }
+        ],
+        "meta": {
+            "counts": {"remaining": 1, "total": 2},
+            "links": {"next": "/api/v1/manage/fabrics/fabric-1/resources?max=1000&offset=1000"},
+        },
+    }
+    page2 = {
+        "resources": [
+            {
+                "resourceId": 102,
+                "entityName": "loopback1",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": "11",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+            }
+        ],
+        "meta": {"counts": {"remaining": 0, "total": 2}},
+    }
+    nd.request.side_effect = [page1, page2]
+
+    results = Results()
+    module = NDResourceManagerModule(nd, results, log=LOG)
+    module._get_all_resources()  # pylint: disable=protected-access
+
+    paths = [call.args[0] for call in nd.request.call_args_list]
+    assert len(module._all_resources) == 2  # pylint: disable=protected-access
+    assert "max=1000&offset=0" in paths[0]
+    assert "max=1000&offset=1000" in paths[1]
+
+
+def test_fetch_resources_paginated_uses_filtered_query_path():
+    """Filtered resource reads push poolName, switchId, and entityName filter to the API."""
+    nd = _mock_nd_module()
+    nd.request.return_value = {"resources": [], "meta": {"counts": {"remaining": 0, "total": 0}}}
+    results = Results()
+    module = NDResourceManagerModule(nd, results, log=LOG)
+
+    resources = module._fetch_resources_paginated(  # pylint: disable=protected-access
+        pool_name="LOOPBACK_ID",
+        switch_id="SER1",
+        filter_expr="entityName:loopback0",
+    )
+
+    assert resources == []
+    path = nd.request.call_args.args[0]
+    assert "poolName=LOOPBACK_ID" in path
+    assert "switchId=SER1" in path
+    assert "filter=entityName:loopback0" in path
+    assert "max=1000" in path
+    assert "offset=0" in path
 
 
 @pytest.mark.parametrize(
@@ -1066,7 +1152,8 @@ def test_get_all_resources_api_error_500_raises():
 
     with pytest.raises(ValueError, match="API call failed"):
         results = Results()
-        NDResourceManagerModule(nd, results, log=LOG)
+        module = NDResourceManagerModule(nd, results, log=LOG)
+        module._get_all_resources()  # pylint: disable=protected-access
 
 
 def test_get_all_resources_api_error_timeout_raises():
@@ -1076,7 +1163,8 @@ def test_get_all_resources_api_error_timeout_raises():
 
     with pytest.raises(ValueError, match="API call failed"):
         results = Results()
-        NDResourceManagerModule(nd, results, log=LOG)
+        module = NDResourceManagerModule(nd, results, log=LOG)
+        module._get_all_resources()  # pylint: disable=protected-access
 
 
 def test_get_all_resources_empty_response():
@@ -1086,6 +1174,7 @@ def test_get_all_resources_empty_response():
 
     results = Results()
     module = NDResourceManagerModule(nd, results, log=LOG)
+    module._get_all_resources()  # pylint: disable=protected-access
 
     assert len(module._all_resources) == 0  # pylint: disable=protected-access
 
@@ -1104,6 +1193,7 @@ def test_get_all_resources_single_dict_wraps_in_list():
 
     results = Results()
     module = NDResourceManagerModule(nd, results, log=LOG)
+    module._get_all_resources()  # pylint: disable=protected-access
 
     # Should wrap in list and parse
     assert len(module._all_resources) >= 0  # pylint: disable=protected-access
@@ -1127,6 +1217,104 @@ def test_validate_input_empty_config_for_deleted_raises():
 
     with pytest.raises(ValueError, match="config.*mandatory"):
         module._validate_input()  # pylint: disable=protected-access
+
+
+def test_manage_state_merged_uses_filtered_candidate_get():
+    """Merged state queries only safe resource candidates before diffing."""
+    config = [
+        {
+            "entity_name": "loopback0",
+            "pool_type": "ID",
+            "pool_name": "LOOPBACK_ID",
+            "scope_type": "device",
+            "switches": ["192.0.2.10"],
+            "resource": "10",
+        }
+    ]
+    nd = _mock_nd_module(state="merged", config=config)
+    nd.request.return_value = {"resources": [], "meta": {"counts": {"remaining": 0, "total": 0}}}
+    results = Results()
+
+    with patch(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.FabricSwitchInventory.from_fabric",
+        return_value=_mock_fabric_inventory({"192.0.2.10": "SER1"}),
+    ):
+        module = NDResourceManagerModule(nd, results, log=LOG)
+        module.manage_state()
+
+    paths = [call.args[0] for call in nd.request.call_args_list]
+    assert "poolName=LOOPBACK_ID" in paths[0]
+    assert "switchId=SER1" in paths[0]
+    assert "max=1000" in paths[0]
+    assert "offset=0" in paths[0]
+
+
+def test_manage_state_deleted_uses_filtered_candidate_get():
+    """Deleted state uses the same filtered candidate lookup before remove-by-ID matching."""
+    config = [
+        {
+            "entity_name": "loopback0",
+            "pool_type": "ID",
+            "pool_name": "LOOPBACK_ID",
+            "scope_type": "device",
+            "switches": ["192.0.2.10"],
+        }
+    ]
+    nd = _mock_nd_module(state="deleted", config=config)
+    nd.request.return_value = {"resources": [], "meta": {"counts": {"remaining": 0, "total": 0}}}
+    results = Results()
+
+    with patch(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.FabricSwitchInventory.from_fabric",
+        return_value=_mock_fabric_inventory({"192.0.2.10": "SER1"}),
+    ):
+        module = NDResourceManagerModule(nd, results, log=LOG)
+        module.manage_state()
+
+    path = nd.request.call_args_list[0].args[0]
+    assert "poolName=LOOPBACK_ID" in path
+    assert "switchId=SER1" in path
+    assert "max=1000" in path
+    assert "offset=0" in path
+    assert len(nd.request.call_args_list) == 1
+
+
+def test_manage_state_gathered_uses_filtered_candidate_get():
+    """Gathered state pushes pool, switch, and entity filters to resource GET."""
+    config = [
+        {
+            "entity_name": "loopback0",
+            "pool_name": "LOOPBACK_ID",
+            "switches": ["192.0.2.10"],
+        }
+    ]
+    nd = _mock_nd_module(state="gathered", config=config)
+    nd.request.return_value = {
+        "resources": [
+            {
+                "resourceId": 101,
+                "entityName": "loopback0",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": "10",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+            }
+        ],
+        "meta": {"counts": {"remaining": 0, "total": 1}},
+    }
+    results = Results()
+
+    with patch(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.FabricSwitchInventory.from_fabric",
+        return_value=_mock_fabric_inventory({"192.0.2.10": "SER1"}),
+    ):
+        module = NDResourceManagerModule(nd, results, log=LOG)
+        module.manage_state()
+
+    path = nd.request.call_args_list[0].args[0]
+    assert "poolName=LOOPBACK_ID" in path
+    assert "switchId=SER1" in path
+    assert "filter=entityName:loopback0" in path
+    assert module.changed_dict[0]["gathered"]  # pylint: disable=protected-access
 
 
 def test_validate_input_gathered_with_partial_filter():
@@ -1964,6 +2152,7 @@ def test_resolve_switch_ids_translates_ip_and_preserves_switch_id():
     module, unused_nd = _resource_manager_with_nd(config=[])
 
     inventory = MagicMock()
+    inventory.switches = [MagicMock()]
     inventory.by_ip.return_value = {"192.0.2.10": MagicMock(switch_id="SER1")}
     inventory.by_id.return_value = {"SER2": MagicMock()}
 
@@ -1989,6 +2178,7 @@ def test_resolve_switch_ids_unresolved_switch_raises_value_error():
     module, unused_nd = _resource_manager_with_nd(config=[])
 
     inventory = MagicMock()
+    inventory.switches = [MagicMock()]
     inventory.by_ip.return_value = {"192.0.2.10": MagicMock(switch_id="SER1")}
     inventory.by_id.return_value = {"SER1": MagicMock()}
 
@@ -2006,6 +2196,53 @@ def test_resolve_switch_ids_unresolved_switch_raises_value_error():
                     }
                 ]
             )  # pylint: disable=protected-access
+
+
+def test_resolve_switch_ids_empty_inventory_raises_value_error():
+    """Switch-bearing configs fail when the fabric inventory GET returns no usable switches."""
+    module, unused_nd = _resource_manager_with_nd(config=[])
+    inventory = MagicMock()
+    inventory.switches = []
+    inventory.by_ip.return_value = {}
+    inventory.by_id.return_value = {}
+
+    with patch(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.FabricSwitchInventory.from_fabric",
+        return_value=inventory,
+    ):
+        with pytest.raises(ValueError, match="No switch inventory found"):
+            module._resolve_switch_ids_in_config(  # pylint: disable=protected-access
+                [
+                    {
+                        "entity_name": "loopback0",
+                        "scope_type": "device",
+                        "switches": ["SER1"],
+                    }
+                ]
+            )
+
+
+def test_resolve_switch_ids_fabric_only_config_does_not_query_inventory():
+    """Fabric-only resource configs do not require switch inventory."""
+    nd = _mock_nd_module(
+        config=[
+            {
+                "entity_name": "l3_vni_fabric",
+                "pool_type": "ID",
+                "pool_name": "L3_VNI",
+                "scope_type": "fabric",
+                "resource": "101",
+            }
+        ]
+    )
+    results = Results()
+
+    with patch(
+        "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager.nd_manage_resource_manager_resources.FabricSwitchInventory.from_fabric"
+    ) as from_fabric:
+        NDResourceManagerModule(nd, results, log=LOG)
+
+    assert from_fabric.call_count == 0
 
 
 def test_manage_merged_check_mode_registers_diff_without_post_call():
@@ -2179,13 +2416,13 @@ def test_exit_module_requeries_when_changed_and_not_check_mode():
     module.changed_dict[0]["merged"] = [{"entityName": "loopback0"}]
     module.nd.module.check_mode = False
 
-    def fake_refresh():
-        module._all_resources = [_response(entityName="loopback9")]
+    def fake_refresh(update_previous=False):  # pylint: disable=unused-argument
+        module.existing = [_response(entityName="loopback9")]
 
-    module._get_all_resources = MagicMock(side_effect=fake_refresh)  # pylint: disable=protected-access
+    module._refresh_existing_resources = MagicMock(side_effect=fake_refresh)  # pylint: disable=protected-access
     module.exit_module()
 
-    assert module._get_all_resources.call_count == 1  # pylint: disable=protected-access
+    module._refresh_existing_resources.assert_called_once_with(update_previous=False)  # pylint: disable=protected-access
     assert any(item.get("entity_name") == "loopback9" for item in ansible_module.exit_payload.get("after", []))
 
 

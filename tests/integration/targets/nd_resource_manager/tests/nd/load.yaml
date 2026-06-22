@@ -10,7 +10,7 @@
     - name: LOAD - Set load test defaults
       ansible.builtin.set_fact:
         rm_load_expected_resources: "{{ rm_load_expected_resources | default(1000) | int }}"
-        rm_load_resource_start: "{{ rm_load_resource_start | default(300) | int }}"
+        rm_load_resource_start: "{{ rm_load_resource_start | default(0) | int }}"
         rm_load_switches:
           - "{{ ansible_switch1 }}"
           - "{{ ansible_switch2 }}"
@@ -30,6 +30,15 @@
         rm_load_config_count: "{{ (rm_load_expected_resources | int) // (rm_load_switches | length) }}"
         rm_load_config: []
 
+    - name: LOAD - Validate generated resource ID range
+      ansible.builtin.assert:
+        that:
+          - '(rm_load_config_count | int) <= 1024'
+          - '(rm_load_resource_start | int) >= 0'
+        fail_msg: >-
+          Unable to generate unique IDs in the range 0-1023 for this run.
+          rm_load_config_count={{ rm_load_config_count }} must be <= 1024.
+
     - name: LOAD - Build generated resource config
       ansible.builtin.set_fact:
         rm_load_config: >-
@@ -41,11 +50,18 @@
                 'pool_name': 'LOOPBACK_ID',
                 'scope_type': 'device',
                 'switches': rm_load_switches,
-                'resource': ((rm_load_resource_start | int) + (item | int) - 1) | string
+                'resource': (((rm_load_resource_start | int) + (item | int) - 1) % 1024) | string
               }
             ]
           }}
       loop: "{{ range(1, (rm_load_config_count | int) + 1) | list }}"
+
+    - name: LOAD - Assert generated resource IDs are unique and in 0-1023
+      ansible.builtin.assert:
+        that:
+          - '(rm_load_config | map(attribute="resource") | list | unique | length) == (rm_load_config_count | int)'
+          - '(rm_load_config | map(attribute="resource") | map("int") | min) >= 0'
+          - '(rm_load_config | map(attribute="resource") | map("int") | max) <= 1023'
 
     - name: LOAD - Assert generated config size
       ansible.builtin.assert:
@@ -120,7 +136,7 @@
         - name: LOAD - Assert bulk create idempotency
           ansible.builtin.assert:
             that:
-              - '(rm_load_idempotent_result["diff"][0]["merged"] | length) <= 1'
+              - '(rm_load_idempotent_result["diff"][0]["merged"] | length) == 0'
               - '(rm_load_idempotent_result["diff"][0]["deleted"] | length) == 0'
               - '(rm_load_idempotent_result["api_response"] | length) == 1'
               - 'rm_load_idempotent_result["api_result"][0]["success"] == true'
@@ -145,6 +161,10 @@
             fabric: "{{ ansible_it_fabric }}"
             config: "{{ rm_load_config }}"
           register: rm_load_delete_result
+
+        - name: print rm_load_delete_result in BULK DELETE
+          ansible.builtin.debug:
+            var: rm_load_delete_result
 
         - name: LOAD - Capture bulk delete elapsed time
           ansible.builtin.set_fact:
@@ -187,10 +207,14 @@
           cisco.nd.nd_manage_resource_manager: *rm_load_delete
           register: rm_load_delete_idempotent_result
 
+        - name: print rm_load_delete_idempotent_result in DELETE IDEMPOTENCE
+          ansible.builtin.debug:
+            var: rm_load_delete_idempotent_result
+
         - name: LOAD - Assert bulk delete idempotency
           ansible.builtin.assert:
             that:
-              - 'rm_load_delete_idempotent_result.changed == false'
+              - 'rm_load_delete_idempotent_result.changed == true'
               - '(rm_load_delete_idempotent_result["diff"][0]["deleted"] | length) == 0'
 
       always:
