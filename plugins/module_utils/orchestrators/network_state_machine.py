@@ -40,6 +40,10 @@ class NetworkStateMachine:
     def __init__(self, coordinator: Any):
         self.coordinator = coordinator
 
+    def _check_mode(self) -> bool:
+        """Return True when the owning Ansible module is running in check mode."""
+        return bool(getattr(getattr(self.coordinator, "module", None), "check_mode", False))
+
     def run_basic(self, module_args: dict, strategy: Optional[BaseNetworkStrategy] = None) -> dict[str, Any]:
         """
         Run only the generic NDStateMachine-backed Network CRUD/gathered flow.
@@ -247,6 +251,17 @@ class NetworkStateMachine:
             result["_deferred_deploy_payloads"] = deploy_payloads
             return result
 
+        if self._check_mode():
+            self.coordinator._merge_api_trace(
+                result,
+                {
+                    "changed": True,
+                    "failed": False,
+                    "check_mode_deploy_payloads": deploy_payloads,
+                },
+            )
+            return result
+
         for deploy_payload in deploy_payloads:
             deploy_trace = self.coordinator._deploy_network_attachments(
                 module_args,
@@ -389,6 +404,17 @@ class NetworkStateMachine:
             config,
             delete_deploy_targets,
         )
+        if self._check_mode():
+            if deploy_payloads:
+                traces.append(
+                    {
+                        "changed": True,
+                        "failed": False,
+                        "check_mode_deploy_payloads": deploy_payloads,
+                    }
+                )
+            return traces
+
         for deploy_payload in deploy_payloads:
             traces.append(
                 self.coordinator._deploy_network_attachments(

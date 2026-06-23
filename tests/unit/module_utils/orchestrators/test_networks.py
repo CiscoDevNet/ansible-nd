@@ -523,6 +523,52 @@ def test_mcfg_parent_delete_does_not_seed_empty_network_level_deploy():
     assert coordinator.deploy_maps == ({},)
 
 
+def test_network_check_mode_delete_skips_deploy_and_wait():
+    class Module:
+        check_mode = True
+
+    class Strategy:
+        is_parent = False
+        is_multicluster = False
+
+    class Coordinator:
+        module = Module()
+
+        def _configured_network_names(self, _config):
+            return ["BLUE_NET"]
+
+        def _build_delete_deploy_payloads(self, _config, *target_maps):
+            assert target_maps == ({"BLUE_NET": {"SERIAL1"}},)
+            return [{"networkNames": ["BLUE_NET"]}]
+
+        def _deploy_network_attachments(self, *_args):
+            raise AssertionError("check mode must not deploy")
+
+        def _wait_for_network_attachments_delete_ready(self, *_args):
+            raise AssertionError("check mode must not wait for attachment delete readiness")
+
+        def _wait_for_networks_delete_ready(self, *_args):
+            raise AssertionError("check mode must not wait for network delete readiness")
+
+    traces = NetworkStateMachine(Coordinator())._deploy_detach_traces(
+        api_args={},
+        wait_args={},
+        strategy=Strategy(),
+        config=[{"network_name": "BLUE_NET"}],
+        detach_trace={"deploy_targets": {"BLUE_NET": {"SERIAL1"}}},
+        wait_network_names=["BLUE_NET"],
+    )
+
+    assert traces == [
+        {"deploy_targets": {"BLUE_NET": {"SERIAL1"}}},
+        {
+            "changed": True,
+            "failed": False,
+            "check_mode_deploy_payloads": [{"networkNames": ["BLUE_NET"]}],
+        },
+    ]
+
+
 def test_network_bulk_delete_retries_only_sync_failed_networks():
     orchestrator = _orchestrator()
     requested_payloads = []
