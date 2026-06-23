@@ -718,3 +718,125 @@ def test_manage_policies_config_models_00600() -> None:
     assert spec["use_desc_as_key"]["default"] is False
     assert spec["config"]["type"] == "list"
     assert spec["config"]["elements"] == "dict"
+
+
+# =============================================================================
+# Test: PlaybookPolicyConfig policy_id field (gathered round-trip auto-promotion)
+# =============================================================================
+
+
+def test_manage_policies_config_models_00250() -> None:
+    """
+    # Summary
+
+    Verify ``policy_id`` defaults to ``None`` when not supplied. It is
+    an optional, gathered-round-trip-only field.
+
+    ## Test
+
+    - Bare instance has ``policy_id is None``.
+
+    ## Classes and Methods
+
+    - ``PlaybookPolicyConfig.__init__``
+    """
+    with does_not_raise():
+        instance = PlaybookPolicyConfig()
+    assert instance.policy_id is None
+
+
+def test_manage_policies_config_models_00260() -> None:
+    """
+    # Summary
+
+    Verify ``policy_id`` survives the ``model_validate -> model_dump``
+    round trip used by the production flow in
+    ``NDPolicyModule.validate_and_prepare_config``. Before the field
+    was declared on the model, ``NDBaseModel.extra='ignore'`` silently
+    dropped it here, breaking the documented gathered round-trip
+    auto-promotion downstream.
+
+    ## Test
+
+    - Validate a gathered-shaped entry (name=template, policy_id=
+      ``POLICY-28440``, switch present).
+    - ``model_dump(by_alias=False, exclude_none=False)`` preserves
+      ``policy_id``.
+
+    ## Classes and Methods
+
+    - ``PlaybookPolicyConfig.model_validate``
+    - ``PlaybookPolicyConfig.model_dump``
+    """
+    entry = {
+        "name": "feature_enable",
+        "policy_id": "POLICY-28440",
+        "description": "Enable LACP",
+        "priority": 100,
+        "switch": [{"serial_number": "FDO123"}],
+    }
+
+    instance = PlaybookPolicyConfig.model_validate(
+        entry,
+        context={"state": "merged", "use_desc_as_key": False},
+    )
+    dumped = instance.model_dump(by_alias=False, exclude_none=False)
+
+    assert instance.policy_id == "POLICY-28440"
+    assert dumped["policy_id"] == "POLICY-28440"
+    # The name (template_name) is preserved alongside; promotion is the
+    # responsibility of NDPolicyModule.translate_config, not the model.
+    assert dumped["name"] == "feature_enable"
+
+
+def test_manage_policies_config_models_00450() -> None:
+    """
+    # Summary
+
+    Verify ``use_desc_as_key=True`` does NOT require a non-empty
+    description when the entry carries an explicit ``policy_id``. The
+    self-contained promotion path rewrites ``name`` to the policy_id
+    before any description-keyed matching runs, so requiring a non-
+    empty description here would break gathered round-trip of policies
+    that have empty descriptions.
+
+    ## Test
+
+    - Template-name entry with empty description but a populated
+      ``policy_id`` validates successfully under ``state=merged`` with
+      ``use_desc_as_key=True``.
+
+    ## Classes and Methods
+
+    - ``PlaybookPolicyConfig.validate_state_requirements``
+    """
+    with does_not_raise():
+        instance = PlaybookPolicyConfig.model_validate(
+            {
+                "name": "switch_freeform",
+                "policy_id": "POLICY-28440",
+                "description": "",
+            },
+            context={"state": "merged", "use_desc_as_key": True},
+        )
+    assert instance.policy_id == "POLICY-28440"
+    assert instance.description == ""
+
+
+def test_manage_policies_config_models_00460() -> None:
+    """
+    # Summary
+
+    Verify ``policy_id`` is type-checked as a string. A non-string
+    value (e.g. int) must raise ``ValidationError``.
+
+    ## Test
+
+    - ``policy_id=12345`` raises ``ValidationError``.
+
+    ## Classes and Methods
+
+    - ``PlaybookPolicyConfig.__init__``
+    """
+    with pytest.raises(ValidationError):
+        PlaybookPolicyConfig(policy_id=12345)

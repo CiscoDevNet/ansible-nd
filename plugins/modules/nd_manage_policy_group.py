@@ -11,8 +11,21 @@ version_added: "2.0.0"
 description:
 - Manage policy groups on Cisco Nexus Dashboard (ND)
 - Policy groups apply a template to multiple switches simultaneously.
-- Each policy group is uniquely identified by the combination of
-  O(config.description) and O(config.name) (template name).
+- Normal idempotent create/update/delete operations identify policy groups by
+  the composite key C(description, template_name).
+- C(POLICY-GROUP-*) IDs can also be supplied. The module resolves the ID to the
+  controller's template name and description before normal state-machine work.
+- Some ID-based operations bypass the normal state-machine path and are sent
+  directly by policy group ID, including groups with no description and updates that
+  change the description of an existing group. These direct actions are reported
+  under the C(direct_actions) return key instead of C(before)/C(after).
+- C(create_additional_policy=true) bypasses idempotency and always creates
+  another policy group. These force-created groups are reported under
+  C(force_created) because duplicate composite identifiers cannot be represented
+  in the normal before/after collections.
+- The module is validation-first but B(not) a rollback transaction. Input validation
+  and duplicate checks run before write operations; after controller writes begin,
+  later API or deploy failures can leave earlier successful operations in place.
 author:
 - L Nikhil Sri Krishna (@nisaikri)
 options:
@@ -25,39 +38,63 @@ options:
   deploy:
     description:
     - Whether to deploy changes after create/update/delete operations.
-    - When C(true), pushConfig is called after create/update, and DELETE verb
-      is issued after markDelete for deletions.
-    - When C(false), changes are staged but not deployed.
-    - "B(Deploy behavior for switch_ids changes:)"
-    - When switches are B(added) to a policy group, C(pushConfig) is called
-      with the policy group ID. The controller deploys the policy configuration
-      to all current members, including newly added switches.
-    - When switches are B(removed) from a policy group, C(pushConfig) alone is
-      not sufficient — the controller does not push the negative (removal)
-      configuration to the removed switches. To handle this, a switch-level
-      deploy (C(POST /switchActions/deploy)) is issued targeting only the
-      removed switch serial numbers. This pushes the negative configuration
-      and cleanly removes the policy from those switches.
-    - When switches are B(added and removed in the same task), both mechanisms
-      are used — C(pushConfig) deploys to all current members (handling additions),
-      and C(switchActions/deploy) targets the removed switches (handling removals).
+    - When C(true), the module pushes the affected switches via
+      C(POST /switchActions/deploy) after the controller-side change
+      (create / update / markDelete + fallback DELETE) succeeds.
+    - When C(false), changes are staged on the controller but never deployed
+      to the switches.
+    - "B(Why switchActions/deploy and not pushConfig:)"
+    - The ND C(POST /policyActions/pushConfig) endpoint is B(not) honoured for
+      policy groups (it only operates on policies). So unlike C(nd_manage_policy),
+      this module has no per-policy deploy path — every deploy step is a
+      switch-level deploy.
+    - "B(Deploy target — which switches receive the deploy:)"
+    - For C(create), the deploy target is the new policy group's member switches.
+    - For C(update), the deploy target is the B(union of the new member set and
+      the removed member set) (i.e. B(post-update members) ∪ B(removed members)).
+      The removed members are included so the controller pushes the negative
+      (removal) configuration to switches that no longer belong to the policy group.
+      This formula covers all three sub-cases identically, switches added only,
+      switches removed only, and switches added-and-removed in the same task.
+    - For C(delete) (both C(markDelete)-succeeded and direct-DELETE fallback),
+      the deploy target is a single consolidated call against the union of all
+      affected switches across every policy group being deleted in this task.
+    - For user-mentioned policy groups listed in O(config) whose desired state
+      already matches the controller (no diff), C(switchActions/deploy) is still
+      issued against the existing member switches so the user-expressed deploy
+      intent is honoured.
+    - B(Warning) — Because every C(deploy=true) step uses C(POST /switchActions/deploy),
+      whenever the targeted policy groups have any member switches, the controller will
+      deploy B(every pending configuration change staged for those switches), not only
+      the policy-group changes performed by this task. The ND controller does not
+      provide a per-task or staged-only variant of the switch-level deploy endpoint.
+      Use O(deploy=false) to stage policy-group changes without triggering a switch-level
+      deploy.
     type: bool
     default: true
   config:
     description:
     - List of policy group configurations.
+    - Required for C(merged) and C(deleted). Optional for C(gathered); when omitted
+      with C(gathered), all policy groups on the fabric are returned.
+    - For C(merged), C(config.name) is required. If C(config.name) is a template name,
+      C(config.description) is also required unless C(create_additional_policy=true).
+    - For C(deleted), C(config.name) is required. A template name without
+      C(config.description) expands to all existing policy groups using that template.
+    - For C(gathered), entries are filters. They may use C(config.name), C(config.description),
+      or both.
     type: list
     elements: dict
     suboptions:
       name:
         description:
         - "This can be one of the following:"
-        - This field is mutually exclusive with O(config.policy_id) as the primary key;
-          when both are present, O(config.policy_id) takes precedence.
-        - "a) Template Name - A unique name identifying the template (e.g., C(feature_enable), C(switch_freeform))."
+        - When both O(config.name) and O(config.policy_id) are supplied, O(config.policy_id)
+          takes precedence as the primary key for resolution.
+        - "a) Template Name - A name identifying the template (e.g., C(feature_enable), C(switch_freeform))."
         - "   A template name can be used by multiple policy groups and hence does not identify a policy group uniquely."
         - "b) Policy Group ID - A unique ID identifying a policy group (e.g., C(POLICY-GROUP-123456))."
-        - "   Policy Group ID MUST be used for modifying specific policies since template names cannot uniquely identify"
+        - "   Policy Group ID MUST be used for modifying specific policy groups since template names cannot uniquely identify"
         - "   a policy group without O(config.description)."
         - "B(Policy Group ID resolution:)"
         - When a C(POLICY-GROUP-*) ID is provided, the module queries the controller to resolve it
@@ -78,18 +115,29 @@ options:
         - When provided together with O(config.name) (template name) and O(config.description),
           this field is used as the authoritative key for ID-based resolution, bypassing the
           composite (description, template_name) lookup.
-        - Optional for O(state=merged) and O(state=deleted). Not applicable for O(state=gathered)
-          (use O(config.name) with a C(POLICY-GROUP-*) value to filter by ID in gathered).
+        - Optional for O(state=merged) and O(state=deleted).
+        - Not used as a C(state=gathered) filter. To gather one policy group by ID, set
+          O(config.name) to the C(POLICY-GROUP-*) value.
+        - When an ID-based C(merged) update changes the group's description, the request
+          bypasses the composite-key merge state machine and is sent as a direct
+          C(PUT /policyGroups/{policy_id}) payload. Always include the intended
+          C(switch_ids) on these entries — B(omitting C(switch_ids) on a direct-ID PUT
+          will replace the group's member set with an empty list), removing the policy
+          group from every switch it previously covered.
         type: str
       description:
         description:
         - Description of the policy group.
         - Used together with O(config.name) as the unique identifier when name is a template name.
-        - Required when O(state=merged) and name is a template name (not a policy group ID).
+        - Required when O(state=merged) and name is a template name (not a policy group ID),
+          B(unless) O(config.create_additional_policy=true) is set — in which case the
+          composite-key idempotency check is bypassed and C(description) becomes optional.
         - "When O(state=deleted):"
         - "  If provided with a template name, deletes the specific policy group matching (description, template_name)."
         - "  If omitted with a template name, deletes ALL policy groups using that template."
         - "  Not required when name is a policy group ID."
+        - When O(state=gathered), can be used by itself to gather all groups with that description,
+          or with O(config.name) to gather the exact template+description match.
         type: str
       switch_ids:
         description:
@@ -110,6 +158,12 @@ options:
       template_inputs:
         description:
         - Dictionary of name/value pairs passed to the policy template.
+        - For C(merged), non-empty inputs are pre-validated against the template
+          parameters endpoint before any policy group write is attempted. Controller
+          parameter-fetch failures degrade to controller-side validation.
+        - System-injected keys returned by gathered output are stripped before
+          validation so gathered-to-merged round trips do not fail on controller-only
+          fields.
         type: dict
       create_additional_policy:
         description:
@@ -126,6 +180,10 @@ options:
     - Required when Change Control is enabled on the ND controller.
     - Must start with a letter and contain only letters, digits, underscores,
       or hyphens (max 64 characters).
+    - B(Note) — C(POST /switchActions/deploy) does not accept a C(ticketId)
+      parameter, so the deploy step is B(not) bound to the supplied ticket.
+      Only the controller-side mutations (C(POST)/C(PUT)/C(DELETE)/C(markDelete))
+      carry the ticket.
     type: str
   cluster_name:
     description:
@@ -143,6 +201,7 @@ options:
     - "    O(config.name) with a C(POLICY-GROUP-*) ID returns that specific policy group."
     - "    O(config.name) with a template name returns all policy groups using that template."
     - "    O(config.name) with a template name and O(config.description) returns the exact match."
+    - "    O(config.description) without O(config.name) returns all policy groups with that description."
     - The output under the C(gathered) return key can be used directly as O(config)
       with O(state=merged) for round-trip operations.
     type: str
@@ -157,27 +216,42 @@ notes:
 - When using a policy group ID, it is resolved to its template name and description
   by querying the controller. The resolved values are used as the composite key
   for all subsequent state machine operations.
+- If O(config.policy_id) is present, it takes precedence over O(config.name) for
+  C(merged) and C(deleted), including gathered round-trip input.
+- ID-based updates for no-description groups or description changes bypass the
+  normal composite-key state machine and are returned under C(direct_actions).
+- C(create_additional_policy=true) bypasses idempotency checks and is returned
+  under C(force_created), not the normal C(before)/C(after) state-machine lists.
 - For O(state=deleted) with only a template name (no description), ALL policy groups
   using that template are expanded and deleted.
-- After creation, C(pushConfig) deploys the policy groups to switches.
+- After creation, C(POST /switchActions/deploy) deploys the policy groups to the
+  member switches when O(deploy=true). The C(policyActions/pushConfig) endpoint is
+  not honoured for policy groups, so the switch-level deploy is the only deploy path.
 - "B(Deletion behavior:)"
-- "Deletion uses a two-step flow: C(markDelete) is called first to soft-delete the
-  policy groups, then C(DELETE) verb is issued when O(deploy=true) to finalize removal."
-- "B(switch_freeform and PYTHON content-type templates:)"
-- Policy groups using PYTHON content-type templates (e.g., C(switch_freeform),
-  C(switch_freeform_config)) cannot be soft-deleted via C(markDelete). The controller
-  returns a 207 partial-success response with per-policy failure status for these.
-- When C(markDelete) fails for a policy group, the module falls back to a direct
-  C(DELETE /policyGroups/{id}) call. This hard-deletes the policy group record.
-- After a direct DELETE of a PYTHON content-type policy group, the controller
-  internally creates a transient C(switch_freeform_config) artifact with a non-empty
-  C(source) field. These ghost records are automatically filtered out during
-  C(query_all) operations so they do not appear in gathered output or affect
-  idempotency checks.
-- "For direct-deleted policy groups (when O(deploy=true)), a switch-level deploy
-  (C(POST /switchActions/deploy)) is issued targeting the affected switches to push
-  the negative (removal) configuration. This ensures the switch running config is
-  updated even though C(markDelete) + C(pushConfig) could not be used."
+- "Deletion uses a three-step controller-side flow:"
+- "  1. C(POST /policyGroups/actions/markDelete) is called once with all policy group IDs.
+  The endpoint returns 207 Multi-Status with per-policy success/failure status."
+- "  2. For policy groups where C(markDelete) failed (typically PYTHON content-type
+  templates such as C(switch_freeform) and C(switch_freeform_config) — the controller
+  rejects C(markDelete) for these), the module falls back to a direct
+  C(DELETE /policyGroups/{id}) call. This fallback is B(unconditional) on the
+  C(markDelete) failure and is B(not) gated by O(deploy)."
+- "  3. If O(deploy=true), a single consolidated C(POST /switchActions/deploy)
+  is issued against the union of all affected switches (from both
+  C(markDelete)-succeeded and direct-DELETE groups) so the negative (removal)
+  configuration is pushed. If O(deploy=false), step 3 is skipped and the
+  switch running config is left untouched until a subsequent deploy."
+- "B(Ghost-record cleanup for PYTHON content-type templates:)"
+- After a direct C(DELETE) of a PYTHON content-type policy group (step 2 above),
+  the controller internally creates a transient C(switch_freeform_config) artifact
+  with a non-empty C(source) field referencing the deleted policy group. These
+  ghost records are automatically filtered out during C(query_all) operations so
+  they do not appear in C(gathered) output and do not affect idempotency checks
+  on subsequent runs.
+- Query and gathered paths filter out controller artifacts with a non-empty C(source)
+  field. Normal state-machine reads also exclude no-description policy groups because
+  they cannot be indexed by the composite key; ID-based direct actions and C(gathered)
+  use broader reads when they need to see those groups.
 """
 
 EXAMPLES = r"""
@@ -320,6 +394,18 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.log import Log
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     require_pydantic,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.common.template_validation import (
+    fetch_template_params as _shared_fetch_template_params,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.template_validation import (
+    strip_system_injected_keys as _shared_strip_system_injected_keys,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.template_validation import (
+    validate_template_inputs as _shared_validate_template_inputs,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.constants import (
+    SYSTEM_INJECTED_TEMPLATE_KEYS,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.fabric_inventory import (
     FabricSwitchInventory,
 )
@@ -345,6 +431,208 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd 
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
+
+# =============================================================================
+# Module-level configuration
+# =============================================================================
+#
+# Internal kill switch for the live template-input schema validation hook
+# (see ``_validate_template_inputs_in_buckets`` below).  When ``True`` (the
+# default), every policy-group entry destined for a POST or PUT to the
+# controller is pre-flighted against the template's
+# ``GET /api/v1/manage/configTemplates/<name>/parameters`` schema before any
+# mutation runs, so users get a structured error message rather than a raw
+# 207 "controller rejected" failure.
+#
+# Flip to ``False`` ONLY as a temporary escape hatch if the controller's
+# parameters endpoint produces false positives in the field -- this degrades
+# us to "trust the controller" behaviour (same as before this PR).  Not
+# exposed in the argspec; meant to be flipped here in-tree and not by users.
+_ENABLE_TEMPLATE_INPUT_VALIDATION: bool = True
+
+
+def _validate_template_inputs_in_buckets(
+    *,
+    force_create_items: list[dict],
+    direct_action_items: list[dict],
+    normal_config: list[dict],
+    state: str,
+    orchestrator,
+    module: AnsibleModule,
+    log: logging.Logger,
+) -> None:
+    """Pre-flight template-input schema validation for every outbound write.
+
+    The policy-group create / update path POSTs ``{"policyGroups": [...]}``
+    (bulk-create) or PUTs ``/policyGroups/{id}`` with a body that contains
+    user-supplied ``templateInputs``.  ND validates those inputs against the
+    config template named by ``templateName`` and returns a per-item 207 on
+    schema violations.  That feedback only arrives **after** the bulk call
+    so we cannot easily surface a structured per-entry error from it.
+
+    This helper closes the gap:  for every entry that is going to carry
+    ``templateInputs`` in its outbound body, fetch the template's parameter
+    schema (cached per-task), strip the ND-injected SYSTEM_INJECTED keys
+    (so gathered -> merged round-trip is clean), and validate.  Any error
+    surfaces via a single aggregated ``fail_json`` before any mutation
+    runs.
+
+    Skip rules (validation is a no-op when the corresponding write does not
+    carry ``templateInputs``):
+
+    - ``_ENABLE_TEMPLATE_INPUT_VALIDATION`` is ``False``   -> skip everything
+    - ``state != "merged"``                                -> skip everything
+        (``deleted`` uses policy IDs in markDelete + DELETE-by-id; the body
+        never carries ``templateInputs``.  ``gathered`` is read-only and
+        short-circuits long before this hook.)
+    - Entry has no ``template_inputs`` (or empty dict)     -> skip the entry
+    - Template name resolves to a ``POLICY-GROUP-*``       -> skip the entry
+        (defensive: the partitioning step always resolves the alias to a
+        real template name; this is a belt-and-braces guard for any future
+        code path that bypasses ``_resolve_config``.)
+
+    The fetch uses ``orchestrator._request`` (so retries, error handling
+    and 404 semantics match every other policy-group endpoint call) and
+    forwards ``cluster_name`` (but NOT ``ticket_id``, since the parameters
+    endpoint is a read endpoint that does not accept ticketId).
+
+    Errors are aggregated across every validated entry into a single
+    ``fail_json`` message that mirrors the per-item failure format used by
+    :py:meth:`PolicyGroupOrchestrator.create_bulk` for 207-Multi-Status
+    responses, so the same downstream parsing / display works for both.
+
+    Args:
+        force_create_items:   Bucket from ``main()`` partitioning -- entries
+                              with ``create_additional_policy: true``.
+        direct_action_items:  Bucket from ``main()`` partitioning -- entries
+                              resolved from ``POLICY-GROUP-*`` IDs that
+                              bypass the state machine.
+        normal_config:        Bucket from ``main()`` partitioning -- the
+                              state-machine-managed entries.
+        state:                Module state ("merged" / "deleted" / "gathered").
+        orchestrator:         The ``PolicyGroupOrchestrator`` instance.
+                              Used for its ``_request`` method and its
+                              ``_apply_endpoint_params`` plumbing (so the
+                              ``cluster_name`` query parameter is honoured).
+        module:               ``AnsibleModule`` for ``fail_json``.
+        log:                  Logger -- ENTER / EXIT / per-entry pass / fail
+                              lines are emitted at DEBUG; aggregated error
+                              count at WARNING via the shared helper.
+
+    Returns:
+        ``None``.  On validation failure, calls ``module.fail_json`` (does
+        not return).
+    """
+    if not _ENABLE_TEMPLATE_INPUT_VALIDATION:
+        log.debug("Template-input validation disabled (kill switch); skipping.")
+        return
+    if state != "merged":
+        log.debug("Template-input validation skipped: state=%s (no body carries templateInputs).", state)
+        return
+
+    # Build the union of write-bound entries.  Order is preserved so the
+    # error message lists violations in the same order the user supplied
+    # them.  The buckets are disjoint by construction (see ``main()``).
+    candidates = (
+        [("force_create", e) for e in force_create_items] + [("direct_action", e) for e in direct_action_items] + [("normal", e) for e in normal_config]
+    )
+    if not candidates:
+        log.debug("Template-input validation skipped: no write-bound entries.")
+        return
+
+    # Per-task fetch cache: {template_name: [param_def, ...]}.  Shared
+    # across every entry so N policy groups with the same template incur
+    # exactly one GET.  Owned here (not on the orchestrator) so the
+    # orchestrator's lifecycle is unaffected and the cache is discarded
+    # on every task run.
+    param_cache: dict[str, list[dict]] = {}
+
+    def _request_fn(path: str, verb) -> dict:
+        # Wraps orchestrator._request so the shared helper sees the same
+        # auth / retry / error-handling envelope as every other GET in
+        # this module.  Re-raises to let the helper's outer try/except
+        # cache an empty list and log a WARNING (graceful degradation).
+        return orchestrator._request(path=path, verb=verb, not_found_ok=False)
+
+    def _set_endpoint_params(ep) -> None:
+        # Forward cluster_name (read endpoint -- NO ticket_id).  Honours
+        # the same per-endpoint capability matrix every other policy-group
+        # call uses via the orchestrator's ``_apply_endpoint_params``.
+        orchestrator._apply_endpoint_params(ep, with_ticket=False)
+
+    log.debug(
+        "Template-input validation: pre-flighting %d entries (force_create=%d, direct_action=%d, normal=%d)",
+        len(candidates),
+        len(force_create_items),
+        len(direct_action_items),
+        len(normal_config),
+    )
+
+    all_errors: list[str] = []
+    for idx, (bucket, entry) in enumerate(candidates):
+        raw_inputs = entry.get("template_inputs") or {}
+        if not raw_inputs:
+            log.debug("config[%d] (%s): no template_inputs -- skip validation.", idx, bucket)
+            continue
+        template_name = entry.get("name", "") or ""
+        # Defensive: the partitioning step always resolves POLICY-GROUP-*
+        # to a real template name BEFORE entries land in any bucket.  This
+        # guard catches any future code path that forgets to do so.
+        if not template_name or template_name.startswith("POLICY-GROUP-"):
+            log.debug(
+                "config[%d] (%s): template name unresolved (%r) -- skip validation.",
+                idx,
+                bucket,
+                template_name,
+            )
+            continue
+
+        # Strip ND-injected control keys before validation so the
+        # gathered -> merged round-trip stays clean.  ``raw_inputs`` is not
+        # mutated; the helper returns a fresh dict.
+        cleaned_inputs = _shared_strip_system_injected_keys(
+            template_name,
+            raw_inputs,
+            SYSTEM_INJECTED_TEMPLATE_KEYS,
+            logger=log,
+        )
+
+        # Fetch (with cache) the template's parameter schema.  A controller
+        # error or 404 caches an empty schema and degrades to "trust the
+        # controller" for this entry (the shared helper's documented
+        # graceful-degradation behaviour).
+        params = _shared_fetch_template_params(
+            template_name,
+            request_fn=_request_fn,
+            cache=param_cache,
+            endpoint_modifier_fn=_set_endpoint_params,
+            logger=log,
+        )
+
+        entry_errors = _shared_validate_template_inputs(
+            template_name,
+            cleaned_inputs,
+            params,
+            logger=log,
+        )
+        if entry_errors:
+            # Prefix each error with a stable per-entry identifier so the
+            # aggregated message tells the user which config[] index hit
+            # which violation.  Uses ``description`` when available (the
+            # user's primary handle) and falls back to ``policy_id`` (for
+            # direct-action / round-trip entries).
+            ident = entry.get("description") or entry.get("policy_id") or "<unidentified>"
+            for err in entry_errors:
+                all_errors.append(f"config[{idx}] (bucket={bucket}, identifier={ident!r}): {err}")
+
+    if all_errors:
+        log.error(
+            "Template-input validation failed for %d entry/entries; aborting before any controller call.",
+            len(all_errors),
+        )
+        module.fail_json(msg=("Template input validation failed for {0} entry/entries: ".format(len(all_errors)) + "; ".join(all_errors)))
+    else:
+        log.debug("Template-input validation passed for all %d candidate entries.", len(candidates))
 
 
 def _resolve_config(config, existing_groups, state, module, log):
@@ -842,6 +1130,22 @@ def main():
                     len(direct_action_items),
                 )
             log.info("Normal state machine items: %d", len(normal_config))
+
+        # Pre-flight template-input schema validation across every bucket
+        # destined for a POST/PUT.  No-op for state=deleted (body never
+        # carries templateInputs) and state=gathered (short-circuited
+        # earlier).  Fail-fast on schema violations so the user sees a
+        # structured per-entry error before any controller call runs.
+        if state == "merged":
+            _validate_template_inputs_in_buckets(
+                force_create_items=force_create_items,
+                direct_action_items=direct_action_items,
+                normal_config=normal_config,
+                state=state,
+                orchestrator=orchestrator,
+                module=module,
+                log=log,
+            )
 
         force_created = False
         force_created_models: list = []

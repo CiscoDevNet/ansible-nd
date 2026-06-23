@@ -15,12 +15,20 @@ description:
 - Supports C(gathered) state for exporting existing policies as playbook-compatible config.
   The gathered output can be copy-pasted directly into a playbook for use with C(merged) state.
 - When O(use_desc_as_key=true), policies are identified by their description instead of policy ID.
-- B(Atomic behavior) — the entire task is treated as a single transaction.
-  If any validation check fails (e.g., missing or duplicate descriptions), the module
-  aborts B(before) making any changes to the controller.
-- When O(use_desc_as_key=true), every O(config[].description) B(must) be non-empty and
-  unique per switch within the playbook. Playbook-level duplicates are rejected by an
-  upfront cross-entry validation before any controller mutation is attempted.
+- B(Validation-first behavior) — playbook schema validation, switch IP resolution,
+  empty-description checks for O(use_desc_as_key=true), and duplicate description+switch
+  checks run before write operations.
+- This module is B(not) a rollback transaction. Once controller write calls begin,
+  later API failures can leave earlier successful creates, updates, deletes, or
+  deploys in place. The result output identifies the per-entry/per-step success or
+  failure where the controller reports it.
+- When O(use_desc_as_key=true), every O(config[].description) on B(template-name) entries
+  must be non-empty and unique per switch within the playbook. Policy-ID entries
+  (entries whose O(config.name) starts with C(POLICY-)), entries that carry an explicit
+  O(config[].policy_id) (gathered round-trip), and switch-only entries (no C(name))
+  are exempt from this check. Playbook-level duplicates of (description, switch) on
+  template-name entries are rejected by an upfront cross-entry validation before any
+  controller mutation is attempted.
 - Controller-side duplicates (i.e., multiple existing policies that share the same
   C(description) on the same switch, created outside of this playbook) are detected
   while processing each config entry and cause the module to B(abort) on the first
@@ -30,11 +38,26 @@ description:
   reference policies by policy ID.
 - Policies and switches are specified separately in the O(config) list. Global policies
   (entries without a C(switch) key) apply to every switch listed in the C(switch) entry.
-  Per-switch policy overrides can be specified using the C(policies) suboption inside each
-  switch entry (only when O(use_desc_as_key=false)). A per-switch override whose template
-  name matches a global policy B(replaces) that global for the switch. Per-switch entries
-  with template names that do not match any global are treated as B(additional) policies for
-  that switch.
+  Per-switch policy entries can be specified using the C(policies) suboption inside each
+  switch entry. When O(use_desc_as_key=false), a per-switch entry whose template name
+  matches a global policy B(replaces) that global for that switch; per-switch entries
+  with template names that do not match any global are treated as B(additional) policies.
+  When O(use_desc_as_key=true), global and per-switch policy entries are both emitted;
+  there is no name-based replacement.
+- Gathered output uses a self-contained shape where each policy entry carries its own
+  C(switch) list. The C(name) field of each gathered entry holds the C(template_name),
+  and a separate C(policy_id) key records the controller-assigned ID.
+- When gathered output is replayed via C(state=merged) or C(state=deleted), entries
+  are matched by C(template_name) plus C(description) (or C(name) plus C(switch) when
+  O(use_desc_as_key=false)). To target a specific existing policy by its controller ID,
+  the gathered round-trip auto-promotes O(config[].policy_id) to O(config[].name) before
+  matching, so an unmodified gathered output updates each policy in place by ID.
+- B(Scope of O(config[].policy_id) auto-promotion) — only honored in the
+  self-contained gathered shape (each entry carries its own embedded C(switch) list).
+  In the legacy two-level shape (top-level globals plus a single C(switch:) entry),
+  C(policy_id) is silently ignored because a single ID fanning across multiple
+  switches has no coherent meaning. To force fresh policy creation from gathered
+  output, remove the C(policy_id) values before replaying.
 - B(Update behavior) — when O(use_desc_as_key=false) and a template name is given,
   existing policies are never updated in-place. A new policy is always created. To update
   a specific policy, provide its policy ID (C(POLICY-xxxxx)) as the O(config[].name).
@@ -73,8 +96,14 @@ options:
     - Required for C(merged) and C(deleted) states.
     - Optional for C(gathered) state. When omitted with C(gathered), all policies on all
       fabric switches are exported. When provided, only matching policies are exported.
+      A C(gathered) filter is still switch-scoped in the current implementation, so provide
+      a switch target (legacy C(switch) entry or self-contained gathered entry) when
+      filtering. To export across the whole fabric, omit O(config).
     - Policy entries define the template, description, priority, and template inputs.
     - A separate C(switch) entry lists the target switches and optional per-switch policy overrides.
+    - The module accepts two shapes, the legacy two-level shape (top-level policy entries plus
+      one C(switch) entry) and the self-contained gathered round-trip shape (each named policy
+      entry includes its own C(switch) list).
     - All global policies (entries without a C(switch) key) are applied to every switch listed
       in the C(switch) entry. When O(use_desc_as_key=false), a per-switch policy whose
       template name matches a global policy B(replaces) that global for the particular switch;
@@ -95,12 +124,25 @@ options:
         - For C(deleted) state, this is optional. When omitted, all policies
           on the specified switch are deleted.
         type: str
+      policy_id:
+        description:
+        - Controller-assigned policy ID (e.g., C(POLICY-28440)).
+        - Emitted in C(state=gathered) output alongside O(config[].name) (which carries
+          the C(template_name)). When the unmodified gathered output is replayed via
+          C(state=merged) or C(state=deleted), this value is promoted to O(config[].name)
+          before matching, so each policy is updated in place by ID.
+        - B(Scope) — only honored in the self-contained gathered shape (each entry carries
+          its own embedded C(switch) list). Silently ignored in the legacy two-level shape.
+        - To force fresh policy creation from gathered output, remove C(policy_id) values
+          before replaying; matching will then fall back to (C(template_name), C(description))
+          or (C(name), C(switch)) per the O(use_desc_as_key) mode.
+        type: str
       description:
         description:
         - Description of the policy.
         - When O(use_desc_as_key=true), this is used as the unique identifier for the policy
-          and B(must) be non-empty and unique per switch. The module fails atomically if
-          duplicate descriptions are detected in the playbook or on the ND controller.
+          and B(must) be non-empty and unique per switch. Duplicate descriptions in the
+          playbook or on the ND controller fail before any policy write is sent.
         type: str
         default: ""
       priority:
@@ -189,9 +231,12 @@ options:
     description:
     - When set to V(true), the policy description is used as the unique key for matching.
     - When set to V(false), the template name (or policy ID if name starts with C(POLICY-)) is used.
-    - When V(true), every O(config[].description) must be non-empty (for C(merged) and C(deleted) states)
-      and unique per switch within the playbook. The module will B(fail immediately) if duplicate
-      C(description + switch) combinations are found in the playbook config or on the ND controller.
+    - When V(true), every O(config[].description) on B(template-name) entries (for
+      C(merged) and C(deleted) states) must be non-empty and unique per switch within
+      the playbook. Policy-ID entries (entries whose O(config.name) starts with
+      C(POLICY-)) and switch-only entries (no C(name)) are exempt. The module will
+      B(fail immediately) if duplicate C(description + switch) combinations are found
+      on template-name entries in the playbook config or on the ND controller.
     - This atomic-fail behavior ensures no partial changes are made when descriptions are ambiguous.
     type: bool
     default: false
@@ -199,6 +244,13 @@ options:
     description:
     - When set to V(true), policies are deployed to devices after create/update/delete operations.
     - For C(merged) state, this triggers a pushConfig action for the affected policy IDs.
+    - For C(merged) entries that already match the controller, O(deploy=true) still calls
+      C(policyActions/pushConfig) for the existing policy IDs so an explicit deploy request
+      can push already-created policies. This no-diff deploy does not by itself mark the task
+      changed.
+    - If C(pushConfig) fails after a create or update, the policy record may already exist or
+      be updated on the controller. Fix the device or controller-side deploy issue and rerun
+      with O(deploy=true).
     - For C(deleted) state with O(deploy=true), the module performs C(markDelete) followed
       by C(switchActions/deploy) to push removal config to the affected switches. The policy
       record remains on the controller in markDeleted state until the next switch-level deploy
@@ -212,12 +264,29 @@ options:
       When O(deploy=true), a C(switchActions/deploy) is also performed to push the
       config removal to the switch. When O(deploy=false), the policy record is removed
       from the controller but the running config remains on the switch until the next deploy.
+    - B(Warning) — The module issues C(POST /switchActions/deploy) targeting the
+      affected switches in these situations when O(deploy=true),
+      (1) C(state=deleted) (after C(markDelete) or direct-DELETE), and
+      (2) C(state=merged) when O(use_desc_as_key=true) and a description's
+      C(template_name) changes, triggering a B(delete_and_create) flow whose
+      delete step also goes through C(markDelete) + C(switchActions/deploy).
+      In both situations the controller deploys B(every pending configuration
+      change staged for those switches), not only the changes performed by this
+      task. The ND controller does not provide a per-task or staged-only variant
+      of the switch-level deploy endpoint. The C(merged)-state C(pushConfig)
+      path (used for plain creates and in-place updates) is scoped to the
+      affected policy IDs and is B(not) subject to this caveat.
     type: bool
     default: true
   ticket_id:
     description:
-    - Change Control Ticket ID to associate with mutation operations.
+    - Change Control Ticket ID to associate with mutation operations
+      (C(POST)/C(PUT)/C(DELETE)/C(markDelete)).
     - Required when Change Control is enabled on the ND controller.
+    - B(Note) — Neither C(POST /policyActions/pushConfig) nor C(POST /switchActions/deploy)
+      accept a C(ticketId) parameter, so the deploy step is B(not) bound to the supplied
+      ticket. Only the controller-side mutations (C(POST)/C(PUT)/C(DELETE)/C(markDelete))
+      carry the ticket.
     type: str
   cluster_name:
     description:
@@ -253,6 +322,9 @@ extends_documentation_fragment:
 seealso:
 - module: cisco.nd.nd_rest
 notes:
+- The module is validation-first but not transactionally rolled back. Validation and
+  controller-ambiguity failures stop before writes; failures returned after write calls
+  begin are reported in task output and may require a rerun or manual cleanup.
 - When O(use_desc_as_key=false) and O(config[].name) is a template name (not a policy ID),
   existing policies are B(never) updated in-place. The module always creates a new policy.
   This is because multiple policies can share the same template name, making it ambiguous
@@ -268,6 +340,9 @@ notes:
   policy record is removed from the controller. This fallback is B(only) triggered
   by the C("content type PYTHON") error — other C(markDelete) failures are reported
   as task failures and are not auto-retried.
+- C(state=gathered) returns only active user-manageable policies. Policies already
+  C(markDeleted) and internal controller sub-policies with a non-empty C(source) field
+  are filtered out before gathered output and idempotency checks.
 """
 
 EXAMPLES = r"""
@@ -525,6 +600,12 @@ EXAMPLES = r"""
 - name: Use gathered output to re-create policies on another fabric
   cisco.nd.nd_manage_policy:
     fabric_name: "{{ target_fabric }}"
+    state: merged
+    config: "{{ all_policies.gathered }}"
+
+- name: Round-trip on the same fabric — gathered output updates existing policies in place by policy_id
+  cisco.nd.nd_manage_policy:
+    fabric_name: "{{ fabric_name }}"
     state: merged
     config: "{{ all_policies.gathered }}"
 

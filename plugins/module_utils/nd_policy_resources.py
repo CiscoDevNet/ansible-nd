@@ -27,17 +27,22 @@ from __future__ import annotations
 
 import copy
 import logging
-import re
 from typing import Any, ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
     ValidationError,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.common.template_validation import (
+    fetch_template_params as _shared_fetch_template_params,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.template_validation import (
+    strip_system_injected_keys as _shared_strip_system_injected_keys,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.common.template_validation import (
+    validate_template_inputs as _shared_validate_template_inputs,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.constants import (
     SYSTEM_INJECTED_TEMPLATE_KEYS,
-)
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_config_templates import (
-    EpManageConfigTemplateParametersGet,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_policies import (
     EpManagePoliciesDelete,
@@ -99,21 +104,18 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Resul
 
 
 # =============================================================================
-# Module-level pre-compiled regex patterns
-# =============================================================================
-#
-# Used by _validate_template_inputs() for soft type-checks of user-supplied
-# template inputs.  Compiled once at import time to avoid repeated parsing
-# cost in tight loops (P3).
-
-_IPV4_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
-_IPV4_SUBNET_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$")
-_MAC_RE = re.compile(r"^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$" r"|^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
-
-
-# =============================================================================
 # Module-level helpers (stateless, used by NDPolicyModule)
 # =============================================================================
+#
+# Note: the IPv4 / IPv4-subnet / MAC regex patterns and the
+# fetch-with-cache + schema-validation logic live in
+# ``plugins/module_utils/common/template_validation.py`` and are consumed
+# via the thin wrappers ``_fetch_template_params``,
+# ``_validate_template_inputs`` and ``_clean_template_inputs`` on
+# ``NDPolicyModule`` below.  The instance-method surface (signatures,
+# return values, log lines, and ``self._template_params_cache``) is
+# what the unit tests in
+# ``tests/unit/module_utils/test_nd_policy_resources_module.py`` exercise.
 
 
 def _looks_like_ipv4(value) -> bool:
@@ -536,6 +538,14 @@ class NDPolicyModule:
                     continue
                 entry = copy.deepcopy(g)
                 entry["switch"] = sn
+                # ``policy_id`` auto-promotion is intentionally scoped to the
+                # self-contained gathered round-trip shape (handled above).
+                # In the legacy two-level shape, a single ``policy_id`` fanning
+                # across N switches has no coherent meaning, so we silently
+                # drop it here.  This also strips the ``policy_id: None``
+                # placeholder that ``PlaybookPolicyConfig.model_dump`` emits
+                # for entries that omit the field.
+                entry.pop("policy_id", None)
                 result.append(entry)
 
             # 4b: Emit per-switch overrides for this switch.
@@ -548,6 +558,10 @@ class NDPolicyModule:
             for ovr in sn_overrides:
                 entry = copy.deepcopy(ovr)
                 entry["switch"] = sn
+                # Same reasoning as 4a — per-switch overrides also drop
+                # any stray ``policy_id`` because the legacy shape never
+                # honors it.
+                entry.pop("policy_id", None)
                 result.append(entry)
 
         return result
@@ -1205,32 +1219,27 @@ class NDPolicyModule:
     def _clean_template_inputs(self, template_name: str, raw_inputs: dict[str, Any]) -> dict[str, Any]:
         """Remove system-injected keys from template inputs.
 
-        Strips keys listed in ``SYSTEM_INJECTED_TEMPLATE_KEYS`` (defined in
-        ``constants.py`` and shared with policy-group resources) and keeps
-        everything else as a real template variable.
+        Delegates to
+        :func:`common.template_validation.strip_system_injected_keys`.  The
+        method signature, return shape (a fresh dict with
+        ``SYSTEM_INJECTED_TEMPLATE_KEYS`` removed) and ENTER / EXIT /
+        stripped-keys debug-log lines define the canonical
+        ``gathered -> merged`` round-trip pre-step.
 
         Args:
             template_name: Template name (for logging context).
             raw_inputs:    Raw ``templateInputs`` dict from the controller.
 
         Returns:
-            Cleaned dict with system-injected keys removed.
+            Cleaned dict with system-injected keys removed.  ``raw_inputs``
+            is not mutated.
         """
-        self.log.debug(f"ENTER: _clean_template_inputs(template={template_name}, " f"keys={list(raw_inputs.keys())})")
-
-        cleaned = {}
-        stripped_keys = []
-        for k, v in raw_inputs.items():
-            if k in SYSTEM_INJECTED_TEMPLATE_KEYS:
-                stripped_keys.append(k)
-            else:
-                cleaned[k] = v
-
-        if stripped_keys:
-            self.log.debug(f"Stripped {len(stripped_keys)} system-injected keys: " f"{sorted(stripped_keys)}")
-
-        self.log.debug(f"EXIT: _clean_template_inputs() -> {len(cleaned)} keys " f"(removed {len(raw_inputs) - len(cleaned)})")
-        return cleaned
+        return _shared_strip_system_injected_keys(
+            template_name,
+            raw_inputs,
+            SYSTEM_INJECTED_TEMPLATE_KEYS,
+            logger=self.log,
+        )
 
     # =========================================================================
     # Helpers: Classification & Filtering
@@ -1603,14 +1612,46 @@ class NDPolicyModule:
     # =========================================================================
     # Template Input Validation
     # =========================================================================
+    #
+    # Both methods below delegate to the shared helper at
+    # ``plugins/module_utils/common/template_validation.py``.  The instance
+    # wrappers exist (rather than calling the helper directly from every
+    # site) for three reasons:
+    #
+    # 1. The instance-method surface
+    #    (``module._fetch_template_params(name)``,
+    #    ``module._validate_template_inputs(name, inputs)``) is exercised
+    #    by 33 unit-test references in
+    #    ``tests/unit/module_utils/test_nd_policy_resources_module.py``
+    #    which seed ``module._template_params_cache[name] = params``
+    #    directly and then invoke
+    #    ``module._validate_template_inputs(name, inputs)``.  The wrappers
+    #    keep these signatures stable.
+    #
+    # 2. ``_fetch_template_params`` records the would-be HTTP call onto
+    #    the instance via ``self._record_call(ep, None)`` so the audit
+    #    trail (``Results.{path,verb}_current`` for the diff output) is
+    #    populated on every fetch.  The shared helper accepts a
+    #    ``record_call_fn`` callback so that instance method can be threaded
+    #    through without polluting the helper's signature for non-policy
+    #    consumers (e.g. the policy-group orchestrator).
+    #
+    # 3. ``self.log`` is the per-instance ``ListLogger`` /
+    #    ``logging.Logger`` on which ENTER / EXIT / cache-hit / WARNING
+    #    lines are emitted.  Passing it as the helper's ``logger`` kwarg
+    #    routes every line through the module's structured-log instance.
 
     def _fetch_template_params(self, template_name: str) -> list[dict]:
         """Fetch and cache parameter definitions for a config template.
 
-        Calls ``GET /api/v1/manage/configTemplates/{templateName}`` and
-        extracts the ``parameters`` array. Results are cached per
-        ``template_name`` so multiple config entries sharing the same
-        template incur only one API call.
+        Delegates to
+        :func:`common.template_validation.fetch_template_params`.  The
+        helper performs the cached
+        ``GET /api/v1/manage/configTemplates/{templateName}/parameters``
+        call using ``self.nd.request`` and stores the result on the
+        instance-owned ``self._template_params_cache`` dict so subsequent
+        callers (and the seed-the-cache unit tests) read from a single
+        canonical cache.
 
         Args:
             template_name: The ND template name (e.g., ``switch_freeform``).
@@ -1618,183 +1659,44 @@ class NDPolicyModule:
         Returns:
             List of parameter dicts, each with at minimum ``name``,
             ``parameterType``, ``optional``, and ``defaultValue`` keys.
-            Returns an empty list if the template has no parameters or
-            the API call fails.
+            Returns an empty list if the template has no parameters or the
+            API call fails (graceful degradation: cache the empty result so
+            we do not re-hit a flaky controller).
         """
-        self.log.debug(f"ENTER: _fetch_template_params(template_name={template_name})")
-
-        if template_name in self._template_params_cache:
-            self.log.debug(f"Template params cache hit for '{template_name}': " f"{len(self._template_params_cache[template_name])} params")
-            return self._template_params_cache[template_name]
-
-        ep = EpManageConfigTemplateParametersGet()
-        ep.template_name = template_name
-
-        try:
-            self._record_call(ep, None)
-            data = self.nd.request(ep.path, ep.verb)
-        except Exception as exc:
-            self.log.warning(f"Failed to fetch template '{template_name}' parameters: {exc}. " "Skipping template input validation.")
-            self._template_params_cache[template_name] = []
-            return []
-
-        # The response is a templateData object with 'parameters' key.
-        # 'parameters' is a list of templateParameter objects.
-        params = data.get("parameters") if isinstance(data, dict) else []
-        if params is None:
-            params = []
-
-        self._template_params_cache[template_name] = params
-        self.log.info(f"Fetched {len(params)} parameter definitions for template '{template_name}'")
-        self.log.debug(f"Template '{template_name}' param names: " f"{[p.get('name') for p in params]}")
-        self.log.debug(f"EXIT: _fetch_template_params()")
-        return params
+        return _shared_fetch_template_params(
+            template_name,
+            request_fn=self.nd.request,
+            cache=self._template_params_cache,
+            record_call_fn=self._record_call,
+            logger=self.log,
+        )
 
     def _validate_template_inputs(self, template_name: str, template_inputs: dict[str, Any]) -> list[str]:
         """Validate user-provided templateInputs against the template schema.
 
-        Performs three checks:
-            1. **Unknown keys** — every key in ``template_inputs`` must
-               correspond to a parameter ``name`` in the template definition.
-            2. **Missing required parameters** — every parameter where
-               ``optional`` is ``False`` AND ``defaultValue`` is empty/null
-               must be supplied by the user.
-            3. **Basic type validation** — lightweight format checks for
-               common ``parameterType`` values (boolean, Integer, ipV4Address,
-               etc.). Values that fail these checks are reported as warnings,
-               not hard failures, because the controller's own validation is
-               authoritative.
+        Delegates to
+        :func:`common.template_validation.validate_template_inputs`.  The
+        contract (3 checks: unknown keys, missing required, per-type soft
+        validation; empty / whitespace values skip type validation;
+        ``parameterType`` matched case-insensitively; ``IsInternal`` params
+        accepted silently) is shared with the policy-group consumer because
+        both invoke the same helper.
 
         Args:
-            template_name: Template name for fetching parameter definitions.
+            template_name:   Template name for fetching parameter definitions.
             template_inputs: User-provided ``templateInputs`` dict.
 
         Returns:
-            List of validation error message strings. Empty list means all
+            List of validation error message strings.  Empty list means all
             inputs are valid.
         """
-        self.log.debug(f"ENTER: _validate_template_inputs(template={template_name}, " f"input_keys={list(template_inputs.keys())})")
-
         params = self._fetch_template_params(template_name)
-        if not params:
-            self.log.debug("No template params available, skipping validation")
-            return []
-
-        errors: list[str] = []
-
-        # Build lookup: param_name -> param_def
-        # Filter out internal parameters (annotations.IsInternal == "true")
-        # that the controller auto-populates (e.g., SERIAL_NUMBER, POLICY_ID,
-        # SOURCE, FABRIC_NAME). Users should never need to set these.
-        param_map: dict[str, dict] = {}
-        internal_names: set = set()
-        for p in params:
-            name = p.get("name")
-            if not name:
-                continue
-            annotations = p.get("annotations") or {}
-            if str(annotations.get("IsInternal", "")).lower() == "true":
-                internal_names.add(name)
-            else:
-                param_map[name] = p
-
-        self.log.debug(f"Template '{template_name}': {len(param_map)} user params, " f"{len(internal_names)} internal params ({sorted(internal_names)})")
-
-        # ------------------------------------------------------------------
-        # Check 1: Unknown keys (skip internal params — they are allowed
-        # but not advertised to users)
-        # ------------------------------------------------------------------
-        valid_names = set(param_map.keys()) | internal_names
-        user_facing_names = set(param_map.keys())
-        for user_key in template_inputs:
-            if user_key not in valid_names:
-                errors.append(f"Unknown templateInput key '{user_key}' for template " f"'{template_name}'. Valid keys: {sorted(user_facing_names)}")
-
-        # ------------------------------------------------------------------
-        # Check 2: Missing required parameters
-        # ------------------------------------------------------------------
-        for pname, pdef in param_map.items():
-            is_optional = pdef.get("optional", True)
-            default_val = pdef.get("defaultValue")
-            has_default = default_val is not None and str(default_val).strip() != ""
-
-            if not is_optional and not has_default and pname not in template_inputs:
-                errors.append(f"Required templateInput '{pname}' (type={pdef.get('parameterType', '?')}) " f"is missing for template '{template_name}'")
-
-        # ------------------------------------------------------------------
-        # Check 3: Basic type validation (soft checks)
-        # Empty strings are treated as "not set" — the controller accepts
-        # them for optional fields, so we skip validation for them.  This
-        # is especially important for the gathered → merged roundtrip
-        # where the controller returns "" for unset optional parameters.
-        # ------------------------------------------------------------------
-        for user_key, user_val in template_inputs.items():
-            pdef = param_map.get(user_key)
-            if not pdef:
-                continue  # Already flagged as unknown above
-
-            ptype = (pdef.get("parameterType") or "").lower()
-            val_str = str(user_val)
-
-            # Skip type validation for empty/blank values — they mean "not set"
-            if val_str.strip() == "":
-                continue
-
-            if ptype == "boolean":
-                if val_str.lower() not in ("true", "false"):
-                    errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects boolean (true/false), got '{val_str}'")
-
-            elif ptype == "integer":
-                try:
-                    int(val_str)
-                except ValueError:
-                    errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects integer, got '{val_str}'")
-
-            elif ptype == "long":
-                try:
-                    int(val_str)
-                except ValueError:
-                    errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects long integer, got '{val_str}'")
-
-            elif ptype == "float":
-                try:
-                    float(val_str)
-                except ValueError:
-                    errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects float, got '{val_str}'")
-
-            elif ptype in ("ipv4address", "ipaddress"):
-                # Basic IPv4 check
-                if not _IPV4_RE.match(val_str):
-                    errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects IPv4 address (e.g., 192.168.1.1), got '{val_str}'")
-
-            elif ptype == "ipv4addresswithsubnet":
-                if not _IPV4_SUBNET_RE.match(val_str):
-                    errors.append(
-                        f"templateInput '{user_key}' for template '{template_name}' "
-                        f"expects IPv4 address with subnet (e.g., 192.168.1.1/24), got '{val_str}'"
-                    )
-
-            elif ptype == "macaddress":
-                if not _MAC_RE.match(val_str):
-                    errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects MAC address, got '{val_str}'")
-
-            elif ptype == "enum":
-                # If metaProperties contains 'validValues', check against them
-                meta = pdef.get("metaProperties") or {}
-                valid_values_str = meta.get("validValues")
-                if valid_values_str:
-                    # validValues format is typically "val1,val2,val3"
-                    valid_values = [v.strip() for v in valid_values_str.split(",")]
-                    if val_str not in valid_values:
-                        errors.append(f"templateInput '{user_key}' for template '{template_name}' " f"expects one of {valid_values}, got '{val_str}'")
-
-        if errors:
-            self.log.warning(f"Template input validation found {len(errors)} errors " f"for template '{template_name}': {errors}")
-        else:
-            self.log.debug(f"Template input validation passed for template '{template_name}'")
-
-        self.log.debug("EXIT: _validate_template_inputs()")
-        return errors
+        return _shared_validate_template_inputs(
+            template_name,
+            template_inputs,
+            params,
+            logger=self.log,
+        )
 
     def _build_have(self, want: dict) -> tuple[list[dict], str | None]:
         """Query existing policies matching the want, in-memory against the cache.

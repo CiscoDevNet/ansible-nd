@@ -158,6 +158,18 @@ class PlaybookPolicyConfig(NDNestedModel):
         max_length=255,
         description="Template name or policy ID",
     )
+    policy_id: str | None = Field(
+        default=None,
+        max_length=255,
+        description=(
+            "Controller-assigned policy ID (e.g., POLICY-28440). When set, the "
+            "gathered round-trip path (each entry carries its own embedded `switch:` "
+            "list) promotes this value to `name` so the update targets the existing "
+            "policy by ID. Honored only in the self-contained gathered shape; "
+            "silently ignored in the legacy two-level shape (globals + single `switch:` "
+            "entry) where one ID has no coherent meaning across multiple switches."
+        ),
+    )
     description: str = Field(
         default="",
         max_length=255,
@@ -223,7 +235,17 @@ class PlaybookPolicyConfig(NDNestedModel):
 
         # When use_desc_as_key=true, description must not be empty for
         # template-name entries (not policy IDs) in merged/deleted states.
-        if use_desc_as_key and state in ("merged", "deleted") and self.name and not self.name.startswith("POLICY-") and not self.description:
+        # Entries that carry an explicit `policy_id` are exempt because the
+        # self-contained promotion path (translate_config) rewrites `name`
+        # to the policy_id before any description-keyed matching runs.
+        if (
+            use_desc_as_key
+            and state in ("merged", "deleted")
+            and self.name
+            and not self.name.startswith("POLICY-")
+            and not self.policy_id
+            and not self.description
+        ):
             raise ValueError(
                 f"'description' cannot be empty when use_desc_as_key=true "
                 f"and name is a template name ('{self.name}'). "

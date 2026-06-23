@@ -1340,3 +1340,95 @@ def test_nd_policy_resources_helpers_00830() -> None:
         out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
 
     assert out == []
+
+
+def test_nd_policy_resources_helpers_00840() -> None:
+    """
+    # Summary
+
+    Verify the legacy two-level shape ignores ``policy_id`` entirely:
+    it is neither promoted to ``name`` nor leaked into the flattened
+    output. The auto-promotion documented in the gathered round-trip
+    path is intentionally scoped to the self-contained shape, where
+    each entry has a 1:1 mapping to a single switch. In the legacy
+    two-level shape one policy entry fans across N switches, so
+    promoting a single ``policy_id`` across multiple switches has no
+    coherent meaning.
+
+    ## Test
+
+    - Legacy two-level config with a stray ``policy_id`` on a global
+      flattens to per-switch entries.
+    - ``policy_id`` is stripped from every emitted entry (not promoted
+      to ``name``).
+    - ``name`` retains the original template name.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule.translate_config``
+    """
+    config = [
+        {"name": "feature_enable", "policy_id": "POLICY-99", "priority": 100},
+        {"switch": [{"serial_number": "S1"}, {"serial_number": "S2"}]},
+    ]
+
+    out = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+
+    assert len(out) == 2
+    for entry in out:
+        assert entry["name"] == "feature_enable"
+        assert "policy_id" not in entry
+    assert {entry["switch"] for entry in out} == {"S1", "S2"}
+
+
+def test_nd_policy_resources_helpers_00850() -> None:
+    """
+    # Summary
+
+    Verify the gathered round-trip stays consistent across repeated
+    ``translate_config`` runs (idempotency proof for the documented
+    behaviour ``gathered -> merged -> gathered -> merged ...``).
+    After the first run the entry's ``name`` is already the policy ID
+    and ``policy_id`` is gone, so subsequent runs leave ``name``
+    unchanged.
+
+    ## Test
+
+    - First call: ``policy_id`` is consumed and promoted into ``name``.
+    - Second call (over the output of the first): no change.
+
+    ## Classes and Methods
+
+    - ``NDPolicyModule.translate_config``
+    """
+    config = [
+        {
+            "name": "feature_enable",
+            "policy_id": "POLICY-28440",
+            "priority": 100,
+            "switch": [{"serial_number": "S1"}],
+        }
+    ]
+
+    out1 = NDPolicyModule.translate_config(config, use_desc_as_key=False)
+    assert len(out1) == 1
+    assert out1[0]["name"] == "POLICY-28440"
+    assert "policy_id" not in out1[0]
+
+    # The second pass receives a flat list (``switch`` is a string, not
+    # a list) so it falls through to the legacy path. We re-wrap the
+    # ``switch`` value into the embedded list shape that the gathered
+    # round-trip uses, to mirror the actual ``gathered -> merged`` flow.
+    re_round_tripped = [
+        {
+            "name": out1[0]["name"],
+            "priority": out1[0]["priority"],
+            "switch": [{"serial_number": out1[0]["switch"]}],
+        }
+    ]
+
+    out2 = NDPolicyModule.translate_config(re_round_tripped, use_desc_as_key=False)
+    assert len(out2) == 1
+    assert out2[0]["name"] == "POLICY-28440"
+    assert "policy_id" not in out2[0]
+    assert out2[0]["switch"] == "S1"
