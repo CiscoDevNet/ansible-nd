@@ -539,6 +539,14 @@ class VrfWorkflowCoordinator:
             result["changed"] = True
         if trace.get("failed") or final.get("failed"):
             result["failed"] = True
+        for key in ("check_mode_attachment_payloads", "check_mode_deploy_payloads"):
+            payloads = trace.get(key)
+            if payloads:
+                result.setdefault(key, [])
+                if prepend:
+                    result[key] = payloads + result[key]
+                else:
+                    result[key].extend(payloads)
 
         verbosity = self.module._verbosity if hasattr(self.module, "_verbosity") else 0
         if self.module.params.get("output_level") == "debug":
@@ -772,6 +780,14 @@ class VrfWorkflowCoordinator:
         operation_type: OperationType,
     ) -> dict[str, Any]:
         """Send attach/detach payload and return mergeable API trace."""
+        if self.module.check_mode:
+            return {
+                "changed": True,
+                "failed": False,
+                "deploy_targets": deploy_targets,
+                "payloads": payloads,
+                "check_mode_attachment_payloads": payloads,
+            }
         return self.attachments.post_vrf_attachments(module_args, strategy, payloads, deploy_targets, operation_type)
 
     def _record_deploy_target(
@@ -833,6 +849,8 @@ class VrfWorkflowCoordinator:
         vrf_names: Optional[list[str]] = None,
     ) -> None:
         """Wait until configured VRFs are absent or in notApplicable state."""
+        if self.module.check_mode:
+            return
         self.attachments.wait_for_vrfs_delete_ready(module_args, strategy, vrf_names)
 
     def _deploy_vrf_attachments(
@@ -842,6 +860,12 @@ class VrfWorkflowCoordinator:
         deploy_payload: dict[str, Any],
     ) -> dict[str, Any]:
         """Deploy pending VRF attachment changes once."""
+        if self.module.check_mode:
+            return {
+                "changed": True,
+                "failed": False,
+                "check_mode_deploy_payloads": [deploy_payload],
+            }
         return self.attachments.deploy_vrf_attachments(module_args, strategy, deploy_payload)
 
     # ── Child task runner ─────────────────────────────────────────

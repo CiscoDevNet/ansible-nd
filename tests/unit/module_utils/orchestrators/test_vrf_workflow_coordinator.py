@@ -958,6 +958,60 @@ def test_vrf_workflow_coordinator_00080_overridden_deploys_omitted_detach_before
     assert result["changed"] is True
 
 
+def test_vrf_workflow_coordinator_check_mode_deleted_skips_deploy_and_wait():
+    module_args = {
+        "fabric": "msd_p",
+        "state": "deleted",
+        "output_level": "debug",
+        "config": [
+            {
+                "vrf_name": "ansible-msd-vrf",
+                "deploy_type": "vrf",
+            }
+        ],
+    }
+    module = _Module(dict(module_args))
+    module.check_mode = True
+    coordinator = VrfWorkflowCoordinator(
+        module=module,
+        strategy=_ParentStrategy(),
+    )
+    call_order = []
+
+    def detach(_args, _strategy):
+        call_order.append("detach")
+        return {"deploy_targets": {"ansible-msd-vrf": {"SERIAL1"}}}
+
+    def deploy(*_args):
+        raise AssertionError("check mode must not deploy")
+
+    def wait(*_args):
+        raise AssertionError("check mode must not wait for delete readiness")
+
+    def delete(_args, strategy=None):
+        call_order.append("delete")
+        assert strategy is not None
+        return {
+            "changed": True,
+            "output_level": "debug",
+            "before": [],
+            "after": [],
+            "diff": [],
+        }
+
+    object.__setattr__(coordinator, "_apply_deleted_attachment_phase", detach)
+    object.__setattr__(coordinator, "_deploy_vrf_attachments", deploy)
+    object.__setattr__(coordinator, "_wait_for_vrfs_delete_ready", wait)
+    object.__setattr__(coordinator, "_run_state_machine", delete)
+    object.__setattr__(coordinator, "_ensure_vrfs_have_no_networks", lambda *_args, **_kwargs: None)
+
+    result = coordinator._run_state_machine_with_attachments(dict(module_args))
+
+    assert call_order == ["detach", "delete"]
+    assert result["changed"] is True
+    assert result["check_mode_deploy_payloads"] == [{"vrfNames": ["ansible-msd-vrf"]}]
+
+
 def test_vrf_workflow_coordinator_00085_overridden_new_vrf_does_not_query_missing_attachments():
     """
     # Summary
