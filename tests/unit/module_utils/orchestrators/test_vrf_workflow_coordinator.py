@@ -1012,6 +1012,55 @@ def test_vrf_workflow_coordinator_check_mode_deleted_skips_deploy_and_wait():
     assert result["check_mode_deploy_payloads"] == [{"vrfNames": ["ansible-msd-vrf"]}]
 
 
+def test_vrf_workflow_coordinator_check_mode_attachment_phase_returns_planned_payload():
+    module_args = {
+        "fabric": "msd_p",
+        "state": "merged",
+        "config": [
+            {
+                "vrf_name": "ansible-msd-vrf",
+                "attach": [{"ip_address": "10.1.1.11"}],
+            }
+        ],
+    }
+    module = _Module(dict(module_args))
+    module.check_mode = True
+    coordinator = VrfWorkflowCoordinator(
+        module=module,
+        strategy=_ParentStrategy(),
+    )
+
+    def post_vrf_attachments(*_args, **_kwargs):
+        raise AssertionError("check mode must not post VRF attachments")
+
+    coordinator.attachments.post_vrf_attachments = post_vrf_attachments
+    desired = {
+        ("ansible-msd-vrf", "SERIAL1"): {
+            "vrfName": "ansible-msd-vrf",
+            "switchId": "SERIAL1",
+            "attach": True,
+        }
+    }
+
+    trace = coordinator._apply_attachment_phase(
+        module_args,
+        _ParentStrategy(),
+        phase="post",
+        desired=desired,
+        current={},
+    )
+
+    assert trace["changed"] is True
+    assert trace["deploy_targets"] == {"ansible-msd-vrf": {"SERIAL1"}}
+    assert trace["check_mode_attachment_payloads"] == [
+        {
+            "vrfName": "ansible-msd-vrf",
+            "switchId": "SERIAL1",
+            "attach": True,
+        }
+    ]
+
+
 def test_vrf_workflow_coordinator_00085_overridden_new_vrf_does_not_query_missing_attachments():
     """
     # Summary

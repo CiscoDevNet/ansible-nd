@@ -469,6 +469,14 @@ class VrfAttachmentManager:
         operation_type: OperationType,
     ) -> dict[str, Any]:
         """Send attach/detach payload and return mergeable API trace."""
+        if getattr(getattr(self.coordinator, "module", None), "check_mode", False):
+            return {
+                "changed": True,
+                "failed": False,
+                "deploy_targets": deploy_targets,
+                "payloads": payloads,
+                "check_mode_attachment_payloads": payloads,
+            }
         request = VrfAttachDetachRequestModel(attachments=[VrfAttachmentModel(**payload) for payload in payloads])
         orchestrator, results = self.coordinator._new_vrf_orchestrator(module_args, strategy)
         endpoint = orchestrator._make_endpoint(EpManageFabricsVrfAttachmentsPost)
