@@ -672,8 +672,8 @@ def test_get_all_resources_reads_multiple_pages_with_offsets():
 
     paths = [call.args[0] for call in nd.request.call_args_list]
     assert len(module._all_resources) == 2  # pylint: disable=protected-access
-    assert "max=1000&offset=0" in paths[0]
-    assert "max=1000&offset=1000" in paths[1]
+    assert "max=500&offset=0" in paths[0]
+    assert "max=500&offset=1" in paths[1]
 
 
 def test_fetch_resources_paginated_uses_filtered_query_path():
@@ -694,7 +694,7 @@ def test_fetch_resources_paginated_uses_filtered_query_path():
     assert "poolName=LOOPBACK_ID" in path
     assert "switchId=SER1" in path
     assert "filter=entityName:loopback0" in path
-    assert "max=1000" in path
+    assert "max=500" in path
     assert "offset=0" in path
 
 
@@ -1232,7 +1232,19 @@ def test_manage_state_merged_uses_filtered_candidate_get():
         }
     ]
     nd = _mock_nd_module(state="merged", config=config)
-    nd.request.return_value = {"resources": [], "meta": {"counts": {"remaining": 0, "total": 0}}}
+    nd.request.return_value = {
+        "resources": [
+            {
+                "resourceId": 101,
+                "entityName": "loopback0",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": "10",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+                "status": None,
+            }
+        ],
+        "meta": {"counts": {"remaining": 0, "total": 1}},
+    }
     results = Results()
 
     with patch(
@@ -1245,7 +1257,7 @@ def test_manage_state_merged_uses_filtered_candidate_get():
     paths = [call.args[0] for call in nd.request.call_args_list]
     assert "poolName=LOOPBACK_ID" in paths[0]
     assert "switchId=SER1" in paths[0]
-    assert "max=1000" in paths[0]
+    assert "max=500" in paths[0]
     assert "offset=0" in paths[0]
 
 
@@ -1274,7 +1286,7 @@ def test_manage_state_deleted_uses_filtered_candidate_get():
     path = nd.request.call_args_list[0].args[0]
     assert "poolName=LOOPBACK_ID" in path
     assert "switchId=SER1" in path
-    assert "max=1000" in path
+    assert "max=500" in path
     assert "offset=0" in path
     assert len(nd.request.call_args_list) == 1
 
@@ -1739,11 +1751,16 @@ def test_manage_merged_with_single_new_resource():
     module, nd = _resource_manager_with_nd(config=[_config()], all_resources=[])  # Empty existing
 
     nd.request.return_value = {
-        "resourceId": 101,
-        "entityName": "loopback0",
-        "poolName": "LOOPBACK_ID",
-        "resourceValue": "10",
-        "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+        "resources": [
+            {
+                "resourceId": 101,
+                "entityName": "loopback0",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": "10",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+            }
+        ],
+        "meta": {"counts": {"remaining": 0, "total": 1}},
     }
 
     # Run manage_merged
@@ -1768,7 +1785,10 @@ def test_manage_deleted_with_existing_resource():
     """manage_deleted removes matching existing resource via DELETE."""
     module, nd = _resource_manager_with_nd(state="deleted", config=[_config()], all_resources=[_response()])  # Existing to delete
 
-    nd.request.return_value = {"statusCode": 200}
+    nd.request.return_value = {
+        "resources": [{"resourceId": 101, "status": None}],
+        "meta": {"counts": {"remaining": 0, "total": 1}},
+    }
 
     # Run manage_deleted
     result = module.manage_deleted()  # pylint: disable=protected-access
@@ -1854,7 +1874,19 @@ def test_manage_state_merged_calls_manage_merged():
             }
         ],
     )
-    nd.request.return_value = []
+    nd.request.return_value = {
+        "resources": [
+            {
+                "resourceId": 101,
+                "entityName": "l3_vni",
+                "poolName": "L3_VNI",
+                "resourceValue": "5000",
+                "scopeDetails": {"scopeType": "fabric"},
+                "status": None,
+            }
+        ],
+        "meta": {"counts": {"remaining": 0, "total": 1}},
+    }
 
     # Call manage_state
     module.manage_state()
@@ -2073,7 +2105,19 @@ def test_check_mode_prevents_api_calls_merged():
     """Check mode with merged state logs but doesn't call API."""
     module, nd = _resource_manager_with_nd(state="merged", config=[_config()], all_resources=[])
     module.check_mode = True
-    nd.request.return_value = []
+    nd.request.return_value = {
+        "resources": [
+            {
+                "resourceId": 101,
+                "entityName": "loopback0",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": "10",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+                "status": None,
+            }
+        ],
+        "meta": {"counts": {"remaining": 0, "total": 1}},
+    }
 
     # Run manage_merged in check mode
     module.manage_merged()  # pylint: disable=protected-access
@@ -2087,7 +2131,10 @@ def test_check_mode_prevents_api_calls_deleted():
     """Check mode with deleted state logs but doesn't call DELETE."""
     module, nd = _resource_manager_with_nd(state="deleted", config=[_config()], all_resources=[_response()])
     module.check_mode = True
-    nd.request.return_value = []
+    nd.request.return_value = {
+        "resources": [{"resourceId": 101, "status": None}],
+        "meta": {"counts": {"remaining": 0, "total": 1}},
+    }
 
     # Run manage_deleted in check mode
     module.manage_deleted()  # pylint: disable=protected-access
@@ -2099,7 +2146,19 @@ def test_check_mode_prevents_api_calls_deleted():
 def test_manage_merged_logs_payload():
     """manage_merged logs payload before sending."""
     module, nd = _resource_manager_with_nd(config=[_config()], all_resources=[])
-    nd.request.return_value = {"resourceId": 101}
+    nd.request.return_value = {
+        "resources": [
+            {
+                "resourceId": 101,
+                "entityName": "loopback0",
+                "poolName": "LOOPBACK_ID",
+                "resourceValue": "10",
+                "scopeDetails": {"scopeType": "device", "switchId": "SER1"},
+                "status": None,
+            }
+        ],
+        "meta": {"counts": {"remaining": 0, "total": 1}},
+    }
 
     # Run manage_merged
     module.manage_merged()  # pylint: disable=protected-access
@@ -2111,7 +2170,10 @@ def test_manage_merged_logs_payload():
 def test_manage_deleted_logs_deletion():
     """manage_deleted logs deletion operation."""
     module, nd = _resource_manager_with_nd(state="deleted", config=[_config()], all_resources=[_response()])
-    nd.request.return_value = {"statusCode": 200}
+    nd.request.return_value = {
+        "resources": [{"resourceId": 101, "status": None}],
+        "meta": {"counts": {"remaining": 0, "total": 1}},
+    }
 
     # Run manage_deleted
     module.manage_deleted()  # pylint: disable=protected-access
@@ -2278,6 +2340,8 @@ def test_manage_merged_validates_response_fields_for_matching_entity():
 
     resp_item = MagicMock()
     resp_item.entity_name = "loopback99"
+    resp_item.status = None
+    resp_item.message = None
     resp_item.model_dump.return_value = {"entityName": "loopback99"}
     fake_batch_response = MagicMock(resources=[resp_item])
 
@@ -2296,6 +2360,144 @@ def test_manage_merged_validates_response_fields_for_matching_entity():
         module.manage_merged()
 
     assert validate_fields.called
+
+
+def test_manage_merged_raises_on_partial_create_response():
+    """Merged state fails when batch create response is missing items."""
+    module, nd = _resource_manager_with_nd(config=[])
+    cfg_1 = _config(entity_name="loopback99", resource="99")
+    cfg_2 = _config(entity_name="loopback100", resource="100")
+    module.proposed = [cfg_1, cfg_2]
+    module.existing = []
+
+    fake_changes = {
+        "idempotent": [],
+        "to_update": [],
+        "to_add": [
+            (cfg_1, "SER1", None),
+            (cfg_2, "SER1", None),
+        ],
+        "to_delete": [],
+        "debugs": [],
+    }
+
+    nd.request.return_value = {"resources": [{"entityName": "loopback99", "status": "created"}]}
+    create_item = MagicMock()
+    create_item.entity_name = "loopback99"
+    create_item.status = "created"
+    create_item.message = None
+    create_item.model_dump.return_value = {"entityName": "loopback99", "status": "created"}
+    fake_batch_response = MagicMock(resources=[create_item])
+
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
+        (
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+            "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+        ),
+        return_value=fake_batch_response,
+    ):
+        with pytest.raises(ValueError, match="Partial success in batch create"):
+            module.manage_merged()
+
+
+def test_manage_merged_raises_on_failed_create_status():
+    """Merged state fails when any create response item reports failure."""
+    module, nd = _resource_manager_with_nd(config=[])
+    cfg = _config(entity_name="loopback99", resource="99")
+    module.proposed = [cfg]
+    module.existing = []
+
+    fake_changes = {
+        "idempotent": [],
+        "to_update": [],
+        "to_add": [(cfg, "SER1", None)],
+        "to_delete": [],
+        "debugs": [],
+    }
+
+    nd.request.return_value = {
+        "resources": [{"entityName": "loopback99", "status": "failed", "message": "resource pool exhausted"}]
+    }
+    failed_item = MagicMock()
+    failed_item.entity_name = "loopback99"
+    failed_item.status = "failed"
+    failed_item.message = "resource pool exhausted"
+    failed_item.model_dump.return_value = {
+        "entityName": "loopback99",
+        "status": "failed",
+        "message": "resource pool exhausted",
+    }
+    fake_batch_response = MagicMock(resources=[failed_item])
+
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
+        (
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+            "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+        ),
+        return_value=fake_batch_response,
+    ):
+        with pytest.raises(ValueError, match="Partial success in batch create") as exc_info:
+            module.manage_merged()
+
+    assert "resource pool exhausted" in str(exc_info.value)
+
+
+def test_manage_merged_raises_on_mixed_create_success_and_failure():
+    """Merged state fails when batch create has mixed success and failure statuses."""
+    module, nd = _resource_manager_with_nd(config=[])
+    cfg_1 = _config(entity_name="loopback99", resource="99")
+    cfg_2 = _config(entity_name="loopback100", resource="100")
+    module.proposed = [cfg_1, cfg_2]
+    module.existing = []
+
+    fake_changes = {
+        "idempotent": [],
+        "to_update": [],
+        "to_add": [
+            (cfg_1, "SER1", None),
+            (cfg_2, "SER1", None),
+        ],
+        "to_delete": [],
+        "debugs": [],
+    }
+
+    nd.request.return_value = {
+        "resources": [
+            {"entityName": "loopback99", "status": "created"},
+            {"entityName": "loopback100", "status": "failed", "message": "already allocated"},
+        ]
+    }
+
+    success_item = MagicMock()
+    success_item.entity_name = "loopback99"
+    success_item.status = "created"
+    success_item.message = None
+    success_item.model_dump.return_value = {"entityName": "loopback99", "status": "created"}
+
+    failed_item = MagicMock()
+    failed_item.entity_name = "loopback100"
+    failed_item.status = "failed"
+    failed_item.message = "already allocated"
+    failed_item.model_dump.return_value = {
+        "entityName": "loopback100",
+        "status": "failed",
+        "message": "already allocated",
+    }
+
+    fake_batch_response = MagicMock(resources=[success_item, failed_item])
+
+    with patch.object(ResourceManagerDiffEngine, "compute_changes", return_value=fake_changes), patch(
+        (
+            "ansible_collections.cisco.nd.plugins.module_utils.manage_resource_manager."
+            "nd_manage_resource_manager_resources.ResourcesManagerBatchResponse.from_response"
+        ),
+        return_value=fake_batch_response,
+    ):
+        with pytest.raises(ValueError, match="Partial success in batch create") as exc_info:
+            module.manage_merged()
+
+    assert "entity_name=loopback100" in str(exc_info.value)
+    assert "already allocated" in str(exc_info.value)
 
 
 def test_manage_deleted_deduplicates_ids_and_skips_missing_id_in_check_mode():
@@ -2364,6 +2566,9 @@ def test_manage_deleted_success_parses_remove_response_items():
 
     nd.request.return_value = {"resources": [{"resourceId": 101}]}
     remove_item = MagicMock()
+    remove_item.status = None
+    remove_item.message = None
+    remove_item.resource_value = "10"
     remove_item.model_dump.return_value = {"resourceId": 101}
     fake_remove_response = MagicMock(resources=[remove_item])
 
