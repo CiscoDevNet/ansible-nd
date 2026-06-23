@@ -360,8 +360,8 @@ def test_fabric_prepare_update_00220() -> None:
             ],
             False,
         ),
-        ([], False),
-        ([{"switches": []}], False),
+        ([], True),
+        ([{"switches": []}], True),
     ],
     ids=["all-success", "skipped-ok", "validate-in-progress", "not-started", "one-group-failed", "empty-snapshot", "no-switches"],
 )
@@ -370,7 +370,8 @@ def test_fabric_prepare_update_00300(snapshot: list, expected: bool) -> None:
     # Summary
 
     Verify `snapshot_fully_prepared` returns True only when every switch in every group has reached
-    a terminal-OK state for both the stage and validate phases.
+    a terminal-OK state for both the stage and validate phases. A switch-less or empty snapshot is
+    vacuously prepared (True), consistent with `wait_for_completion`.
 
     ## Classes and Methods
 

@@ -18,8 +18,27 @@ from urllib.parse import quote
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import Field
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.base import NDEndpointBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.mixins import FabricNameMixin
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.query_params import EndpointQueryParams
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.base_path import BasePath
 from ansible_collections.cisco.nd.plugins.module_utils.enums import HttpVerbEnum
+
+
+class SoftwareUpdatePlanSummaryEndpointParams(EndpointQueryParams):
+    """
+    # Summary
+
+    Endpoint-specific query parameters for the software update plan summary endpoint.
+
+    `update_group_name` is rendered as the API's `updateGroupName` query parameter (snake_case ->
+    camelCase is automatic via `EndpointQueryParams`). When set, Nexus Dashboard scopes the summary
+    to that single update group instead of returning the fabric-wide plan.
+
+    ## Raises
+
+    None
+    """
+
+    update_group_name: str | None = Field(default=None, min_length=1, description="Scope the summary to a single update group")
 
 
 class EpFabricSoftwareUpdatePlanSummary(FabricNameMixin, NDEndpointBaseModel):
@@ -31,6 +50,9 @@ class EpFabricSoftwareUpdatePlanSummary(FabricNameMixin, NDEndpointBaseModel):
     Returns the fabric-wide software update plan: every update group with its per-switch stage /
     validate / install status. Used to drive the `nd_fabric_prepare_update` pre-flight role check
     and to poll for staging completion.
+
+    Set `endpoint_params.update_group_name` to scope the summary to a single update group via the
+    API's optional `updateGroupName` query parameter; leave it unset for the fabric-wide summary.
 
     - Path: `/api/v1/manage/fabrics/{fabric_name}/softwareUpdatePlan/summary`
     - Verb: GET
@@ -45,13 +67,17 @@ class EpFabricSoftwareUpdatePlanSummary(FabricNameMixin, NDEndpointBaseModel):
     class_name: Literal["EpFabricSoftwareUpdatePlanSummary"] = Field(
         default="EpFabricSoftwareUpdatePlanSummary", frozen=True, description="Class name for backward compatibility"
     )
+    endpoint_params: SoftwareUpdatePlanSummaryEndpointParams = Field(
+        default_factory=SoftwareUpdatePlanSummaryEndpointParams, description="Endpoint-specific query parameters"
+    )
 
     @property
     def path(self) -> str:
         """
         # Summary
 
-        Build the software update plan summary endpoint path. `fabric_name` is percent-encoded with `safe=""`.
+        Build the software update plan summary endpoint path. `fabric_name` is percent-encoded with `safe=""`. When
+        `endpoint_params.update_group_name` is set, the `updateGroupName` query string is appended to scope the summary.
 
         ## Raises
 
@@ -61,7 +87,11 @@ class EpFabricSoftwareUpdatePlanSummary(FabricNameMixin, NDEndpointBaseModel):
         """
         if self.fabric_name is None:
             raise ValueError(f"{type(self).__name__}.path: fabric_name must be set before accessing path.")
-        return BasePath.path("fabrics", quote(self.fabric_name, safe=""), "softwareUpdatePlan", "summary")
+        base_path = BasePath.path("fabrics", quote(self.fabric_name, safe=""), "softwareUpdatePlan", "summary")
+        query_string = self.endpoint_params.to_query_string()
+        if query_string:
+            return f"{base_path}?{query_string}"
+        return base_path
 
     @property
     def verb(self) -> HttpVerbEnum:

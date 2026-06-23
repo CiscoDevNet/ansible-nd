@@ -177,12 +177,33 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
 
         return self.rest_send.response_current.get("DATA", {})
 
-    def get_summary(self) -> SoftwareUpdatePlanSummaryModel:
+    @staticmethod
+    def scope_for(update_group_names: list[str]) -> str | None:
+        """
+        # Summary
+
+        Return the single update group name to scope a summary read to, or `None` when the read must
+        stay fabric-wide. The `updateGroupName` query parameter accepts one group at a time, so only
+        a single-group request can be scoped; any other count falls back to the fabric-wide summary.
+
+        ## Raises
+
+        None
+        """
+        return update_group_names[0] if len(update_group_names) == 1 else None
+
+    def get_summary(self, update_group_name: str | None = None) -> SoftwareUpdatePlanSummaryModel:
         """
         # Summary
 
         GET the fabric's software update plan summary and parse it into a
         `SoftwareUpdatePlanSummaryModel`.
+
+        Pass `update_group_name` to scope the read to a single update group via the API's
+        `updateGroupName` query parameter; this avoids transferring and parsing the entire fabric
+        plan on every poll for the common single-group prepare. The parameter accepts only one group
+        at a time, so multi-group prepares fetch the fabric-wide summary once and filter in memory
+        (a single GET beats one scoped GET per group).
 
         ## Raises
 
@@ -192,6 +213,8 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
         """
         api_endpoint = EpFabricSoftwareUpdatePlanSummary()
         api_endpoint.fabric_name = self.fabric_name
+        if update_group_name is not None:
+            api_endpoint.endpoint_params.update_group_name = update_group_name
         result = self._request(path=api_endpoint.path, verb=api_endpoint.verb, operation_type=OperationType.QUERY)
         # NDBaseModel.from_response is annotated to return the base type; narrow it to the concrete model.
         return cast(SoftwareUpdatePlanSummaryModel, SoftwareUpdatePlanSummaryModel.from_response(result if isinstance(result, dict) else {}))
@@ -316,15 +339,15 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
         changes, so a `success` status already means "staged for the currently-configured image" -
         no separate version comparison is needed.
 
-        Returns False for an empty snapshot (nothing to confirm prepared).
+        A switch-less snapshot is vacuously prepared: there is nothing to stage, so this returns
+        True (consistent with `wait_for_completion`, which treats a switch-less group as already
+        satisfied). Reporting "prepared" avoids a pointless stage POST for a group with no members.
 
         ## Raises
 
         None
         """
         switches = [sw for group in snapshot for sw in group.get("switches", [])]
-        if not switches:
-            return False
         return all(sw.get("image_staged_status") in _TERMINAL_OK and sw.get("image_validated_status") in _TERMINAL_OK for sw in switches)
 
     def stage(self, update_group_names: list[str]) -> ResponseType:
@@ -394,10 +417,14 @@ class FabricPrepareUpdateOrchestrator(BaseModel):
         - If staging does not complete within `timeout` seconds.
         """
         deadline = time.monotonic() + max(timeout, 0)
+        interval = max(interval, 0)
+        # Scope the (repeated) poll to a single update group when possible; multi-group prepares
+        # fetch the fabric-wide summary once per poll and filter in memory.
+        scope = self.scope_for(update_group_names)
         consecutive_failures = 0
         while True:
             try:
-                summary = self.get_summary()
+                summary = self.get_summary(update_group_name=scope)
                 groups = self._resolve_groups(summary, update_group_names)
                 switches = [sw for group in groups for sw in (group.update_group_switches or [])]
             except Exception as e:  # pylint: disable=broad-except

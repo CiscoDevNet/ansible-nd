@@ -100,7 +100,7 @@ EXAMPLES = r"""
       - SITE1_N9K_spine
     wait: true
     wait_timeout: 3600
-    wait_interval: 60
+    wait_interval: 20
     state: merged
 
 - name: Start preparing an update group without waiting for completion
@@ -124,6 +124,22 @@ from ansible_collections.cisco.nd.plugins.module_utils.rest.response_handler_nd 
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 from ansible_collections.cisco.nd.plugins.module_utils.rest.results import Results
 from ansible_collections.cisco.nd.plugins.module_utils.rest.sender_nd import Sender
+
+
+def _validate_update_groups(module: AnsibleModule, output: NDOutput) -> None:
+    """
+    # Summary
+
+    Fail if `update_groups` is empty. Ansible's `required=True` only guarantees the key is present,
+    not that the list is non-empty; an empty list would silently prepare nothing, so enforce at
+    least one update group name here.
+
+    ## Raises
+
+    None
+    """
+    if not module.params["update_groups"]:
+        module.fail_json(msg="update_groups must contain at least one update group name.", **output.format())
 
 
 def _run_prepare(module: AnsibleModule) -> tuple[Results | None, dict]:
@@ -160,8 +176,9 @@ def _run_prepare(module: AnsibleModule) -> tuple[Results | None, dict]:
 
     # Pre-flight: ND will not prepare an update group that spans more than one switch role.
     # Fetch the summary once and reuse it for both the role check and the `before` snapshot,
-    # so startup costs a single GET instead of two.
-    summary = orchestrator.get_summary()
+    # so startup costs a single GET instead of two. Scope the read to the requested group when a
+    # single group is prepared (the common case); multi-group prepares fetch the fabric-wide plan.
+    summary = orchestrator.get_summary(update_group_name=orchestrator.scope_for(update_groups))
     orchestrator.preflight_role_check(update_groups, summary=summary)
 
     before = orchestrator.status_snapshot(update_groups, summary=summary)
@@ -206,6 +223,7 @@ def main():
     require_pydantic(module)
 
     output = NDOutput(output_level=module.params.get("output_level", "normal"))
+    _validate_update_groups(module, output)
 
     try:
         results, output_fields = _run_prepare(module)
