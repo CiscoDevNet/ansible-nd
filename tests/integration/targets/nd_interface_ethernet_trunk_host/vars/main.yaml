@@ -128,6 +128,24 @@ ethernet_48_vlan_mapping:
             dot1q_tunnel: true
             provider_vlan_id: 200
 
+# --- Storm-control read-back test config ---
+# Exercises the from_response (GET) path with a storm-control level present, to
+# confirm ND does not echo both the percentage and PPS variant for a class (which
+# the PR #265 mutual-exclusion validator would reject). Only the percentage variant
+# is set; the PPS variant is intentionally left unset.
+
+ethernet_48_storm_control:
+  switch_ip: "{{ test_switch_ip }}"
+  interface_names:
+    - Ethernet1/48
+  config_data:
+    network_os:
+      policy:
+        admin_state: true
+        allowed_vlans: "100-200"
+        description: "Storm-control read-back test Ethernet1/48"
+        storm_control_broadcast_level: 50.0
+
 # --- Cleanup helper: all test interfaces ---
 
 cleanup_interface_names:

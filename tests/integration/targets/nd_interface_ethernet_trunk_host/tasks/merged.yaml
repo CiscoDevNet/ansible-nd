@@ -315,3 +315,50 @@
   ansible.builtin.assert:
     that:
       - nm_merged_idem_large_fanout is not changed
+
+# --- MERGED STORM-CONTROL READ-BACK (PR #265 validator coverage) ---
+# Creates an interface with a single storm-control level (percentage variant only),
+# then re-applies the same config. The re-apply forces from_response() to parse the
+# storm-control field on the GET. If ND echoed both the percentage and PPS variant
+# for the class, the new mutual-exclusion validator would raise during from_response
+# and this re-apply would error -- so a clean "not changed" proves both that the GET
+# shape is accepted and that the field round-trips idempotently.
+
+- name: "MERGED STORM-CONTROL: Create Ethernet1/48 with a broadcast storm-control level"
+  cisco.nd.nd_interface_ethernet_trunk_host: &merge_eth48_storm
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - "{{ ethernet_48_storm_control }}"
+    state: merged
+  register: nm_merged_storm_create
+
+- name: "DEBUG: Show storm-control create read-back (after-state)"
+  ansible.builtin.debug:
+    var: nm_merged_storm_create.after
+
+- name: "MERGED STORM-CONTROL: Verify create reported the new interface"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_storm_create is changed
+      - nm_merged_storm_create.after | selectattr('switch_ip', 'equalto', test_switch_ip) | selectattr('interface_name', 'equalto', 'Ethernet1/48') | list | length == 1
+
+- name: "MERGED STORM-CONTROL: Re-apply to exercise from_response on the storm-control GET"
+  cisco.nd.nd_interface_ethernet_trunk_host: *merge_eth48_storm
+  register: nm_merged_storm_idem
+
+- name: "MERGED STORM-CONTROL: Verify no change on read-back (GET shape accepted, field round-trips)"
+  ansible.builtin.assert:
+    that:
+      - nm_merged_storm_idem is not changed
+
+# Clean up the storm-control test interface
+- name: "CLEANUP: Remove Ethernet1/48 (storm-control)"
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    output_level: "{{ nd_info.output_level }}"
+    fabric_name: "{{ test_fabric_name }}"
+    config:
+      - switch_ip: "{{ test_switch_ip }}"
+        interface_names:
+          - Ethernet1/48
+    state: deleted
