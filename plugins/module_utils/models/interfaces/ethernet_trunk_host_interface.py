@@ -372,6 +372,26 @@ class EthernetTrunkHostPolicyModel(NDNestedModel):
                 raise ValueError(f"{level_field} and {pps_field} are mutually exclusive; set only one.")
         return self
 
+    @model_validator(mode="after")
+    def _validate_vlan_mapping_entries_present(self) -> EthernetTrunkHostPolicyModel:
+        """
+        # Summary
+
+        Reject enabling `vlan_mapping` without supplying any `vlan_mapping_entries`.
+
+        The DOCUMENTATION and field description state that `vlan_mapping_entries` is required when `vlan_mapping` is true. Enforcing it at the model
+        layer fails an incomplete policy early with a clear error instead of accepting it and deferring the outcome to a later layer or to ND.
+
+        ## Raises
+
+        ### ValueError
+
+        - If `vlan_mapping` is true and `vlan_mapping_entries` is missing or empty.
+        """
+        if self.vlan_mapping is True and not self.vlan_mapping_entries:
+            raise ValueError("vlan_mapping_entries must be provided when vlan_mapping is true.")
+        return self
+
 
 class EthernetTrunkHostNetworkOSModel(NDNestedModel):
     """

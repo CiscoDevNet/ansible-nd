@@ -1890,3 +1890,44 @@ def test_ethernet_trunk_host_interface_01130(kwargs, should_raise):
     else:
         with does_not_raise():
             EthernetTrunkHostPolicyModel(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs,should_raise",
+    [
+        ({"vlan_mapping": True}, True),
+        ({"vlan_mapping": True, "vlan_mapping_entries": []}, True),
+        ({"vlan_mapping": True, "vlan_mapping_entries": [{"customer_vlan_id": ["10"], "provider_vlan_id": 100}]}, False),
+        ({"vlan_mapping": False}, False),
+        ({"vlan_mapping": None}, False),
+    ],
+    ids=[
+        "enabled_no_entries_raise",
+        "enabled_empty_entries_raise",
+        "enabled_with_entry_ok",
+        "disabled_ok",
+        "unset_ok",
+    ],
+)
+def test_ethernet_trunk_host_interface_01140(kwargs, should_raise):
+    """
+    # Summary
+
+    Verify `vlan_mapping_entries` is required when `vlan_mapping` is enabled.
+
+    ## Test
+
+    - vlan_mapping=True with missing or empty entries raises ValidationError
+    - vlan_mapping=True with at least one entry is accepted
+    - vlan_mapping False/None is accepted regardless of entries
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostPolicyModel._validate_vlan_mapping_entries_present()
+    """
+    if should_raise:
+        with pytest.raises(ValidationError, match=r"vlan_mapping_entries must be provided"):
+            EthernetTrunkHostPolicyModel(**kwargs)
+    else:
+        with does_not_raise():
+            EthernetTrunkHostPolicyModel(**kwargs)
