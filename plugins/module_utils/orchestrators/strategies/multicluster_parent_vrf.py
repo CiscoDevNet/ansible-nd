@@ -5,6 +5,14 @@
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multisite_parent_vrf import (
     MultisiteParentVrfStrategy,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.vrfs import (
+    EpOneManageFabricsVrfActionsDeployPost,
+    EpOneManageFabricsVrfsGet,
+    EpOneManageFabricsVrfsBulkDelete,
+    EpOneManageFabricsVrfsPost,
+    EpOneManageFabricsVrfsVrfNameDelete,
+    EpOneManageFabricsVrfsVrfNamePut,
+)
 
 
 class MulticlusterParentVrfStrategy(MultisiteParentVrfStrategy):
@@ -26,3 +34,26 @@ class MulticlusterParentVrfStrategy(MultisiteParentVrfStrategy):
     @property
     def is_multisite(self) -> bool:
         return False
+
+    def vrfs_get_cls(self) -> type:
+        return EpOneManageFabricsVrfsGet
+
+    def vrfs_post_cls(self) -> type:
+        return EpOneManageFabricsVrfsPost
+
+    def vrf_put_cls(self) -> type:
+        return EpOneManageFabricsVrfsVrfNamePut
+
+    def vrf_delete_cls(self) -> type:
+        return EpOneManageFabricsVrfsVrfNameDelete
+
+    def vrf_actions_deploy_post_cls(self) -> type:
+        return EpOneManageFabricsVrfActionsDeployPost
+
+    def vrf_actions_remove_post_cls(self) -> type:
+        return EpOneManageFabricsVrfsBulkDelete
+
+    def configure_endpoint(self, ep) -> None:
+        super().configure_endpoint(ep)
+        if hasattr(ep, "proxy_path"):
+            ep.proxy_path = self.fabric_data.get("onemanageProxyPath", "")

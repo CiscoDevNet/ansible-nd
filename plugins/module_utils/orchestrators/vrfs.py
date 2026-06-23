@@ -35,6 +35,7 @@ Architecture overview
 
 from __future__ import annotations
 
+import json
 import time
 
 from typing import Any, ClassVar
@@ -387,8 +388,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 operation_type=OperationType.QUERY,
             )
             if isinstance(result, dict):
-                return result.get("vrfs") or result.get("items") or []
-            return result or []
+                return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result.get("vrfs") or result.get("items") or []))
+            return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result))
         except Exception as e:
             if scoped_vrf_names:
                 return self._query_all_unfiltered()
@@ -415,9 +416,9 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             for item in result_items:
                 item_name = item.get("vrfName") or item.get("vrf_name") if isinstance(item, dict) else None
                 if item_name and item_name not in seen:
-                    vrfs.append(item)
+                    vrfs.append(self._normalize_query_vrf_item(item))
                     seen.add(item_name)
-        return vrfs
+        return self._enrich_mcfg_parent_vrfs_from_children(vrfs)
 
     def _query_all_unfiltered(self) -> ResponseType:
         """GET all VRFs without a filter fallback."""
@@ -429,8 +430,8 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             operation_type=OperationType.QUERY,
         )
         if isinstance(result, dict):
-            return result.get("vrfs") or result.get("items") or []
-        return result or []
+            return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result.get("vrfs") or result.get("items") or []))
+        return self._enrich_mcfg_parent_vrfs_from_children(self._normalize_query_vrf_items(result))
 
     def _query_scope_vrf_names(self) -> list[str]:
         """Return VRF names safe to use for targeted current-state discovery."""
@@ -457,6 +458,297 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
         expression = terms[0] if len(terms) == 1 else "(" + " OR ".join(terms) + ")"
         return quote(expression, safe="")
 
+    def _normalize_query_vrf_item(self, item: Any) -> Any:
+        if not isinstance(item, dict):
+            return item
+        if not (getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False)):
+            return item
+
+        normalized = dict(item)
+        if not normalized.get("fabricName"):
+            normalized["fabricName"] = normalized.get("fabric") or self.strategy.fabric_name
+        if not normalized.get("vrfType"):
+            normalized["vrfType"] = self._default_vrf_type()
+        if normalized.get("vrfStatus") == "NA":
+            normalized["vrfStatus"] = "notApplicable"
+        template_config = normalized.get("vrfTemplateConfig")
+        if isinstance(template_config, str):
+            try:
+                template_config = json.loads(template_config)
+            except ValueError:
+                template_config = {}
+            normalized["vrfTemplateConfig"] = {str(key): "" if value is None else str(value) for key, value in template_config.items()}
+        if isinstance(template_config, dict):
+            normalized.update(self._schema_fields_from_top_down_template(template_config))
+        return normalized
+
+    def _normalize_query_vrf_items(self, items: Any) -> list[Any]:
+        return [self._normalize_query_vrf_item(item) for item in (items or [])]
+
+    def _is_mcfg_parent(self) -> bool:
+        return bool(getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False))
+
+    def _child_vrf_records_for_mcfg_parent(self) -> dict[str, dict[str, Any]]:
+        """Read child VRFs so parent output can include fabric-instance fields omitted by top-down."""
+        if not self._is_mcfg_parent():
+            return {}
+        members = (self.strategy.fabric_data or {}).get("members") or []
+        if not members:
+            return {}
+
+        from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.vrf_fabric_resolver import VrfFabricResolver
+
+        fabric_fields = ("advertiseHostRoute", "advertiseDefaultRoute", "configureStaticDefaultRoute")
+        records_by_name: dict[str, dict[str, Any]] = {}
+        conflicts_by_name: dict[str, set[str]] = {}
+        for member in members:
+            child_fabric_name = member.get("fabricName")
+            if not child_fabric_name:
+                continue
+            child_strategy = VrfFabricResolver.strategy_from_fabric_details(child_fabric_name, member)
+            endpoint = child_strategy.vrfs_get_cls()()
+            endpoint.fabric_name = child_strategy.fabric_name
+            child_strategy.configure_endpoint(endpoint)
+            try:
+                result = self._request(
+                    path=endpoint.path,
+                    verb=endpoint.verb,
+                    not_found_ok=True,
+                    operation_type=OperationType.QUERY,
+                )
+            except Exception:
+                continue
+
+            if isinstance(result, dict):
+                child_items = result.get("vrfs") or result.get("items") or []
+            else:
+                child_items = result or []
+            for item in child_items:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("vrfName") or item.get("vrf_name")
+                if not name:
+                    continue
+                child_fabric_data = item.get("fabricData") or item.get("fabric_data") or {}
+                if not isinstance(child_fabric_data, dict):
+                    continue
+                aggregate = records_by_name.setdefault(name, {"fabricData": {}})
+                aggregate_fabric_data = aggregate["fabricData"]
+                conflicts = conflicts_by_name.setdefault(name, set())
+                for field in fabric_fields:
+                    if field in conflicts or field not in child_fabric_data:
+                        continue
+                    value = child_fabric_data[field]
+                    if field not in aggregate_fabric_data:
+                        aggregate_fabric_data[field] = value
+                    elif aggregate_fabric_data[field] != value:
+                        aggregate_fabric_data.pop(field, None)
+                        conflicts.add(field)
+        return records_by_name
+
+    def _enrich_mcfg_parent_vrfs_from_children(self, items: list[Any]) -> list[Any]:
+        if not self._is_mcfg_parent() or not items:
+            return items
+
+        child_records = self._child_vrf_records_for_mcfg_parent()
+        if not child_records:
+            return items
+
+        fabric_fields = ("advertiseHostRoute", "advertiseDefaultRoute", "configureStaticDefaultRoute")
+        enriched: list[Any] = []
+        for item in items:
+            if not isinstance(item, dict):
+                enriched.append(item)
+                continue
+            child_record = child_records.get(item.get("vrfName") or item.get("vrf_name"))
+            child_fabric_data = child_record.get("fabricData") if isinstance(child_record, dict) else None
+            if not isinstance(child_fabric_data, dict):
+                enriched.append(item)
+                continue
+
+            parent_item = dict(item)
+            parent_fabric_data = dict(parent_item.get("fabricData") or {})
+            for field in fabric_fields:
+                if field not in parent_fabric_data and field in child_fabric_data:
+                    parent_fabric_data[field] = child_fabric_data[field]
+            if parent_fabric_data:
+                parent_item["fabricData"] = parent_fabric_data
+            enriched.append(parent_item)
+        return enriched
+
+    @staticmethod
+    def _top_down_bool(value: Any) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        if value is None or value == "":
+            return None
+        return str(value).strip().lower() == "true"
+
+    @staticmethod
+    def _top_down_int(value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _top_down_list(value: Any) -> list[str] | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, list):
+            return [str(item) for item in value if str(item)]
+        return [item.strip() for item in str(value).split(",") if item.strip()]
+
+    def _schema_fields_from_top_down_template(self, template_config: dict[str, Any]) -> dict[str, Any]:
+        """Convert top-down template values into the standard VRF schema shape."""
+        converted: dict[str, Any] = {}
+        vlan_id = self._top_down_int(template_config.get("vrfVlanId"))
+        if vlan_id is not None:
+            converted["vlanId"] = vlan_id
+
+        core_data = {
+            "vrfVlanName": template_config.get("vrfVlanName"),
+            "vrfInterfaceDescription": template_config.get("vrfIntfDescription"),
+            "vrfDescription": template_config.get("vrfDescription"),
+            "mtu": self._top_down_int(template_config.get("mtu")),
+            "routingTag": self._top_down_int(template_config.get("tag")),
+            "vrfRouteMap": template_config.get("vrfRouteMap"),
+            "v6VrfRouteMap": template_config.get("v6VrfRouteMap"),
+            "maxBgpPaths": self._top_down_int(template_config.get("maxBgpPaths")),
+            "maxIbgpPaths": self._top_down_int(template_config.get("maxIbgpPaths")),
+            "ipv6LinkLocal": self._top_down_bool(template_config.get("ipv6LinkLocalFlag")),
+            "disableRtAuto": self._top_down_bool(template_config.get("disableRtAuto")),
+            "routeTargetImport": self._top_down_list(template_config.get("routeTargetImport")),
+            "routeTargetExport": self._top_down_list(template_config.get("routeTargetExport")),
+            "evpnRouteTargetImport": self._top_down_list(template_config.get("routeTargetImportEvpn")),
+            "evpnRouteTargetExport": self._top_down_list(template_config.get("routeTargetExportEvpn")),
+        }
+        core_data = {key: value for key, value in core_data.items() if value not in (None, "")}
+        if core_data:
+            converted["coreData"] = core_data
+
+        l3vni_without_vlan = self._top_down_bool(template_config.get("enableL3VniNoVlan"))
+        if l3vni_without_vlan is None:
+            l3vni_without_vlan = template_config.get("vrfVlanId") == ""
+        trm_data = {
+            "ipv4Trm": self._top_down_bool(template_config.get("trmEnabled")),
+            "v4RpAbsent": self._top_down_bool(template_config.get("isRPAbsent")),
+            "v4RpExternal": self._top_down_bool(template_config.get("isRPExternal")),
+            "v4RpAddress": template_config.get("rpAddress"),
+            "loopbackNumber": self._top_down_int(template_config.get("loopbackNumber")),
+            "l3VniMulticastGroup": template_config.get("L3VniMcastGroup"),
+            "v4MulticastGroup": template_config.get("multicastGroup"),
+            "trmOnBgw": self._top_down_bool(template_config.get("trmBGWMSiteEnabled")),
+            "mvpnRouteTargetImport": self._top_down_list(template_config.get("routeTargetImportMvpn")),
+            "mvpnRouteTargetExport": self._top_down_list(template_config.get("routeTargetExportMvpn")),
+        }
+        trm_data = {key: value for key, value in trm_data.items() if value not in (None, "")}
+        fabric_data = {
+            "l3VniWithoutVlan": l3vni_without_vlan,
+            "advertiseHostRoute": self._top_down_bool(template_config.get("advertiseHostRouteFlag")),
+            "advertiseDefaultRoute": self._top_down_bool(template_config.get("advertiseDefaultRouteFlag")),
+            "configureStaticDefaultRoute": self._top_down_bool(template_config.get("configureStaticDefaultRouteFlag")),
+            "bgpPassword": template_config.get("bgpPassword"),
+            "bgpPasswordKeyType": self._top_down_int(template_config.get("bgpPasswordKeyType")),
+            "netflow": self._top_down_bool(template_config.get("ENABLE_NETFLOW")),
+            "netflowMonitor": template_config.get("NETFLOW_MONITOR"),
+        }
+        fabric_data = {key: value for key, value in fabric_data.items() if value not in (None, "")}
+        if trm_data:
+            fabric_data["trmData"] = trm_data
+        if fabric_data:
+            converted["fabricData"] = fabric_data
+
+        return converted
+
+    @staticmethod
+    def _nested_payload(value: Any) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return value
+        if hasattr(value, "to_payload"):
+            return value.to_payload()
+        return {}
+
+    @staticmethod
+    def _template_value(value: Any) -> Any:
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return ",".join(str(item) for item in value)
+        return value
+
+    def _top_down_vrf_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
+        """Build the legacy template-config payload required by the MCFG parent top-down API."""
+        core_data = self._nested_payload(model_instance.core_data)
+        fabric_data = self._nested_payload(model_instance.fabric_data)
+        trm_data = self._nested_payload(fabric_data.get("trmData"))
+        management = ((self.strategy.fabric_data or {}).get("manageFabricDetails") or {}).get("management") or {}
+
+        if model_instance.vrf_template_config:
+            template_config = {key: self._template_value(value) for key, value in model_instance.vrf_template_config.items()}
+            template_config.setdefault("vrfSegmentId", self._template_value(model_instance.vrf_id))
+            template_config.setdefault("vrfName", model_instance.vrf_name)
+            template_config.setdefault("vrfVlanId", self._template_value(model_instance.vlan_id))
+        else:
+            template_config = {
+                "vrfSegmentId": self._template_value(model_instance.vrf_id),
+                "vrfName": model_instance.vrf_name,
+                "vrfVlanId": self._template_value(model_instance.vlan_id),
+                "vrfVlanName": self._template_value(core_data.get("vrfVlanName")),
+                "vrfIntfDescription": self._template_value(core_data.get("vrfInterfaceDescription")),
+                "vrfDescription": self._template_value(core_data.get("vrfDescription")),
+                "mtu": self._template_value(core_data.get("mtu")),
+                "tag": self._template_value(core_data.get("routingTag")),
+                "vrfRouteMap": self._template_value(core_data.get("vrfRouteMap")),
+                "v6VrfRouteMap": self._template_value(core_data.get("v6VrfRouteMap")),
+                "maxBgpPaths": self._template_value(core_data.get("maxBgpPaths")),
+                "maxIbgpPaths": self._template_value(core_data.get("maxIbgpPaths")),
+                "ipv6LinkLocalFlag": self._template_value(core_data.get("ipv6LinkLocal")),
+                "enableL3VniNoVlan": self._template_value(fabric_data.get("l3VniWithoutVlan")),
+                "trmEnabled": self._template_value(trm_data.get("ipv4Trm")),
+                "isRPExternal": self._template_value(trm_data.get("v4RpExternal")),
+                "rpAddress": self._template_value(trm_data.get("v4RpAddress")),
+                "loopbackNumber": self._template_value(trm_data.get("loopbackNumber")),
+                "L3VniMcastGroup": self._template_value(trm_data.get("l3VniMulticastGroup")),
+                "multicastGroup": self._template_value(trm_data.get("v4MulticastGroup")),
+                "trmBGWMSiteEnabled": self._template_value(trm_data.get("trmOnBgw")),
+                "advertiseHostRouteFlag": self._template_value(fabric_data.get("advertiseHostRoute")),
+                "advertiseDefaultRouteFlag": self._template_value(fabric_data.get("advertiseDefaultRoute")),
+                "configureStaticDefaultRouteFlag": self._template_value(fabric_data.get("configureStaticDefaultRoute")),
+                "bgpPassword": self._template_value(fabric_data.get("bgpPassword")),
+                "bgpPasswordKeyType": self._template_value(fabric_data.get("bgpPasswordKeyType")),
+                "isRPAbsent": self._template_value(trm_data.get("v4RpAbsent")),
+                "ENABLE_NETFLOW": self._template_value(fabric_data.get("netflow")),
+                "NETFLOW_MONITOR": self._template_value(fabric_data.get("netflowMonitor")),
+                "disableRtAuto": self._template_value(core_data.get("disableRtAuto")),
+                "routeTargetImport": self._template_value(core_data.get("routeTargetImport")),
+                "routeTargetExport": self._template_value(core_data.get("routeTargetExport")),
+                "routeTargetImportEvpn": self._template_value(core_data.get("evpnRouteTargetImport")),
+                "routeTargetExportEvpn": self._template_value(core_data.get("evpnRouteTargetExport")),
+                "routeTargetImportMvpn": self._template_value(trm_data.get("mvpnRouteTargetImport")),
+                "routeTargetExportMvpn": self._template_value(trm_data.get("mvpnRouteTargetExport")),
+            }
+
+        return {
+            "fabric": self.strategy.fabric_name,
+            "vrfName": model_instance.vrf_name,
+            "vrfTemplate": model_instance.vrf_template_name or management.get("vrfTemplate") or "Default_VRF_Universal",
+            "vrfExtensionTemplate": model_instance.vrf_extension_template_name or management.get("vrfExtensionTemplate") or "Default_VRF_Extension_Universal",
+            "vrfId": model_instance.vrf_id,
+            "serviceVrfTemplate": model_instance.service_vrf_template_name,
+            "source": None,
+            "vrfTemplateConfig": json.dumps(template_config),
+        }
+
+    def _create_or_update_payload(self, model_instance: NDVrfModel) -> dict[str, Any]:
+        if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
+            return self._top_down_vrf_payload(model_instance)
+        return model_instance.to_payload()
+
     # ── Create ────────────────────────────────────────────────────
 
     def create(self, model_instance: NDVrfModel, **kwargs) -> ResponseType:
@@ -471,10 +763,20 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
             return [self.update(model_instance) for model_instance in model_instances]
         try:
             endpoint = self._make_endpoint(self.strategy.vrfs_post_cls())
+            if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
+                return [
+                    self._request(
+                        path=endpoint.path,
+                        verb=endpoint.verb,
+                        data=self._create_or_update_payload(model_instance),
+                        operation_type=OperationType.CREATE,
+                    )
+                    for model_instance in model_instances
+                ]
             return self._request(
                 path=endpoint.path,
                 verb=endpoint.verb,
-                data={"vrfs": [m.to_payload() for m in model_instances]},
+                data={"vrfs": [self._create_or_update_payload(m) for m in model_instances]},
                 operation_type=OperationType.CREATE,
             )
         except Exception as e:
@@ -491,7 +793,7 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
                 self.strategy.vrf_put_cls(),
                 vrf_name=vrf_name,
             )
-            payload = model_instance.to_payload()
+            payload = self._create_or_update_payload(model_instance)
             if self.strategy.is_child:
                 payload = {key: value for key, value in payload.items() if key in ("fabricName", "vrfName", "vrfType", "fabricData")}
             return self._request(
@@ -532,6 +834,15 @@ class NDVrfOrchestrator(NDBaseOrchestrator["NDVrfModel"]):
 
     def _delete_bulk_with_retry(self, vrf_names: list[str]) -> ResponseType:
         """Delete VRFs, retrying controller sync failures for only failed VRFs."""
+        if getattr(self.strategy, "is_parent", False) and getattr(self.strategy, "is_multicluster", False):
+            endpoint = self._make_endpoint(self.strategy.vrf_actions_remove_post_cls())
+            endpoint.query_params.vrf_names = ",".join(vrf_names)
+            return self._request(
+                path=endpoint.path,
+                verb=endpoint.verb,
+                operation_type=OperationType.DELETE,
+            )
+
         pending_vrf_names = list(vrf_names)
         successful_results: list[dict[str, Any]] = []
         last_error: Exception | None = None

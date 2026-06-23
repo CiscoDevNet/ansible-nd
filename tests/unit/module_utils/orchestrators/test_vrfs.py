@@ -12,6 +12,8 @@ from __future__ import absolute_import, annotations, division, print_function
 
 __metaclass__ = type  # pylint: disable=invalid-name
 
+import json
+
 import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import (
@@ -103,6 +105,16 @@ class _EndpointStrategy:
         )
 
         return EpManageFabricsVrfsVrfNamePut
+
+
+class _McfgTopDownStrategy:
+    fabric_name = "MCFG_FAB"
+    is_parent = True
+    is_child = False
+    is_multicluster = True
+
+    def __init__(self, fabric_data=None):
+        self.fabric_data = fabric_data or {"management": {"type": "vxlan"}}
 
 
 class _RestSend:
@@ -567,6 +579,148 @@ def test_vrfs_00085_query_all_does_not_scope_overridden_reads():
     assert orchestrator.query_all() == []
     assert len(requested_paths) == 1
     assert "filter=" not in requested_paths[0]
+
+
+def test_vrfs_00087_mcfg_parent_normalizes_top_down_vrf_template_config():
+    """
+    # Summary
+
+    Verify MCFG parent top-down GET data is converted back into the normal VRF
+    schema shape used by validation and module output.
+    """
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(orchestrator, "strategy", _McfgTopDownStrategy())
+
+    normalized = orchestrator._normalize_query_vrf_item(
+        {
+            "fabric": "MCFG_FAB",
+            "vrfName": "ansible-nd-vrf-mcfg-a",
+            "vrfId": 9008860,
+            "vrfStatus": "NA",
+            "vrfTemplateConfig": json.dumps(
+                {
+                    "vrfVlanId": "2860",
+                    "vrfDescription": "Ansible ND VRF MCFG sanity merged",
+                    "maxBgpPaths": "2",
+                    "maxIbgpPaths": "2",
+                    "disableRtAuto": "true",
+                    "routeTargetImport": "65000:50660",
+                    "routeTargetExport": "65000:50661",
+                    "routeTargetImportEvpn": "65000:50662",
+                    "routeTargetExportEvpn": "65000:50663",
+                    "advertiseHostRouteFlag": "true",
+                    "advertiseDefaultRouteFlag": "false",
+                    "configureStaticDefaultRouteFlag": "false",
+                }
+            ),
+        }
+    )
+
+    assert normalized["fabricName"] == "MCFG_FAB"
+    assert normalized["vrfType"] == "vxlan"
+    assert normalized["vrfStatus"] == "notApplicable"
+    assert normalized["vlanId"] == 2860
+    assert normalized["coreData"]["vrfDescription"] == "Ansible ND VRF MCFG sanity merged"
+    assert normalized["coreData"]["maxBgpPaths"] == 2
+    assert normalized["coreData"]["maxIbgpPaths"] == 2
+    assert normalized["coreData"]["disableRtAuto"] is True
+    assert normalized["coreData"]["routeTargetImport"] == ["65000:50660"]
+    assert normalized["coreData"]["routeTargetExport"] == ["65000:50661"]
+    assert normalized["coreData"]["evpnRouteTargetImport"] == ["65000:50662"]
+    assert normalized["coreData"]["evpnRouteTargetExport"] == ["65000:50663"]
+    assert normalized["fabricData"]["l3VniWithoutVlan"] is False
+    assert normalized["fabricData"]["advertiseHostRoute"] is True
+    assert normalized["fabricData"]["advertiseDefaultRoute"] is False
+    assert normalized["fabricData"]["configureStaticDefaultRoute"] is False
+
+
+def test_vrfs_00088_mcfg_parent_infers_l3vni_without_vlan_from_top_down_empty_vlan():
+    """Top-down omits the explicit L3VNI flag on some releases but returns an empty VLAN."""
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(orchestrator, "strategy", _McfgTopDownStrategy())
+
+    normalized = orchestrator._normalize_query_vrf_item(
+        {
+            "fabric": "MCFG_FAB",
+            "vrfName": "ansible-nd-vrf-mcfg-b",
+            "vrfStatus": "NA",
+            "vrfTemplateConfig": json.dumps(
+                {
+                    "vrfVlanId": "",
+                    "vrfDescription": "Ansible ND VRF MCFG L3VNI without VLAN",
+                    "advertiseDefaultRouteFlag": "true",
+                    "configureStaticDefaultRouteFlag": "true",
+                }
+            ),
+        }
+    )
+
+    assert "vlanId" not in normalized
+    assert normalized["coreData"]["vrfDescription"] == "Ansible ND VRF MCFG L3VNI without VLAN"
+    assert normalized["fabricData"]["l3VniWithoutVlan"] is True
+    assert normalized["fabricData"]["advertiseDefaultRoute"] is True
+    assert normalized["fabricData"]["configureStaticDefaultRoute"] is True
+
+
+def test_vrfs_00089_mcfg_parent_enriches_missing_fabric_fields_from_child_vrfs():
+    """
+    MCFG top-down parent records may omit fabric-instance booleans; child
+    fabric records remain the source of truth for those fields.
+    """
+    orchestrator = NDVrfOrchestrator.__new__(NDVrfOrchestrator)
+    object.__setattr__(
+        orchestrator,
+        "strategy",
+        _McfgTopDownStrategy(
+            {
+                "members": [
+                    {
+                        "fabricName": "nac-msd-fabric1",
+                        "fabricState": "member",
+                        "clusterName": "ND42-REL",
+                    }
+                ]
+            }
+        ),
+    )
+    requested_paths = []
+
+    def request(**kwargs):
+        requested_paths.append(kwargs["path"])
+        return {
+            "vrfs": [
+                {
+                    "vrfName": "ansible-nd-vrf-mcfg-a",
+                    "fabricData": {
+                        "advertiseHostRoute": True,
+                        "advertiseDefaultRoute": False,
+                        "configureStaticDefaultRoute": False,
+                    },
+                }
+            ]
+        }
+
+    object.__setattr__(orchestrator, "_request", request)
+
+    enriched = orchestrator._enrich_mcfg_parent_vrfs_from_children(
+        [
+            {
+                "fabricName": "MCFG_FAB",
+                "vrfName": "ansible-nd-vrf-mcfg-a",
+                "fabricData": {
+                    "l3VniWithoutVlan": False,
+                },
+            }
+        ]
+    )
+
+    assert requested_paths == ["/api/v1/manage/fabrics/nac-msd-fabric1/vrfs?clusterName=ND42-REL"]
+    assert enriched[0]["fabricData"] == {
+        "l3VniWithoutVlan": False,
+        "advertiseHostRoute": True,
+        "advertiseDefaultRoute": False,
+        "configureStaticDefaultRoute": False,
+    }
 
 
 def test_vrfs_00090_bulk_delete_retries_only_sync_failed_vrfs():

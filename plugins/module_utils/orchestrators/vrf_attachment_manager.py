@@ -12,9 +12,6 @@ import time
 from typing import Any, Optional, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_actions import (
-    EpManageFabricsVrfActionsDeployPost,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_vrf_attachments import (
     EpManageFabricsVrfAttachmentsPost,
     EpManageFabricsVrfAttachmentsQueryPost,
@@ -628,7 +625,7 @@ class VrfAttachmentManager:
     ) -> dict[str, Any]:
         """Deploy pending VRF attachment changes once."""
         orchestrator, results = self.coordinator._new_vrf_orchestrator(module_args, strategy)
-        endpoint = orchestrator._make_endpoint(EpManageFabricsVrfActionsDeployPost)
+        endpoint = orchestrator._make_endpoint(strategy.vrf_actions_deploy_post_cls())
         orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,
