@@ -362,6 +362,6 @@ class VpcInterfaceBaseOrchestrator(NDBaseInterfaceOrchestrator[ModelType]):
                     existing = interfaces_by_name.get(name)
                     if existing is None or switch_id < existing[0]:
                         interfaces_by_name[name] = (switch_id, iface)
-            return [entry for _, entry in interfaces_by_name.values()]
+            return [entry[1] for entry in interfaces_by_name.values()]
         except Exception as e:
             raise RuntimeError(f"Query all failed: {e}") from e
