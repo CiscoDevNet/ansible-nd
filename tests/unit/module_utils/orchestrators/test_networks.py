@@ -569,6 +569,54 @@ def test_network_check_mode_delete_skips_deploy_and_wait():
     ]
 
 
+def test_network_check_mode_attachment_phase_returns_planned_payload():
+    class Module:
+        check_mode = True
+        _verbosity = 3
+        params = {
+            "state": "merged",
+            "config": [
+                {
+                    "network_name": "BLUE_NET",
+                    "attach": [{"ip_address": "10.1.1.11"}],
+                }
+            ],
+        }
+
+    module_args = dict(Module.params)
+    coordinator = NetworkWorkflowCoordinator(module=Module(), strategy=_orchestrator().strategy)
+
+    def new_network_orchestrator(*_args, **_kwargs):
+        raise AssertionError("check mode must not build a REST orchestrator for Network attachments")
+
+    object.__setattr__(coordinator, "_new_network_orchestrator", new_network_orchestrator)
+    desired = {
+        ("BLUE_NET", "SERIAL1"): {
+            "networkName": "BLUE_NET",
+            "switchId": "SERIAL1",
+            "attach": True,
+        }
+    }
+
+    trace = coordinator._apply_attachment_phase(
+        module_args,
+        _orchestrator().strategy,
+        phase="post",
+        desired=desired,
+        current={},
+    )
+
+    assert trace["changed"] is True
+    assert trace["deploy_targets"] == {"BLUE_NET": {"SERIAL1"}}
+    assert trace["check_mode_attachment_payloads"] == [
+        {
+            "networkName": "BLUE_NET",
+            "switchId": "SERIAL1",
+            "attach": True,
+        }
+    ]
+
+
 def test_network_bulk_delete_retries_only_sync_failed_networks():
     orchestrator = _orchestrator()
     requested_payloads = []

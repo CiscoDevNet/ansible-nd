@@ -348,6 +348,14 @@ class NetworkAttachmentManager:
         deploy_targets: dict[str, set[str]],
         operation_type: OperationType,
     ) -> dict[str, Any]:
+        if getattr(getattr(self.coordinator, "module", None), "check_mode", False):
+            return {
+                "changed": True,
+                "failed": False,
+                "deploy_targets": deploy_targets,
+                "payloads": payloads,
+                "check_mode_attachment_payloads": payloads,
+            }
         request = NetworkAttachDetachPayloadModel(attachments=[NetworkAttachmentModel(**payload) for payload in payloads])
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
         endpoint = orchestrator._make_endpoint(EpManageFabricsNetworkAttachmentsPost)
