@@ -182,7 +182,8 @@
               access_vlan: 400
               ports: []
               description: "No-deploy test port-channel504"
-    deploy: false
+    config_actions:
+      deploy: false
     state: merged
   register: nm_merged_no_deploy
 
