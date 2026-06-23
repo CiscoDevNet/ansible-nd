@@ -1304,12 +1304,15 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
     def manage_gathered(self):
         """Return resources from the ND fabric, optionally filtered by config criteria.
 
-        When no ``config`` is provided, all resources cached in ``self._all_resources`` are
-        translated to the playbook format and returned.  When ``config`` is provided, each
-        filter item is processed in sequence; a resource must satisfy every non-None
-        criterion in the filter (``entity_name``, ``pool_name``, ``switches``) to be
-        included.  Deduplication is applied across filter items using the resource ID so
-        that a resource matching multiple filters appears only once in the output.
+        ``_refresh_existing_resources()`` (called by ``manage_state()``) already fetched
+        and stored the correctly scoped resources in ``self._all_resources`` before this
+        method is invoked:
+          - No ``config``  → full paginated fabric inventory.
+          - With ``config`` → API-filtered fetch via ``_build_gathered_resource_criteria()``
+            (pool_name, switchId, and Lucene entityName params applied server-side).
+
+        This method therefore only translates ``self._all_resources`` to the playbook
+        config format and stores the results.
 
         Results are stored in ``self.changed_dict[0]['gathered']`` and
         ``self.api_responses``.
@@ -1321,22 +1324,17 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             config_count,
         )
 
-        if not self.config:
-            # No filters — return everything translated to merged format
-            results = self.translate_gathered_results(self._all_resources)
-            self.log.info(
-                "manage_gathered: No filter criteria provided, returning all %s resource(s)",
-                len(results),
-            )
-            self.api_responses.extend(results)
-            self.changed_dict[0]["gathered"].extend(results)
-            return
-
-        results = self._apply_gathered_filters()
+        # _refresh_existing_resources() already populated self._all_resources with
+        # API-filtered resources (via _build_gathered_resource_criteria() for gathered+config,
+        # or a full paginated fetch for gathered without config). Translate and return directly
+        # without a second in-memory filter pass.
+        results = self.translate_gathered_results(self._all_resources)
 
         self.log.info(
-            "manage_gathered: Gather complete, %s resource(s) matched filters",
+            "manage_gathered: Gather complete, %s resource(s) returned for fabric=%s (filter_count=%s)",
             len(results),
+            self.fabric,
+            config_count,
         )
         self.api_responses.extend(results)
         self.changed_dict[0]["gathered"].extend(results)
