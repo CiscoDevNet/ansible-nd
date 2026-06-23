@@ -1840,3 +1840,53 @@ def test_ethernet_trunk_host_interface_01120(field, enum_cls, key):
     else:
         expected = [e.value for e in enum_cls]
     assert policy_spec[field]["choices"] == expected
+
+
+@pytest.mark.parametrize(
+    "kwargs,should_raise",
+    [
+        ({"storm_control_broadcast_level": 50.0, "storm_control_broadcast_level_pps": 1000}, True),
+        ({"storm_control_multicast_level": 50.0, "storm_control_multicast_level_pps": 1000}, True),
+        ({"storm_control_unicast_level": 50.0, "storm_control_unicast_level_pps": 1000}, True),
+        ({"storm_control_broadcast_level": 50.0}, False),
+        ({"storm_control_broadcast_level_pps": 1000}, False),
+        ({"storm_control_multicast_level": 50.0}, False),
+        ({"storm_control_multicast_level_pps": 1000}, False),
+        ({"storm_control_unicast_level": 50.0}, False),
+        ({"storm_control_unicast_level_pps": 1000}, False),
+        ({}, False),
+    ],
+    ids=[
+        "broadcast_both_raise",
+        "multicast_both_raise",
+        "unicast_both_raise",
+        "broadcast_level_ok",
+        "broadcast_pps_ok",
+        "multicast_level_ok",
+        "multicast_pps_ok",
+        "unicast_level_ok",
+        "unicast_pps_ok",
+        "none_ok",
+    ],
+)
+def test_ethernet_trunk_host_interface_01130(kwargs, should_raise):
+    """
+    # Summary
+
+    Verify the storm-control percentage and packets-per-second variants are mutually exclusive per traffic class.
+
+    ## Test
+
+    - Setting both the percentage and PPS field for the same class (broadcast/multicast/unicast) raises ValidationError
+    - Setting only one variant (or neither) is accepted
+
+    ## Classes and Methods
+
+    - EthernetTrunkHostPolicyModel._validate_storm_control_level_exclusivity()
+    """
+    if should_raise:
+        with pytest.raises(ValidationError, match=r"mutually exclusive"):
+            EthernetTrunkHostPolicyModel(**kwargs)
+    else:
+        with does_not_raise():
+            EthernetTrunkHostPolicyModel(**kwargs)

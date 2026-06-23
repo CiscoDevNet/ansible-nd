@@ -36,6 +36,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat im
     SerializationInfo,
     field_validator,
     model_serializer,
+    model_validator,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.models.base import NDBaseModel
 from ansible_collections.cisco.nd.plugins.module_utils.models.interfaces.enums import (
@@ -343,6 +344,33 @@ class EthernetTrunkHostPolicyModel(NDNestedModel):
             result.pop("policy_type", None)
             result.pop("policyType", None)
         return result
+
+    @model_validator(mode="after")
+    def _validate_storm_control_level_exclusivity(self) -> EthernetTrunkHostPolicyModel:
+        """
+        # Summary
+
+        Reject setting both the percentage and the packets-per-second variant of the same storm-control traffic class.
+
+        For each traffic class (broadcast, multicast, unicast) ND accepts either the percentage level (`storm_control_<class>_level`) or the
+        packets-per-second level (`storm_control_<class>_level_pps`), never both. The pair is documented as mutually exclusive; enforcing it at
+        the model layer fails the conflict early with a clear error instead of leaving it to ND, serialization order, or API-side validation.
+
+        ## Raises
+
+        ### ValueError
+
+        - If both the percentage and the packets-per-second field are set for the same storm-control traffic class.
+        """
+        exclusive_pairs = (
+            ("storm_control_broadcast_level", "storm_control_broadcast_level_pps"),
+            ("storm_control_multicast_level", "storm_control_multicast_level_pps"),
+            ("storm_control_unicast_level", "storm_control_unicast_level_pps"),
+        )
+        for level_field, pps_field in exclusive_pairs:
+            if getattr(self, level_field) is not None and getattr(self, pps_field) is not None:
+                raise ValueError(f"{level_field} and {pps_field} are mutually exclusive; set only one.")
+        return self
 
 
 class EthernetTrunkHostNetworkOSModel(NDNestedModel):
