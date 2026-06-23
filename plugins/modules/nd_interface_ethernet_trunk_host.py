@@ -394,6 +394,42 @@ EXAMPLES = r"""
                   provider_vlan_id: 200
     state: merged
 
+- name: Replace the configuration of specific trunkHost interfaces
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_names:
+          - Ethernet1/1
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "300-400"
+              native_vlan: 300
+              description: Reprovisioned trunk port
+    state: replaced
+
+# state=overridden is fabric-wide: every trunkHost interface in the fabric that is NOT listed
+# below is reset to its fabric default configuration. An empty config list resets ALL trunkHost
+# interfaces in the fabric. Use with caution.
+- name: Enforce trunkHost interfaces fabric-wide, resetting all others to fabric default
+  cisco.nd.nd_interface_ethernet_trunk_host:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_names:
+          - Ethernet1/1
+          - Ethernet1/2
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              allowed_vlans: "100-200"
+              native_vlan: 1
+              description: Trunk ports to keep; all other trunkHost interfaces reset
+    state: overridden
+
 - name: Delete trunkHost interface configurations
   cisco.nd.nd_interface_ethernet_trunk_host:
     fabric_name: my_fabric
