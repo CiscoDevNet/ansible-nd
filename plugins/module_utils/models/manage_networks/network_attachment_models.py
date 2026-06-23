@@ -225,7 +225,7 @@ class NetworkAttachmentDetailModel(NDNestedModel):
 
 
 class NetworkAttachmentExportRequestModel(NDBaseModel):
-    """Request body for POST /fabrics/{fabricName}/networkAttachments/export."""
+    """Request body for POST /fabrics/{fabricName}/networkAttachment/export."""
 
     identifiers: ClassVar[list[str]] = []
     identifier_strategy: ClassVar[Literal["single", "composite", "hierarchical", "singleton"] | None] = "singleton"

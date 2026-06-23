@@ -306,15 +306,8 @@ class NetworkStateMachine:
 
         requested_network_names = self.coordinator._configured_network_names(config)
         current_networks = self.coordinator._query_current_networks(module_args, strategy)
-        current_network_names = {
-            network.get("networkName") or network.get("network_name")
-            for network in current_networks
-        }
-        target_network_names = [
-            network_name
-            for network_name in requested_network_names
-            if network_name in current_network_names
-        ]
+        current_network_names = {network.get("networkName") or network.get("network_name") for network in current_networks}
+        target_network_names = [network_name for network_name in requested_network_names if network_name in current_network_names]
         self.coordinator._ensure_networks_have_no_networks(
             module_args,
             strategy,
@@ -385,11 +378,10 @@ class NetworkStateMachine:
         target_network_names = wait_network_names
         if target_network_names is None:
             target_network_names = self.coordinator._configured_network_names(config)
-        delete_deploy_targets: dict[str, set[str]] = {
-            network_name: set()
-            for network_name in target_network_names
-            if network_name
-        }
+        is_mcfg_parent = bool(getattr(strategy, "is_parent", False) and getattr(strategy, "is_multicluster", False))
+        delete_deploy_targets: dict[str, set[str]] = {}
+        if not is_mcfg_parent:
+            delete_deploy_targets = {network_name: set() for network_name in target_network_names if network_name}
         for network_name, switch_ids in (detach_trace.get("deploy_targets", {}) if detach_trace else {}).items():
             delete_deploy_targets.setdefault(network_name, set()).update(switch_ids or set())
 

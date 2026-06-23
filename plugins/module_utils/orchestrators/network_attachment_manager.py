@@ -10,9 +10,6 @@ import time
 from typing import Any, Optional, Union
 
 from ansible_collections.cisco.nd.plugins.module_utils.enums import OperationType
-from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_network_actions import (
-    EpManageFabricsNetworkActionsDeployPost,
-)
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_network_attachments import (
     EpManageFabricsNetworkAttachmentsPost,
     EpManageFabricsNetworkAttachmentsQueryPost,
@@ -456,7 +453,7 @@ class NetworkAttachmentManager:
 
     def deploy_network_attachments(self, module_args: dict, strategy: BaseNetworkStrategy, deploy_payload: dict[str, Any]) -> dict[str, Any]:
         orchestrator, results = self.coordinator._new_network_orchestrator(module_args, strategy)
-        endpoint = orchestrator._make_endpoint(EpManageFabricsNetworkActionsDeployPost)
+        endpoint = orchestrator._make_endpoint(strategy.network_actions_deploy_post_cls())
         response = orchestrator._request(
             path=endpoint.path,
             verb=endpoint.verb,

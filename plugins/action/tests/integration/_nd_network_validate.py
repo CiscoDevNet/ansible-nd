@@ -277,7 +277,7 @@ def _extract_records(data: Any) -> list[dict[str, Any]]:
         if records:
             return records
 
-    for key in ("parent", "children", "response", "result", "DATA"):
+    for key in ("parent_fabric", "parent", "child_fabrics", "children", "response", "result", "DATA"):
         if key in data:
             records = _extract_records(data.get(key))
             if records:

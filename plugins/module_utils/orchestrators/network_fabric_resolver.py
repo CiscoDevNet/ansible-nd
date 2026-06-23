@@ -23,6 +23,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics import (
+    EpManageFabricsGet,
+    EpManageFabricsMembersGet,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.fabrics import (
+    EpOneManageFabricsGet,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.base_network import (
     BaseNetworkStrategy,
 )
@@ -199,11 +206,11 @@ class NetworkFabricResolver:
                   part of a federation (standalone or MSD-only deployments).
         """
         proxy = _nd_onemanage_proxy(self._nd.version or "")
-        path = f"{proxy}/appcenter/cisco/ndfc/api/v1/onemanage/fabrics"
+        endpoint = EpOneManageFabricsGet(proxy_path=proxy)
 
         response = self._nd.request(
-            path,
-            method="GET",
+            endpoint.path,
+            method=endpoint.verb.value,
             ignore_not_found_error=True,
         )
 
@@ -313,15 +320,39 @@ class NetworkFabricResolver:
         ``management.type`` (for example ``vxlanIbgp`` or ``vxlanEbgp``),
         which maps to the default Network ``networkType`` for standard Network creates.
         """
-        path = f"/api/v1/manage/fabrics/{fabric_name}"
+        endpoint = EpManageFabricsGet(fabric_name=fabric_name)
+        endpoint.endpoint_params.cluster_name = cluster_name
         response = self._nd.request(
-            path,
-            method="GET",
-            qs={"clusterName": cluster_name} if cluster_name else None,
+            endpoint.path,
+            method=endpoint.verb.value,
             ignore_not_found_error=True,
         )
         data = _response_data(response)
         return data if isinstance(data, dict) else {}
+
+    def _fetch_manage_fabric_members(self, fabric_name: str, cluster_name: str | None = None) -> list[dict[str, Any]]:
+        """
+        GET ND Manage member fabrics for a multicluster parent fabric.
+
+        This is used only as an additive MCFG enrichment; standalone and MSD
+        routing continue to use the existing association data.
+        """
+        endpoint = EpManageFabricsMembersGet(fabric_name=fabric_name)
+        endpoint.endpoint_params.cluster_name = cluster_name
+        response = self._nd.request(
+            endpoint.path,
+            method=endpoint.verb.value,
+            ignore_not_found_error=True,
+        )
+        data = _response_data(response)
+        if isinstance(data, list):
+            return [member for member in data if isinstance(member, dict)]
+        if isinstance(data, dict):
+            for key in ("members", "items", "data", "DATA"):
+                members = data.get(key)
+                if isinstance(members, list):
+                    return [member for member in members if isinstance(member, dict)]
+        return []
 
     def _enrich_with_manage_fabric_details(self, fabric_data: dict) -> dict:
         """
@@ -345,6 +376,15 @@ class NetworkFabricResolver:
                 enriched["managementType"] = network_type
         if details:
             enriched["manageFabricDetails"] = details
+        if enriched.get("fabricType") == "MFD":
+            enriched["onemanageProxyPath"] = _nd_onemanage_proxy(self._nd.version or "")
+            try:
+                members = self._fetch_manage_fabric_members(self.fabric_name, enriched.get("clusterName"))
+            except Exception:
+                members = []
+            if members:
+                enriched.setdefault("members", members)
+                enriched["manageFabricMembers"] = members
         return enriched
 
     def _resolve_fabric_type(self) -> tuple[str, dict]:

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from ansible_collections.cisco.nd.plugins.module_utils.models.manage_networks.config_models import (
@@ -22,8 +24,14 @@ from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.networks im
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_workflow_coordinator import (
     NetworkWorkflowCoordinator,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.network_state_machine import (
+    NetworkStateMachine,
+)
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.standalone_network import (
     StandaloneNetworkStrategy,
+)
+from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multicluster_parent_network import (
+    MulticlusterParentNetworkStrategy,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.rest.rest_send import RestSend
 
@@ -32,6 +40,26 @@ def _orchestrator():
     strategy = StandaloneNetworkStrategy(
         fabric_name="fab1",
         fabric_data={"managementType": "vxlanIbgp"},
+    )
+    return NDNetworkOrchestrator(
+        rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}),
+        strategy=strategy,
+    )
+
+
+def _mcfg_parent_orchestrator():
+    strategy = MulticlusterParentNetworkStrategy(
+        fabric_name="MCFG_FAB",
+        fabric_data={
+            "managementType": "vxlan",
+            "onemanageProxyPath": "/onemanage",
+            "manageFabricDetails": {
+                "management": {
+                    "networkTemplate": "Default_Network_Universal",
+                    "networkExtensionTemplate": "Default_Network_Extension_Universal",
+                }
+            },
+        },
     )
     return NDNetworkOrchestrator(
         rest_send=RestSend({"state": "merged", "config": [], "check_mode": False}),
@@ -99,6 +127,34 @@ def test_parent_config_accepts_child_fabric_overrides():
     )
 
     assert model.to_config()["child_fabric_config"][0]["fabric"] == "child1"
+
+
+def test_child_task_inherits_parent_network_identity_and_layer_fields():
+    orchestrator = _mcfg_parent_orchestrator()
+    coordinator = NetworkWorkflowCoordinator(module=object(), strategy=orchestrator.strategy)
+
+    child_tasks = coordinator._accumulate_child_task(
+        parent_network={
+            "network_name": "BLUE_NET",
+            "network_id": 901030,
+            "vlan_id": 3130,
+            "vlan_name": "BLUE_VLAN",
+            "vrf_name": "NA",
+            "is_l2only": True,
+        },
+        child_cfg={"fabric": "child1"},
+        child_tasks_dict={},
+        child_fabric_data={"fabricName": "child1", "fabricState": "member", "clusterName": "cluster1"},
+        state="merged",
+    )
+
+    child_config = child_tasks["child1"]["module_args"]["config"][0]
+    assert child_config["network_name"] == "BLUE_NET"
+    assert child_config["network_id"] == 901030
+    assert child_config["vlan_id"] == 3130
+    assert child_config["vlan_name"] == "BLUE_VLAN"
+    assert child_config["vrf_name"] == "NA"
+    assert child_config["is_l2only"] is True
 
 
 def test_argument_spec_uses_manage_json_defaults():
@@ -357,6 +413,114 @@ def test_network_bulk_create_uses_single_networks_payload():
         "BLUE_NET",
         "GREEN_NET",
     ]
+
+
+def test_mcfg_parent_network_create_uses_top_down_template_payload():
+    orchestrator = _mcfg_parent_orchestrator()
+    requests = []
+
+    def request(**kwargs):
+        requests.append(kwargs)
+        return {"networkName": "BLUE_NET", "status": "success"}
+
+    object.__setattr__(orchestrator, "_request", request)
+    model = NDNetworkOrchestrator.model_class.from_config(
+        orchestrator.prepare_config_data(
+            [
+                {
+                    "network_name": "BLUE_NET",
+                    "network_id": 901030,
+                    "vlan_id": 3130,
+                    "vlan_name": "BLUE_VLAN",
+                    "is_l2only": True,
+                    "rt_auto": True,
+                    "enable_ir": False,
+                }
+            ]
+        )[0]
+    )
+
+    result = orchestrator.create_bulk([model])
+
+    assert result == [{"networkName": "BLUE_NET", "status": "success"}]
+    assert len(requests) == 1
+    assert requests[0]["path"] == "/onemanage/appcenter/cisco/ndfc/api/v1/onemanage/top-down/fabrics/MCFG_FAB/networks"
+    assert "networks" not in requests[0]["data"]
+    assert requests[0]["data"]["networkName"] == "BLUE_NET"
+    assert requests[0]["data"]["fabric"] == "MCFG_FAB"
+    assert requests[0]["data"]["vrf"] == "NA"
+    assert requests[0]["data"]["networkTemplate"] == "Default_Network_Universal"
+    template_config = json.loads(requests[0]["data"]["networkTemplateConfig"])
+    assert template_config["segmentId"] == 901030
+    assert template_config["vlanId"] == 3130
+    assert template_config["vlanName"] == "BLUE_VLAN"
+    assert template_config["isLayer2Only"] is True
+    assert template_config["rtBothAuto"] is True
+
+
+def test_mcfg_parent_network_query_normalizes_top_down_template_config():
+    orchestrator = _mcfg_parent_orchestrator()
+    top_down_network = {
+        "fabric": "MCFG_FAB",
+        "networkName": "BLUE_NET",
+        "networkId": 901030,
+        "primaryNetworkId": 0,
+        "networkStatus": "NA",
+        "vrf": "NA",
+        "networkTemplateConfig": (
+            '{"segmentId":"901030","vlanId":"3130","vlanName":"BLUE_VLAN",' '"isLayer2Only":"true","rtBothAuto":"true","enableIR":"false"}'
+        ),
+    }
+
+    normalized = orchestrator._normalize_query_network_item(top_down_network)
+
+    assert normalized["fabricName"] == "MCFG_FAB"
+    assert normalized["networkType"] == "vxlan"
+    assert normalized["networkStatus"] == "notApplicable"
+    assert normalized["vrfName"] == "NA"
+    assert normalized["networkId"] == 901030
+    assert "primaryNetworkId" not in normalized
+    assert normalized["vlanId"] == 3130
+    assert normalized["layer"] == "layer2"
+    assert normalized["l2Data"]["vlanName"] == "BLUE_VLAN"
+    assert normalized["l2Data"]["rtAuto"] is True
+    assert normalized["l2Data"]["fabricData"]["enableIr"] is False
+
+
+def test_mcfg_parent_delete_does_not_seed_empty_network_level_deploy():
+    class Strategy:
+        is_parent = True
+        is_multicluster = True
+
+    class Coordinator:
+        deploy_maps = None
+
+        def _configured_network_names(self, _config):
+            return ["BLUE_NET"]
+
+        def _build_delete_deploy_payloads(self, _config, *target_maps):
+            self.deploy_maps = target_maps
+            return []
+
+        def _wait_for_network_attachments_delete_ready(self, *_args):
+            return None
+
+        def _wait_for_networks_delete_ready(self, *_args):
+            return None
+
+    coordinator = Coordinator()
+
+    traces = NetworkStateMachine(coordinator)._deploy_detach_traces(
+        api_args={},
+        wait_args={},
+        strategy=Strategy(),
+        config=[{"network_name": "BLUE_NET"}],
+        detach_trace={},
+        wait_network_names=["BLUE_NET"],
+    )
+
+    assert traces == []
+    assert coordinator.deploy_maps == ({},)
 
 
 def test_network_bulk_delete_retries_only_sync_failed_networks():

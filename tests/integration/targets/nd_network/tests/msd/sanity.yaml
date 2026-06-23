@@ -60,7 +60,7 @@
     that:
       - msd_sanity_merged.changed == true
       - msd_sanity_merged.fabric_type == "multisite_parent"
-      - msd_sanity_merged.children | default([]) | length >= 1
+      - msd_sanity_merged.child_fabrics | default([]) | length >= 1
   when: nd_network_run_msd | bool
   tags: sanity
 

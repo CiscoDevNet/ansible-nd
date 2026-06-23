@@ -339,6 +339,9 @@ class NetworkWorkflowCoordinator:
 
         # Inherit the Network name from the parent Network definition
         child_cfg["network_name"] = parent_network.get("network_name")
+        for field in ("network_id", "vlan_id", "vlan_name", "vrf_name", "layer", "is_l2only"):
+            if child_cfg.get(field) is None and parent_network.get(field) is not None:
+                child_cfg[field] = parent_network.get(field)
 
         if child_fabric_name in child_tasks_dict:
             # Append to existing child task (batch multiple Networks together)

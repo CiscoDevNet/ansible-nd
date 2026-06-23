@@ -15,6 +15,7 @@ from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manag
     EpManageFabricsNetworkActionsStretchPost,
 )
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_network_attachments import (
+    EpManageFabricsNetworkAttachmentsExportPost,
     EpManageFabricsNetworkAttachmentsPost,
     EpManageFabricsNetworkAttachmentsQueryPost,
 )
@@ -98,6 +99,8 @@ def test_manage_network_attachments_00200() -> None:
     """Verify network attachment endpoint paths and query parameters."""
     attach = EpManageFabricsNetworkAttachmentsPost(fabric_name="fab1")
     attach.endpoint_params.ticket_id = "CHG123"
+    export = EpManageFabricsNetworkAttachmentsExportPost(fabric_name="fab1")
+    export.endpoint_params.cluster_name = "cluster1"
     query = EpManageFabricsNetworkAttachmentsQueryPost(fabric_name="fab1")
     query.endpoint_params.max = 100
     query.endpoint_params.include_all = True
@@ -105,5 +108,7 @@ def test_manage_network_attachments_00200() -> None:
 
     assert attach.path == "/api/v1/manage/fabrics/fab1/networkAttachments?ticketId=CHG123"
     assert attach.verb == HttpVerbEnum.POST
+    assert export.path == "/api/v1/manage/fabrics/fab1/networkAttachment/export?clusterName=cluster1"
+    assert export.verb == HttpVerbEnum.POST
     assert query.path == "/api/v1/manage/fabrics/fab1/networkAttachments/query?max=100&isConsolidated=false&includeAll=true"
     assert query.verb == HttpVerbEnum.POST

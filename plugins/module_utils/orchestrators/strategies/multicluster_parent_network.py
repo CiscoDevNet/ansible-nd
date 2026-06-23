@@ -5,6 +5,14 @@
 from ansible_collections.cisco.nd.plugins.module_utils.orchestrators.strategies.multisite_parent_network import (
     MultisiteParentNetworkStrategy,
 )
+from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.onemanage.networks import (
+    EpOneManageFabricsNetworkActionsDeployPost,
+    EpOneManageFabricsNetworksGet,
+    EpOneManageFabricsNetworksBulkDelete,
+    EpOneManageFabricsNetworksNetworkNameDelete,
+    EpOneManageFabricsNetworksNetworkNamePut,
+    EpOneManageFabricsNetworksPost,
+)
 
 
 class MulticlusterParentNetworkStrategy(MultisiteParentNetworkStrategy):
@@ -26,3 +34,26 @@ class MulticlusterParentNetworkStrategy(MultisiteParentNetworkStrategy):
     @property
     def is_multisite(self) -> bool:
         return False
+
+    def networks_get_cls(self) -> type:
+        return EpOneManageFabricsNetworksGet
+
+    def networks_post_cls(self) -> type:
+        return EpOneManageFabricsNetworksPost
+
+    def network_put_cls(self) -> type:
+        return EpOneManageFabricsNetworksNetworkNamePut
+
+    def network_delete_cls(self) -> type:
+        return EpOneManageFabricsNetworksNetworkNameDelete
+
+    def network_actions_deploy_post_cls(self) -> type:
+        return EpOneManageFabricsNetworkActionsDeployPost
+
+    def network_actions_remove_post_cls(self) -> type:
+        return EpOneManageFabricsNetworksBulkDelete
+
+    def configure_endpoint(self, ep) -> None:
+        super().configure_endpoint(ep)
+        if hasattr(ep, "proxy_path"):
+            ep.proxy_path = self.fabric_data.get("onemanageProxyPath", "")
