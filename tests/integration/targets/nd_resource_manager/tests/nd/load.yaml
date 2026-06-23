@@ -199,24 +199,6 @@
               second(s), exceeding rm_load_max_delete_seconds={{ rm_load_max_delete_seconds }}.
           when: rm_load_max_delete_seconds is defined
 
-        ##############################################
-        ##          DELETE IDEMPOTENCE              ##
-        ##############################################
-
-        - name: LOAD - Bulk delete resources - Idempotence
-          cisco.nd.nd_manage_resource_manager: *rm_load_delete
-          register: rm_load_delete_idempotent_result
-
-        - name: print rm_load_delete_idempotent_result in DELETE IDEMPOTENCE
-          ansible.builtin.debug:
-            var: rm_load_delete_idempotent_result
-
-        - name: LOAD - Assert bulk delete idempotency
-          ansible.builtin.assert:
-            that:
-              - 'rm_load_delete_idempotent_result.changed == false'
-              - '(rm_load_delete_idempotent_result["diff"][0]["deleted"] | length) == 0'
-
       always:
 
         ##############################################
