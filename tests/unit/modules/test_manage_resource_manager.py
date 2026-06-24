@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from ansible_collections.cisco.nd.plugins.modules import nd_manage_resource_manager as manage_resource_manager_module
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabrics_resources import (
     EpManageFabricResourcesGet,
 )
@@ -90,6 +91,9 @@ class _DummyAnsibleModule:
     def exit_json(self, **kwargs):
         self.exit_payload = kwargs
 
+    def fail_json(self, **kwargs):
+        raise AssertionError("fail_json was not expected: {0}".format(kwargs))
+
 
 class _DummyND:
     """Small NDModule stand-in for NDResourceManagerModule.exit_module tests."""
@@ -132,6 +136,51 @@ def _resource_manager_for_exit(verbosity=0):
     module._proposed_list = []
     module.output = NDOutput("normal")
     return module, ansible_module
+
+
+def test_main_requires_pydantic_before_continuing():
+    """Module entrypoint calls require_pydantic immediately after AnsibleModule."""
+    dummy_module = _DummyAnsibleModule()
+    dummy_module.params = {
+        "fabric": "fabric-1",
+        "output_level": "normal",
+        "state": "gathered",
+        "config": [],
+        "host": "198.51.100.10",
+        "username": "admin",
+    }
+    call_order = []
+    mocked_rm_module = MagicMock()
+
+    with patch.object(manage_resource_manager_module, "nd_argument_spec", return_value={}), patch.object(
+        manage_resource_manager_module.ResourceManagerConfigModel, "get_argument_spec", return_value={}
+    ), patch.object(manage_resource_manager_module, "AnsibleModule", return_value=dummy_module), patch.object(
+        manage_resource_manager_module,
+        "require_pydantic",
+        side_effect=lambda module: call_order.append(("require_pydantic", module)),
+    ), patch.object(
+        manage_resource_manager_module,
+        "setup_logging",
+        side_effect=lambda *args, **kwargs: call_order.append(("setup_logging", args[0])),
+    ), patch.object(
+        manage_resource_manager_module,
+        "NDModule",
+        side_effect=lambda module: call_order.append(("NDModule", module)) or MagicMock(),
+    ), patch.object(
+        manage_resource_manager_module,
+        "NDResourceManagerModule",
+        return_value=mocked_rm_module,
+    ):
+        mocked_rm_module.manage_state.side_effect = lambda: call_order.append(("manage_state", None))
+        mocked_rm_module.exit_module.side_effect = lambda: call_order.append(("exit_module", None))
+
+        manage_resource_manager_module.main()
+
+    assert [name for name, _ in call_order[:3]] == ["require_pydantic", "setup_logging", "NDModule"]
+    assert call_order[0][1] is dummy_module
+    assert call_order[1][1] is dummy_module
+    mocked_rm_module.manage_state.assert_called_once_with()
+    mocked_rm_module.exit_module.assert_called_once_with()
 
 
 def test_resource_manager_config_rejects_unknown_id_pool_name():
@@ -2123,8 +2172,11 @@ def test_check_mode_prevents_api_calls_merged():
     module.manage_merged()  # pylint: disable=protected-access
 
     # API shouldn't be called in check mode for new resources
-    # (Or if called, should be read-only GET)
-    assert True  # Check mode handling verified
+    assert nd.request.call_count == 0
+    # Verify changed=True and diff recorded in check mode
+    assert len(module.results.result) > 0
+    last_result = module.results.result[-1]
+    assert last_result["changed"] is True
 
 
 def test_check_mode_prevents_api_calls_deleted():
@@ -2140,7 +2192,11 @@ def test_check_mode_prevents_api_calls_deleted():
     module.manage_deleted()  # pylint: disable=protected-access
 
     # DELETE shouldn't be called in check mode
-    assert True  # Check mode handling verified
+    assert nd.request.call_count == 0
+    # Verify changed=True and diff recorded in check mode
+    assert len(module.results.result) > 0
+    last_result = module.results.result[-1]
+    assert last_result["changed"] is True
 
 
 def test_manage_merged_logs_payload():
@@ -2318,6 +2374,12 @@ def test_manage_merged_check_mode_registers_diff_without_post_call():
 
     assert nd.request.call_count == 0
     assert len(module.changed_dict[0]["merged"]) == 1
+    # Verify check mode registers pending changes with changed=True and diff
+    assert len(module.results.result) > 0
+    last_result = module.results.result[-1]
+    assert last_result["changed"] is True
+    assert "merged" in last_result.get("diff", {})
+    assert len(last_result["diff"]["merged"]) == 1
 
 
 def test_manage_merged_post_exception_is_wrapped_with_value_error():
@@ -2525,6 +2587,12 @@ def test_manage_deleted_deduplicates_ids_and_skips_missing_id_in_check_mode():
 
     assert module.changed_dict[0]["deleted"] == ["101"]
     assert nd.request.call_count == 0
+    # Verify check mode registers pending deletions with changed=True and diff
+    assert len(module.results.result) > 0
+    last_result = module.results.result[-1]
+    assert last_result["changed"] is True
+    assert "deleted" in last_result.get("diff", {})
+    assert last_result["diff"]["deleted"] == ["101"]
 
 
 def test_manage_deleted_api_exception_is_wrapped_with_value_error():
@@ -2679,10 +2747,35 @@ def test_exit_module_gathered_state_returns_changed_false():
     assert ansible_module.exit_payload["changed"] is False
 
 
-def test_exit_module_check_mode_forces_changed_false():
-    """Exit path forces changed=False in check mode even if diff has mutations."""
+def test_exit_module_check_mode_returns_changed_true_with_pending_merged():
+    """Exit path returns changed=True in check mode when diff has pending merges."""
     module, ansible_module = _resource_manager_for_exit(verbosity=0)
     module.changed_dict[0]["merged"] = [{"entityName": "loopback0"}]
+    module.nd.module.check_mode = True
+
+    module.exit_module()
+
+    assert ansible_module.exit_payload["changed"] is True
+    assert len(module.changed_dict[0]["merged"]) == 1
+
+
+def test_exit_module_check_mode_returns_changed_true_with_pending_deleted():
+    """Exit path returns changed=True in check mode when diff has pending deletes."""
+    module, ansible_module = _resource_manager_for_exit(verbosity=0)
+    module.changed_dict[0]["deleted"] = [101, 102]
+    module.nd.module.check_mode = True
+
+    module.exit_module()
+
+    assert ansible_module.exit_payload["changed"] is True
+    assert len(module.changed_dict[0]["deleted"]) == 2
+
+
+def test_exit_module_check_mode_returns_changed_false_with_no_pending():
+    """Exit path returns changed=False in check mode when diff has no pending changes."""
+    module, ansible_module = _resource_manager_for_exit(verbosity=0)
+    module.changed_dict[0]["merged"] = []
+    module.changed_dict[0]["deleted"] = []
     module.nd.module.check_mode = True
 
     module.exit_module()

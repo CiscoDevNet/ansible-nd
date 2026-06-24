@@ -348,6 +348,7 @@ import logging
 import traceback
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.cisco.nd.plugins.module_utils.common.pydantic_compat import require_pydantic
 from ansible_collections.cisco.nd.plugins.module_utils.common.log import setup_logging
 from ansible_collections.cisco.nd.plugins.module_utils.nd_v2 import (
     NDModule,
@@ -435,6 +436,8 @@ def main():
             ("state", "deleted", ["config"]),
         ],
     )
+
+    require_pydantic(module)
 
     # Initialize logging. ND_LOGGING_CONFIG remains the supported config override.
     setup_logging(module)

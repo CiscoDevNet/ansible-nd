@@ -1071,7 +1071,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 "merge",
                 OperationType.CREATE,
                 "check mode — skipped",
-                changed=False,
+                changed=True,
                 diff={"merged": payloads_only},
                 verb=HttpVerbEnum.POST,
                 path=ep.path,
@@ -1240,7 +1240,7 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
                 "delete",
                 OperationType.DELETE,
                 "check mode — skipped",
-                changed=False,
+                changed=True,
                 diff={"deleted": resource_ids},
                 verb=HttpVerbEnum.POST,
                 path=ep.path,
@@ -1398,18 +1398,17 @@ class NDResourceManagerModule(ResourceManagerResourceHelpersMixin):
             return
 
         changed = len(self.changed_dict[0]["merged"]) > 0 or len(self.changed_dict[0]["deleted"]) > 0
-        if self.nd.module.check_mode:
-            self.log.info(
-                "exit_module: check_mode is enabled, overriding changed=False (would have been changed=%s)",
-                changed,
-            )
-            changed = False
 
         self.log.info(
             "exit_module: merged=%s, deleted=%s, gathered=%s, changed=%s, check_mode=%s",
             len(self.changed_dict[0]["merged"]),
             len(self.changed_dict[0]["deleted"]),
             len(self.changed_dict[0]["gathered"]),
+            changed,
+            self.nd.module.check_mode,
+        )
+        self.log.debug(
+            "exit_module: changed=%s reflects check_mode=%s state (check mode does NOT override changed flag)",
             changed,
             self.nd.module.check_mode,
         )
