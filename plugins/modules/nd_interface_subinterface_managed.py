@@ -236,6 +236,40 @@ EXAMPLES = r"""
               prefix: 24
     state: merged
 
+- name: Replace the configuration of a specific subinterface
+  cisco.nd.nd_interface_subinterface_managed:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: Ethernet1/3.2
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              vlan_id: 2
+              ip: 10.20.30.40
+              prefix: 24
+              description: Reprovisioned subinterface Ethernet1/3.2
+    state: replaced
+
+# state=overridden is fabric-wide: every managed subinterface in the fabric that is managed by this module and is
+# NOT listed below is deleted. An empty config list deletes ALL such subinterfaces in the fabric. Use with caution.
+- name: Enforce subinterfaces fabric-wide, deleting all others managed by this module
+  cisco.nd.nd_interface_subinterface_managed:
+    fabric_name: my_fabric
+    config:
+      - switch_ip: 192.168.1.1
+        interface_name: Ethernet1/3.2
+        config_data:
+          network_os:
+            policy:
+              admin_state: true
+              vlan_id: 2
+              ip: 10.10.10.1
+              prefix: 24
+              description: Subinterface to keep; all other managed subinterfaces deleted
+    state: overridden
+
 - name: Delete a subinterface
   cisco.nd.nd_interface_subinterface_managed:
     fabric_name: my_fabric
