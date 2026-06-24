@@ -528,3 +528,51 @@ def test_interface_capability_preflight_00310() -> None:
         {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"},
     ]
     assert second_ids == {"FDO12345ABC", "FDO12345ABD"}
+
+
+def test_interface_capability_preflight_00320() -> None:
+    """
+    # Summary
+
+    Verify `get_capable_switches` deep-copies cached records, so mutating a returned record dict cannot corrupt
+    cached state or the derived `get_capable_switch_ids` set. Regression guard for the shallow-copy defect: a
+    `list(self._cache[key])` copy shares the record dicts by reference (PR #275 review).
+
+    ## Test
+
+    - First `get_capable_switches` call returns two records; mutate a returned record in place (`["switchId"] = "HACKED"`)
+    - Second `get_capable_switches` returns the original, un-mutated records from cache
+    - `get_capable_switch_ids` (built after the mutation) yields the original IDs, proving the mutation did not
+      leak into the cache used to derive them
+
+    ## Classes and Methods
+
+    - InterfaceCapabilityPreflight.get_capable_switches
+    - InterfaceCapabilityPreflight.get_capable_switch_ids
+    """
+    method_name = inspect.stack()[0][3]
+    key = f"{method_name}a"
+
+    def responses():
+        yield responses_preflight(key)
+
+    gen_responses = ResponseGenerator(responses())
+    rest_send = _build_rest_send(gen_responses)
+
+    with does_not_raise():
+        instance = InterfaceCapabilityPreflight(rest_send=rest_send, fabric_name="fabric_1")
+        first_list = instance.get_capable_switches("loopback", "managed")
+        # Mutate the returned record dicts in place -- must not touch the cache.
+        first_list[0]["switchId"] = "HACKED"
+        first_list[1]["switchName"] = "HACKED"
+        del first_list[0]["model"]
+
+        second_list = instance.get_capable_switches("loopback", "managed")
+        # ids are derived from the cache *after* the mutation above
+        ids = instance.get_capable_switch_ids("loopback", "managed")
+
+    assert second_list == [
+        {"model": "N9K-C9300v", "switchId": "FDO12345ABC", "switchName": "BG1"},
+        {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"},
+    ]
+    assert ids == {"FDO12345ABC", "FDO12345ABD"}

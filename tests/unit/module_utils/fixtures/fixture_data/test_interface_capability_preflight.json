@@ -153,5 +153,28 @@
                 {"model": "N9K-C9300v", "switchId": "FDO12345ABD", "switchName": "BG2"}
             ]
         }
+    },
+    "test_interface_capability_preflight_00320a": {
+        "TEST_NOTES": [
+            "capableSwitches for (loopback, managed): two capable switches; used to verify returned RECORD dicts are deep copies (mutating a returned record must not corrupt the cache)."
+        ],
+        "RETURN_CODE": 200,
+        "METHOD": "GET",
+        "REQUEST_PATH": "/api/v1/manage/fabrics/fabric_1/capableSwitches?interfaceType=loopback&mode=managed",
+        "MESSAGE": "OK",
+        "DATA": {
+            "switches": [
+                {
+                    "model": "N9K-C9300v",
+                    "switchId": "FDO12345ABC",
+                    "switchName": "BG1"
+                },
+                {
+                    "model": "N9K-C9300v",
+                    "switchId": "FDO12345ABD",
+                    "switchName": "BG2"
+                }
+            ]
+        }
     }
 }

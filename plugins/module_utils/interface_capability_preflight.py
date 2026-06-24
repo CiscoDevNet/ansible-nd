@@ -16,6 +16,7 @@ endpoint. See GitHub issue #273 for stability/risk discussion.
 
 from __future__ import annotations
 
+import copy
 from typing import ClassVar
 
 from ansible_collections.cisco.nd.plugins.module_utils.endpoints.v1.manage.manage_fabric_capable_switches import (
@@ -201,7 +202,7 @@ class InterfaceCapabilityPreflight:
 
         Return the list of switch records capable of hosting `(interface_type, mode)` in this fabric. Each record contains
         at least `switchId`, `switchName`, and `model`. Lazily fetched and cached per `(interface_type, mode)`. Returns a
-        fresh list per call; callers may mutate the returned list without affecting cached state.
+        deep copy per call; callers may mutate the returned list *and its record dicts* without affecting cached state.
 
         ## Raises
 
@@ -218,7 +219,10 @@ class InterfaceCapabilityPreflight:
         if key not in self._cache:
             result = self._query_get(self._build_endpoint(interface_type, mode).path)
             self._cache[key] = result.get("switches") or []
-        return list(self._cache[key])
+        # Deep copy so callers can mutate returned records without corrupting the cache. A shallow
+        # list() copy would still share the record dicts by reference, letting a caller alter
+        # cached switchId/switchName/model (and so the derived id cache built later).
+        return copy.deepcopy(self._cache[key])
 
     def get_capable_switch_ids(self, interface_type: str, mode: str) -> set[str]:
         """
