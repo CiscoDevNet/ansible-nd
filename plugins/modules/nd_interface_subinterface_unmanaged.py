@@ -50,15 +50,20 @@ options:
         - The parent kind is inferred from the prefix; only Ethernet and Port-channel parents are supported.
         type: str
         required: true
-  deploy:
+  config_actions:
     description:
-    - Whether to deploy interface changes after mutations are complete.
-    - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module execution
-      via the C(interfaceActions/deploy) API. Only the subinterfaces modified by this task are deployed.
-    - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
-    - Setting O(deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
-    type: bool
-    default: true
+    - Controls deploy behavior after interface mutations are complete.
+    type: dict
+    suboptions:
+      deploy:
+        description:
+        - Whether to deploy interface changes after mutations are complete.
+        - When V(true), all queued interface changes are deployed in a single bulk API call at the end of module
+          execution via the C(interfaceActions/deploy) API. Only the subinterfaces modified by this task are deployed.
+        - When V(false), changes are staged but not deployed. Use a separate deploy module or task to deploy later.
+        - Setting O(config_actions.deploy=false) is useful when batching changes across multiple interface tasks before a single deploy.
+        type: bool
+        default: true
   state:
     description:
     - The desired state of the network resources on the Cisco Nexus Dashboard.
@@ -143,7 +148,8 @@ EXAMPLES = r"""
     config:
       - switch_ip: 192.168.1.1
         interface_name: Port-channel10.20
-    deploy: false
+    config_actions:
+      deploy: false
     state: merged
 """
 
@@ -178,7 +184,12 @@ def main():
     argument_spec = nd_argument_spec()
     argument_spec.update(SubinterfaceUnmanagedInterfaceModel.get_argument_spec())
     argument_spec.update(
-        deploy=dict(type="bool", default=True),
+        config_actions={
+            "type": "dict",
+            "options": {
+                "deploy": {"type": "bool", "default": True},
+            },
+        },
     )
 
     module = AnsibleModule(
@@ -203,13 +214,15 @@ def main():
         )
         if not isinstance(nd_state_machine.model_orchestrator, NDBaseInterfaceOrchestrator):
             raise AssertionError(f"Expected NDBaseInterfaceOrchestrator, got {type(nd_state_machine.model_orchestrator)}")
-        nd_state_machine.model_orchestrator.deploy = module.params["deploy"]
+        config_actions = module.params.get("config_actions") or {}
+        deploy = config_actions.get("deploy", True)
+        nd_state_machine.model_orchestrator.deploy = deploy
 
         module_log.debug(
             "manage_state begin state=%s check_mode=%s deploy=%s",
             module.params.get("state"),
             module.check_mode,
-            module.params["deploy"],
+            deploy,
         )
         nd_state_machine.manage_state()
         module_log.debug("manage_state end")
