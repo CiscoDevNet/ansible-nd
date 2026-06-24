@@ -211,7 +211,8 @@
               description: "No-deploy test vlan337"
               ip: 10.99.103.1
               prefix: 24
-    deploy: false
+    config_actions:
+      deploy: false
     state: merged
   register: nm_merged_no_deploy
 
