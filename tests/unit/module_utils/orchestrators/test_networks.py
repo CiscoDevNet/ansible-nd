@@ -157,6 +157,44 @@ def test_child_task_inherits_parent_network_identity_and_layer_fields():
     assert child_config["is_l2only"] is True
 
 
+def test_child_task_exception_returns_structured_network_failure():
+    class ChildStrategy:
+        fabric_type = "multicluster_child"
+
+    coordinator = NetworkWorkflowCoordinator(module=object(), strategy=_mcfg_parent_orchestrator().strategy)
+
+    def raise_child(*_args, **_kwargs):
+        raise RuntimeError("child network route failed")
+
+    object.__setattr__(coordinator, "_run_state_machine", raise_child)
+    child_result = coordinator._run_child_task(
+        {
+            "module_args": {"config": [{"network_name": "BLUE_NET"}]},
+            "strategy": ChildStrategy(),
+        }
+    )
+    child_result["child_fabric"] = "nac-msd-fabric2"
+
+    result = coordinator._build_structured_result(
+        {"changed": True, "failed": False, "before": [], "after": [], "diff": []},
+        [child_result],
+        "MCFG_FAB",
+        "multicluster_parent",
+        "multicluster",
+    )
+
+    assert result["changed"] is True
+    assert result["failed"] is True
+    assert "nac-msd-fabric2" in result["msg"]
+    child = result["child_fabrics"][0]
+    assert child["fabric"] == "nac-msd-fabric2"
+    assert child["fabric_type"] == "multicluster_child"
+    assert child["failed"] is True
+    assert child["msg"] == "child network route failed"
+    assert child["exception"] == "RuntimeError"
+    assert child["proposed"] == [{"network_name": "BLUE_NET"}]
+
+
 def test_argument_spec_uses_manage_json_defaults():
     spec = network_parent_argument_spec()
 

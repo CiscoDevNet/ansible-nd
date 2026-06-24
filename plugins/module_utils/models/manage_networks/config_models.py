@@ -144,6 +144,11 @@ class NetworkChildConfigModel(NDNestedModel):
     secondary_gateway_ipv6_collection: list[str] | None = Field(default=None, alias="secondaryGatewayIpv6Collection")
     vlan_intf_desc: str | None = Field(default=None, alias="vlanIntfDesc")
     mtu: int | None = Field(default=9216)
+    l2_fabric_data: dict[str, Any] | None = Field(default=None, alias="l2FabricData")
+    stretch: str | None = None
+    enable_ir: bool | None = Field(default=False, alias="enableIr")
+    multicast_group_address: str | None = Field(default=None, alias="multicastGroup")
+    ds_vni: int | None = Field(default=None, alias="dsVni")
     arp_suppression: bool | None = Field(default=None, alias="arpSuppression")
     routing_tag: int | None = Field(default=None, alias="routingTag")
     dhcp_servers: list[dict[str, Any]] | None = Field(default=None, alias="dhcpServers")
@@ -168,6 +173,11 @@ class NetworkChildConfigModel(NDNestedModel):
     @classmethod
     def _validate_ipv4_cidr(cls, v: str | None) -> str | None:
         return NetworkValidators.validate_cidrv4(v)
+
+    @field_validator("multicast_group_address", mode="before")
+    @classmethod
+    def _validate_multicast_group(cls, v: str | None) -> str | None:
+        return NetworkValidators.validate_multicast_ipv4(v)
 
     @field_validator("gateway_ipv6_address", mode="before")
     @classmethod

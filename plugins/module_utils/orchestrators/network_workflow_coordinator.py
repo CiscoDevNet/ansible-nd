@@ -919,7 +919,17 @@ class NetworkWorkflowCoordinator:
         """
         module_args = child_task["module_args"]
         child_strategy = child_task["strategy"]
-        result = self._run_state_machine(module_args, strategy=child_strategy)
+        try:
+            result = self._run_state_machine(module_args, strategy=child_strategy)
+        except Exception as exc:
+            return {
+                "changed": False,
+                "failed": True,
+                "msg": str(exc),
+                "exception": type(exc).__name__,
+                "fabric_type": getattr(child_strategy, "fabric_type", "unknown_child"),
+                "proposed": copy.deepcopy(module_args.get("config") or []),
+            }
         result.setdefault("fabric_type", child_strategy.fabric_type)
         return result
 

@@ -21,8 +21,8 @@ class ChildNetworkStrategy(StandaloneNetworkStrategy):
     Unified strategy for Multisite (MSD) and Multicluster (MFD) child fabrics.
 
     Inherits all endpoint classes from StandaloneNetworkStrategy — child fabrics
-    use the same API surface.  The only difference for Multicluster is that
-    cluster_name must be injected into each endpoint's query parameters.
+    use the same fabric-scoped API surface.  Multicluster child identity is
+    retained as metadata, but fabric operations are routed by fabric name.
     """
 
     def __init__(
@@ -71,24 +71,14 @@ class ChildNetworkStrategy(StandaloneNetworkStrategy):
         """Child fabrics do not expose child_fabric_config."""
         return network_base_argument_spec()
 
-    # ── Cluster name guard ─────────────────────────────────────────
-
-    def _require_cluster_name(self) -> str:
-        """Return cluster_name or raise ValueError if absent."""
-        if not self._cluster_name:
-            raise ValueError(
-                f"ChildNetworkStrategy for fabric '{self.fabric_name}' requires a "
-                "cluster_name for Multicluster operations, but none was found. "
-                "Ensure the member fabric data returned by ND includes 'clusterName'."
-            )
-        return self._cluster_name
-
     # ── Endpoint configuration hook ────────────────────────────────
 
     def configure_endpoint(self, ep) -> None:
         """
-        Inject cluster_name into the endpoint's query parameters for
-        Multicluster child fabrics.  No-op for Multisite child fabrics.
+        Inject clusterName for Multicluster child fabrics.
+
+        Remote MCFG child fabric-scoped APIs require the association cluster
+        name in the URI when authenticated against the MCFG login domain.
         """
-        if self.is_multicluster:
-            ep.endpoint_params.cluster_name = self._require_cluster_name()
+        if self.is_multicluster and hasattr(ep, "endpoint_params") and hasattr(ep.endpoint_params, "cluster_name"):
+            ep.endpoint_params.cluster_name = self.cluster_name
